@@ -302,26 +302,35 @@ export default function App() {
   useEffect(() => {
     (async () => {
       try {
-        const r = await window.api.settingsGet?.();
+        const result = await window.api.settingsGet?.();
+        if (!result || !result.ok) {
+          console.warn('Failed to load settings:', result?.error);
+          return;
+        }
+        const r = result.settings;
         if (!r) return;
+        
+        // Apply settings
         if (r.tcpPort != null) setTcpPort(Number(r.tcpPort) || 5000);
         if (typeof r.httpUrl === 'string') setHttpUrl(r.httpUrl);
         if (r.httpInterval != null) setHttpInterval(Number(r.httpInterval) || 5000);
         if (Array.isArray(r.histLogger)) setHistLogger(r.histLogger);
         if (Array.isArray(r.histTrace)) setHistTrace(r.histTrace);
+        
         // CSS Vars
         const root = document.documentElement;
         const detail = Number(r.detailHeight || 0);
         if (detail) root.style.setProperty('--detail-height', `${Math.round(detail)}px`);
         const map = [ ['--col-ts', r.colTs], ['--col-lvl', r.colLvl], ['--col-logger', r.colLogger] ];
         for (const [k, v] of map) if (v != null) root.style.setProperty(k, `${Math.round(Number(v)||0)}px`);
+        
         // Logging
         setLogToFile(!!r.logToFile);
         setLogFilePath(String(r.logFilePath || ''));
         setLogMaxBytes(Number(r.logMaxBytes || (5*1024*1024)));
         setLogMaxBackups(Number(r.logMaxBackups || 3));
       } catch (e) {
-        // ignore
+        console.error('Error loading settings:', e);
       }
     })();
   }, []);
