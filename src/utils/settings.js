@@ -4,6 +4,13 @@
  */
 
 /**
+ * Constants for validation bounds
+ */
+const MIN_USER_PORT = 1024; // Ports below 1024 are reserved for system services
+const MAX_PORT = 65535;
+const MAX_LOG_SIZE_BYTES = 1024 * 1024 * 1024; // 1GB
+
+/**
  * Default settings schema with types and validators
  */
 export const SETTINGS_SCHEMA = {
@@ -29,7 +36,7 @@ export const SETTINGS_SCHEMA = {
   tcpPort: {
     type: 'number',
     default: 5000,
-    validate: (val) => Number.isInteger(val) && val >= 1 && val <= 65535,
+    validate: (val) => Number.isInteger(val) && val >= MIN_USER_PORT && val <= MAX_PORT,
   },
 
   httpUrl: {
@@ -104,7 +111,7 @@ export const SETTINGS_SCHEMA = {
   logMaxBytes: {
     type: 'number',
     default: 5 * 1024 * 1024,
-    validate: (val) => Number.isInteger(val) && val >= 1024 && val <= 1024 * 1024 * 1024,
+    validate: (val) => Number.isInteger(val) && val >= 1024 && val <= MAX_LOG_SIZE_BYTES,
   },
 
   logMaxBackups: {

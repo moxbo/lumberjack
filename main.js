@@ -356,7 +356,7 @@ app.on('quit', () => {
 ipcMain.handle('settings:get', () => {
   try {
     // Return a deep copy to prevent accidental mutations
-    return { ok: true, settings: JSON.parse(JSON.stringify(settings)) };
+    return { ok: true, settings: structuredClone(settings) };
   } catch (err) {
     console.error('Error getting settings:', err.message);
     return { ok: false, error: err.message };
@@ -403,7 +403,7 @@ ipcMain.handle('settings:set', (_event, patch) => {
       }
     }
 
-    return { ok: true, settings: JSON.parse(JSON.stringify(settings)) };
+    return { ok: true, settings: structuredClone(settings) };
   } catch (err) {
     console.error('Error setting settings:', err.message);
     return { ok: false, error: err.message };
