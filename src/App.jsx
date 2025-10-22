@@ -29,6 +29,30 @@ function fmtTimestamp(ts) {
   return ts ? moment(ts).format('YYYY-MM-DD HH:mm:ss.SSS') : '-';
 }
 
+// Hilfsfunktion: erzeugt halbtransparente Tönung als rgba()-String
+function computeTint(color, alpha = 0.4) {
+  if (!color) return '';
+  const c = String(color).trim();
+  const hex = c.startsWith('#') ? c.slice(1) : null;
+  if (hex) {
+    let r, g, b;
+    if (hex.length === 3) {
+      r = parseInt(hex[0] + hex[0], 16);
+      g = parseInt(hex[1] + hex[1], 16);
+      b = parseInt(hex[2] + hex[2], 16);
+      return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+    }
+    if (hex.length === 6) {
+      r = parseInt(hex.slice(0, 2), 16);
+      g = parseInt(hex.slice(2, 4), 16);
+      b = parseInt(hex.slice(4, 6), 16);
+      return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+    }
+  }
+  // Fallback: unveränderte Farbe (ohne Alpha)
+  return c;
+}
+
 // Message-Filter-Logik ausgelagert nach utils/msgFilter.js
 
 export default function App() {
@@ -136,6 +160,63 @@ export default function App() {
   const ctxRef = useRef(null);
 
   const colorChoices = ['#fffbcc', '#d1fae5', '#bae6fd', '#fecaca', '#e9d5ff', '#f5f5f5'];
+
+  // MDC-Filter Modal aus Auswahl
+  const [showMdcModal, setShowMdcModal] = useState(false);
+  const [mdcAgg, setMdcAgg] = useState([]); // [{ key, values: [{ val, count }] }]
+  const [mdcSelKey, setMdcSelKey] = useState('');
+  const [mdcSelVals, setMdcSelVals] = useState(new Set());
+
+  function openMdcFromSelection() {
+    // Aggregiere MDC-Key/Values aus aktueller Auswahl
+    const map = new Map(); // key -> Map(val->count)
+    for (const idx of selected) {
+      const e = entries[idx];
+      const m = e && e.mdc ? e.mdc : null;
+      if (!m) continue;
+      for (const [k0, v0] of Object.entries(m)) {
+        const k = String(k0);
+        const v = String(v0 ?? '');
+        if (!map.has(k)) map.set(k, new Map());
+        const mm = map.get(k);
+        mm.set(v, (mm.get(v) || 0) + 1);
+      }
+    }
+    const arr = Array.from(map.entries()).map(([key, mm]) => ({
+      key,
+      values: Array.from(mm.entries()).map(([val, count]) => ({ val, count })),
+    }));
+    arr.sort((a, b) => a.key.localeCompare(b.key));
+    for (const it of arr) it.values.sort((a, b) => a.val.localeCompare(b.val));
+    setMdcAgg(arr);
+    setMdcSelKey(arr[0]?.key || '');
+    setMdcSelVals(new Set());
+    setShowMdcModal(true);
+    setCtxMenu({ open: false, x: 0, y: 0 });
+  }
+  function addSelectedMdcToFilter({ presentOnly = false, allValues = false } = {}) {
+    const key = String(mdcSelKey || '').trim();
+    if (!key) return;
+    if (presentOnly) {
+      DiagnosticContextFilter.addMdcEntry(key, ''); // Wildcard: Key vorhanden
+      DiagnosticContextFilter.setEnabled(true);
+      return;
+    }
+    const item = mdcAgg.find((x) => x.key === key);
+    if (!item) return;
+    const values = allValues ? item.values.map((x) => x.val) : Array.from(mdcSelVals.values());
+    for (const v of values) DiagnosticContextFilter.addMdcEntry(key, v);
+    if (values.length) DiagnosticContextFilter.setEnabled(true);
+  }
+  function removeSelectedMdcFromFilter() {
+    const key = String(mdcSelKey || '').trim();
+    if (!key) return;
+    const item = mdcAgg.find((x) => x.key === key);
+    if (!item) return;
+    const values =
+      mdcSelVals.size > 0 ? Array.from(mdcSelVals.values()) : item.values.map((x) => x.val);
+    for (const v of values) DiagnosticContextFilter.removeMdcEntry(key, v);
+  }
 
   // Kontextmenü öffnen für Zeile idx
   function openContextMenu(ev, idx) {
@@ -628,13 +709,14 @@ export default function App() {
         if (showSettings) setShowSettings(false);
         if (showHttpLoadDlg) setShowHttpLoadDlg(false);
         if (showHttpPollDlg) setShowHttpPollDlg(false);
+        if (showMdcModal) setShowMdcModal(false);
         if (ctxMenu.open) setCtxMenu({ open: false, x: 0, y: 0 });
         if (httpMenu.open) setHttpMenu({ open: false, x: 0, y: 0 });
       }
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [showSettings, showHttpLoadDlg, showHttpPollDlg, ctxMenu.open, httpMenu.open]);
+  }, [showSettings, showHttpLoadDlg, showHttpPollDlg, showMdcModal, ctxMenu.open, httpMenu.open]);
 
   // Drag & Drop
   useEffect(() => {
@@ -1453,7 +1535,7 @@ export default function App() {
       {/* Diagnostic Context Filter Panel */}
       <DCFilterPanel />
 
-      {/* Hauptlayout: Liste + Details */}
+      {/* Hauptlayout: Liste + Details als Overlay */}
       <main className="layout" style="min-height:0;" ref={layoutRef}>
         <aside className="list" id="listPane" ref={parentRef}>
           <div className="list-header" role="row">
@@ -1492,7 +1574,8 @@ export default function App() {
                 height: 36 + 'px',
                 transform: `translateY(${vi.start}px)`,
               };
-              if (!sel && e?._mark) Object.assign(rowStyle, { background: e._mark });
+              // Markierte Einträge: gut sichtbar, aber Text lesbar halten -> Farbstreifen statt Vollhintergrund
+              if (e?._mark) Object.assign(rowStyle, { boxShadow: `inset 4px 0 0 ${e._mark}` });
               return (
                 <li
                   key={vi.key}
@@ -1515,122 +1598,258 @@ export default function App() {
             })}
           </ul>
         </aside>
-        <div className="divider" ref={dividerRef} title="Höhe der Details ziehen" />
-        <section className="details" id="detailsPane">
-          {!selectedOneIdx && <div id="detailsEmpty">Kein Eintrag ausgewählt.</div>}
-          {selectedEntry && (
-            <div id="detailsView">
-              <div className="kv">
-                <span>Zeit</span>
-                <code id="dTime">{fmtTimestamp(selectedEntry.timestamp)}</code>
-              </div>
-              <div className="kv">
-                <span>Level</span>
-                <code id="dLevel">{fmt(selectedEntry.level)}</code>
-              </div>
-              <div className="kv">
-                <span>Logger</span>
-                <div
-                  style={{
-                    display: 'grid',
-                    gridTemplateColumns: '1fr auto',
-                    alignItems: 'center',
-                    gap: '6px',
-                  }}
-                >
-                  <code id="dLogger">{fmt(selectedEntry.logger)}</code>
-                  <button
-                    title="Logger in Filter übernehmen"
-                    onClick={() => {
-                      const v = String(selectedEntry.logger || '');
-                      setStdFiltersEnabled(true);
-                      setFilter((f) => ({ ...f, logger: v }));
-                      addToHistory('logger', v);
-                    }}
-                  >
-                    + Filter
-                  </button>
-                </div>
-              </div>
-              <div className="kv">
-                <span>Thread</span>
-                <div
-                  style={{
-                    display: 'grid',
-                    gridTemplateColumns: '1fr auto',
-                    alignItems: 'center',
-                    gap: '6px',
-                  }}
-                >
-                  <code id="dThread">{fmt(selectedEntry.thread)}</code>
-                  <button
-                    title="Thread in Filter übernehmen"
-                    onClick={() => {
-                      const v = String(selectedEntry.thread || '');
-                      setStdFiltersEnabled(true);
-                      setFilter((f) => ({ ...f, thread: v }));
-                    }}
-                  >
-                    + Filter
-                  </button>
-                </div>
-              </div>
-              <div className="kv">
-                <span>Source</span>
-                <code id="dSource">{fmt(selectedEntry.source)}</code>
-              </div>
-              <div className="kv full">
-                <span>Message</span>
-                <pre
-                  id="dMessage"
-                  dangerouslySetInnerHTML={{ __html: highlightAll(selectedEntry.message, search) }}
-                />
-              </div>
-              {mdcPairs.length > 0 && (
-                <div className="kv full">
-                  <span>MDC</span>
-                  <div>
+        <div className="overlay">
+          <div className="divider" ref={dividerRef} title="Höhe der Details ziehen" />
+          <section
+            className="details"
+            id="detailsPane"
+            data-tinted={selectedEntry && selectedEntry._mark ? '1' : undefined}
+            style={
+              selectedEntry && selectedEntry._mark
+                ? { ['--details-tint']: computeTint(selectedEntry._mark) }
+                : undefined
+            }
+          >
+            {/* Tönung via CSS-Variable/Background-Image, kein Overlay-Element mehr nötig */}
+            {selectedOneIdx == null && <div id="detailsEmpty">Kein Eintrag ausgewählt.</div>}
+            {selectedEntry && (
+              <div id="detailsView">
+                {/* Meta-Infos kompakt in zwei Spalten */}
+                <div className="meta-grid">
+                  <div className="kv">
+                    <span>Zeit</span>
+                    <code id="dTime">{fmtTimestamp(selectedEntry.timestamp)}</code>
+                  </div>
+                  <div className="kv">
+                    <span>Level</span>
+                    <code id="dLevel">{fmt(selectedEntry.level)}</code>
+                  </div>
+                  <div className="kv">
+                    <span>Logger</span>
                     <div
                       style={{
                         display: 'grid',
-                        gridTemplateColumns: '120px 1fr auto',
-                        gap: '6px',
+                        gridTemplateColumns: '1fr auto',
                         alignItems: 'center',
+                        gap: '6px',
                       }}
                     >
-                      {mdcPairs.map(([k, v]) => (
-                        <Fragment key={`${k}|${v}`}>
-                          <div style={{ color: '#555' }}>{k}</div>
-                          <div>
-                            <code
+                      <code id="dLogger">{fmt(selectedEntry.logger)}</code>
+                      <button
+                        title="Logger in Filter übernehmen"
+                        onClick={() => {
+                          const v = String(selectedEntry.logger || '');
+                          setStdFiltersEnabled(true);
+                          setFilter((f) => ({ ...f, logger: v }));
+                          addToHistory('logger', v);
+                        }}
+                      >
+                        + Filter
+                      </button>
+                    </div>
+                  </div>
+                  <div className="kv">
+                    <span>Thread</span>
+                    <div
+                      style={{
+                        display: 'grid',
+                        gridTemplateColumns: '1fr auto',
+                        alignItems: 'center',
+                        gap: '6px',
+                      }}
+                    >
+                      <code id="dThread">{fmt(selectedEntry.thread)}</code>
+                      <button
+                        title="Thread in Filter übernehmen"
+                        onClick={() => {
+                          const v = String(selectedEntry.thread || '');
+                          setStdFiltersEnabled(true);
+                          setFilter((f) => ({ ...f, thread: v }));
+                        }}
+                      >
+                        + Filter
+                      </button>
+                    </div>
+                  </div>
+                  <div className="kv">
+                    <span>Source</span>
+                    <code id="dSource">{fmt(selectedEntry.source)}</code>
+                  </div>
+                </div>
+
+                <div className="kv full">
+                  <span>Message</span>
+                  <pre
+                    id="dMessage"
+                    dangerouslySetInnerHTML={{
+                      __html: highlightAll(selectedEntry.message, search),
+                    }}
+                  />
+                </div>
+                {mdcPairs.length > 0 && (
+                  <div className="kv full">
+                    <span>MDC</span>
+                    <div>
+                      <div className="mdc-grid">
+                        {mdcPairs.map(([k, v]) => (
+                          <Fragment key={`${k}|${v}`}>
+                            <div className="mdc-key">{k}</div>
+                            <div className="mdc-val">
+                              <code>{v}</code>
+                            </div>
+                            <div className="mdc-act">
+                              <button
+                                title="Zum DC-Filter hinzufügen"
+                                onClick={() => addMdcToFilter(k, v)}
+                              >
+                                + Filter
+                              </button>
+                            </div>
+                          </Fragment>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+          </section>
+        </div>
+      </main>
+
+      {/* MDC-Filter Modal: aus Listenauswahl */}
+      {showMdcModal && (
+        <div className="modal-backdrop" onClick={() => setShowMdcModal(false)}>
+          <div className="modal" onClick={(e) => e.stopPropagation()}>
+            <h3>MDC-Filter aus Auswahl</h3>
+            {mdcAgg.length === 0 ? (
+              <div style={{ padding: '8px', color: '#777' }}>Keine MDC-Daten in der Auswahl</div>
+            ) : (
+              <div className="kv full">
+                <span>Schlüssel</span>
+                <div style={{ display: 'grid', gridTemplateColumns: '220px 1fr', gap: '10px' }}>
+                  <div style={{ borderRight: '1px solid var(--color-divider)' }}>
+                    {mdcAgg.map((it) => (
+                      <div
+                        key={it.key}
+                        className={`item${mdcSelKey === it.key ? ' sel' : ''}`}
+                        style={{ padding: '6px 8px', cursor: 'pointer' }}
+                        onClick={() => {
+                          setMdcSelKey(it.key);
+                          setMdcSelVals(new Set());
+                        }}
+                      >
+                        {it.key}{' '}
+                        <small style={{ color: 'var(--color-text-secondary)' }}>
+                          ({it.values.length})
+                        </small>
+                      </div>
+                    ))}
+                  </div>
+                  <div>
+                    <div
+                      style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '8px',
+                        marginBottom: '8px',
+                      }}
+                    >
+                      <button onClick={() => addSelectedMdcToFilter({ presentOnly: true })}>
+                        + Key vorhanden
+                      </button>
+                      <button
+                        onClick={() => addSelectedMdcToFilter({ allValues: true })}
+                        disabled={!mdcAgg.find((x) => x.key === mdcSelKey)}
+                      >
+                        + Alle Werte
+                      </button>
+                      <button
+                        onClick={() => addSelectedMdcToFilter()}
+                        disabled={mdcSelVals.size === 0}
+                      >
+                        + Ausgewählte Werte
+                      </button>
+                      <button
+                        onClick={removeSelectedMdcFromFilter}
+                        disabled={mdcSelVals.size === 0}
+                      >
+                        Ausgewählte entfernen
+                      </button>
+                    </div>
+                    <div
+                      style={{
+                        maxHeight: '280px',
+                        overflow: 'auto',
+                        border: '1px solid var(--color-divider)',
+                        borderRadius: '8px',
+                      }}
+                    >
+                      {(mdcAgg.find((x) => x.key === mdcSelKey)?.values || []).map(
+                        ({ val, count }) => {
+                          const id = `${mdcSelKey}|${val}`;
+                          const checked = mdcSelVals.has(val);
+                          return (
+                            <label
+                              key={id}
+                              className="item"
                               style={{
-                                display: 'inline-flex',
-                                padding: '4px 6px',
-                                background: '#f7f7f7',
-                                borderRadius: '4px',
+                                display: 'flex',
+                                alignItems: 'center',
+                                gap: '8px',
+                                padding: '6px 8px',
+                                borderBottom: '1px solid var(--color-divider)',
+                                cursor: 'pointer',
                               }}
                             >
-                              {v}
-                            </code>
-                          </div>
-                          <div style={{ textAlign: 'right' }}>
-                            <button
-                              title="Zum DC-Filter hinzufügen"
-                              onClick={() => addMdcToFilter(k, v)}
-                            >
-                              + Filter
-                            </button>
-                          </div>
-                        </Fragment>
-                      ))}
+                              <input
+                                type="checkbox"
+                                checked={checked}
+                                onChange={(e) => {
+                                  setMdcSelVals((prev) => {
+                                    const next = new Set(prev);
+                                    if (e.currentTarget.checked) next.add(val);
+                                    else next.delete(val);
+                                    return next;
+                                  });
+                                }}
+                              />
+                              <code style={{ flex: 1 }}>{val}</code>
+                              <small style={{ color: 'var(--color-text-secondary)' }}>
+                                {count}
+                              </small>
+                            </label>
+                          );
+                        }
+                      )}
                     </div>
                   </div>
                 </div>
-              )}
+              </div>
+            )}
+            <div className="modal-actions">
+              <button
+                onClick={() => {
+                  DiagnosticContextFilter.reset();
+                  setShowMdcModal(false);
+                }}
+                title="Alle MDC-Filter entfernen"
+              >
+                Leeren
+              </button>
+              <button
+                onClick={() => {
+                  DiagnosticContextFilter.setEnabled(!DiagnosticContextFilter.isEnabled());
+                  setShowMdcModal(false);
+                }}
+              >
+                {DiagnosticContextFilter.isEnabled() ? 'Deaktivieren' : 'Aktivieren'}
+              </button>
+              <button onClick={() => setShowMdcModal(false)}>Schließen</button>
             </div>
-          )}
-        </section>
-      </main>
+          </div>
+        </div>
+      )}
 
       {/* Kontextmenü */}
       {ctxMenu.open && (
@@ -1659,6 +1878,19 @@ export default function App() {
           </div>
           <div className="item" onClick={copyTsMsg}>
             Kopieren: Zeit und Message
+          </div>
+          <div className="sep" />
+          <div className="item" onClick={() => DiagnosticContextFilter.setEnabled(true)}>
+            MDC-Filter aktivieren
+          </div>
+          <div className="item" onClick={() => DiagnosticContextFilter.setEnabled(false)}>
+            MDC-Filter deaktivieren
+          </div>
+          <div className="item" onClick={() => DiagnosticContextFilter.reset()}>
+            MDC-Filter leeren
+          </div>
+          <div className="item" onClick={openMdcFromSelection}>
+            MDC aus Auswahl…
           </div>
         </div>
       )}

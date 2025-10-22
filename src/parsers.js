@@ -70,7 +70,7 @@ function parseJsonFile(filename, text) {
 }
 
 function parseZipFile(zipPath) {
-  const zip = new AdmZip(zipPath);
+  const zip = new AdmZip(zipPath, null);
   const entries = [];
   zip.getEntries().forEach((zEntry) => {
     const name = zEntry.entryName;
