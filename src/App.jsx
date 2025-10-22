@@ -1248,51 +1248,6 @@ export default function App() {
                   </div>
                 </div>
               )}
-              <div class="actions">
-                <button
-                  id="btnFilterByTrace"
-                  onClick={() => {
-                    const v = String(selectedEntry.traceId || '');
-                    setStdFiltersEnabled(true);
-                    setFilter((f) => ({ ...f, trace: v }));
-                    addTraceTokensToHistory([v]);
-                  }}
-                >
-                  Nach TraceId filtern
-                </button>
-                <button
-                  id="btnFilterByLogger"
-                  onClick={() => {
-                    const v = String(selectedEntry.logger || '');
-                    setStdFiltersEnabled(true);
-                    setFilter((f) => ({ ...f, logger: v }));
-                    addToHistory('logger', v);
-                  }}
-                >
-                  Nach Logger filtern
-                </button>
-                <button
-                  id="btnFilterByLevel"
-                  onClick={() => {
-                    const v = String(selectedEntry.level || '');
-                    setStdFiltersEnabled(true);
-                    setFilter((f) => ({ ...f, level: v }));
-                  }}
-                >
-                  Nach Level filtern
-                </button>
-                <button
-                  id="btnCopyMessage"
-                  onClick={async () => {
-                    try {
-                      await navigator.clipboard.writeText(String(selectedEntry.message || ''));
-                    } catch {}
-                  }}
-                >
-                  Message kopieren
-                </button>
-              </div>
-              {/* Trace-Chips Darstellung unter den Filtern */}
             </div>
           )}
         </section>
