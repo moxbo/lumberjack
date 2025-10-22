@@ -9,33 +9,33 @@
   --col-ts: 220px;
   --col-lvl: 90px;
   --col-logger: 280px;
-  
+
   /* Color palette - Light mode */
   --color-primary: #3b82f6;
   --color-primary-light: #60a5fa;
   --color-primary-dark: #2563eb;
   --color-primary-contrast: #ffffff;
-  
+
   --color-secondary: #64748b;
   --color-secondary-light: #94a3b8;
-  
+
   --color-success: #10b981;
   --color-warning: #f59e0b;
   --color-error: #ef4444;
   --color-info: #06b6d4;
-  
+
   --color-bg-default: #ffffff;
   --color-bg-paper: #f9fafb;
   --color-bg-elevated: #ffffff;
   --color-bg-hover: #f3f4f6;
-  
+
   --color-text-primary: #111827;
   --color-text-secondary: #6b7280;
   --color-text-disabled: #9ca3af;
-  
+
   --color-divider: #e5e7eb;
   --color-border: #e5e7eb;
-  
+
   /* Log levels */
   --color-level-trace: #8b5cf6;
   --color-level-debug: #06b6d4;
@@ -43,15 +43,18 @@
   --color-level-warn: #f59e0b;
   --color-level-error: #ef4444;
   --color-level-fatal: #dc2626;
-  
+
   /* Typography */
-  --font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
-  --font-family-mono: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace;
+  --font-family:
+    -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+  --font-family-mono:
+    ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Monaco, Consolas, 'Liberation Mono',
+    'Courier New', monospace;
   --font-size-xs: 0.75rem;
   --font-size-sm: 0.875rem;
   --font-size-base: 1rem;
   --font-size-lg: 1.125rem;
-  
+
   /* Spacing */
   --spacing-1: 0.25rem;
   --spacing-2: 0.5rem;
@@ -60,25 +63,25 @@
   --spacing-5: 1.25rem;
   --spacing-6: 1.5rem;
   --spacing-8: 2rem;
-  
+
   /* Border radius */
   --radius-sm: 0.25rem;
   --radius-base: 0.5rem;
   --radius-md: 0.625rem;
   --radius-lg: 0.75rem;
   --radius-xl: 1rem;
-  
+
   /* Shadows */
   --shadow-sm: 0 1px 2px 0 rgba(0, 0, 0, 0.05);
   --shadow-base: 0 1px 3px 0 rgba(0, 0, 0, 0.1), 0 1px 2px -1px rgba(0, 0, 0, 0.1);
   --shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -2px rgba(0, 0, 0, 0.1);
   --shadow-lg: 0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -4px rgba(0, 0, 0, 0.1);
-  
+
   /* Transitions */
   --transition-fast: 150ms cubic-bezier(0.4, 0, 0.2, 1);
   --transition-base: 200ms cubic-bezier(0.4, 0, 0.2, 1);
   --transition-slow: 300ms cubic-bezier(0.4, 0, 0.2, 1);
-  
+
   /* Z-index */
   --z-dropdown: 1000;
   --z-sticky: 1020;
@@ -303,13 +306,27 @@ body {
 }
 
 /* Level colors with modern palette */
-.lev-trace { color: var(--color-level-trace); }
-.lev-debug { color: var(--color-level-debug); }
-.lev-info { color: var(--color-level-info); }
-.lev-warn { color: var(--color-level-warn); }
-.lev-error { color: var(--color-level-error); }
-.lev-fatal { color: var(--color-level-fatal); }
-.lev-unk { color: var(--color-text-secondary); }
+.lev-trace {
+  color: var(--color-level-trace);
+}
+.lev-debug {
+  color: var(--color-level-debug);
+}
+.lev-info {
+  color: var(--color-level-info);
+}
+.lev-warn {
+  color: var(--color-level-warn);
+}
+.lev-error {
+  color: var(--color-level-error);
+}
+.lev-fatal {
+  color: var(--color-level-fatal);
+}
+.lev-unk {
+  color: var(--color-text-secondary);
+}
 
 /* Modern divider with subtle gradient */
 .divider {
@@ -321,7 +338,12 @@ body {
 }
 
 .divider:hover {
-  background: linear-gradient(180deg, transparent 0%, var(--color-primary-light) 50%, transparent 100%);
+  background: linear-gradient(
+    180deg,
+    transparent 0%,
+    var(--color-primary-light) 50%,
+    transparent 100%
+  );
 }
 
 /* Modern details panel */
@@ -458,7 +480,9 @@ select {
   color: var(--color-text-primary);
   font-size: var(--font-size-sm);
   font-family: inherit;
-  transition: border-color var(--transition-fast), box-shadow var(--transition-fast);
+  transition:
+    border-color var(--transition-fast),
+    box-shadow var(--transition-fast);
 }
 
 input[type='text']:focus,
@@ -635,7 +659,9 @@ input[type='checkbox'] {
   border-radius: var(--radius-md);
   border: 2px solid var(--color-border);
   cursor: pointer;
-  transition: transform var(--transition-fast), box-shadow var(--transition-fast);
+  transition:
+    transform var(--transition-fast),
+    box-shadow var(--transition-fast);
 }
 
 .context-menu .swatch:hover {

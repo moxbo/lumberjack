@@ -67,7 +67,15 @@ export default function App() {
   const [httpUrl, setHttpUrl] = useState('');
   const [httpInterval, setHttpInterval] = useState(5000);
   const [showSettings, setShowSettings] = useState(false);
-  const [form, setForm] = useState({ tcpPort: 5000, httpUrl: '', httpInterval: 5000, logToFile: false, logFilePath: '', logMaxMB: 5, logMaxBackups: 3 });
+  const [form, setForm] = useState({
+    tcpPort: 5000,
+    httpUrl: '',
+    httpInterval: 5000,
+    logToFile: false,
+    logFilePath: '',
+    logMaxMB: 5,
+    logMaxBackups: 3,
+  });
 
   // Logging-Settings (persisted state for convenience)
   const [logToFile, setLogToFile] = useState(false);
@@ -309,25 +317,30 @@ export default function App() {
         }
         const r = result.settings;
         if (!r) return;
-        
+
         // Apply settings
         if (r.tcpPort != null) setTcpPort(Number(r.tcpPort) || 5000);
         if (typeof r.httpUrl === 'string') setHttpUrl(r.httpUrl);
         if (r.httpInterval != null) setHttpInterval(Number(r.httpInterval) || 5000);
         if (Array.isArray(r.histLogger)) setHistLogger(r.histLogger);
         if (Array.isArray(r.histTrace)) setHistTrace(r.histTrace);
-        
+
         // CSS Vars
         const root = document.documentElement;
         const detail = Number(r.detailHeight || 0);
         if (detail) root.style.setProperty('--detail-height', `${Math.round(detail)}px`);
-        const map = [ ['--col-ts', r.colTs], ['--col-lvl', r.colLvl], ['--col-logger', r.colLogger] ];
-        for (const [k, v] of map) if (v != null) root.style.setProperty(k, `${Math.round(Number(v)||0)}px`);
-        
+        const map = [
+          ['--col-ts', r.colTs],
+          ['--col-lvl', r.colLvl],
+          ['--col-logger', r.colLogger],
+        ];
+        for (const [k, v] of map)
+          if (v != null) root.style.setProperty(k, `${Math.round(Number(v) || 0)}px`);
+
         // Logging
         setLogToFile(!!r.logToFile);
         setLogFilePath(String(r.logFilePath || ''));
-        setLogMaxBytes(Number(r.logMaxBytes || (5*1024*1024)));
+        setLogMaxBytes(Number(r.logMaxBytes || 5 * 1024 * 1024));
         setLogMaxBackups(Number(r.logMaxBackups || 3));
       } catch (e) {
         console.error('Error loading settings:', e);
@@ -342,7 +355,7 @@ export default function App() {
       httpInterval,
       logToFile,
       logFilePath,
-      logMaxMB: Math.max(1, Math.round((logMaxBytes || (5*1024*1024)) / (1024 * 1024))),
+      logMaxMB: Math.max(1, Math.round((logMaxBytes || 5 * 1024 * 1024) / (1024 * 1024))),
       logMaxBackups,
     });
     setShowSettings(true);
@@ -954,7 +967,9 @@ export default function App() {
                 min="0"
                 step="1"
                 value={form.logMaxBackups}
-                onInput={(e) => setForm({ ...form, logMaxBackups: Number(e.currentTarget.value || 0) })}
+                onInput={(e) =>
+                  setForm({ ...form, logMaxBackups: Number(e.currentTarget.value || 0) })
+                }
                 disabled={!form.logToFile}
               />
             </div>
@@ -970,8 +985,8 @@ export default function App() {
       <header className="toolbar">
         <div className="section">
           <span className="counts">
-            <span id="countTotal">{countTotal}</span> gesamt,{" "}
-            <span id="countFiltered">{countFiltered}</span> gefiltert,{" "}
+            <span id="countTotal">{countTotal}</span> gesamt,{' '}
+            <span id="countFiltered">{countFiltered}</span> gefiltert,{' '}
             <span id="countSelected">{countSelected}</span> selektiert
           </span>
           <button onClick={clearLogs} disabled={entries.length === 0}>
@@ -1032,7 +1047,7 @@ export default function App() {
               type="checkbox"
               checked={stdFiltersEnabled}
               onChange={(e) => setStdFiltersEnabled(e.currentTarget.checked)}
-            />{" "}
+            />{' '}
             Standard-Filter aktiv
           </label>
           <label>Level</label>

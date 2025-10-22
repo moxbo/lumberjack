@@ -83,16 +83,19 @@ function saveSettings() {
 // Datei-Logging: Stream + Rotation
 function defaultLogFilePath() {
   const portableDir = process.env.PORTABLE_EXECUTABLE_DIR;
-  const base = portableDir && typeof portableDir === 'string' && portableDir.length
-    ? path.join(portableDir, 'data')
-    : app.getPath('userData');
+  const base =
+    portableDir && typeof portableDir === 'string' && portableDir.length
+      ? path.join(portableDir, 'data')
+      : app.getPath('userData');
   return path.join(base, 'lumberjack.log');
 }
 let logStream = null;
 let logBytes = 0;
 let logPath = '';
 function closeLogStream() {
-  try { logStream?.end?.(); } catch {}
+  try {
+    logStream?.end?.();
+  } catch {}
   logStream = null;
   logBytes = 0;
   logPath = '';
@@ -123,11 +126,15 @@ function rotateIfNeeded(extraBytes) {
       const src = `${p}.${i}`;
       const dst = `${p}.${i + 1}`;
       if (fs.existsSync(src)) {
-        try { fs.renameSync(src, dst); } catch {}
+        try {
+          fs.renameSync(src, dst);
+        } catch {}
       }
     }
     if (backups >= 1 && fs.existsSync(p)) {
-      try { fs.renameSync(p, `${p}.1`); } catch {}
+      try {
+        fs.renameSync(p, `${p}.1`);
+      } catch {}
     }
   } catch {}
   openLogStream();
@@ -444,7 +451,9 @@ ipcMain.handle('logs:parsePaths', async (_event, filePaths) => {
 // Helper: send appended logs to renderer
 function sendAppend(entries) {
   if (!mainWindow) return;
-  try { writeEntriesToFile(entries); } catch {}
+  try {
+    writeEntriesToFile(entries);
+  } catch {}
   mainWindow.webContents.send('logs:append', entries);
 }
 
@@ -566,7 +575,11 @@ ipcMain.handle('http:startPoll', async (_event, { url, intervalMs }) => {
       const fresh = dedupeNewEntries(entries, seen);
       if (fresh.length) sendAppend(fresh);
     } catch (err) {
-      const e = toEntry({ level: 'ERROR', message: `HTTP poll error for ${url}: ${err.message}` }, '', url);
+      const e = toEntry(
+        { level: 'ERROR', message: `HTTP poll error for ${url}: ${err.message}` },
+        '',
+        url
+      );
       // sendAppend schreibt bereits in die Logdatei
       sendAppend([e]);
     }
