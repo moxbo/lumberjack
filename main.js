@@ -88,18 +88,6 @@ function buildMenu() {
       ]
     },
     {
-      label: 'Bearbeiten',
-      submenu: [
-        { role: 'undo' },
-        { role: 'redo' },
-        { type: 'separator' },
-        { role: 'cut' },
-        { role: 'copy' },
-        { role: 'paste' },
-        ...(isMac ? [{ role: 'pasteAndMatchStyle' }, { role: 'delete' }, { role: 'selectAll' }] : [{ role: 'delete' }, { role: 'selectAll' }])
-      ]
-    },
-    {
       label: 'Ansicht',
       submenu: [
         { role: 'reload' },

@@ -1,8 +1,13 @@
 import {useEffect, useMemo, useRef, useState} from 'preact/hooks'
+import { Fragment } from 'preact'
 import {useVirtualizer} from '@tanstack/react-virtual'
 import moment from 'moment'
 import { highlightAll } from './utils/highlight.js'
+import { msgMatches } from './utils/msgFilter.js'
 import { DragAndDropManager } from './utils/dnd.js'
+import DCFilterPanel from './DCFilterPanel.jsx'
+import { LoggingStore } from './store/loggingStore.js'
+import { DiagnosticContextFilter } from './store/dcFilter.js'
 
 function levelClass(level) {
     const l = (level || '').toUpperCase()
@@ -11,15 +16,7 @@ function levelClass(level) {
 function fmt(v) { return v == null ? '' : String(v) }
 function fmtTimestamp(ts) { return ts ? moment(ts).format('YYYY-MM-DD HH:mm:ss.SSS') : '-' }
 
-// Message-Filter: expr mit | (ODER) und & (UND), case-insensitive Teilstringvergleich
-function msgMatches(message, expr) {
-    const m = String(message || '').toLowerCase()
-    const q = String(expr || '').toLowerCase().trim()
-    if (!q) return true
-    const orGroups = q.split('|').map(s => s.trim()).filter(Boolean).map(g => g.split('&').map(t => t.trim()).filter(Boolean))
-    if (!orGroups.length) return true
-    return orGroups.some(andGroup => andGroup.every(tok => m.includes(tok)))
-}
+// Message-Filter-Logik ausgelagert nach utils/msgFilter.js
 
 export default function App() {
     const [entries, setEntries] = useState([])
@@ -28,7 +25,12 @@ export default function App() {
     const lastClicked = useRef(null)
 
     const [search, setSearch] = useState('')
-    const [filter, setFilter] = useState({level: '', logger: '', service: '', trace: '', message: ''})
+    const [filter, setFilter] = useState({level: '', logger: '', thread: '', service: '', trace: '', message: ''})
+    const [stdFiltersEnabled, setStdFiltersEnabled] = useState(true)
+
+    // re-render trigger for MDC filter changes
+    const [dcVersion, setDcVersion] = useState(0)
+    useEffect(() => { const off = DiagnosticContextFilter.onChange(() => setDcVersion(v => v + 1)); return () => off?.() }, [])
 
     // Filter-Historien
     const [histLogger, setHistLogger] = useState([])
@@ -43,6 +45,15 @@ export default function App() {
     const [httpInterval, setHttpInterval] = useState(5000)
     const [showSettings, setShowSettings] = useState(false)
     const [form, setForm] = useState({tcpPort: 5000, httpUrl: '', httpInterval: 5000})
+
+    // HTTP Dropdown-Menü (toolbar)
+    const [httpMenu, setHttpMenu] = useState({open:false, x:0, y:0})
+    const httpBtnRef = useRef(null)
+
+    // Countdown bis zum nächsten Intervall
+    const [nextPollDueAt, setNextPollDueAt] = useState(null)
+    const [pollMs, setPollMs] = useState(0)
+    const [nextPollIn, setNextPollIn] = useState('')
 
     const dividerRef = useRef(null)
     const colResize = useRef({active: null, startX: 0, startW: 0})
@@ -63,30 +74,36 @@ export default function App() {
     function ensureIds(arr) {
         let id = nextId; for (const e of arr) { if (e._id == null) e._id = id++ } if (id !== nextId) setNextId(id)
     }
-    function appendEntries(arr) { ensureIds(arr); setEntries((prev) => prev.concat(arr)) }
+    function appendEntries(arr) { ensureIds(arr); try { LoggingStore.addEvents(arr) } catch {} setEntries((prev) => prev.concat(arr)) }
 
     const filteredIdx = useMemo(() => {
         const level = filter.level.trim().toUpperCase()
         const logger = filter.logger.trim().toLowerCase()
+        const thread = (filter.thread ?? '').trim().toLowerCase()
         const service = (filter.service ?? '').trim().toLowerCase()
         const traceList = (filter.trace.trim().toLowerCase() || '').split('|').map(t => t.trim()).filter(Boolean)
         const msgExpr = filter.message || ''
         const out = []
         for (let i = 0; i < entries.length; i++) {
             const e = entries[i]
-            if (level && (String(e.level || '').toUpperCase() !== level)) continue
-            if (logger && !String(e.logger || '').toLowerCase().includes(logger)) continue
-            if (service && !String(e.service || '').toLowerCase().includes(service)) continue
-            if (traceList.length) {
-                const et = String(e.traceId || '').toLowerCase(); let ok = false
-                for (const t of traceList) { if (et.includes(t)) { ok = true; break } }
-                if (!ok) continue
+            if (stdFiltersEnabled) {
+                if (level && (String(e.level || '').toUpperCase() !== level)) continue
+                if (logger && !String(e.logger || '').toLowerCase().includes(logger)) continue
+                if (thread && !String(e.thread || '').toLowerCase().includes(thread)) continue
+                if (service && !String(e.service || '').toLowerCase().includes(service)) continue
+                if (traceList.length) {
+                    const et = String(e.traceId || '').toLowerCase(); let ok = false
+                    for (const t of traceList) { if (et.includes(t)) { ok = true; break } }
+                    if (!ok) continue
+                }
+                if (!msgMatches(e?.message, msgExpr)) continue
             }
-            if (!msgMatches(e?.message, msgExpr)) continue
+            // MDC filter muss matchen
+            try { if (!DiagnosticContextFilter.matches(e?.mdc || {})) continue } catch {}
             out.push(i)
         }
         return out
-    }, [entries, filter])
+    }, [entries, filter, dcVersion, stdFiltersEnabled])
 
     const searchMatchIdx = useMemo(() => {
         const s = search.trim().toLowerCase(); if (!s) return []
@@ -137,6 +154,18 @@ export default function App() {
     const selectedOneIdx = useMemo(() => selected.size === 1 ? [...selected][0] : null, [selected])
     const selectedEntry = selectedOneIdx != null ? entries[selectedOneIdx] : null
 
+    // sortierte MDC-Paare für die Detailansicht
+    const mdcPairs = useMemo(() => {
+        const m = selectedEntry && selectedEntry.mdc ? selectedEntry.mdc : {}
+        // Only exclude logger/thread from MDC details, keep traceId variants visible here
+        const banned = new Set(['logger','thread'])
+        const arr = Object.entries(m).filter(([k]) => !banned.has(String(k))).map(([k, v]) => [String(k), String(v)])
+        arr.sort((a,b) => a[0].localeCompare(b[0]) || a[1].localeCompare(b[1]))
+        return arr
+    }, [selectedEntry])
+
+    function addMdcToFilter(k, v) { try { DiagnosticContextFilter.addMdcEntry(k, v); DiagnosticContextFilter.setEnabled(true) } catch {} }
+
     function openSettingsModal() { setForm({tcpPort, httpUrl, httpInterval}); setShowSettings(true) }
     async function saveSettingsModal() {
         const port = Number(form.tcpPort || 0); if (!(port >= 1 && port <= 65535)) { alert('Ungültiger TCP-Port'); return }
@@ -165,6 +194,52 @@ export default function App() {
         setAndPersistHistory('trace', out)
     }
 
+    // Toolbar HTTP Menü öffnen
+    function openHttpMenu(ev){ ev.preventDefault(); const btn = httpBtnRef.current; if (!btn) return; const r = btn.getBoundingClientRect(); setHttpMenu({open:true, x: Math.round(r.left), y: Math.round(r.bottom + 4)}) }
+
+    // Clicks außerhalb: schließe Menü
+    useEffect(() => { function onDocClick(e){ if (!httpMenu.open) return; const btn=httpBtnRef.current; const menu=document.querySelector('#httpMenu'); if (btn && (btn===e.target || btn.contains(e.target))) return; if (menu && menu.contains(e.target)) return; setHttpMenu({open:false, x:0, y:0}) } window.addEventListener('mousedown', onDocClick, true); return () => window.removeEventListener('mousedown', onDocClick, true) }, [httpMenu.open])
+
+    // Poll-Countdown aktualisieren
+    useEffect(() => {
+        if (httpPollId == null || !pollMs) { setNextPollIn(''); return }
+        let rafId = null
+        const tick = () => {
+            const now = Date.now()
+            let due = nextPollDueAt || (now + pollMs)
+            // rolle vor, falls vergangen
+            while (due && now > due) due += pollMs
+            setNextPollDueAt(due)
+            const remain = Math.max(0, (due || now) - now)
+            const txt = (remain/1000).toFixed(remain < 10000 ? 1 : 0) + 's'
+            setNextPollIn(txt)
+            rafId = requestAnimationFrame(tick)
+        }
+        rafId = requestAnimationFrame(tick)
+        return () => { if (rafId) cancelAnimationFrame(rafId) }
+    }, [httpPollId, pollMs])
+
+    // ESC: modal / Kontextmenü schließen
+    useEffect(() => { const onKey = (e) => { if (e.key === 'Escape') { if (showSettings) setShowSettings(false); if (ctxMenu.open) setCtxMenu({open: false, x: 0, y: 0}); if (httpMenu.open) setHttpMenu({open:false,x:0,y:0}) } }; window.addEventListener('keydown', onKey); return () => window.removeEventListener('keydown', onKey) }, [showSettings, ctxMenu.open, httpMenu.open])
+
+    // Drag & Drop
+    useEffect(() => {
+        const mgr = new DragAndDropManager({
+            onFiles: async (paths) => {
+                await withBusy(async () => {
+                    const res = await window.api.parsePaths(paths)
+                    if (res?.ok) appendEntries(res.entries); else alert('Fehler beim Laden (Drop): ' + (res?.error || 'unbekannt'))
+                })
+            },
+            onActiveChange: (active) => setDragActive(active)
+        })
+        mgr.attach(window)
+        return () => mgr.detach()
+    }, [])
+
+    // Kontextmenü außerhalb schließen (Zeilenmenü)
+    useEffect(() => { function onDocClick(e) { if (!ctxMenu.open) return; const el = ctxRef.current; if (el && el.contains(e.target)) return; setCtxMenu({open: false, x: 0, y: 0}) } window.addEventListener('mousedown', onDocClick, true); return () => window.removeEventListener('mousedown', onDocClick, true) }, [ctxMenu.open])
+
     useEffect(() => {
         const off = window.api.onAppend((arr) => appendEntries(arr))
         const offTcp = window.api.onTcpStatus((s) => setTcpStatus(s.message || ''))
@@ -173,8 +248,8 @@ export default function App() {
                 case 'open-files': { const files = await window.api.openFiles(); if (!files?.length) return; await withBusy(async () => { const res = await window.api.parsePaths(files); if (res?.ok) appendEntries(res.entries); else alert('Fehler beim Laden: ' + (res?.error || '')) }); break }
                 case 'open-settings': { openSettingsModal(); break }
                 case 'http-load': { const url = (httpUrl || '').trim(); if (!url) { openSettingsModal(); return } await withBusy(async () => { const res = await window.api.httpLoadOnce(url); if (res.ok) appendEntries(res.entries); else setHttpStatus('Fehler: ' + res.error) }); break }
-                case 'http-start-poll': { const url = (httpUrl || '').trim(); const ms = Math.max(500, Number(httpInterval || 5000)); if (!url) { openSettingsModal(); return } const r = await window.api.httpStartPoll({url, intervalMs: ms}); if (r.ok) { setHttpPollId(r.id); setHttpStatus(`Polling #${r.id}`) } else setHttpStatus('Fehler: ' + r.error); break }
-                case 'http-stop-poll': { if (httpPollId == null) { setHttpStatus('Kein aktives Polling'); return } const r = await window.api.httpStopPoll(httpPollId); if (r.ok) { setHttpStatus('Poll gestoppt'); setHttpPollId(null) } break }
+                case 'http-start-poll': { const url = (httpUrl || '').trim(); const ms = Math.max(500, Number(httpInterval || 5000)); if (!url) { openSettingsModal(); return } const r = await window.api.httpStartPoll({url, intervalMs: ms}); if (r.ok) { setHttpPollId(r.id); setHttpStatus(`Polling #${r.id}`); setPollMs(ms); setNextPollDueAt(Date.now()+ms) } else setHttpStatus('Fehler: ' + r.error); break }
+                case 'http-stop-poll': { if (httpPollId == null) { setHttpStatus('Kein aktives Polling'); return } const r = await window.api.httpStopPoll(httpPollId); if (r.ok) { setHttpStatus('Poll gestoppt'); setHttpPollId(null); setNextPollIn(''); setNextPollDueAt(null) } break }
                 case 'tcp-configure': { openSettingsModal(); break }
                 case 'tcp-start': { const port = Number(tcpPort || 5000); if (!port) return; window.api.tcpStart(port); break }
                 case 'tcp-stop': { window.api.tcpStop(); break }
@@ -183,50 +258,13 @@ export default function App() {
         return () => { off?.(); offTcp?.(); offMenu?.() }
     }, [httpPollId, tcpPort, httpUrl, httpInterval])
 
-    // ESC: modal / Kontextmenü schließen
-    useEffect(() => { const onKey = (e) => { if (e.key === 'Escape') { if (showSettings) setShowSettings(false); if (ctxMenu.open) setCtxMenu({open: false, x: 0, y: 0}) } }; window.addEventListener('keydown', onKey); return () => window.removeEventListener('keydown', onKey) }, [showSettings, ctxMenu.open])
+    // Toolbar-Aktion: Logs leeren
+    function clearLogs(){ setEntries([]); setSelected(new Set()); setNextId(1); try { LoggingStore.reset() } catch {} setHttpStatus(''); setTcpStatus('') }
 
-    // Kontextmenü außerhalb schließen
-    useEffect(() => { function onDocClick(e) { if (!ctxMenu.open) return; const el = ctxRef.current; if (el && el.contains(e.target)) return; setCtxMenu({open: false, x: 0, y: 0}) } window.addEventListener('mousedown', onDocClick, true); return () => window.removeEventListener('mousedown', onDocClick, true) }, [ctxMenu.open])
-
-    // Tastatur: Navigation
-    useEffect(() => {
-        function isEditableTarget(el) { if (!el) return false; const t = (el.tagName || '').toLowerCase(); return t === 'input' || t === 'textarea' || t === 'select' || !!el.isContentEditable }
-        function onKey(e) {
-            if (isEditableTarget(e.target)) return
-            if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
-                if (!filteredIdx.length) return
-                const current = (selectedOneIdx != null ? selectedOneIdx : filteredIdx[0])
-                const pos = filteredIdx.indexOf(current)
-                let next = null
-                if (e.key === 'ArrowDown') { if (pos < 0) next = filteredIdx[0]; else if (pos < filteredIdx.length - 1) next = filteredIdx[pos + 1] }
-                else { if (pos > 0) next = filteredIdx[pos - 1]; else if (pos === -1) next = filteredIdx[0] }
-                if (next != null) { e.preventDefault(); setSelected(new Set([next])); lastClicked.current = next; const visIndex = filteredIdx.indexOf(next); if (visIndex >= 0) parentRef.current?.scrollTo({top: visIndex * rowH, behavior: 'smooth'}) }
-            } else if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
-                const dir = e.key === 'ArrowRight' ? 1 : -1
-                if (search.trim() && searchMatchIdx.length > 0) { e.preventDefault(); gotoSearchMatch(dir) }
-                else if (!search.trim() && markedIdx.length > 0) { e.preventDefault(); gotoMarked(dir) }
-            }
-        }
-        window.addEventListener('keydown', onKey); return () => window.removeEventListener('keydown', onKey)
-    }, [filteredIdx, selectedOneIdx, search, searchMatchIdx, markedIdx])
-
-    // Drag & Drop
-    useEffect(() => { const mgr = new DragAndDropManager({ onFiles: async (paths) => { await withBusy(async () => { const res = await window.api.parsePaths(paths); if (res?.ok) appendEntries(res.entries); else alert('Fehler beim Laden (Drop): ' + (res?.error || 'unbekannt')) }) }, onActiveChange: (active) => setDragActive(active) }); mgr.attach(window); return () => mgr.detach() }, [])
-
-    // Settings initial laden (inkl. Historien)
-    useEffect(() => { (async () => { try { const res = await window.api.settingsGet(); if (res) {
-        if (res.tcpPort) setTcpPort(Number(res.tcpPort) || 5000)
-        if (res.httpUrl != null) setHttpUrl(String(res.httpUrl))
-        if (res.httpInterval != null) setHttpInterval(Number(res.httpInterval) || 5000)
-        const root = document.documentElement.style
-        if (res.detailHeight) root.setProperty('--detail-height', `${Math.round(res.detailHeight)}px`)
-        if (res.colTs) root.setProperty('--col-ts', `${Math.round(res.colTs)}px`)
-        if (res.colLvl) root.setProperty('--col-lvl', `${Math.round(res.colLvl)}px`)
-        if (res.colLogger) root.setProperty('--col-logger', `${Math.round(res.colLogger)}px`)
-        if (Array.isArray(res.histLogger)) setHistLogger(res.histLogger)
-        if (Array.isArray(res.histTrace)) setHistTrace(res.histTrace)
-    } } catch {} })() }, [])
+    // Toolbar-HTTP-Menü Aktionen
+    async function httpMenuLoadOnce(){ setHttpMenu({open:false,x:0,y:0}); const url=(httpUrl||'').trim(); if(!url){ openSettingsModal(); return } await withBusy(async () => { const res = await window.api.httpLoadOnce(url); if (res.ok) appendEntries(res.entries); else setHttpStatus('Fehler: ' + res.error) }) }
+    async function httpMenuStartPoll(){ setHttpMenu({open:false,x:0,y:0}); const url=(httpUrl||'').trim(); const ms=Math.max(500, Number(httpInterval||5000)); if(!url){ openSettingsModal(); return } const r = await window.api.httpStartPoll({url, intervalMs: ms}); if (r.ok){ setHttpPollId(r.id); setHttpStatus(`Polling #${r.id}`); setPollMs(ms); setNextPollDueAt(Date.now()+ms) } else { setHttpStatus('Fehler: ' + r.error) } }
+    async function httpMenuStopPoll(){ setHttpMenu({open:false,x:0,y:0}); if (httpPollId==null) return; const r = await window.api.httpStopPoll(httpPollId); if (r.ok){ setHttpStatus('Poll gestoppt'); setHttpPollId(null); setNextPollIn(''); setNextPollDueAt(null) } }
 
     // Divider Drag
     useEffect(() => {
@@ -234,8 +272,9 @@ export default function App() {
             if (!dividerRef.current?._resizing) return
             const startY = dividerRef.current._startY
             const startH = dividerRef.current._startH
+            // Invertiertes Verhalten: nach oben ziehen => größere Detail-Höhe
             const dy = e.clientY - startY
-            let newH = startH + dy
+            let newH = startH - dy
             const layout = document.querySelector('main.layout')
             const total = layout ? layout.clientHeight : (document.body.clientHeight || window.innerHeight)
             const minDetail = 150
@@ -279,8 +318,10 @@ export default function App() {
     function onColMouseDown(key, e) {
         const varMap = {ts: '--col-ts', lvl: '--col-lvl', logger: '--col-logger'}; const active = varMap[key]; if (!active) return
         const cs = getComputedStyle(document.documentElement); const cur = cs.getPropertyValue(active).trim(); const curW = Number(cur.replace('px', '')) || 0
+        const onMove = (ev) => onColMouseMove(ev)
+        const onUp = async () => { await onColMouseUp() }
         colResize.current = {active, startX: e.clientX, startW: curW}; document.body.style.userSelect = 'none'; document.body.style.cursor = 'col-resize'
-        window.addEventListener('mousemove', onColMouseMove); window.addEventListener('mouseup', onColMouseUp)
+        window.addEventListener('mousemove', onMove); window.addEventListener('mouseup', onUp)
     }
     function onColMouseMove(e) {
         const st = colResize.current; if (!st.active) return
@@ -294,7 +335,7 @@ export default function App() {
         try { if (!st.active) return; const cs = getComputedStyle(document.documentElement); const val = cs.getPropertyValue(st.active).trim(); const num = Number(val.replace('px', '')) || 0; const keyMap = {'--col-ts': 'colTs', '--col-lvl': 'colLvl', '--col-logger': 'colLogger'}; const k = keyMap[st.active]; if (k) await window.api.settingsSet({[k]: Math.round(num)}) } catch {}
     }
 
-    // Kontextmenü-Aktionen
+    // Kontextmenü-Aktionen (Zeilen)
     function openContextMenu(ev, idx) {
         ev.preventDefault(); ev.stopPropagation(); if (!selected.has(idx)) { setSelected(new Set([idx])); lastClicked.current = idx } setCtxMenu({open: true, x: ev.clientX, y: ev.clientY})
     }
@@ -312,6 +353,28 @@ export default function App() {
     const traceTokens = useMemo(() => (filter.trace || '').split('|').map(s => s.trim()).filter(Boolean), [filter.trace])
     function removeTraceToken(tok) {
         const rest = traceTokens.filter(t => t !== tok); setFilter((f) => ({...f, trace: rest.join('|')}))
+    }
+
+    // Aktive Standard-Filter als Chips zusammenstellen (Level/Logger/Thread/Message)
+    const stdFilterChips = useMemo(() => {
+        const chips = []
+        if (filter.level) chips.push({ key: 'level', label: `Level: ${filter.level}`, onRemove: () => setFilter((f) => ({...f, level: ''})) })
+        if (filter.logger) chips.push({ key: 'logger', label: `Logger: ${filter.logger}`, onRemove: () => setFilter((f) => ({...f, logger: ''})) })
+        if (filter.thread) chips.push({ key: 'thread', label: `Thread: ${filter.thread}`, onRemove: () => setFilter((f) => ({...f, thread: ''})) })
+        if (filter.message) chips.push({ key: 'message', label: `Message: ${filter.message}`, onRemove: () => setFilter((f) => ({...f, message: ''})) })
+        return chips
+    }, [filter.level, filter.logger, filter.thread, filter.message])
+
+    // Kombinierte Chip-Liste (Standardfilter + Trace-Token)
+    const allFilterChips = useMemo(() => {
+        const base = stdFilterChips.map(c => ({...c, type: 'std'}))
+        const trace = traceTokens.map(t => ({ key: `trace:${t}`, type: 'trace', label: `TraceId: ${t}`, onRemove: () => removeTraceToken(t) }))
+        return [...base, ...trace]
+    }, [stdFilterChips, traceTokens])
+
+    function clearAllFilterChips() {
+        // Löscht nur Standard-Filterfelder + Trace, nicht Suche/MDC
+        setFilter((f) => ({...f, level: '', logger: '', thread: '', message: '', trace: ''}))
     }
 
     return (
@@ -333,6 +396,7 @@ export default function App() {
             <header class="toolbar">
                 <div class="section">
                     <span class="counts"><span id="countTotal">{countTotal}</span> gesamt, <span id="countFiltered">{countFiltered}</span> gefiltert, <span id="countSelected">{countSelected}</span> selektiert</span>
+                    <button onClick={clearLogs} disabled={entries.length===0}>Logs leeren</button>
                 </div>
 
                 {/* Navigation & Markierungen */}
@@ -349,34 +413,75 @@ export default function App() {
                     <button id="btnNextMatch" title="Nächster Treffer" disabled={!search.trim() || searchMatchIdx.length === 0} onClick={() => gotoSearchMatch(1)}>▶</button>
                 </div>
 
-                {/* Filter neu angeordnet */}
+                {/* Filter */}
                 <div class="section">
+                    <label><input type="checkbox" checked={stdFiltersEnabled} onChange={(e)=>setStdFiltersEnabled(e.currentTarget.checked)} /> Standard-Filter aktiv</label>
                     <label>Level</label>
-                    <select id="filterLevel" value={filter.level} onChange={(e) => setFilter({...filter, level: e.currentTarget.value})}>
+                    <select id="filterLevel" value={filter.level} onChange={(e) => setFilter({...filter, level: e.currentTarget.value})} disabled={!stdFiltersEnabled}>
                         <option value="">Alle</option>
-                        {['TRACE','DEBUG','INFO','WARN','ERROR','FATAL'].map(l => <option value={l}>{l}</option>)}
+                        {['TRACE','DEBUG','INFO','WARN','ERROR','FATAL'].map(l => <option key={l} value={l}>{l}</option>)}
                     </select>
 
                     <label>Logger</label>
-                    <input id="filterLogger" list="loggerHistoryList" type="text" value={filter.logger} onInput={(e) => setFilter({...filter, logger: e.currentTarget.value})} placeholder="Logger enthält…"/>
+                    <input id="filterLogger" list="loggerHistoryList" type="text" value={filter.logger} onInput={(e) => setFilter({...filter, logger: e.currentTarget.value})} placeholder="Logger enthält…" disabled={!stdFiltersEnabled}/>
                     <datalist id="loggerHistoryList">{histLogger.map((v, i) => <option key={i} value={v} />)}</datalist>
 
+                    <label>Thread</label>
+                    <input id="filterThread" type="text" value={filter.thread} onInput={(e) => setFilter({...filter, thread: e.currentTarget.value})} placeholder="Thread enthält…" disabled={!stdFiltersEnabled}/>
+
                     <label>Message</label>
-                    <input id="filterMessage" type="text" value={filter.message} onInput={(e) => setFilter({...filter, message: e.currentTarget.value})} placeholder="Message-Filter: & = UND, | = ODER"/>
+                    <input id="filterMessage" type="text" value={filter.message} onInput={(e) => setFilter({...filter, message: e.currentTarget.value})} placeholder="Message-Filter: & = UND, | = ODER, ! = NICHT" disabled={!stdFiltersEnabled}/>
 
                     <label>TraceId</label>
-                    <input id="filterTrace" list="traceHistoryList" type="text" value={filter.trace} onInput={(e) => setFilter({...filter, trace: e.currentTarget.value})} placeholder="TraceId (| getrennt)"/>
+                    <input id="filterTrace" list="traceHistoryList" type="text" value={filter.trace} onInput={(e) => setFilter({...filter, trace: e.currentTarget.value})} placeholder="TraceId (| getrennt)" disabled={!stdFiltersEnabled}/>
                     <datalist id="traceHistoryList">{histTrace.map((v, i) => <option key={i} value={v} />)}</datalist>
 
-                    <button id="btnClearFilters" onClick={() => { setSearch(''); setFilter({level:'',logger:'',service:'',trace:'',message:''}) }}>Reset</button>
+                    <button id="btnClearFilters" onClick={() => { setSearch(''); setFilter({level:'',logger:'',thread:'',service:'',trace:'',message:''}) }}>Filter leeren</button>
+                </div>
+
+                {/* HTTP */}
+                <div class="section">
+                    <button ref={httpBtnRef} onClick={openHttpMenu}>HTTP ▾</button>
+                    <span id="httpStatus" class="status">{httpStatus}{httpPollId!=null && nextPollIn ? ` • Nächstes in ${nextPollIn}` : ''}</span>
                 </div>
 
                 <div class="section">
                     {busy && (<span class="busy"><span class="spinner"></span>Lädt…</span>)}
                     <span id="tcpStatus" class="status">{tcpStatus}</span>
-                    <span id="httpStatus" class="status">{httpStatus}</span>
                 </div>
             </header>
+
+            {/* Aktive Filter-Chips (Standard-Filter + TraceIds) */}
+            {allFilterChips.length > 0 && (
+                <div style={{padding:'6px 12px'}} title={!stdFiltersEnabled ? 'Standard-Filter sind deaktiviert – Chips wirken erst nach Aktivierung.' : ''}>
+                    <div style={{display:'flex', alignItems:'center', gap:'8px', flexWrap:'wrap'}}>
+                        <div style={{fontSize:'12px', color:'#666'}}>Aktive Filter:</div>
+                        <div class="chips" style={{display:'flex', gap:'6px', flexWrap:'wrap', opacity: !stdFiltersEnabled ? 0.8 : 1}}>
+                            {allFilterChips.map((c) => (
+                                <span class="chip" key={c.key}>
+                                    {c.label}
+                                    <button title="Entfernen" onClick={c.onRemove}>×</button>
+                                </span>
+                            ))}
+                        </div>
+                        <button onClick={clearAllFilterChips} title="Alle Filter-Chips löschen">Alle löschen</button>
+                    </div>
+                </div>
+            )}
+
+            {/* HTTP Dropdown Menü */}
+            {httpMenu.open && (
+                <div id="httpMenu" class="context-menu" style={{left: httpMenu.x + 'px', top: httpMenu.y + 'px'}}>
+                    <div class="item" onClick={httpMenuLoadOnce}>Einmal laden</div>
+                    <div class="item" onClick={httpMenuStartPoll}>Polling starten</div>
+                    <div class="item" onClick={httpMenuStopPoll}>Polling stoppen</div>
+                    <div class="sep"/>
+                    <div class="item" onClick={openSettingsModal}>Einstellungen…</div>
+                </div>
+            )}
+
+            {/* Diagnostic Context Filter Panel */}
+            <DCFilterPanel />
 
             <main class="layout" style="min-height:0;">
                 <aside class="list" id="listPane" ref={parentRef}>
@@ -404,16 +509,42 @@ export default function App() {
                         {/* ...existing code... */}
                         <div class="kv"><span>Zeit</span><code id="dTime">{fmtTimestamp(selectedEntry.timestamp)}</code></div>
                         <div class="kv"><span>Level</span><code id="dLevel">{fmt(selectedEntry.level)}</code></div>
-                        <div class="kv"><span>Logger</span><code id="dLogger">{fmt(selectedEntry.logger)}</code></div>
-                        <div class="kv"><span>Thread</span><code id="dThread">{fmt(selectedEntry.thread)}</code></div>
-                        <div class="kv"><span>TraceId</span><code id="dTrace">{fmt(selectedEntry.traceId)}</code></div>
+                        <div class="kv"><span>Logger</span>
+                            <div style={{display:'grid', gridTemplateColumns:'1fr auto', alignItems:'center', gap:'6px'}}>
+                                <code id="dLogger">{fmt(selectedEntry.logger)}</code>
+                                <button title="Logger in Filter übernehmen" onClick={() => { const v = String(selectedEntry.logger || ''); setStdFiltersEnabled(true); setFilter((f) => ({...f, logger: v})); addToHistory('logger', v) }}>+ Filter</button>
+                            </div>
+                        </div>
+                        <div class="kv"><span>Thread</span>
+                            <div style={{display:'grid', gridTemplateColumns:'1fr auto', alignItems:'center', gap:'6px'}}>
+                                <code id="dThread">{fmt(selectedEntry.thread)}</code>
+                                <button title="Thread in Filter übernehmen" onClick={() => { const v = String(selectedEntry.thread || ''); setStdFiltersEnabled(true); setFilter((f) => ({...f, thread: v})) }}>+ Filter</button>
+                            </div>
+                        </div>
+                        {/* TraceId Detailzeile entfernt, TraceId wird nur im MDC-Block angezeigt */}
                         <div class="kv"><span>Source</span><code id="dSource">{fmt(selectedEntry.source)}</code></div>
                         <div class="kv full"><span>Message</span><pre id="dMessage" dangerouslySetInnerHTML={{__html: highlightAll(selectedEntry.message, search)}}/></div>
-                        <div class="kv full"><span>Raw</span><pre id="dRaw">{(() => { try { return JSON.stringify(selectedEntry.raw, null, 2) } catch { return String(selectedEntry.raw) } })()}</pre></div>
+                        {/* MDC-Liste statt Raw */}
+                        {mdcPairs.length > 0 && (
+                          <div class="kv full">
+                            <span>MDC</span>
+                            <div>
+                              <div style={{display:'grid', gridTemplateColumns:'120px 1fr auto', gap:'6px', alignItems:'center'}}>
+                                {mdcPairs.map(([k,v]) => (
+                                  <Fragment key={`${k}|${v}`}>
+                                    <div style={{color:'#555'}}>{k}</div>
+                                    <div><code style={{display:'inline-flex', padding:'4px 6px', background:'#f7f7f7', borderRadius:'4px'}}>{v}</code></div>
+                                    <div style={{textAlign:'right'}}><button title="Zum DC-Filter hinzufügen" onClick={() => addMdcToFilter(k, v)}>+ Filter</button></div>
+                                  </Fragment>
+                                ))}
+                              </div>
+                            </div>
+                          </div>
+                        )}
                         <div class="actions">
-                            <button id="btnFilterByTrace" onClick={() => { const v = String(selectedEntry.traceId || ''); setFilter((f) => ({...f, trace: v})); addTraceTokensToHistory([v]) }}>Nach TraceId filtern</button>
-                            <button id="btnFilterByLogger" onClick={() => { const v = String(selectedEntry.logger || ''); setFilter((f) => ({...f, logger: v})); addToHistory('logger', v) }}>Nach Logger filtern</button>
-                            <button id="btnFilterByLevel" onClick={() => { const v = String(selectedEntry.level || ''); setFilter((f) => ({...f, level: v})) }}>Nach Level filtern</button>
+                            <button id="btnFilterByTrace" onClick={() => { const v = String(selectedEntry.traceId || ''); setStdFiltersEnabled(true); setFilter((f) => ({...f, trace: v})); addTraceTokensToHistory([v]) }}>Nach TraceId filtern</button>
+                            <button id="btnFilterByLogger" onClick={() => { const v = String(selectedEntry.logger || ''); setStdFiltersEnabled(true); setFilter((f) => ({...f, logger: v})); addToHistory('logger', v) }}>Nach Logger filtern</button>
+                            <button id="btnFilterByLevel" onClick={() => { const v = String(selectedEntry.level || ''); setStdFiltersEnabled(true); setFilter((f) => ({...f, level: v})) }}>Nach Level filtern</button>
                             <button id="btnCopyMessage" onClick={async () => { try { await navigator.clipboard.writeText(String(selectedEntry.message || '')) } catch {} }}>Message kopieren</button>
                         </div>
                         {/* Trace-Chips Darstellung unter den Filtern */}
@@ -421,23 +552,14 @@ export default function App() {
                 </section>
             </main>
 
-            {/* Trace-Chips immer unter Toolbar anzeigen, wenn gesetzt */}
-            {traceTokens.length > 0 && (
-                <div style={{padding:'6px 12px'}}>
-                    <div style={{fontSize:'12px', color:'#666', marginBottom:'4px'}}>Aktive TraceId-Filter:</div>
-                    <div class="chips">
-                        {traceTokens.map((t) => (<span class="chip" key={t}>{t}<button title="Entfernen" onClick={() => removeTraceToken(t)}>×</button></span>))}
-                    </div>
-                </div>
-            )}
 
             {ctxMenu.open && (
                 <div ref={ctxRef} class="context-menu" style={{left: ctxMenu.x + 'px', top: ctxMenu.y + 'px'}}>
-                    <div class="item" onClick={() => applyMarkColor(undefined)}>Markierung entfernen</div>
+                    <div class="item" onClick={() => applyMarkColor(undefined)}>Markierung löschen</div>
                     <div class="colors">{colorChoices.map((c, i) => (<div key={i} class="swatch" style={{background: c}} onClick={() => applyMarkColor(c)} title={c}/>))}</div>
                     <div class="sep"/>
-                    <div class="item" onClick={adoptTraceIds}>TraceId(s) übernehmen</div>
-                    <div class="item" onClick={copyTsMsg}>Kopieren: Zeit + Message</div>
+                    <div class="item" onClick={adoptTraceIds}>TraceId(s) in Filter übernehmen</div>
+                    <div class="item" onClick={copyTsMsg}>Kopieren: Zeit und Message</div>
                 </div>
             )}
         </div>
