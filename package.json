@@ -54,11 +54,24 @@
     "electronDist": "node_modules/electron/dist",
     "artifactName": "Lumberjack-${version}-${arch}.${ext}",
     "compression": "store",
-    "electronLanguages": ["de", "en-US"],
+    "electronLanguages": [
+      "de",
+      "en-US"
+    ],
     "win": {
       "target": [
-        { "target": "portable", "arch": ["x64"] },
-        { "target": "zip", "arch": ["x64"] }
+        {
+          "target": "portable",
+          "arch": [
+            "x64"
+          ]
+        },
+        {
+          "target": "zip",
+          "arch": [
+            "x64"
+          ]
+        }
       ],
       "signAndEditExecutable": false,
       "forceCodeSigning": false,

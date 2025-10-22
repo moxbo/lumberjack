@@ -3,6 +3,12 @@ const path = require('path');
 const fs = require('fs');
 const net = require('net');
 const { parsePaths, toEntry } = require('./src/parsers');
+const {
+  getDefaultSettings,
+  parseSettingsJSON,
+  stringifySettingsJSON,
+  mergeSettings,
+} = require('./src/utils/settings');
 
 let mainWindow;
 let tcpServer = null;
@@ -10,24 +16,9 @@ let tcpRunning = false;
 let httpPollers = new Map(); // id -> {timer, url, seen}
 let httpPollerSeq = 1;
 
-// settings
-let settings = {
-  windowBounds: { width: 1200, height: 800 },
-  tcpPort: 5000,
-  detailHeight: 300,
-  colTs: 220,
-  colLvl: 90,
-  colLogger: 280,
-  httpUrl: '',
-  httpInterval: 5000,
-  histLogger: [],
-  histTrace: [],
-  // file logging (neu)
-  logToFile: false,
-  logFilePath: '',
-  logMaxBytes: 5 * 1024 * 1024, // 5 MB
-  logMaxBackups: 3,
-};
+// settings with defaults from schema
+let settings = getDefaultSettings();
+
 const settingsPath = () => {
   // Use a local data folder next to the portable EXE if available
   // electron-builder portable sets PORTABLE_EXECUTABLE_DIR at runtime
@@ -38,36 +29,73 @@ const settingsPath = () => {
   }
   return path.join(app.getPath('userData'), 'settings.json');
 };
+
+/**
+ * Load settings with validation and error handling
+ */
 function loadSettings() {
   try {
     const p = settingsPath();
-    if (fs.existsSync(p)) {
-      const raw = JSON.parse(fs.readFileSync(p, 'utf8'));
-      settings = { ...settings, ...raw };
+    if (!fs.existsSync(p)) {
+      console.log('Settings file not found, using defaults');
+      return;
     }
-  } catch (_) {}
+
+    const raw = fs.readFileSync(p, 'utf8');
+    const result = parseSettingsJSON(raw);
+
+    if (result.success) {
+      settings = result.settings;
+      console.log('Settings loaded successfully');
+    } else {
+      console.error('Failed to parse settings:', result.error);
+      console.log('Using default settings');
+    }
+  } catch (err) {
+    console.error('Error loading settings:', err.message);
+    console.log('Using default settings');
+  }
 }
+
+/**
+ * Save settings with validation and error handling
+ */
 function saveSettings() {
   try {
+    const result = stringifySettingsJSON(settings);
+
+    if (!result.success) {
+      console.error('Failed to stringify settings:', result.error);
+      return false;
+    }
+
     const p = settingsPath();
     fs.mkdirSync(path.dirname(p), { recursive: true });
-    fs.writeFileSync(p, JSON.stringify(settings, null, 2), 'utf8');
-  } catch (_) {}
+    fs.writeFileSync(p, result.json, 'utf8');
+    console.log('Settings saved successfully');
+    return true;
+  } catch (err) {
+    console.error('Error saving settings:', err.message);
+    return false;
+  }
 }
 
 // Datei-Logging: Stream + Rotation
 function defaultLogFilePath() {
   const portableDir = process.env.PORTABLE_EXECUTABLE_DIR;
-  const base = portableDir && typeof portableDir === 'string' && portableDir.length
-    ? path.join(portableDir, 'data')
-    : app.getPath('userData');
+  const base =
+    portableDir && typeof portableDir === 'string' && portableDir.length
+      ? path.join(portableDir, 'data')
+      : app.getPath('userData');
   return path.join(base, 'lumberjack.log');
 }
 let logStream = null;
 let logBytes = 0;
 let logPath = '';
 function closeLogStream() {
-  try { logStream?.end?.(); } catch {}
+  try {
+    logStream?.end?.();
+  } catch {}
   logStream = null;
   logBytes = 0;
   logPath = '';
@@ -98,11 +126,15 @@ function rotateIfNeeded(extraBytes) {
       const src = `${p}.${i}`;
       const dst = `${p}.${i + 1}`;
       if (fs.existsSync(src)) {
-        try { fs.renameSync(src, dst); } catch {}
+        try {
+          fs.renameSync(src, dst);
+        } catch {}
       }
     }
     if (backups >= 1 && fs.existsSync(p)) {
-      try { fs.renameSync(p, `${p}.1`); } catch {}
+      try {
+        fs.renameSync(p, `${p}.1`);
+      } catch {}
     }
   } catch {}
   openLogStream();
@@ -318,40 +350,62 @@ app.on('quit', () => {
 });
 
 // IPC: settings
-ipcMain.handle('settings:get', () => ({ ...settings }));
+/**
+ * IPC: Get current settings
+ */
+ipcMain.handle('settings:get', () => {
+  try {
+    // Return a deep copy to prevent accidental mutations
+    return { ok: true, settings: structuredClone(settings) };
+  } catch (err) {
+    console.error('Error getting settings:', err.message);
+    return { ok: false, error: err.message };
+  }
+});
+
+/**
+ * IPC: Update settings with validation
+ */
 ipcMain.handle('settings:set', (_event, patch) => {
   try {
-    if (patch && typeof patch === 'object') {
-      // only accept known keys
-      const allowed = [
-        'tcpPort',
-        'detailHeight',
-        'colTs',
-        'colLvl',
-        'colLogger',
-        'windowBounds',
-        'httpUrl',
-        'httpInterval',
-        'histLogger',
-        'histTrace',
-        'logToFile',
-        'logFilePath',
-        'logMaxBytes',
-        'logMaxBackups',
-      ];
-      const before = { logToFile: settings.logToFile, logFilePath: settings.logFilePath };
-      for (const k of Object.keys(patch)) {
-        if (allowed.includes(k)) settings[k] = patch[k];
-      }
-      saveSettings();
-      const needReopen = before.logToFile !== settings.logToFile || before.logFilePath !== settings.logFilePath;
-      if (needReopen) {
-        closeLogStream();
-        if (settings.logToFile) openLogStream();
+    if (!patch || typeof patch !== 'object') {
+      return { ok: false, error: 'Invalid patch: not an object' };
+    }
+
+    const before = {
+      logToFile: settings.logToFile,
+      logFilePath: settings.logFilePath,
+      logMaxBytes: settings.logMaxBytes,
+      logMaxBackups: settings.logMaxBackups,
+    };
+
+    // Merge with validation
+    const merged = mergeSettings(patch, settings);
+    settings = merged;
+
+    // Save to disk
+    const saved = saveSettings();
+    if (!saved) {
+      return { ok: false, error: 'Failed to save settings to disk' };
+    }
+
+    // Handle log stream changes
+    const needReopen =
+      before.logToFile !== settings.logToFile ||
+      before.logFilePath !== settings.logFilePath ||
+      before.logMaxBytes !== settings.logMaxBytes ||
+      before.logMaxBackups !== settings.logMaxBackups;
+
+    if (needReopen) {
+      closeLogStream();
+      if (settings.logToFile) {
+        openLogStream();
       }
     }
-    return { ok: true, settings: { ...settings } };
+
+    return { ok: true, settings: structuredClone(settings) };
   } catch (err) {
+    console.error('Error setting settings:', err.message);
     return { ok: false, error: err.message };
   }
 });
@@ -397,7 +451,9 @@ ipcMain.handle('logs:parsePaths', async (_event, filePaths) => {
 // Helper: send appended logs to renderer
 function sendAppend(entries) {
   if (!mainWindow) return;
-  try { writeEntriesToFile(entries); } catch {}
+  try {
+    writeEntriesToFile(entries);
+  } catch {}
   mainWindow.webContents.send('logs:append', entries);
 }
 
@@ -519,7 +575,11 @@ ipcMain.handle('http:startPoll', async (_event, { url, intervalMs }) => {
       const fresh = dedupeNewEntries(entries, seen);
       if (fresh.length) sendAppend(fresh);
     } catch (err) {
-      const e = toEntry({ level: 'ERROR', message: `HTTP poll error for ${url}: ${err.message}` }, '', url);
+      const e = toEntry(
+        { level: 'ERROR', message: `HTTP poll error for ${url}: ${err.message}` },
+        '',
+        url
+      );
       // sendAppend schreibt bereits in die Logdatei
       sendAppend([e]);
     }
