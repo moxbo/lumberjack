@@ -1,17 +1,19 @@
 // Drag & Drop Manager: kapselt Events, extrahiert Pfade und meldet Aktiv-Status
 export class DragAndDropManager {
   /**
-   * @param {{ onFiles: (paths: string[]) => void|Promise<void>, onActiveChange?: (active: boolean) => void }} opts
+   * @param {{ onFiles: (paths: string[]) => void|Promise<void>, onActiveChange?: (active: boolean) => void, onRawFiles?: (files: {name: string, data: string, encoding: 'utf8'|'base64'}[]) => void|Promise<void> }} opts
    */
   constructor(opts) {
     this.onFiles = opts.onFiles;
     this.onActiveChange = opts.onActiveChange || (() => {});
+    this.onRawFiles = opts.onRawFiles || null;
     this._dragCounter = 0;
     this._handlers = null;
   }
 
   attach(target = window) {
     if (this._handlers) return;
+    const debug = typeof window !== 'undefined' && !!window.__DEBUG_DND__;
     const onDragOverBlockAll = (e) => {
       e.preventDefault();
     };
@@ -19,13 +21,24 @@ export class DragAndDropManager {
     const isFileDrag = (e) => {
       const dt = e.dataTransfer;
       if (!dt) return false;
+      if (debug) {
+        try {
+          const types = Array.from(dt.types || []);
+          console.log('[DnD] drag types:', types);
+        } catch {}
+      }
       // DataTransfer.types ist array-ähnlich, iterierbar
       let hasFiles = false;
       const types = dt.types;
       if (types && typeof types.length === 'number') {
         for (let i = 0; i < types.length; i++) {
           const t = types[i];
-          if (t === 'Files' || t === 'public.file-url' || t === 'text/uri-list') {
+          if (
+            t === 'Files' ||
+            t === 'public.file-url' ||
+            t === 'text/uri-list' ||
+            t === 'text/plain'
+          ) {
             hasFiles = true;
             break;
           }
@@ -35,7 +48,8 @@ export class DragAndDropManager {
       const items = dt.items;
       if (items && typeof items.length === 'number') {
         for (let i = 0; i < items.length; i++) {
-          if (items[i] && items[i].kind === 'file') return true;
+          if (items[i] && (items[i].kind === 'file' || items[i].type === 'text/uri-list'))
+            return true;
         }
       }
       return false;
@@ -52,11 +66,16 @@ export class DragAndDropManager {
           // trim CR und Spaces
           if (line.endsWith('\r')) line = line.slice(0, -1);
           line = line.trim();
-          if (line && line.startsWith('file://')) {
-            try {
-              const url = new URL(line);
-              out.push(decodeURIComponent(url.pathname));
-            } catch {}
+          if (line) {
+            if (line.startsWith('file://')) {
+              try {
+                const url = new URL(line);
+                out.push(decodeURIComponent(url.pathname));
+              } catch {}
+            } else if (line.startsWith('/')) {
+              // macOS Finder liefert teils plain absolute Pfade in text/plain
+              out.push(line);
+            }
           }
           start = i + 1;
         }
@@ -68,15 +87,24 @@ export class DragAndDropManager {
       const dt = e.dataTransfer;
       const out = [];
       if (!dt) return out;
-      // Prefer URI list for sandboxed renderers on macOS
+      // Prefer URI list/public.file-url for sandboxed renderers on macOS
       try {
         const uris = dt.getData('text/uri-list');
         const fromUris = fileUrlsToPaths(uris);
-        if (fromUris.length) {
-          for (let i = 0; i < fromUris.length; i++) out.push(fromUris[i]);
-        }
+        if (fromUris.length) out.push(...fromUris);
       } catch {}
-      // Fallback to FileList .path if available (may be empty in sandbox)
+      try {
+        const pub = dt.getData('public.file-url');
+        const fromPub = fileUrlsToPaths(pub);
+        if (fromPub.length) out.push(...fromPub);
+      } catch {}
+      // Manche Umgebungen liefern file:// oder Plain-Pfade in text/plain
+      try {
+        const plain = dt.getData('text/plain');
+        const fromPlain = fileUrlsToPaths(plain);
+        if (fromPlain.length) out.push(...fromPlain);
+      } catch {}
+      // Fallback 1: FileList .path (benötigt sandbox=false)
       try {
         const files = dt.files;
         if (files && typeof files.length === 'number') {
@@ -87,7 +115,106 @@ export class DragAndDropManager {
           }
         }
       } catch {}
+      // Fallback 2: DataTransferItem.getAsFile().path
+      try {
+        const items = dt.items;
+        if (items && typeof items.length === 'number') {
+          for (let i = 0; i < items.length; i++) {
+            const it = items[i];
+            if (it && it.kind === 'file') {
+              const f = it.getAsFile?.();
+              const p = f && /** @type {any} */ (f).path;
+              if (p) out.push(p);
+            }
+          }
+        }
+      } catch {}
+      if (debug) console.log('[DnD] extracted paths before dedupe:', out.slice());
       // Deduplizieren ohne Set
+      if (out.length > 1) {
+        const seen = Object.create(null);
+        const dedup = [];
+        for (let i = 0; i < out.length; i++) {
+          const p = out[i];
+          if (!seen[p]) {
+            seen[p] = 1;
+            dedup.push(p);
+          }
+        }
+        if (debug) console.log('[DnD] deduped paths:', dedup.slice());
+        return dedup;
+      }
+      return out;
+    };
+
+    const readFilesAsPayloads = async (fileList) => {
+      const out = [];
+      if (!fileList || typeof fileList.length !== 'number') return out;
+      /** @type {(f: File) => Promise<{name: string, data: string, encoding: 'utf8'|'base64'}>} */
+      const readOne = (f) =>
+        new Promise((resolve) => {
+          try {
+            const name = String(f?.name || '');
+            const ext = name.toLowerCase().slice(name.lastIndexOf('.'));
+            const fr = new FileReader();
+            if (ext === '.zip') {
+              fr.onload = () => {
+                try {
+                  const buf = new Uint8Array(fr.result);
+                  // zu base64
+                  let bin = '';
+                  for (let i = 0; i < buf.length; i++) bin += String.fromCharCode(buf[i]);
+                  const b64 = btoa(bin);
+                  resolve({ name, data: b64, encoding: 'base64' });
+                } catch {
+                  resolve({ name, data: '', encoding: 'base64' });
+                }
+              };
+              fr.onerror = () => resolve({ name, data: '', encoding: 'base64' });
+              fr.readAsArrayBuffer(f);
+            } else {
+              fr.onload = () => resolve({ name, data: String(fr.result || ''), encoding: 'utf8' });
+              fr.onerror = () => resolve({ name, data: '', encoding: 'utf8' });
+              fr.readAsText(f, 'utf-8');
+            }
+          } catch {
+            resolve({ name: String(f?.name || ''), data: '', encoding: 'utf8' });
+          }
+        });
+      for (let i = 0; i < fileList.length; i++) out.push(await readOne(fileList[i]));
+      return out;
+    };
+
+    const extractPathsFromItemsAsync = async (e) => {
+      const dt = e.dataTransfer;
+      if (!dt || !dt.items || !dt.items.length) return [];
+      const wanted = new Set(['text/uri-list', 'public.file-url', 'text/plain']);
+      const promises = [];
+      for (let i = 0; i < dt.items.length; i++) {
+        const it = dt.items[i];
+        if (!it) continue;
+        const t = it.type || '';
+        if (!wanted.has(t)) continue;
+        if (typeof it.getAsString === 'function') {
+          promises.push(
+            new Promise((resolve) => {
+              try {
+                it.getAsString((str) => {
+                  try {
+                    resolve(fileUrlsToPaths(String(str || '')));
+                  } catch {
+                    resolve([]);
+                  }
+                });
+              } catch {
+                resolve([]);
+              }
+            })
+          );
+        }
+      }
+      const chunks = await Promise.all(promises);
+      const out = [].concat(...chunks);
       if (out.length > 1) {
         const seen = Object.create(null);
         const dedup = [];
@@ -102,8 +229,6 @@ export class DragAndDropManager {
       }
       return out;
     };
-
-    const allowed = new Set(['.log', '.json', '.zip']);
 
     const onDragEnter = (e) => {
       if (!isFileDrag(e)) return;
@@ -132,22 +257,34 @@ export class DragAndDropManager {
       this._dragCounter = 0;
       this.onActiveChange(false);
       let paths = extractPaths(e);
-      // Filter by allowed extensions
-      if (paths.length) {
-        const filtered = [];
-        for (let i = 0; i < paths.length; i++) {
-          const p = paths[i];
-          const dot = p.lastIndexOf('.');
-          const ext = dot >= 0 ? p.slice(dot).toLowerCase() : '';
-          if (allowed.has(ext)) filtered.push(p);
-        }
-        paths = filtered;
+      if ((!paths || !paths.length) && e?.dataTransfer?.items?.length) {
+        try {
+          const fromItems = await extractPathsFromItemsAsync(e);
+          if (fromItems && fromItems.length) paths = fromItems;
+        } catch {}
       }
-      if (!paths.length) return;
+      if (debug) console.log('[DnD] final paths:', (paths || []).slice());
+      if (paths && paths.length) {
+        try {
+          await this.onFiles(paths);
+        } catch (err) {
+          console.error('DnD onFiles error:', err);
+        }
+        return;
+      }
+      // Letzter Fallback: Dateien direkt lesen und als Rohdaten liefern (benötigt opts.onRawFiles)
       try {
-        await this.onFiles(paths);
+        if (this.onRawFiles && e?.dataTransfer?.files?.length) {
+          const payloads = await readFilesAsPayloads(e.dataTransfer.files);
+          if (debug)
+            console.log(
+              '[DnD] raw file payloads:',
+              payloads.map((p) => ({ name: p.name, enc: p.encoding, size: p.data?.length || 0 }))
+            );
+          if (payloads && payloads.length) await this.onRawFiles(payloads);
+        }
       } catch (err) {
-        console.error('DnD onFiles error:', err);
+        console.error('DnD onRawFiles error:', err);
       }
     };
 

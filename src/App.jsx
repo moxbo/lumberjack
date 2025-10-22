@@ -37,6 +37,18 @@ export default function App() {
   const [selected, setSelected] = useState(new Set());
   const lastClicked = useRef(null);
 
+  // Theme Mode: 'system' | 'light' | 'dark'
+  const [themeMode, setThemeMode] = useState('system');
+  function applyThemeMode(mode) {
+    const root = document.documentElement;
+    if (!mode || mode === 'system') {
+      root.removeAttribute('data-theme');
+      // allow prefers-color-scheme to apply
+      return;
+    }
+    root.setAttribute('data-theme', mode);
+  }
+
   const [search, setSearch] = useState('');
   const [filter, setFilter] = useState({
     level: '',
@@ -67,6 +79,8 @@ export default function App() {
   const [httpUrl, setHttpUrl] = useState('');
   const [httpInterval, setHttpInterval] = useState(5000);
   const [showSettings, setShowSettings] = useState(false);
+  // neuer Tab-State für das Einstellungsfenster: 'tcp' | 'http' | 'logging' | 'appearance'
+  const [settingsTab, setSettingsTab] = useState('tcp');
   const [form, setForm] = useState({
     tcpPort: 5000,
     httpUrl: '',
@@ -75,7 +89,13 @@ export default function App() {
     logFilePath: '',
     logMaxMB: 5,
     logMaxBackups: 3,
+    themeMode: 'system',
   });
+  // Neue Dialog-States: HTTP einmal laden & Poll starten
+  const [showHttpLoadDlg, setShowHttpLoadDlg] = useState(false);
+  const [httpLoadUrl, setHttpLoadUrl] = useState('');
+  const [showHttpPollDlg, setShowHttpPollDlg] = useState(false);
+  const [httpPollForm, setHttpPollForm] = useState({ url: '', interval: 5000 });
 
   // Logging-Settings (persisted state for convenience)
   const [logToFile, setLogToFile] = useState(false);
@@ -116,6 +136,93 @@ export default function App() {
   const ctxRef = useRef(null);
 
   const colorChoices = ['#fffbcc', '#d1fae5', '#bae6fd', '#fecaca', '#e9d5ff', '#f5f5f5'];
+
+  // Kontextmenü öffnen für Zeile idx
+  function openContextMenu(ev, idx) {
+    ev.preventDefault();
+    // Auswahl auf die Zeile setzen, wenn noch nicht enthalten
+    setSelected((prev) => {
+      if (prev.has(idx)) return prev;
+      lastClicked.current = idx;
+      return new Set([idx]);
+    });
+    setCtxMenu({ open: true, x: ev.clientX, y: ev.clientY });
+  }
+  // Markierungsfarbe auf selektierte Einträge anwenden
+  function applyMarkColor(color) {
+    setEntries((prev) => {
+      if (!prev || !prev.length) return prev;
+      const next = prev.slice();
+      for (const idx of selected) {
+        if (next[idx]) {
+          if (color) next[idx] = { ...next[idx], _mark: color };
+          else {
+            const { _mark, ...rest } = next[idx];
+            next[idx] = rest;
+          }
+        }
+      }
+      return next;
+    });
+    setCtxMenu({ open: false, x: 0, y: 0 });
+  }
+  // TraceIds aus Auswahl in Filter übernehmen
+  function adoptTraceIds() {
+    const tokens = [];
+    for (const idx of selected) {
+      const e = entries[idx];
+      if (!e) continue;
+      const t1 = String(e.traceId || '').trim();
+      const t2 = String(e?.mdc?.traceId || '').trim();
+      if (t1) tokens.push(t1);
+      if (t2 && t2 !== t1) tokens.push(t2);
+    }
+    const uniq = Array.from(new Set(tokens)).filter(Boolean);
+    if (!uniq.length) return;
+    setStdFiltersEnabled(true);
+    setFilter((f) => {
+      const cur = (f.trace || '')
+        .split('|')
+        .map((s) => s.trim())
+        .filter(Boolean);
+      const all = Array.from(new Set([...cur, ...uniq]));
+      return { ...f, trace: all.join('|') };
+    });
+    try {
+      addTraceTokensToHistory(uniq);
+    } catch {}
+    setCtxMenu({ open: false, x: 0, y: 0 });
+  }
+  // Zeit+Message der Auswahl kopieren
+  async function copyTsMsg() {
+    try {
+      const lines = [];
+      const order = Array.from(selected).sort((a, b) => a - b);
+      for (const idx of order) {
+        const e = entries[idx];
+        if (!e) continue;
+        const ts = fmtTimestamp(e.timestamp);
+        lines.push(`${ts} ${String(e.message || '')}`);
+      }
+      const text = lines.join('\n');
+      if (!text) return;
+      if (navigator?.clipboard?.writeText) await navigator.clipboard.writeText(text);
+      else {
+        // Fallback
+        const ta = document.createElement('textarea');
+        ta.value = text;
+        ta.style.position = 'fixed';
+        ta.style.left = '-1000px';
+        document.body.appendChild(ta);
+        ta.select();
+        document.execCommand('copy');
+        document.body.removeChild(ta);
+      }
+      setCtxMenu({ open: false, x: 0, y: 0 });
+    } catch (e) {
+      alert('Kopieren fehlgeschlagen: ' + (e?.message || String(e)));
+    }
+  }
 
   function ensureIds(arr) {
     let id = nextId;
@@ -225,7 +332,7 @@ export default function App() {
   const countSelected = selected.size;
 
   const parentRef = useRef(null);
-  const rowH = 28;
+  const rowH = 36;
   const virtualizer = useVirtualizer({
     count: filteredIdx.length,
     getScrollElement: () => parentRef.current,
@@ -324,6 +431,11 @@ export default function App() {
         if (r.httpInterval != null) setHttpInterval(Number(r.httpInterval) || 5000);
         if (Array.isArray(r.histLogger)) setHistLogger(r.histLogger);
         if (Array.isArray(r.histTrace)) setHistTrace(r.histTrace);
+        if (typeof r.themeMode === 'string') {
+          const mode = ['light', 'dark', 'system'].includes(r.themeMode) ? r.themeMode : 'system';
+          setThemeMode(mode);
+          applyThemeMode(mode);
+        }
 
         // CSS Vars
         const root = document.documentElement;
@@ -348,7 +460,7 @@ export default function App() {
     })();
   }, []);
 
-  function openSettingsModal() {
+  function openSettingsModal(initialTab) {
     setForm({
       tcpPort,
       httpUrl,
@@ -357,7 +469,9 @@ export default function App() {
       logFilePath,
       logMaxMB: Math.max(1, Math.round((logMaxBytes || 5 * 1024 * 1024) / (1024 * 1024))),
       logMaxBackups,
+      themeMode,
     });
+    setSettingsTab(initialTab || 'tcp');
     setShowSettings(true);
   }
   async function saveSettingsModal() {
@@ -372,6 +486,7 @@ export default function App() {
     const maxMB = Math.max(1, Number(form.logMaxMB || 5));
     const maxBytes = Math.round(maxMB * 1024 * 1024);
     const backups = Math.max(0, Number(form.logMaxBackups || 0));
+    const mode = ['light', 'dark', 'system'].includes(form.themeMode) ? form.themeMode : 'system';
     try {
       await window.api.settingsSet({
         tcpPort: port,
@@ -381,6 +496,7 @@ export default function App() {
         logFilePath: path,
         logMaxBytes: maxBytes,
         logMaxBackups: backups,
+        themeMode: mode,
       });
       setTcpPort(port);
       setHttpUrl(String(form.httpUrl || '').trim());
@@ -389,6 +505,8 @@ export default function App() {
       setLogFilePath(path);
       setLogMaxBytes(maxBytes);
       setLogMaxBackups(backups);
+      setThemeMode(mode);
+      applyThemeMode(mode);
       setShowSettings(false);
     } catch (e) {
       alert('Speichern fehlgeschlagen: ' + (e?.message || String(e)));
@@ -448,6 +566,19 @@ export default function App() {
     setHttpMenu({ open: true, x: Math.round(r.left), y: Math.round(r.bottom + 4) });
   }
 
+  // Dialoge öffnen: HTTP einmal laden & Poll starten
+  function openHttpLoadDialog() {
+    // URL aus Settings übernehmen
+    setHttpLoadUrl(String(httpUrl || ''));
+    setShowHttpLoadDlg(true);
+  }
+  function openHttpPollDialog() {
+    const url = String(httpUrl || '');
+    const ms = Math.max(0, Number(httpInterval || 0)) || 5000;
+    setHttpPollForm({ url, interval: ms });
+    setShowHttpPollDlg(true);
+  }
+
   // Clicks außerhalb: schließe Menü (nutzt composedPath + Refs statt querySelector)
   useEffect(() => {
     function onDocClick(e) {
@@ -495,13 +626,15 @@ export default function App() {
     const onKey = (e) => {
       if (e.key === 'Escape') {
         if (showSettings) setShowSettings(false);
+        if (showHttpLoadDlg) setShowHttpLoadDlg(false);
+        if (showHttpPollDlg) setShowHttpPollDlg(false);
         if (ctxMenu.open) setCtxMenu({ open: false, x: 0, y: 0 });
         if (httpMenu.open) setHttpMenu({ open: false, x: 0, y: 0 });
       }
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [showSettings, ctxMenu.open, httpMenu.open]);
+  }, [showSettings, showHttpLoadDlg, showHttpPollDlg, ctxMenu.open, httpMenu.open]);
 
   // Drag & Drop
   useEffect(() => {
@@ -514,8 +647,20 @@ export default function App() {
         });
       },
       onActiveChange: (active) => setDragActive(active),
+      onRawFiles: async (files) => {
+        await withBusy(async () => {
+          try {
+            const res = await window.api.parseRawDrops(files);
+            if (res?.ok) appendEntries(res.entries);
+            else alert('Fehler beim Laden (Drop-Rohdaten): ' + (res?.error || 'unbekannt'));
+          } catch (e) {
+            alert('Fehler beim Einlesen der Dateien: ' + (e?.message || String(e)));
+          }
+        });
+      },
     });
-    mgr.attach(window);
+    // war: mgr.attach(window)
+    mgr.attach(document);
     return () => mgr.detach();
   }, []);
 
@@ -548,36 +693,15 @@ export default function App() {
           break;
         }
         case 'open-settings': {
-          openSettingsModal();
+          openSettingsModal(cmd?.tab || 'tcp');
           break;
         }
         case 'http-load': {
-          const url = (httpUrl || '').trim();
-          if (!url) {
-            openSettingsModal();
-            return;
-          }
-          await withBusy(async () => {
-            const res = await window.api.httpLoadOnce(url);
-            if (res.ok) appendEntries(res.entries);
-            else setHttpStatus('Fehler: ' + res.error);
-          });
+          openHttpLoadDialog();
           break;
         }
         case 'http-start-poll': {
-          const url = (httpUrl || '').trim();
-          const ms = Math.max(500, Number(httpInterval || 5000));
-          if (!url) {
-            openSettingsModal();
-            return;
-          }
-          const r = await window.api.httpStartPoll({ url, intervalMs: ms });
-          if (r.ok) {
-            setHttpPollId(r.id);
-            setHttpStatus(`Polling #${r.id}`);
-            setPollMs(ms);
-            setNextPollDueAt(Date.now() + ms);
-          } else setHttpStatus('Fehler: ' + r.error);
+          openHttpPollDialog();
           break;
         }
         case 'http-stop-poll': {
@@ -595,7 +719,7 @@ export default function App() {
           break;
         }
         case 'tcp-configure': {
-          openSettingsModal();
+          openSettingsModal('tcp');
           break;
         }
         case 'tcp-start': {
@@ -629,37 +753,14 @@ export default function App() {
     setTcpStatus('');
   }
 
-  // Toolbar-HTTP-Menü Aktionen
+  // Toolbar-HTTP-Menü Aktionen -> Dialoge statt direkte Aktionen
   async function httpMenuLoadOnce() {
     setHttpMenu({ open: false, x: 0, y: 0 });
-    const url = (httpUrl || '').trim();
-    if (!url) {
-      openSettingsModal();
-      return;
-    }
-    await withBusy(async () => {
-      const res = await window.api.httpLoadOnce(url);
-      if (res.ok) appendEntries(res.entries);
-      else setHttpStatus('Fehler: ' + res.error);
-    });
+    openHttpLoadDialog();
   }
   async function httpMenuStartPoll() {
     setHttpMenu({ open: false, x: 0, y: 0 });
-    const url = (httpUrl || '').trim();
-    const ms = Math.max(500, Number(httpInterval || 5000));
-    if (!url) {
-      openSettingsModal();
-      return;
-    }
-    const r = await window.api.httpStartPoll({ url, intervalMs: ms });
-    if (r.ok) {
-      setHttpPollId(r.id);
-      setHttpStatus(`Polling #${r.id}`);
-      setPollMs(ms);
-      setNextPollDueAt(Date.now() + ms);
-    } else {
-      setHttpStatus('Fehler: ' + r.error);
-    }
+    openHttpPollDialog();
   }
   async function httpMenuStopPoll() {
     setHttpMenu({ open: false, x: 0, y: 0 });
@@ -673,16 +774,15 @@ export default function App() {
     }
   }
 
-  // Divider Drag (nutzt layoutRef statt querySelector im Mousemove)
+  // Divider Drag (Höhe der Detailansicht anpassen)
   useEffect(() => {
     function onMouseMove(e) {
       if (!dividerRef.current?._resizing) return;
       const startY = dividerRef.current._startY;
       const startH = dividerRef.current._startH;
-      // Invertiertes Verhalten: nach oben ziehen => größere Detail-Höhe
       const dy = e.clientY - startY;
       let newH = startH - dy;
-      const layout = layoutRef.current; // vermeidet querySelector pro Event
+      const layout = layoutRef.current;
       const total = layout ? layout.clientHeight : document.body.clientHeight || window.innerHeight;
       const minDetail = 150;
       const minList = 140;
@@ -720,10 +820,12 @@ export default function App() {
     if (el) el.addEventListener('mousedown', onMouseDown);
     return () => {
       if (el) el.removeEventListener('mousedown', onMouseDown);
+      window.removeEventListener('mousemove', onMouseMove);
+      window.removeEventListener('mouseup', onMouseUp);
     };
   }, []);
 
-  // Spalten-Resize
+  // Spalten-Resize (Zeit/Level/Logger)
   function onColMouseDown(key, e) {
     const varMap = { ts: '--col-ts', lvl: '--col-lvl', logger: '--col-logger' };
     const active = varMap[key];
@@ -769,137 +871,68 @@ export default function App() {
     } catch {}
   }
 
-  // Kontextmenü-Aktionen (Zeilen)
-  function openContextMenu(ev, idx) {
-    ev.preventDefault();
-    ev.stopPropagation();
-    if (!selected.has(idx)) {
-      setSelected(new Set([idx]));
-      lastClicked.current = idx;
-    }
-    setCtxMenu({ open: true, x: ev.clientX, y: ev.clientY });
-  }
-  function applyMarkColor(color) {
-    setEntries((prev) => {
-      const next = prev.slice();
-      for (const idx of selected) {
-        if (next[idx]) next[idx] = { ...next[idx], _mark: color || undefined };
-      }
-      return next;
-    });
-    setCtxMenu({ open: false, x: 0, y: 0 });
-  }
-  function adoptTraceIds() {
-    const ids = [];
-    for (const idx of selected) {
-      const v = String(entries[idx]?.traceId || '').trim();
-      if (v) ids.push(v);
-    }
-    const uniq = Array.from(new Set(ids));
-    setFilter((f) => ({ ...f, trace: uniq.join('|') }));
-    addTraceTokensToHistory(uniq);
-    setCtxMenu({ open: false, x: 0, y: 0 });
-  }
-  async function copyTsMsg() {
-    try {
-      const lines = [];
-      for (const idx of selected) {
-        const e = entries[idx];
-        if (!e) continue;
-        lines.push(`${fmtTimestamp(e.timestamp)}\n${String(e.message || '')}`);
-      }
-      const text = lines.join('\n');
-      if (text) await navigator.clipboard.writeText(text);
-    } catch {}
-    setCtxMenu({ open: false, x: 0, y: 0 });
-  }
-
-  // Trace-Chips
-  const traceTokens = useMemo(
-    () =>
-      (filter.trace || '')
-        .split('|')
-        .map((s) => s.trim())
-        .filter(Boolean),
-    [filter.trace]
-  );
-  function removeTraceToken(tok) {
-    const rest = traceTokens.filter((t) => t !== tok);
-    setFilter((f) => ({ ...f, trace: rest.join('|') }));
-  }
-
-  // Aktive Standard-Filter als Chips zusammenstellen (Level/Logger/Thread/Message)
-  const stdFilterChips = useMemo(() => {
-    const chips = [];
-    if (filter.level)
-      chips.push({
-        key: 'level',
-        label: `Level: ${filter.level}`,
-        onRemove: () => setFilter((f) => ({ ...f, level: '' })),
-      });
-    if (filter.logger)
-      chips.push({
-        key: 'logger',
-        label: `Logger: ${filter.logger}`,
-        onRemove: () => setFilter((f) => ({ ...f, logger: '' })),
-      });
-    if (filter.thread)
-      chips.push({
-        key: 'thread',
-        label: `Thread: ${filter.thread}`,
-        onRemove: () => setFilter((f) => ({ ...f, thread: '' })),
-      });
-    if (filter.message)
-      chips.push({
-        key: 'message',
-        label: `Message: ${filter.message}`,
-        onRemove: () => setFilter((f) => ({ ...f, message: '' })),
-      });
-    return chips;
-  }, [filter.level, filter.logger, filter.thread, filter.message]);
-
-  // Kombinierte Chip-Liste (Standardfilter + Trace-Token)
-  const allFilterChips = useMemo(() => {
-    const base = stdFilterChips.map((c) => ({ ...c, type: 'std' }));
-    const trace = traceTokens.map((t) => ({
-      key: `trace:${t}`,
-      type: 'trace',
-      label: `TraceId: ${t}`,
-      onRemove: () => removeTraceToken(t),
-    }));
-    return [...base, ...trace];
-  }, [stdFilterChips, traceTokens]);
-
-  function clearAllFilterChips() {
-    // Löscht nur Standard-Filterfelder + Trace, nicht Suche/MDC
-    setFilter((f) => ({ ...f, level: '', logger: '', thread: '', message: '', trace: '' }));
-  }
-
   return (
     <div style="height:100%; display:flex; flex-direction:column;">
       {dragActive && <div className="drop-overlay">Dateien hierher ziehen (.log, .json, .zip)</div>}
-
-      {showSettings && (
-        <div className="modal-backdrop" onClick={() => setShowSettings(false)}>
+      {/* HTTP Load Dialog */}
+      {showHttpLoadDlg && (
+        <div className="modal-backdrop" onClick={() => setShowHttpLoadDlg(false)}>
           <div className="modal" onClick={(e) => e.stopPropagation()}>
-            <h3>Einstellungen</h3>
-            <div className="kv">
-              <span>TCP Port</span>
-              <input
-                type="number"
-                min="1"
-                max="65535"
-                value={form.tcpPort}
-                onInput={(e) => setForm({ ...form, tcpPort: Number(e.currentTarget.value || 0) })}
-              />
-            </div>
+            <h3>HTTP einmal laden</h3>
             <div className="kv">
               <span>HTTP URL</span>
               <input
                 type="text"
-                value={form.httpUrl}
-                onInput={(e) => setForm({ ...form, httpUrl: e.currentTarget.value })}
+                value={httpLoadUrl}
+                onInput={(e) => setHttpLoadUrl(e.currentTarget.value)}
                 placeholder="https://…/logs.json"
+                autoFocus
+              />
+            </div>
+            <div className="modal-actions">
+              <button onClick={() => setShowHttpLoadDlg(false)}>Abbrechen</button>
+              <button
+                onClick={async () => {
+                  const url = String(httpLoadUrl || '').trim();
+                  if (!url) {
+                    alert('Bitte eine gültige URL eingeben');
+                    return;
+                  }
+                  setShowHttpLoadDlg(false);
+                  await withBusy(async () => {
+                    try {
+                      // Persistiere URL bequemlichkeitshalber
+                      setHttpUrl(url);
+                      window.api.settingsSet({ httpUrl: url });
+                      const res = await window.api.httpLoadOnce(url);
+                      if (res.ok) appendEntries(res.entries);
+                      else setHttpStatus('Fehler: ' + res.error);
+                    } catch (e) {
+                      setHttpStatus('Fehler: ' + (e?.message || String(e)));
+                    }
+                  });
+                }}
+              >
+                Laden
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* HTTP Poll Dialog */}
+      {showHttpPollDlg && (
+        <div className="modal-backdrop" onClick={() => setShowHttpPollDlg(false)}>
+          <div className="modal" onClick={(e) => e.stopPropagation()}>
+            <h3>HTTP Poll starten</h3>
+            <div className="kv">
+              <span>HTTP URL</span>
+              <input
+                type="text"
+                value={httpPollForm.url}
+                onInput={(e) => setHttpPollForm({ ...httpPollForm, url: e.currentTarget.value })}
+                placeholder="https://…/logs.json"
+                autoFocus
               />
             </div>
             <div className="kv">
@@ -908,80 +941,249 @@ export default function App() {
                 type="number"
                 min="500"
                 step="500"
-                value={form.httpInterval}
+                value={httpPollForm.interval}
                 onInput={(e) =>
-                  setForm({ ...form, httpInterval: Number(e.currentTarget.value || 5000) })
+                  setHttpPollForm({
+                    ...httpPollForm,
+                    interval: Math.max(0, Number(e.currentTarget.value || 0)),
+                  })
                 }
               />
             </div>
-
-            <h4 style={{ marginTop: '12px' }}>Logging</h4>
-            <div className="kv">
-              <label style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                <input
-                  type="checkbox"
-                  checked={!!form.logToFile}
-                  onChange={(e) => setForm({ ...form, logToFile: e.currentTarget.checked })}
-                />
-                <span>In Datei schreiben</span>
-              </label>
+            <div className="modal-actions">
+              <button onClick={() => setShowHttpPollDlg(false)}>Abbrechen</button>
+              <button
+                disabled={httpPollId != null}
+                title={httpPollId != null ? 'Bitte laufendes Polling zuerst stoppen' : ''}
+                onClick={async () => {
+                  const url = String(httpPollForm.url || '').trim();
+                  const ms = Math.max(500, Number(httpPollForm.interval || 5000));
+                  if (!url) {
+                    alert('Bitte eine gültige URL eingeben');
+                    return;
+                  }
+                  if (httpPollId != null) return; // doppelt absichern
+                  setShowHttpPollDlg(false);
+                  try {
+                    // Persistiere URL & Intervall
+                    setHttpUrl(url);
+                    setHttpInterval(ms);
+                    window.api.settingsSet({ httpUrl: url, httpInterval: ms });
+                    const r = await window.api.httpStartPoll({ url, intervalMs: ms });
+                    if (r.ok) {
+                      setHttpPollId(r.id);
+                      setHttpStatus(`Polling #${r.id}`);
+                      setPollMs(ms);
+                      setNextPollDueAt(Date.now() + ms);
+                    } else setHttpStatus('Fehler: ' + r.error);
+                  } catch (e) {
+                    setHttpStatus('Fehler: ' + (e?.message || String(e)));
+                  }
+                }}
+              >
+                Starten
+              </button>
             </div>
-            <div className="kv">
-              <span>Datei</span>
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr auto', gap: '6px' }}>
-                <input
-                  type="text"
-                  value={form.logFilePath}
-                  onInput={(e) => setForm({ ...form, logFilePath: e.currentTarget.value })}
-                  placeholder="(Standardpfad)"
-                  disabled={!form.logToFile}
-                />
+          </div>
+        </div>
+      )}
+
+      {/* Einstellungen (Tabs) */}
+      {showSettings && (
+        <div className="modal-backdrop" onClick={() => setShowSettings(false)}>
+          <div className="modal" onClick={(e) => e.stopPropagation()}>
+            <h3>Einstellungen</h3>
+
+            <div className="tabs">
+              <div className="tablist" role="tablist" aria-label="Einstellungen Tabs">
                 <button
-                  onClick={async () => {
-                    try {
-                      const p = await window.api.chooseLogFile();
-                      if (p) setForm({ ...form, logFilePath: p });
-                    } catch {}
-                  }}
-                  disabled={!form.logToFile}
+                  className={`tab${settingsTab === 'tcp' ? ' active' : ''}`}
+                  role="tab"
+                  aria-selected={settingsTab === 'tcp'}
+                  onClick={() => setSettingsTab('tcp')}
                 >
-                  Wählen…
+                  TCP
+                </button>
+                <button
+                  className={`tab${settingsTab === 'http' ? ' active' : ''}`}
+                  role="tab"
+                  aria-selected={settingsTab === 'http'}
+                  onClick={() => setSettingsTab('http')}
+                >
+                  HTTP
+                </button>
+                <button
+                  className={`tab${settingsTab === 'logging' ? ' active' : ''}`}
+                  role="tab"
+                  aria-selected={settingsTab === 'logging'}
+                  onClick={() => setSettingsTab('logging')}
+                >
+                  Logging
+                </button>
+                <button
+                  className={`tab${settingsTab === 'appearance' ? ' active' : ''}`}
+                  role="tab"
+                  aria-selected={settingsTab === 'appearance'}
+                  onClick={() => setSettingsTab('appearance')}
+                >
+                  Darstellung
                 </button>
               </div>
-            </div>
-            <div className="kv">
-              <span>Max. Größe (MB)</span>
-              <input
-                type="number"
-                min="1"
-                step="1"
-                value={form.logMaxMB}
-                onInput={(e) => setForm({ ...form, logMaxMB: Number(e.currentTarget.value || 5) })}
-                disabled={!form.logToFile}
-              />
-            </div>
-            <div className="kv">
-              <span>Max. Backups</span>
-              <input
-                type="number"
-                min="0"
-                step="1"
-                value={form.logMaxBackups}
-                onInput={(e) =>
-                  setForm({ ...form, logMaxBackups: Number(e.currentTarget.value || 0) })
-                }
-                disabled={!form.logToFile}
-              />
+
+              {settingsTab === 'tcp' && (
+                <div className="tabpanel" role="tabpanel">
+                  <div className="kv">
+                    <span>TCP Port</span>
+                    <input
+                      type="number"
+                      min="1"
+                      max="65535"
+                      value={form.tcpPort}
+                      onInput={(e) =>
+                        setForm({ ...form, tcpPort: Number(e.currentTarget.value || 0) })
+                      }
+                    />
+                  </div>
+                </div>
+              )}
+
+              {settingsTab === 'http' && (
+                <div className="tabpanel" role="tabpanel">
+                  <div className="kv">
+                    <span>HTTP URL</span>
+                    <input
+                      type="text"
+                      value={form.httpUrl}
+                      onInput={(e) => setForm({ ...form, httpUrl: e.currentTarget.value })}
+                      placeholder="https://…/logs.json"
+                      autoFocus
+                    />
+                  </div>
+                  <div className="kv">
+                    <span>Intervall (ms)</span>
+                    <input
+                      type="number"
+                      min="500"
+                      step="500"
+                      value={form.httpInterval}
+                      onInput={(e) =>
+                        setForm({ ...form, httpInterval: Number(e.currentTarget.value || 5000) })
+                      }
+                    />
+                  </div>
+                </div>
+              )}
+
+              {settingsTab === 'logging' && (
+                <div className="tabpanel" role="tabpanel">
+                  <div className="kv">
+                    <label style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                      <input
+                        type="checkbox"
+                        checked={!!form.logToFile}
+                        onChange={(e) => setForm({ ...form, logToFile: e.currentTarget.checked })}
+                      />
+                      <span>In Datei schreiben</span>
+                    </label>
+                  </div>
+                  <div className="kv">
+                    <span>Datei</span>
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr auto', gap: '6px' }}>
+                      <input
+                        type="text"
+                        value={form.logFilePath}
+                        onInput={(e) => setForm({ ...form, logFilePath: e.currentTarget.value })}
+                        placeholder="(Standardpfad)"
+                        disabled={!form.logToFile}
+                      />
+                      <button
+                        onClick={async () => {
+                          try {
+                            const p = await window.api.chooseLogFile();
+                            if (p) setForm({ ...form, logFilePath: p });
+                          } catch {}
+                        }}
+                        disabled={!form.logToFile}
+                      >
+                        Wählen…
+                      </button>
+                    </div>
+                  </div>
+                  <div className="kv">
+                    <span>Max. Größe (MB)</span>
+                    <input
+                      type="number"
+                      min="1"
+                      step="1"
+                      value={form.logMaxMB}
+                      onInput={(e) =>
+                        setForm({ ...form, logMaxMB: Number(e.currentTarget.value || 5) })
+                      }
+                      disabled={!form.logToFile}
+                    />
+                  </div>
+                  <div className="kv">
+                    <span>Max. Backups</span>
+                    <input
+                      type="number"
+                      min="0"
+                      step="1"
+                      value={form.logMaxBackups}
+                      onInput={(e) =>
+                        setForm({ ...form, logMaxBackups: Number(e.currentTarget.value || 0) })
+                      }
+                      disabled={!form.logToFile}
+                    />
+                  </div>
+                </div>
+              )}
+
+              {settingsTab === 'appearance' && (
+                <div className="tabpanel" role="tabpanel">
+                  <div className="kv">
+                    <span>Theme</span>
+                    <select
+                      value={form.themeMode}
+                      onChange={(e) => {
+                        const v = e.currentTarget.value;
+                        setForm({ ...form, themeMode: v });
+                        // Live-Vorschau, ohne zu speichern
+                        applyThemeMode(['light', 'dark'].includes(v) ? v : 'system');
+                      }}
+                    >
+                      <option value="system">System</option>
+                      <option value="light">Hell</option>
+                      <option value="dark">Dunkel</option>
+                    </select>
+                  </div>
+                  <div className="kv">
+                    <span>Akzent</span>
+                    <div>
+                      <small style={{ color: '#6b7280' }}>
+                        Akzentfarbe kann in styles.css über --accent / --accent-2 angepasst werden.
+                      </small>
+                    </div>
+                  </div>
+                </div>
+              )}
             </div>
 
             <div className="modal-actions">
-              <button onClick={() => setShowSettings(false)}>Abbrechen</button>
+              <button
+                onClick={() => {
+                  applyThemeMode(themeMode);
+                  setShowSettings(false);
+                }}
+              >
+                Abbrechen
+              </button>
               <button onClick={saveSettingsModal}>Speichern</button>
             </div>
           </div>
         </div>
       )}
 
+      {/* Toolbar */}
       <header className="toolbar">
         <div className="section">
           <span className="counts">
@@ -993,8 +1195,6 @@ export default function App() {
             Logs leeren
           </button>
         </div>
-
-        {/* Navigation & Markierungen */}
         <div className="section">
           <button
             title="Vorherige Markierung"
@@ -1011,8 +1211,6 @@ export default function App() {
             Markierung ▶
           </button>
         </div>
-
-        {/* Suche */}
         <div className="section">
           <label>Suche</label>
           <input
@@ -1039,8 +1237,6 @@ export default function App() {
             ▶
           </button>
         </div>
-
-        {/* Filter */}
         <div className="section">
           <label>
             <input
@@ -1064,7 +1260,6 @@ export default function App() {
               </option>
             ))}
           </select>
-
           <label>Logger</label>
           <input
             id="filterLogger"
@@ -1080,7 +1275,6 @@ export default function App() {
               <option key={i} value={v} />
             ))}
           </datalist>
-
           <label>Thread</label>
           <input
             id="filterThread"
@@ -1090,7 +1284,6 @@ export default function App() {
             placeholder="Thread enthält…"
             disabled={!stdFiltersEnabled}
           />
-
           <label>Message</label>
           <input
             id="filterMessage"
@@ -1100,7 +1293,6 @@ export default function App() {
             placeholder="Message-Filter: & = UND, | = ODER, ! = NICHT"
             disabled={!stdFiltersEnabled}
           />
-
           <label>TraceId</label>
           <input
             id="filterTrace"
@@ -1116,7 +1308,6 @@ export default function App() {
               <option key={i} value={v} />
             ))}
           </datalist>
-
           <button
             id="btnClearFilters"
             onClick={() => {
@@ -1127,8 +1318,6 @@ export default function App() {
             Filter leeren
           </button>
         </div>
-
-        {/* HTTP */}
         <div className="section">
           <button ref={httpBtnRef} onClick={openHttpMenu}>
             HTTP ▾
@@ -1138,7 +1327,6 @@ export default function App() {
             {httpPollId != null && nextPollIn ? ` • Nächstes in ${nextPollIn}` : ''}
           </span>
         </div>
-
         <div className="section">
           {busy && (
             <span className="busy">
@@ -1151,42 +1339,86 @@ export default function App() {
         </div>
       </header>
 
-      {/* Aktive Filter-Chips (Standard-Filter + TraceIds) */}
-      {allFilterChips.length > 0 && (
-        <div
-          style={{ padding: '6px 12px' }}
-          title={
-            !stdFiltersEnabled
-              ? 'Standard-Filter sind deaktiviert – Chips wirken erst nach Aktivierung.'
-              : ''
-          }
-        >
-          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
-            <div style={{ fontSize: '12px', color: '#666' }}>Aktive Filter:</div>
-            <div
-              className="chips"
-              style={{
-                display: 'flex',
-                gap: '6px',
-                flexWrap: 'wrap',
-                opacity: !stdFiltersEnabled ? 0.8 : 1,
-              }}
-            >
-              {allFilterChips.map((c) => (
-                <span className="chip" key={c.key}>
-                  {c.label}
-                  <button title="Entfernen" onClick={c.onRemove}>
-                    ×
-                  </button>
-                </span>
-              ))}
+      {/* Aktive Filter-Chips */}
+      {(() => {
+        const traceTokens = (filter.trace || '')
+          .split('|')
+          .map((s) => s.trim())
+          .filter(Boolean);
+        const stdFilterChips = [];
+        if (filter.level)
+          stdFilterChips.push({
+            key: 'level',
+            label: `Level: ${filter.level}`,
+            onRemove: () => setFilter((f) => ({ ...f, level: '' })),
+          });
+        if (filter.logger)
+          stdFilterChips.push({
+            key: 'logger',
+            label: `Logger: ${filter.logger}`,
+            onRemove: () => setFilter((f) => ({ ...f, logger: '' })),
+          });
+        if (filter.thread)
+          stdFilterChips.push({
+            key: 'thread',
+            label: `Thread: ${filter.thread}`,
+            onRemove: () => setFilter((f) => ({ ...f, thread: '' })),
+          });
+        if (filter.message)
+          stdFilterChips.push({
+            key: 'message',
+            label: `Message: ${filter.message}`,
+            onRemove: () => setFilter((f) => ({ ...f, message: '' })),
+          });
+        const allChips = [
+          ...stdFilterChips.map((c) => ({ ...c, type: 'std' })),
+          ...traceTokens.map((t) => ({
+            key: `trace:${t}`,
+            type: 'trace',
+            label: `TraceId: ${t}`,
+            onRemove: () =>
+              setFilter((f) => ({
+                ...f,
+                trace: (f.trace || '')
+                  .split('|')
+                  .filter((x) => x.trim() !== t)
+                  .join('|'),
+              })),
+          })),
+        ];
+        return allChips.length > 0 ? (
+          <div style={{ padding: '6px 12px' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+              <div style={{ fontSize: '12px', color: '#666' }}>Aktive Filter:</div>
+              <div className="chips" style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
+                {allChips.map((c) => (
+                  <span className="chip" key={c.key}>
+                    {c.label}
+                    <button title="Entfernen" onClick={c.onRemove}>
+                      ×
+                    </button>
+                  </span>
+                ))}
+              </div>
+              <button
+                onClick={() =>
+                  setFilter((f) => ({
+                    ...f,
+                    level: '',
+                    logger: '',
+                    thread: '',
+                    message: '',
+                    trace: '',
+                  }))
+                }
+                title="Alle Filter-Chips löschen"
+              >
+                Alle löschen
+              </button>
             </div>
-            <button onClick={clearAllFilterChips} title="Alle Filter-Chips löschen">
-              Alle löschen
-            </button>
           </div>
-        </div>
-      )}
+        ) : null;
+      })()}
 
       {/* HTTP Dropdown Menü */}
       {httpMenu.open && (
@@ -1202,11 +1434,17 @@ export default function App() {
           <div className="item" onClick={httpMenuStartPoll}>
             Polling starten
           </div>
-          <div className="item" onClick={httpMenuStopPoll}>
+          <div
+            className="item"
+            onClick={() => {
+              setHttpMenu({ open: false, x: 0, y: 0 });
+              if (httpPollId != null) httpMenuStopPoll();
+            }}
+          >
             Polling stoppen
           </div>
           <div className="sep" />
-          <div className="item" onClick={openSettingsModal}>
+          <div className="item" onClick={() => openSettingsModal('http')}>
             Einstellungen…
           </div>
         </div>
@@ -1215,9 +1453,9 @@ export default function App() {
       {/* Diagnostic Context Filter Panel */}
       <DCFilterPanel />
 
+      {/* Hauptlayout: Liste + Details */}
       <main className="layout" style="min-height:0;" ref={layoutRef}>
         <aside className="list" id="listPane" ref={parentRef}>
-          {/* ...existing header... */}
           <div className="list-header" role="row">
             <div className="cell" role="columnheader">
               Zeit
@@ -1251,7 +1489,7 @@ export default function App() {
                 top: 0,
                 left: 0,
                 right: 0,
-                height: rowH + 'px',
+                height: 36 + 'px',
                 transform: `translateY(${vi.start}px)`,
               };
               if (!sel && e?._mark) Object.assign(rowStyle, { background: e._mark });
@@ -1279,11 +1517,9 @@ export default function App() {
         </aside>
         <div className="divider" ref={dividerRef} title="Höhe der Details ziehen" />
         <section className="details" id="detailsPane">
-          {!selectedEntry && <div id="detailsEmpty">Kein Eintrag ausgewählt.</div>}
+          {!selectedOneIdx && <div id="detailsEmpty">Kein Eintrag ausgewählt.</div>}
           {selectedEntry && (
             <div id="detailsView">
-              {/* ...bestehende Details... */}
-              {/* ...existing code... */}
               <div className="kv">
                 <span>Zeit</span>
                 <code id="dTime">{fmtTimestamp(selectedEntry.timestamp)}</code>
@@ -1339,7 +1575,6 @@ export default function App() {
                   </button>
                 </div>
               </div>
-              {/* TraceId Detailzeile entfernt, TraceId wird nur im MDC-Block angezeigt */}
               <div className="kv">
                 <span>Source</span>
                 <code id="dSource">{fmt(selectedEntry.source)}</code>
@@ -1351,7 +1586,6 @@ export default function App() {
                   dangerouslySetInnerHTML={{ __html: highlightAll(selectedEntry.message, search) }}
                 />
               </div>
-              {/* MDC-Liste statt Raw */}
               {mdcPairs.length > 0 && (
                 <div className="kv full">
                   <span>MDC</span>
@@ -1398,6 +1632,7 @@ export default function App() {
         </section>
       </main>
 
+      {/* Kontextmenü */}
       {ctxMenu.open && (
         <div
           ref={ctxRef}

@@ -2,6 +2,7 @@ const { app, BrowserWindow, ipcMain, dialog, Menu, nativeImage } = require('elec
 const path = require('path');
 const fs = require('fs');
 const net = require('net');
+const AdmZip = require('adm-zip');
 const { parsePaths, toEntry } = require('./src/parsers');
 const {
   getDefaultSettings,
@@ -24,8 +25,7 @@ const settingsPath = () => {
   // electron-builder portable sets PORTABLE_EXECUTABLE_DIR at runtime
   const portableDir = process.env.PORTABLE_EXECUTABLE_DIR;
   if (portableDir && typeof portableDir === 'string' && portableDir.length) {
-    const p = path.join(portableDir, 'data', 'settings.json');
-    return p;
+    return path.join(portableDir, 'data', 'settings.json');
   }
   return path.join(app.getPath('userData'), 'settings.json');
 };
@@ -251,6 +251,10 @@ function buildMenu() {
         { label: 'HTTP Poll stoppen', click: () => sendMenuCmd({ type: 'http-stop-poll' }) },
         { type: 'separator' },
         {
+          label: 'HTTP URL festlegen\u2026',
+          click: () => sendMenuCmd({ type: 'open-settings', tab: 'http' }),
+        },
+        {
           label: 'TCP Port konfigurieren\u2026',
           click: () => sendMenuCmd({ type: 'tcp-configure' }),
         },
@@ -298,8 +302,13 @@ function createWindow() {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
       nodeIntegration: false,
-      sandbox: true,
+      sandbox: false,
     },
+  });
+
+  // Verhindert, dass ein Datei-/Link-Drop die App zu einer Datei/URL navigiert
+  mainWindow.webContents.on('will-navigate', (event) => {
+    event.preventDefault();
   });
 
   mainWindow.webContents.on('did-finish-load', () => {
@@ -380,8 +389,7 @@ ipcMain.handle('settings:set', (_event, patch) => {
     };
 
     // Merge with validation
-    const merged = mergeSettings(patch, settings);
-    settings = merged;
+    settings = mergeSettings(patch, settings);
 
     // Save to disk
     const saved = saveSettings();
@@ -415,7 +423,7 @@ ipcMain.handle('dialog:openFiles', async () => {
   const res = await dialog.showOpenDialog(mainWindow, {
     properties: ['openFile', 'multiSelections'],
     filters: [
-      { name: 'Logs', extensions: ['log', 'json', 'zip'] },
+      { name: 'Logs', extensions: ['log', 'json', 'jsonl', 'txt', 'zip'] },
       { name: 'All Files', extensions: ['*'] },
     ],
   });
@@ -443,6 +451,52 @@ ipcMain.handle('logs:parsePaths', async (_event, filePaths) => {
     const entries = parsePaths(filePaths);
     writeEntriesToFile(entries);
     return { ok: true, entries };
+  } catch (err) {
+    return { ok: false, error: err.message };
+  }
+});
+
+// IPC: parse raw dropped files (from renderer)
+ipcMain.handle('logs:parseRaw', async (_event, files) => {
+  try {
+    if (!Array.isArray(files) || !files.length) return { ok: true, entries: [] };
+    const { parseJsonFile, parseTextLines } = require('./src/parsers');
+    const all = [];
+    for (const f of files) {
+      const name = String(f?.name || '');
+      const enc = String(f?.encoding || 'utf8');
+      const data = String(f?.data || '');
+      const ext = path.extname(name).toLowerCase();
+      if (!name || !data) continue;
+      if (ext === '.zip') {
+        // decode base64 to Buffer and iterate entries
+        const buf = Buffer.from(data, enc === 'base64' ? 'base64' : 'utf8');
+        const zip = new AdmZip(buf);
+        zip.getEntries().forEach((zEntry) => {
+          const ename = zEntry.entryName;
+          const eext = path.extname(ename).toLowerCase();
+          if (
+            !zEntry.isDirectory &&
+            (eext === '.log' || eext === '.json' || eext === '.jsonl' || eext === '.txt')
+          ) {
+            const text = zEntry.getData().toString('utf8');
+            const parsed =
+              eext === '.json' ? parseJsonFile(ename, text) : parseTextLines(ename, text);
+            parsed.forEach((e) => (e.source = `${name}::${ename}`));
+            all.push(...parsed);
+          }
+        });
+      } else if (ext === '.json') {
+        const entries = parseJsonFile(name, data);
+        all.push(...entries);
+      } else {
+        // treat as text lines (.log, .txt, .jsonl, or no ext)
+        const entries = parseTextLines(name, data);
+        all.push(...entries);
+      }
+    }
+    writeEntriesToFile(all);
+    return { ok: true, entries: all };
   } catch (err) {
     return { ok: false, error: err.message };
   }

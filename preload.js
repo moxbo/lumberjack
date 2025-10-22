@@ -6,6 +6,7 @@ contextBridge.exposeInMainWorld('api', {
   chooseLogFile: () => ipcRenderer.invoke('dialog:chooseLogFile'),
   // logs
   parsePaths: (paths) => ipcRenderer.invoke('logs:parsePaths', paths),
+  parseRawDrops: (files) => ipcRenderer.invoke('logs:parseRaw', files),
   onAppend: (cb) => {
     const listener = (_event, entries) => cb(entries);
     ipcRenderer.on('logs:append', listener);

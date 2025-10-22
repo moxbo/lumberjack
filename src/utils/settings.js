@@ -76,6 +76,13 @@ export const SETTINGS_SCHEMA = {
     validate: (val) => typeof val === 'number' && val >= 100 && val <= 800,
   },
 
+  // NEW: theme mode (persisted user choice)
+  themeMode: {
+    type: 'string',
+    default: 'system',
+    validate: (val) => typeof val === 'string' && ['system', 'light', 'dark'].includes(val),
+  },
+
   // History
   histLogger: {
     type: 'array',
@@ -176,7 +183,7 @@ export function validateSettings(settings) {
   const errors = [];
 
   // Validate each known setting
-  for (const [key, schema] of Object.entries(SETTINGS_SCHEMA)) {
+  for (const key of Object.keys(SETTINGS_SCHEMA)) {
     const result = validateSetting(key, settings?.[key]);
     validated[key] = result.value;
 

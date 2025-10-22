@@ -145,6 +145,7 @@ export default function DCFilterPanel() {
           <div style="display:flex; flex-direction:column;">
             <label style="font-size:12px; color:#555;">MDC Key</label>
             <input
+              class="bright-input"
               list="dc-keys"
               value={selectedKey}
               onInput={(e) => setSelectedKey(e.currentTarget.value)}
@@ -159,6 +160,7 @@ export default function DCFilterPanel() {
           <div style="display:flex; flex-direction:column; min-width:220px;">
             <label style="font-size:12px; color:#555;">MDC Value</label>
             <input
+              class="bright-input"
               ref={valueInputRef}
               value={val}
               onInput={(e) => setVal(e.currentTarget.value)}
