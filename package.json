@@ -8,7 +8,8 @@
     "start": "npm run build:renderer && electron .",
     "dev": "concurrently -k -s first -n \"VITE,ELECTRON\" -c \"cyan,magenta\" \"vite --open=false\" \"wait-on http://localhost:5173 && cross-env VITE_DEV_SERVER_URL=http://localhost:5173 electron .\"",
     "test": "node ./scripts/smoke-parse.js",
-    "lint": "eslint ."
+    "format": "prettier --write .",
+    "format:check": "prettier --check ."
   },
   "author": "",
   "license": "ISC",
@@ -18,9 +19,9 @@
     "concurrently": "^9.1.2",
     "cross-env": "^7.0.3",
     "electron": "^38.4.0",
-    "eslint": "^9.38.0",
     "vite": "^7.1.11",
-    "wait-on": "^8.0.3"
+    "wait-on": "^8.0.3",
+    "prettier": "^3.3.3"
   },
   "dependencies": {
     "@tanstack/react-virtual": "^3.13.12",

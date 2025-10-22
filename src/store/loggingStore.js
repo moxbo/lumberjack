@@ -4,13 +4,26 @@
 // - addLoggingStoreListener(listener): { loggingEventsAdded(events), loggingStoreReset() }
 
 const RESERVED_STD_FIELDS = new Set([
-  'remarks', 'color', 'stack_trace', 'level', 'thread_name', 'logger_name', 'message', '@timestamp', '@version',
+  'remarks',
+  'color',
+  'stack_trace',
+  'level',
+  'thread_name',
+  'logger_name',
+  'message',
+  '@timestamp',
+  '@version',
   // additional common standard keys to avoid duplication in MDC
-  'timestamp', 'time', 'logger', 'thread'
+  'timestamp',
+  'time',
+  'logger',
+  'thread',
   // trace id variants intentionally NOT excluded to show in MDC only
 ]);
 
-function isString(v) { return typeof v === 'string' }
+function isString(v) {
+  return typeof v === 'string';
+}
 
 function findExternalId(raw) {
   if (!raw || typeof raw !== 'object') return null;
@@ -56,19 +69,22 @@ class LoggingStoreImpl {
       try {
         // Attach MDC derived from raw JSON object
         const raw = e && (e.raw || e);
-        const mdc = computeMdcFromRaw(raw);
-        e.mdc = mdc;
+        e.mdc = computeMdcFromRaw(raw);
       } catch (_) {}
     }
     this._events.push(...events);
     for (const l of this._listeners) {
-      try { l.loggingEventsAdded && l.loggingEventsAdded(events); } catch {}
+      try {
+        l.loggingEventsAdded && l.loggingEventsAdded(events);
+      } catch {}
     }
   }
   reset() {
     this._events = [];
     for (const l of this._listeners) {
-      try { l.loggingStoreReset && l.loggingStoreReset(); } catch {}
+      try {
+        l.loggingStoreReset && l.loggingStoreReset();
+      } catch {}
     }
   }
 }

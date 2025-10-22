@@ -1,0 +1,14 @@
+node_modules/
+dist/
+build/
+*.log
+*.zip
+*.png
+*.jpg
+*.jpeg
+*.gif
+*.svg
+*.ico
+.DS_Store
+coverage/
+

@@ -12,23 +12,32 @@ export class DragAndDropManager {
 
   attach(target = window) {
     if (this._handlers) return;
-    const onDragOverBlockAll = (e) => { e.preventDefault(); };
+    const onDragOverBlockAll = (e) => {
+      e.preventDefault();
+    };
 
     const isFileDrag = (e) => {
       const dt = e.dataTransfer;
       if (!dt) return false;
       const types = new Set(Array.from(dt.types || []));
-      if (types.has('Files') || types.has('public.file-url') || types.has('text/uri-list')) return true;
+      if (types.has('Files') || types.has('public.file-url') || types.has('text/uri-list'))
+        return true;
       return !!(dt.items && Array.from(dt.items).some((it) => it.kind === 'file'));
     };
 
     const fileUrlsToPaths = (data) => {
       if (!data) return [];
-      const lines = data.split(/\r?\n/).map((s) => s.trim()).filter(Boolean);
+      const lines = data
+        .split(/\r?\n/)
+        .map((s) => s.trim())
+        .filter(Boolean);
       const out = [];
       for (const line of lines) {
         if (line.startsWith('file://')) {
-          try { const url = new URL(line); out.push(decodeURIComponent(url.pathname)); } catch {}
+          try {
+            const url = new URL(line);
+            out.push(decodeURIComponent(url.pathname));
+          } catch {}
         }
       }
       return out;
@@ -47,7 +56,7 @@ export class DragAndDropManager {
       try {
         const files = Array.from(dt.files || []);
         for (const f of files) {
-          const p = /** @type {any} */(f).path || '';
+          const p = /** @type {any} */ (f).path || '';
           if (p) out.push(p);
         }
       } catch {}
@@ -57,21 +66,31 @@ export class DragAndDropManager {
     const allowed = new Set(['.log', '.json', '.zip']);
 
     const onDragEnter = (e) => {
-      if (!isFileDrag(e)) return; e.preventDefault(); e.stopPropagation();
-      this._dragCounter++; if (this._dragCounter === 1) this.onActiveChange(true);
+      if (!isFileDrag(e)) return;
+      e.preventDefault();
+      e.stopPropagation();
+      this._dragCounter++;
+      if (this._dragCounter === 1) this.onActiveChange(true);
     };
     const onDragOver = (e) => {
-      if (!isFileDrag(e)) return; e.preventDefault(); e.stopPropagation();
+      if (!isFileDrag(e)) return;
+      e.preventDefault();
+      e.stopPropagation();
       if (e.dataTransfer) e.dataTransfer.dropEffect = 'copy';
     };
     const onDragLeave = (e) => {
-      if (!isFileDrag(e)) return; e.preventDefault(); e.stopPropagation();
+      if (!isFileDrag(e)) return;
+      e.preventDefault();
+      e.stopPropagation();
       this._dragCounter = Math.max(0, this._dragCounter - 1);
       if (this._dragCounter === 0) this.onActiveChange(false);
     };
     const onDrop = async (e) => {
-      if (!isFileDrag(e)) return; e.preventDefault(); e.stopPropagation();
-      this._dragCounter = 0; this.onActiveChange(false);
+      if (!isFileDrag(e)) return;
+      e.preventDefault();
+      e.stopPropagation();
+      this._dragCounter = 0;
+      this.onActiveChange(false);
       let paths = extractPaths(e);
       // Filter by allowed extensions
       paths = paths.filter((p) => {
@@ -80,7 +99,11 @@ export class DragAndDropManager {
         return allowed.has(ext);
       });
       if (!paths.length) return;
-      try { await this.onFiles(paths); } catch (err) { console.error('DnD onFiles error:', err); }
+      try {
+        await this.onFiles(paths);
+      } catch (err) {
+        console.error('DnD onFiles error:', err);
+      }
     };
 
     // Two layers: block default navigation and add functional handlers (with capture)
@@ -96,7 +119,8 @@ export class DragAndDropManager {
   }
 
   detach() {
-    const h = this._handlers; if (!h) return;
+    const h = this._handlers;
+    if (!h) return;
     const t = h.target;
     t.removeEventListener('dragover', h.onDragOverBlockAll, { capture: true });
     t.removeEventListener('drop', h.onDragOverBlockAll, { capture: true });

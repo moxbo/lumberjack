@@ -30,5 +30,5 @@ contextBridge.exposeInMainWorld('api', {
   },
   // settings
   settingsGet: () => ipcRenderer.invoke('settings:get'),
-  settingsSet: (patch) => ipcRenderer.invoke('settings:set', patch)
+  settingsSet: (patch) => ipcRenderer.invoke('settings:set', patch),
 });
