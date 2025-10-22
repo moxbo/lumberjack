@@ -18,11 +18,12 @@ export default function DCFilterPanel() {
     function onDocClick(e) {
       if (!ctx.open) return;
       const el = ctxRef.current;
-      if (el && el.contains(e.target)) return;
+      const path = typeof e.composedPath === 'function' ? e.composedPath() : [];
+      if (el && (el === e.target || el.contains(e.target) || (path && path.includes(el)))) return;
       setCtx({ open: false, x: 0, y: 0 });
     }
-    window.addEventListener('mousedown', onDocClick, true);
-    return () => window.removeEventListener('mousedown', onDocClick, true);
+    window.addEventListener('mousedown', onDocClick, { capture: true, passive: true });
+    return () => window.removeEventListener('mousedown', onDocClick, { capture: true });
   }, [ctx.open]);
 
   // sync keys from MDCListener; clear on store reset

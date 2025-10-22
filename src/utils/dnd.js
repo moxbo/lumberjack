@@ -19,25 +19,46 @@ export class DragAndDropManager {
     const isFileDrag = (e) => {
       const dt = e.dataTransfer;
       if (!dt) return false;
-      const types = new Set(Array.from(dt.types || []));
-      if (types.has('Files') || types.has('public.file-url') || types.has('text/uri-list'))
-        return true;
-      return !!(dt.items && Array.from(dt.items).some((it) => it.kind === 'file'));
+      // DataTransfer.types ist array-ähnlich, iterierbar
+      let hasFiles = false;
+      const types = dt.types;
+      if (types && typeof types.length === 'number') {
+        for (let i = 0; i < types.length; i++) {
+          const t = types[i];
+          if (t === 'Files' || t === 'public.file-url' || t === 'text/uri-list') {
+            hasFiles = true;
+            break;
+          }
+        }
+      }
+      if (hasFiles) return true;
+      const items = dt.items;
+      if (items && typeof items.length === 'number') {
+        for (let i = 0; i < items.length; i++) {
+          if (items[i] && items[i].kind === 'file') return true;
+        }
+      }
+      return false;
     };
 
     const fileUrlsToPaths = (data) => {
       if (!data) return [];
-      const lines = data
-        .split(/\r?\n/)
-        .map((s) => s.trim())
-        .filter(Boolean);
       const out = [];
-      for (const line of lines) {
-        if (line.startsWith('file://')) {
-          try {
-            const url = new URL(line);
-            out.push(decodeURIComponent(url.pathname));
-          } catch {}
+      let start = 0;
+      // einfache Zeilen-Split ohne Regex/Allokationen in Hot-Path
+      for (let i = 0; i <= data.length; i++) {
+        if (i === data.length || data.charCodeAt(i) === 10 /* \n */) {
+          let line = data.slice(start, i);
+          // trim CR und Spaces
+          if (line.endsWith('\r')) line = line.slice(0, -1);
+          line = line.trim();
+          if (line && line.startsWith('file://')) {
+            try {
+              const url = new URL(line);
+              out.push(decodeURIComponent(url.pathname));
+            } catch {}
+          }
+          start = i + 1;
         }
       }
       return out;
@@ -50,17 +71,36 @@ export class DragAndDropManager {
       // Prefer URI list for sandboxed renderers on macOS
       try {
         const uris = dt.getData('text/uri-list');
-        out.push(...fileUrlsToPaths(uris));
+        const fromUris = fileUrlsToPaths(uris);
+        if (fromUris.length) {
+          for (let i = 0; i < fromUris.length; i++) out.push(fromUris[i]);
+        }
       } catch {}
       // Fallback to FileList .path if available (may be empty in sandbox)
       try {
-        const files = Array.from(dt.files || []);
-        for (const f of files) {
-          const p = /** @type {any} */ (f).path || '';
-          if (p) out.push(p);
+        const files = dt.files;
+        if (files && typeof files.length === 'number') {
+          for (let i = 0; i < files.length; i++) {
+            const f = files[i];
+            const p = /** @type {any} */ (f).path || '';
+            if (p) out.push(p);
+          }
         }
       } catch {}
-      return Array.from(new Set(out));
+      // Deduplizieren ohne Set
+      if (out.length > 1) {
+        const seen = Object.create(null);
+        const dedup = [];
+        for (let i = 0; i < out.length; i++) {
+          const p = out[i];
+          if (!seen[p]) {
+            seen[p] = 1;
+            dedup.push(p);
+          }
+        }
+        return dedup;
+      }
+      return out;
     };
 
     const allowed = new Set(['.log', '.json', '.zip']);
@@ -93,11 +133,16 @@ export class DragAndDropManager {
       this.onActiveChange(false);
       let paths = extractPaths(e);
       // Filter by allowed extensions
-      paths = paths.filter((p) => {
-        const dot = p.lastIndexOf('.');
-        const ext = dot >= 0 ? p.slice(dot).toLowerCase() : '';
-        return allowed.has(ext);
-      });
+      if (paths.length) {
+        const filtered = [];
+        for (let i = 0; i < paths.length; i++) {
+          const p = paths[i];
+          const dot = p.lastIndexOf('.');
+          const ext = dot >= 0 ? p.slice(dot).toLowerCase() : '';
+          if (allowed.has(ext)) filtered.push(p);
+        }
+        paths = filtered;
+      }
       if (!paths.length) return;
       try {
         await this.onFiles(paths);

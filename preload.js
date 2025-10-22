@@ -3,6 +3,7 @@ const { contextBridge, ipcRenderer } = require('electron');
 contextBridge.exposeInMainWorld('api', {
   // dialogs
   openFiles: () => ipcRenderer.invoke('dialog:openFiles'),
+  chooseLogFile: () => ipcRenderer.invoke('dialog:chooseLogFile'),
   // logs
   parsePaths: (paths) => ipcRenderer.invoke('logs:parsePaths', paths),
   onAppend: (cb) => {

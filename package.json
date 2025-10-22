@@ -1,7 +1,7 @@
 {
   "name": "my-electron-app",
   "version": "1.0.0",
-  "description": "",
+  "description": "Lumberjack - A log file viewer",
   "main": "main.js",
   "scripts": {
     "build:renderer": "vite build",
@@ -9,24 +9,60 @@
     "dev": "concurrently -k -s first -n \"VITE,ELECTRON\" -c \"cyan,magenta\" \"vite --open=false\" \"wait-on http://localhost:5173 && cross-env VITE_DEV_SERVER_URL=http://localhost:5173 electron .\"",
     "test": "node ./scripts/smoke-parse.js",
     "format": "prettier --write .",
-    "format:check": "prettier --check ."
+    "format:check": "prettier --check .",
+    "build:portable": "npm run build:renderer && cross-env CSC_IDENTITY_AUTO_DISCOVERY=false electron-builder --win portable",
+    "build:portable:x64": "npm run build:renderer && cross-env CSC_IDENTITY_AUTO_DISCOVERY=false electron-builder --win portable --x64",
+    "build:zip:x64": "npm run build:renderer && cross-env CSC_IDENTITY_AUTO_DISCOVERY=false electron-builder --win zip --x64"
   },
   "author": "",
   "license": "ISC",
   "devDependencies": {
     "@esbuild/win32-x64": "^0.25.11",
     "@preact/preset-vite": "^2.10.2",
-    "concurrently": "^9.1.2",
-    "cross-env": "^7.0.3",
+    "concurrently": "^9.2.1",
+    "cross-env": "^10.1.0",
     "electron": "^38.4.0",
+    "electron-builder": "^26.0.12",
     "vite": "^7.1.11",
-    "wait-on": "^8.0.3",
-    "prettier": "^3.3.3"
+    "wait-on": "^9.0.1",
+    "prettier": "^3.6.2"
   },
   "dependencies": {
     "@tanstack/react-virtual": "^3.13.12",
     "adm-zip": "^0.5.16",
     "moment": "^2.30.1",
     "preact": "^10.27.2"
+  },
+  "build": {
+    "appId": "com.example.lumberjack",
+    "productName": "Lumberjack",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "dist/**/*",
+      "main.js",
+      "preload.js",
+      "src/**/*.js",
+      "index.html",
+      "renderer.js",
+      "styles.css",
+      "package.json"
+    ],
+    "asar": true,
+    "electronVersion": "38.4.0",
+    "electronDist": "node_modules/electron/dist",
+    "artifactName": "Lumberjack-${version}-${arch}.${ext}",
+    "compression": "store",
+    "electronLanguages": ["de", "en-US"],
+    "win": {
+      "target": [
+        { "target": "portable", "arch": ["x64"] },
+        { "target": "zip", "arch": ["x64"] }
+      ],
+      "signAndEditExecutable": false,
+      "forceCodeSigning": false,
+      "signExts": []
+    }
   }
 }

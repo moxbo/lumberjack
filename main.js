@@ -22,8 +22,22 @@ let settings = {
   httpInterval: 5000,
   histLogger: [],
   histTrace: [],
+  // file logging (neu)
+  logToFile: false,
+  logFilePath: '',
+  logMaxBytes: 5 * 1024 * 1024, // 5 MB
+  logMaxBackups: 3,
 };
-const settingsPath = () => path.join(app.getPath('userData'), 'settings.json');
+const settingsPath = () => {
+  // Use a local data folder next to the portable EXE if available
+  // electron-builder portable sets PORTABLE_EXECUTABLE_DIR at runtime
+  const portableDir = process.env.PORTABLE_EXECUTABLE_DIR;
+  if (portableDir && typeof portableDir === 'string' && portableDir.length) {
+    const p = path.join(portableDir, 'data', 'settings.json');
+    return p;
+  }
+  return path.join(app.getPath('userData'), 'settings.json');
+};
 function loadSettings() {
   try {
     const p = settingsPath();
@@ -39,6 +53,77 @@ function saveSettings() {
     fs.mkdirSync(path.dirname(p), { recursive: true });
     fs.writeFileSync(p, JSON.stringify(settings, null, 2), 'utf8');
   } catch (_) {}
+}
+
+// Datei-Logging: Stream + Rotation
+function defaultLogFilePath() {
+  const portableDir = process.env.PORTABLE_EXECUTABLE_DIR;
+  const base = portableDir && typeof portableDir === 'string' && portableDir.length
+    ? path.join(portableDir, 'data')
+    : app.getPath('userData');
+  return path.join(base, 'lumberjack.log');
+}
+let logStream = null;
+let logBytes = 0;
+let logPath = '';
+function closeLogStream() {
+  try { logStream?.end?.(); } catch {}
+  logStream = null;
+  logBytes = 0;
+  logPath = '';
+}
+function openLogStream() {
+  if (!settings.logToFile) return;
+  const p = (settings.logFilePath && String(settings.logFilePath).trim()) || defaultLogFilePath();
+  try {
+    fs.mkdirSync(path.dirname(p), { recursive: true });
+    const st = fs.existsSync(p) ? fs.statSync(p) : null;
+    logBytes = st ? st.size : 0;
+    logStream = fs.createWriteStream(p, { flags: 'a' });
+    logPath = p;
+  } catch (err) {
+    console.error('Log-Datei kann nicht geöffnet werden:', err.message);
+    closeLogStream();
+  }
+}
+function rotateIfNeeded(extraBytes) {
+  const max = Math.max(1024 * 1024, Number(settings.logMaxBytes || 0) || 0);
+  if (!max) return; // 0 deaktiviert
+  if (logBytes + extraBytes <= max) return;
+  try {
+    closeLogStream();
+    const p = (settings.logFilePath && String(settings.logFilePath).trim()) || defaultLogFilePath();
+    const backups = Math.max(0, Number(settings.logMaxBackups || 0) || 0);
+    for (let i = backups - 1; i >= 1; i--) {
+      const src = `${p}.${i}`;
+      const dst = `${p}.${i + 1}`;
+      if (fs.existsSync(src)) {
+        try { fs.renameSync(src, dst); } catch {}
+      }
+    }
+    if (backups >= 1 && fs.existsSync(p)) {
+      try { fs.renameSync(p, `${p}.1`); } catch {}
+    }
+  } catch {}
+  openLogStream();
+}
+function writeEntriesToFile(entries) {
+  try {
+    if (!settings.logToFile) return;
+    if (!entries || !entries.length) return;
+    if (!logStream) openLogStream();
+    if (!logStream) return;
+    for (const e of entries) {
+      const line = JSON.stringify(e) + '\n';
+      rotateIfNeeded(line.length);
+      if (!logStream) openLogStream();
+      if (!logStream) return;
+      logStream.write(line);
+      logBytes += line.length;
+    }
+  } catch (err) {
+    console.error('Fehler beim Schreiben in Logdatei:', err.message);
+  }
 }
 
 let pendingMenuCmds = [];
@@ -171,6 +256,7 @@ function updateMenu() {
 
 function createWindow() {
   loadSettings();
+  if (settings.logToFile) openLogStream();
   const { width, height, x, y } = settings.windowBounds || {};
   mainWindow = new BrowserWindow({
     width: width || 1200,
@@ -227,6 +313,9 @@ app.on('window-all-closed', () => {
     app.quit();
   }
 });
+app.on('quit', () => {
+  closeLogStream();
+});
 
 // IPC: settings
 ipcMain.handle('settings:get', () => ({ ...settings }));
@@ -245,11 +334,21 @@ ipcMain.handle('settings:set', (_event, patch) => {
         'httpInterval',
         'histLogger',
         'histTrace',
+        'logToFile',
+        'logFilePath',
+        'logMaxBytes',
+        'logMaxBackups',
       ];
+      const before = { logToFile: settings.logToFile, logFilePath: settings.logFilePath };
       for (const k of Object.keys(patch)) {
         if (allowed.includes(k)) settings[k] = patch[k];
       }
       saveSettings();
+      const needReopen = before.logToFile !== settings.logToFile || before.logFilePath !== settings.logFilePath;
+      if (needReopen) {
+        closeLogStream();
+        if (settings.logToFile) openLogStream();
+      }
     }
     return { ok: true, settings: { ...settings } };
   } catch (err) {
@@ -269,11 +368,26 @@ ipcMain.handle('dialog:openFiles', async () => {
   if (res.canceled) return [];
   return res.filePaths || [];
 });
+// IPC: choose log file
+ipcMain.handle('dialog:chooseLogFile', async () => {
+  const def = (settings.logFilePath && String(settings.logFilePath).trim()) || defaultLogFilePath();
+  const res = await dialog.showSaveDialog(mainWindow, {
+    title: 'Logdatei wählen',
+    defaultPath: def,
+    filters: [
+      { name: 'Logdateien', extensions: ['log', 'jsonl', 'txt'] },
+      { name: 'Alle Dateien', extensions: ['*'] },
+    ],
+  });
+  if (res.canceled) return '';
+  return res.filePath || '';
+});
 
 // IPC: parse paths
 ipcMain.handle('logs:parsePaths', async (_event, filePaths) => {
   try {
     const entries = parsePaths(filePaths);
+    writeEntriesToFile(entries);
     return { ok: true, entries };
   } catch (err) {
     return { ok: false, error: err.message };
@@ -283,6 +397,7 @@ ipcMain.handle('logs:parsePaths', async (_event, filePaths) => {
 // Helper: send appended logs to renderer
 function sendAppend(entries) {
   if (!mainWindow) return;
+  try { writeEntriesToFile(entries); } catch {}
   mainWindow.webContents.send('logs:append', entries);
 }
 
@@ -384,6 +499,7 @@ ipcMain.handle('http:loadOnce', async (_event, url) => {
     const { parseJsonFile, parseTextLines } = require('./src/parsers');
     const isJson = text.trim().startsWith('[') || text.trim().startsWith('{');
     const entries = isJson ? parseJsonFile(url, text) : parseTextLines(url, text);
+    writeEntriesToFile(entries);
     return { ok: true, entries };
   } catch (err) {
     return { ok: false, error: err.message };
@@ -403,9 +519,9 @@ ipcMain.handle('http:startPoll', async (_event, { url, intervalMs }) => {
       const fresh = dedupeNewEntries(entries, seen);
       if (fresh.length) sendAppend(fresh);
     } catch (err) {
-      sendAppend([
-        toEntry({ level: 'ERROR', message: `HTTP poll error for ${url}: ${err.message}` }, '', url),
-      ]);
+      const e = toEntry({ level: 'ERROR', message: `HTTP poll error for ${url}: ${err.message}` }, '', url);
+      // sendAppend schreibt bereits in die Logdatei
+      sendAppend([e]);
     }
   }
 

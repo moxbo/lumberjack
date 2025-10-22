@@ -67,11 +67,18 @@ export default function App() {
   const [httpUrl, setHttpUrl] = useState('');
   const [httpInterval, setHttpInterval] = useState(5000);
   const [showSettings, setShowSettings] = useState(false);
-  const [form, setForm] = useState({ tcpPort: 5000, httpUrl: '', httpInterval: 5000 });
+  const [form, setForm] = useState({ tcpPort: 5000, httpUrl: '', httpInterval: 5000, logToFile: false, logFilePath: '', logMaxMB: 5, logMaxBackups: 3 });
+
+  // Logging-Settings (persisted state for convenience)
+  const [logToFile, setLogToFile] = useState(false);
+  const [logFilePath, setLogFilePath] = useState('');
+  const [logMaxBytes, setLogMaxBytes] = useState(5 * 1024 * 1024);
+  const [logMaxBackups, setLogMaxBackups] = useState(3);
 
   // HTTP Dropdown-Menü (toolbar)
   const [httpMenu, setHttpMenu] = useState({ open: false, x: 0, y: 0 });
   const httpBtnRef = useRef(null);
+  const httpMenuRef = useRef(null);
 
   // Countdown bis zum nächsten Intervall
   const [nextPollDueAt, setNextPollDueAt] = useState(null);
@@ -79,6 +86,7 @@ export default function App() {
   const [nextPollIn, setNextPollIn] = useState('');
 
   const dividerRef = useRef(null);
+  const layoutRef = useRef(null);
   const colResize = useRef({ active: null, startX: 0, startW: 0 });
 
   const [dragActive, setDragActive] = useState(false);
@@ -290,8 +298,44 @@ export default function App() {
     } catch {}
   }
 
+  // Initial Settings laden (inkl. CSS-Variablen und Historien)
+  useEffect(() => {
+    (async () => {
+      try {
+        const r = await window.api.settingsGet?.();
+        if (!r) return;
+        if (r.tcpPort != null) setTcpPort(Number(r.tcpPort) || 5000);
+        if (typeof r.httpUrl === 'string') setHttpUrl(r.httpUrl);
+        if (r.httpInterval != null) setHttpInterval(Number(r.httpInterval) || 5000);
+        if (Array.isArray(r.histLogger)) setHistLogger(r.histLogger);
+        if (Array.isArray(r.histTrace)) setHistTrace(r.histTrace);
+        // CSS Vars
+        const root = document.documentElement;
+        const detail = Number(r.detailHeight || 0);
+        if (detail) root.style.setProperty('--detail-height', `${Math.round(detail)}px`);
+        const map = [ ['--col-ts', r.colTs], ['--col-lvl', r.colLvl], ['--col-logger', r.colLogger] ];
+        for (const [k, v] of map) if (v != null) root.style.setProperty(k, `${Math.round(Number(v)||0)}px`);
+        // Logging
+        setLogToFile(!!r.logToFile);
+        setLogFilePath(String(r.logFilePath || ''));
+        setLogMaxBytes(Number(r.logMaxBytes || (5*1024*1024)));
+        setLogMaxBackups(Number(r.logMaxBackups || 3));
+      } catch (e) {
+        // ignore
+      }
+    })();
+  }, []);
+
   function openSettingsModal() {
-    setForm({ tcpPort, httpUrl, httpInterval });
+    setForm({
+      tcpPort,
+      httpUrl,
+      httpInterval,
+      logToFile,
+      logFilePath,
+      logMaxMB: Math.max(1, Math.round((logMaxBytes || (5*1024*1024)) / (1024 * 1024))),
+      logMaxBackups,
+    });
     setShowSettings(true);
   }
   async function saveSettingsModal() {
@@ -301,15 +345,28 @@ export default function App() {
       return;
     }
     const interval = Math.max(500, Number(form.httpInterval || 5000));
+    const toFile = !!form.logToFile;
+    const path = String(form.logFilePath || '').trim();
+    const maxMB = Math.max(1, Number(form.logMaxMB || 5));
+    const maxBytes = Math.round(maxMB * 1024 * 1024);
+    const backups = Math.max(0, Number(form.logMaxBackups || 0));
     try {
       await window.api.settingsSet({
         tcpPort: port,
         httpUrl: String(form.httpUrl || '').trim(),
         httpInterval: interval,
+        logToFile: toFile,
+        logFilePath: path,
+        logMaxBytes: maxBytes,
+        logMaxBackups: backups,
       });
       setTcpPort(port);
       setHttpUrl(String(form.httpUrl || '').trim());
       setHttpInterval(interval);
+      setLogToFile(toFile);
+      setLogFilePath(path);
+      setLogMaxBytes(maxBytes);
+      setLogMaxBackups(backups);
       setShowSettings(false);
     } catch (e) {
       alert('Speichern fehlgeschlagen: ' + (e?.message || String(e)));
@@ -369,18 +426,22 @@ export default function App() {
     setHttpMenu({ open: true, x: Math.round(r.left), y: Math.round(r.bottom + 4) });
   }
 
-  // Clicks außerhalb: schließe Menü
+  // Clicks außerhalb: schließe Menü (nutzt composedPath + Refs statt querySelector)
   useEffect(() => {
     function onDocClick(e) {
       if (!httpMenu.open) return;
       const btn = httpBtnRef.current;
-      const menu = document.querySelector('#httpMenu');
-      if (btn && (btn === e.target || btn.contains(e.target))) return;
-      if (menu && menu.contains(e.target)) return;
+      const menu = httpMenuRef.current;
+      // Nutzen Sie composedPath, um DOM-Traversal zu vermeiden
+      const path = typeof e.composedPath === 'function' ? e.composedPath() : [];
+      if (btn && (btn === e.target || btn.contains(e.target) || (path && path.includes(btn))))
+        return;
+      if (menu && (menu === e.target || menu.contains(e.target) || (path && path.includes(menu))))
+        return;
       setHttpMenu({ open: false, x: 0, y: 0 });
     }
-    window.addEventListener('mousedown', onDocClick, true);
-    return () => window.removeEventListener('mousedown', onDocClick, true);
+    window.addEventListener('mousedown', onDocClick, { capture: true, passive: true });
+    return () => window.removeEventListener('mousedown', onDocClick, { capture: true });
   }, [httpMenu.open]);
 
   // Poll-Countdown aktualisieren
@@ -441,11 +502,12 @@ export default function App() {
     function onDocClick(e) {
       if (!ctxMenu.open) return;
       const el = ctxRef.current;
-      if (el && el.contains(e.target)) return;
+      const path = typeof e.composedPath === 'function' ? e.composedPath() : [];
+      if (el && (el === e.target || el.contains(e.target) || (path && path.includes(el)))) return;
       setCtxMenu({ open: false, x: 0, y: 0 });
     }
-    window.addEventListener('mousedown', onDocClick, true);
-    return () => window.removeEventListener('mousedown', onDocClick, true);
+    window.addEventListener('mousedown', onDocClick, { capture: true, passive: true });
+    return () => window.removeEventListener('mousedown', onDocClick, { capture: true });
   }, [ctxMenu.open]);
 
   useEffect(() => {
@@ -589,7 +651,7 @@ export default function App() {
     }
   }
 
-  // Divider Drag
+  // Divider Drag (nutzt layoutRef statt querySelector im Mousemove)
   useEffect(() => {
     function onMouseMove(e) {
       if (!dividerRef.current?._resizing) return;
@@ -598,7 +660,7 @@ export default function App() {
       // Invertiertes Verhalten: nach oben ziehen => größere Detail-Höhe
       const dy = e.clientY - startY;
       let newH = startH - dy;
-      const layout = document.querySelector('main.layout');
+      const layout = layoutRef.current; // vermeidet querySelector pro Event
       const total = layout ? layout.clientHeight : document.body.clientHeight || window.innerHeight;
       const minDetail = 150;
       const minList = 140;
@@ -793,13 +855,13 @@ export default function App() {
 
   return (
     <div style="height:100%; display:flex; flex-direction:column;">
-      {dragActive && <div class="drop-overlay">Dateien hierher ziehen (.log, .json, .zip)</div>}
+      {dragActive && <div className="drop-overlay">Dateien hierher ziehen (.log, .json, .zip)</div>}
 
       {showSettings && (
-        <div class="modal-backdrop" onClick={() => setShowSettings(false)}>
-          <div class="modal" onClick={(e) => e.stopPropagation()}>
+        <div className="modal-backdrop" onClick={() => setShowSettings(false)}>
+          <div className="modal" onClick={(e) => e.stopPropagation()}>
             <h3>Einstellungen</h3>
-            <div class="kv">
+            <div className="kv">
               <span>TCP Port</span>
               <input
                 type="number"
@@ -809,7 +871,7 @@ export default function App() {
                 onInput={(e) => setForm({ ...form, tcpPort: Number(e.currentTarget.value || 0) })}
               />
             </div>
-            <div class="kv">
+            <div className="kv">
               <span>HTTP URL</span>
               <input
                 type="text"
@@ -818,7 +880,7 @@ export default function App() {
                 placeholder="https://…/logs.json"
               />
             </div>
-            <div class="kv">
+            <div className="kv">
               <span>Intervall (ms)</span>
               <input
                 type="number"
@@ -830,7 +892,65 @@ export default function App() {
                 }
               />
             </div>
-            <div class="modal-actions">
+
+            <h4 style={{ marginTop: '12px' }}>Logging</h4>
+            <div className="kv">
+              <label style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <input
+                  type="checkbox"
+                  checked={!!form.logToFile}
+                  onChange={(e) => setForm({ ...form, logToFile: e.currentTarget.checked })}
+                />
+                <span>In Datei schreiben</span>
+              </label>
+            </div>
+            <div className="kv">
+              <span>Datei</span>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr auto', gap: '6px' }}>
+                <input
+                  type="text"
+                  value={form.logFilePath}
+                  onInput={(e) => setForm({ ...form, logFilePath: e.currentTarget.value })}
+                  placeholder="(Standardpfad)"
+                  disabled={!form.logToFile}
+                />
+                <button
+                  onClick={async () => {
+                    try {
+                      const p = await window.api.chooseLogFile();
+                      if (p) setForm({ ...form, logFilePath: p });
+                    } catch {}
+                  }}
+                  disabled={!form.logToFile}
+                >
+                  Wählen…
+                </button>
+              </div>
+            </div>
+            <div className="kv">
+              <span>Max. Größe (MB)</span>
+              <input
+                type="number"
+                min="1"
+                step="1"
+                value={form.logMaxMB}
+                onInput={(e) => setForm({ ...form, logMaxMB: Number(e.currentTarget.value || 5) })}
+                disabled={!form.logToFile}
+              />
+            </div>
+            <div className="kv">
+              <span>Max. Backups</span>
+              <input
+                type="number"
+                min="0"
+                step="1"
+                value={form.logMaxBackups}
+                onInput={(e) => setForm({ ...form, logMaxBackups: Number(e.currentTarget.value || 0) })}
+                disabled={!form.logToFile}
+              />
+            </div>
+
+            <div className="modal-actions">
               <button onClick={() => setShowSettings(false)}>Abbrechen</button>
               <button onClick={saveSettingsModal}>Speichern</button>
             </div>
@@ -838,11 +958,11 @@ export default function App() {
         </div>
       )}
 
-      <header class="toolbar">
-        <div class="section">
-          <span class="counts">
-            <span id="countTotal">{countTotal}</span> gesamt,{' '}
-            <span id="countFiltered">{countFiltered}</span> gefiltert,{' '}
+      <header className="toolbar">
+        <div className="section">
+          <span className="counts">
+            <span id="countTotal">{countTotal}</span> gesamt,{" "}
+            <span id="countFiltered">{countFiltered}</span> gefiltert,{" "}
             <span id="countSelected">{countSelected}</span> selektiert
           </span>
           <button onClick={clearLogs} disabled={entries.length === 0}>
@@ -851,7 +971,7 @@ export default function App() {
         </div>
 
         {/* Navigation & Markierungen */}
-        <div class="section">
+        <div className="section">
           <button
             title="Vorherige Markierung"
             onClick={() => gotoMarked(-1)}
@@ -869,7 +989,7 @@ export default function App() {
         </div>
 
         {/* Suche */}
-        <div class="section">
+        <div className="section">
           <label>Suche</label>
           <input
             id="searchText"
@@ -897,13 +1017,13 @@ export default function App() {
         </div>
 
         {/* Filter */}
-        <div class="section">
+        <div className="section">
           <label>
             <input
               type="checkbox"
               checked={stdFiltersEnabled}
               onChange={(e) => setStdFiltersEnabled(e.currentTarget.checked)}
-            />{' '}
+            />{" "}
             Standard-Filter aktiv
           </label>
           <label>Level</label>
@@ -985,23 +1105,23 @@ export default function App() {
         </div>
 
         {/* HTTP */}
-        <div class="section">
+        <div className="section">
           <button ref={httpBtnRef} onClick={openHttpMenu}>
             HTTP ▾
           </button>
-          <span id="httpStatus" class="status">
+          <span id="httpStatus" className="status">
             {httpStatus}
             {httpPollId != null && nextPollIn ? ` • Nächstes in ${nextPollIn}` : ''}
           </span>
         </div>
 
-        <div class="section">
+        <div className="section">
           {busy && (
-            <span class="busy">
-              <span class="spinner"></span>Lädt…
+            <span className="busy">
+              <span className="spinner"></span>Lädt…
             </span>
           )}
-          <span id="tcpStatus" class="status">
+          <span id="tcpStatus" className="status">
             {tcpStatus}
           </span>
         </div>
@@ -1020,7 +1140,7 @@ export default function App() {
           <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
             <div style={{ fontSize: '12px', color: '#666' }}>Aktive Filter:</div>
             <div
-              class="chips"
+              className="chips"
               style={{
                 display: 'flex',
                 gap: '6px',
@@ -1029,7 +1149,7 @@ export default function App() {
               }}
             >
               {allFilterChips.map((c) => (
-                <span class="chip" key={c.key}>
+                <span className="chip" key={c.key}>
                   {c.label}
                   <button title="Entfernen" onClick={c.onRemove}>
                     ×
@@ -1048,20 +1168,21 @@ export default function App() {
       {httpMenu.open && (
         <div
           id="httpMenu"
-          class="context-menu"
+          ref={httpMenuRef}
+          className="context-menu"
           style={{ left: httpMenu.x + 'px', top: httpMenu.y + 'px' }}
         >
-          <div class="item" onClick={httpMenuLoadOnce}>
+          <div className="item" onClick={httpMenuLoadOnce}>
             Einmal laden
           </div>
-          <div class="item" onClick={httpMenuStartPoll}>
+          <div className="item" onClick={httpMenuStartPoll}>
             Polling starten
           </div>
-          <div class="item" onClick={httpMenuStopPoll}>
+          <div className="item" onClick={httpMenuStopPoll}>
             Polling stoppen
           </div>
-          <div class="sep" />
-          <div class="item" onClick={openSettingsModal}>
+          <div className="sep" />
+          <div className="item" onClick={openSettingsModal}>
             Einstellungen…
           </div>
         </div>
@@ -1070,29 +1191,29 @@ export default function App() {
       {/* Diagnostic Context Filter Panel */}
       <DCFilterPanel />
 
-      <main class="layout" style="min-height:0;">
-        <aside class="list" id="listPane" ref={parentRef}>
+      <main className="layout" style="min-height:0;" ref={layoutRef}>
+        <aside className="list" id="listPane" ref={parentRef}>
           {/* ...existing header... */}
-          <div class="list-header" role="row">
-            <div class="cell" role="columnheader">
+          <div className="list-header" role="row">
+            <div className="cell" role="columnheader">
               Zeit
-              <span class="resizer" onMouseDown={(e) => onColMouseDown('ts', e)} />
+              <span className="resizer" onMouseDown={(e) => onColMouseDown('ts', e)} />
             </div>
-            <div class="cell" role="columnheader">
+            <div className="cell" role="columnheader">
               Level
-              <span class="resizer" onMouseDown={(e) => onColMouseDown('lvl', e)} />
+              <span className="resizer" onMouseDown={(e) => onColMouseDown('lvl', e)} />
             </div>
-            <div class="cell" role="columnheader">
+            <div className="cell" role="columnheader">
               Logger
-              <span class="resizer" onMouseDown={(e) => onColMouseDown('logger', e)} />
+              <span className="resizer" onMouseDown={(e) => onColMouseDown('logger', e)} />
             </div>
-            <div class="cell" role="columnheader">
+            <div className="cell" role="columnheader">
               Message
             </div>
           </div>
           <ul
             id="logList"
-            class="log-list"
+            className="log-list"
             style={{ position: 'relative', height: totalHeight + 'px' }}
           >
             {virtualItems.map((vi) => {
@@ -1113,7 +1234,7 @@ export default function App() {
               return (
                 <li
                   key={vi.key}
-                  class={`row${sel ? ' sel' : ''}`}
+                  className={`row${sel ? ' sel' : ''}`}
                   data-idx={idx}
                   style={rowStyle}
                   onClick={(ev) => {
@@ -1123,31 +1244,31 @@ export default function App() {
                   }}
                   onContextMenu={(ev) => openContextMenu(ev, idx)}
                 >
-                  <span class="col ts">{fmtTimestamp(e?.timestamp)}</span>
-                  <span class={`col lvl ${levelClass(e?.level)}`}>{fmt(e?.level || '')}</span>
-                  <span class="col logger">{fmt(e?.logger)}</span>
-                  <span class="col msg" dangerouslySetInnerHTML={{ __html: msgHtml }} />
+                  <span className="col ts">{fmtTimestamp(e?.timestamp)}</span>
+                  <span className={`col lvl ${levelClass(e?.level)}`}>{fmt(e?.level || '')}</span>
+                  <span className="col logger">{fmt(e?.logger)}</span>
+                  <span className="col msg" dangerouslySetInnerHTML={{ __html: msgHtml }} />
                 </li>
               );
             })}
           </ul>
         </aside>
-        <div class="divider" ref={dividerRef} title="Höhe der Details ziehen" />
-        <section class="details" id="detailsPane">
+        <div className="divider" ref={dividerRef} title="Höhe der Details ziehen" />
+        <section className="details" id="detailsPane">
           {!selectedEntry && <div id="detailsEmpty">Kein Eintrag ausgewählt.</div>}
           {selectedEntry && (
             <div id="detailsView">
               {/* ...bestehende Details... */}
               {/* ...existing code... */}
-              <div class="kv">
+              <div className="kv">
                 <span>Zeit</span>
                 <code id="dTime">{fmtTimestamp(selectedEntry.timestamp)}</code>
               </div>
-              <div class="kv">
+              <div className="kv">
                 <span>Level</span>
                 <code id="dLevel">{fmt(selectedEntry.level)}</code>
               </div>
-              <div class="kv">
+              <div className="kv">
                 <span>Logger</span>
                 <div
                   style={{
@@ -1171,7 +1292,7 @@ export default function App() {
                   </button>
                 </div>
               </div>
-              <div class="kv">
+              <div className="kv">
                 <span>Thread</span>
                 <div
                   style={{
@@ -1195,11 +1316,11 @@ export default function App() {
                 </div>
               </div>
               {/* TraceId Detailzeile entfernt, TraceId wird nur im MDC-Block angezeigt */}
-              <div class="kv">
+              <div className="kv">
                 <span>Source</span>
                 <code id="dSource">{fmt(selectedEntry.source)}</code>
               </div>
-              <div class="kv full">
+              <div className="kv full">
                 <span>Message</span>
                 <pre
                   id="dMessage"
@@ -1208,7 +1329,7 @@ export default function App() {
               </div>
               {/* MDC-Liste statt Raw */}
               {mdcPairs.length > 0 && (
-                <div class="kv full">
+                <div className="kv full">
                   <span>MDC</span>
                   <div>
                     <div
@@ -1256,28 +1377,28 @@ export default function App() {
       {ctxMenu.open && (
         <div
           ref={ctxRef}
-          class="context-menu"
+          className="context-menu"
           style={{ left: ctxMenu.x + 'px', top: ctxMenu.y + 'px' }}
         >
-          <div class="item" onClick={() => applyMarkColor(undefined)}>
+          <div className="item" onClick={() => applyMarkColor(undefined)}>
             Markierung löschen
           </div>
-          <div class="colors">
+          <div className="colors">
             {colorChoices.map((c, i) => (
               <div
                 key={i}
-                class="swatch"
+                className="swatch"
                 style={{ background: c }}
                 onClick={() => applyMarkColor(c)}
                 title={c}
               />
             ))}
           </div>
-          <div class="sep" />
-          <div class="item" onClick={adoptTraceIds}>
+          <div className="sep" />
+          <div className="item" onClick={adoptTraceIds}>
             TraceId(s) in Filter übernehmen
           </div>
-          <div class="item" onClick={copyTsMsg}>
+          <div className="item" onClick={copyTsMsg}>
             Kopieren: Zeit und Message
           </div>
         </div>
