@@ -101,7 +101,53 @@ function resolveIconPath() {
 - Eliminates redundant file system checks on subsequent icon requests
 - Reduces I/O operations during startup
 
-### 4. Optimized Menu Building (main.js)
+### 4. Lazy-Loaded Settings Module (main.js)
+
+**Changed**: Settings utilities are now loaded on-demand rather than at startup
+
+**Before**:
+
+```javascript
+const {
+  getDefaultSettings,
+  parseSettingsJSON,
+  stringifySettingsJSON,
+  mergeSettings,
+} = require('./src/utils/settings');
+
+let settings = getDefaultSettings(); // Loaded immediately at startup
+```
+
+**After**:
+
+```javascript
+// Lazy-load settings utilities only when needed
+let settingsUtils = null;
+function getSettingsUtils() {
+  if (!settingsUtils) {
+    settingsUtils = require('./src/utils/settings');
+  }
+  return settingsUtils;
+}
+
+let settings = null; // Initialized on first use
+
+function ensureSettings() {
+  if (settings === null) {
+    const { getDefaultSettings } = getSettingsUtils();
+    settings = getDefaultSettings();
+  }
+  return settings;
+}
+```
+
+**Impact**:
+
+- Defers loading of settings validation schema until first use
+- Reduces initial module loading overhead at startup
+- Settings module is only loaded when createWindow() is called or settings are accessed
+
+### 5. Optimized Menu Building (main.js)
 
 **Changed**: Deferred menu building to run asynchronously after window starts loading
 
@@ -130,7 +176,7 @@ setImmediate(async () => {
 - Menu builds in parallel with window rendering
 - Improved perceived startup time
 
-### 5. Startup Performance Tracking (main.js)
+### 6. Startup Performance Tracking (main.js)
 
 **Added**: Performance measurement to track time to window ready
 
@@ -151,7 +197,7 @@ mainWindow.once('ready-to-show', () => {
 - Provides measurable feedback on startup performance
 - Helps identify performance regressions in future development
 
-### 6. Window Title Branding (index.html)
+### 7. Window Title Branding (index.html)
 
 **Changed**: Updated window title from "Log Viewer" to "Lumberjack"
 
@@ -160,7 +206,7 @@ mainWindow.once('ready-to-show', () => {
 - Consistent branding across all UI elements
 - Professional appearance in taskbar and window title
 
-### 7. Code Quality Improvements
+### 8. Code Quality Improvements
 
 **Applied**: Prettier formatting across all source files
 
@@ -174,8 +220,9 @@ mainWindow.once('ready-to-show', () => {
 Based on the optimizations implemented:
 
 1. **Window Creation**: 50-200ms faster by eliminating synchronous icon resolution
-2. **Perceived Startup**: 200-500ms faster by showing window before menu/settings load
-3. **Overall Startup**: Expected reduction from ~30 seconds to under 5 seconds
+2. **Module Loading**: 20-50ms faster by lazy-loading settings utilities
+3. **Perceived Startup**: 200-500ms faster by showing window before menu/settings load
+4. **Overall Startup**: Expected reduction from ~30 seconds to under 5 seconds
 
 The actual improvement will depend on:
 
