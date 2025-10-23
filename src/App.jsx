@@ -437,6 +437,29 @@ export default function App() {
   const virtualItems = virtualizer.getVirtualItems();
   const totalHeight = virtualizer.getTotalSize();
 
+  // Breite der nativen Scrollbar messen und als CSS-Variable setzen,
+  // damit das Overlay rechts Platz lässt (Scroll-Buttons bleiben sichtbar)
+  useEffect(() => {
+    function updateScrollbarVar() {
+      const el = parentRef.current;
+      if (!el) return;
+      const w = Math.max(0, Math.round((el.offsetWidth || 0) - (el.clientWidth || 0)));
+      document.documentElement.style.setProperty('--scrollbar-w', w + 'px');
+    }
+    updateScrollbarVar();
+    const onResize = () => updateScrollbarVar();
+    window.addEventListener('resize', onResize);
+    let ro = null;
+    if (window.ResizeObserver) {
+      ro = new ResizeObserver(() => updateScrollbarVar());
+      if (parentRef.current) ro.observe(parentRef.current);
+    }
+    return () => {
+      window.removeEventListener('resize', onResize);
+      if (ro) ro.disconnect();
+    };
+  }, [filteredIdx.length, totalHeight]);
+
   function toggleSelectIndex(idx, extendRange, keepOthers) {
     setSelected((prev) => {
       const next = keepOthers || extendRange ? new Set(prev) : new Set();

@@ -112,6 +112,8 @@
   --z-modal: 1050;
   /* Default-Tönung für Details (wird zur Laufzeit überschrieben) */
   --details-tint: transparent;
+  /* Laufzeit: Breite der nativen Scrollbar (per JS gemessen) */
+  --scrollbar-w: 0px;
 }
 
 @media (prefers-color-scheme: dark) {
@@ -327,6 +329,8 @@ body {
   overflow: auto;
   height: 100%;
   min-height: 0;
+  /* Platz für das unten liegende Details-Overlay schaffen: */
+  padding-bottom: calc(var(--detail-height) + 8px);
 }
 
 /* Overlay-Container für Divider + Details als gläserisches Panel
@@ -334,7 +338,8 @@ body {
 .overlay {
   position: absolute;
   left: 0;
-  right: 0;
+  /* rechts Platz für die Scrollbar der Liste lassen */
+  right: var(--scrollbar-w, 0px);
   bottom: 0;
   /* Divider (8px) + Detailbereich */
   height: calc(var(--detail-height) + 8px);
