@@ -5,10 +5,12 @@ This document summarizes the optimizations made to improve Windows startup perfo
 ## Issues Identified
 
 ### 1. Branding Issue
+
 - **Problem**: The application name in `package.json` was set to `"my-electron-app"` instead of `"lumberjack"`
 - **Impact**: This affected how the application was referenced in build outputs and potentially in system-level identifiers
 
 ### 2. Windows Startup Performance
+
 - **Problem**: The application took approximately 30 seconds to start on Windows
 - **Root Causes**:
   - Synchronous icon resolution during window creation
@@ -19,16 +21,20 @@ This document summarizes the optimizations made to improve Windows startup perfo
 ## Optimizations Implemented
 
 ### 1. Fixed Application Name (package.json)
+
 **Changed**: Updated `"name": "my-electron-app"` to `"name": "lumberjack"`
 
-**Impact**: 
+**Impact**:
+
 - Ensures consistent branding across all application contexts
 - Build artifacts now correctly show "lumberjack@1.0.1" instead of "my-electron-app@1.0.1"
 
 ### 2. Deferred Icon Resolution (main.js)
+
 **Changed**: Moved icon resolution from synchronous (during window creation) to asynchronous (after window is shown)
 
 **Before**:
+
 ```javascript
 // Icon resolution happened during BrowserWindow creation
 let winIconOpt = {};
@@ -44,6 +50,7 @@ mainWindow = new BrowserWindow({
 ```
 
 **After**:
+
 ```javascript
 mainWindow = new BrowserWindow({
   // No icon set initially - faster creation
@@ -51,7 +58,7 @@ mainWindow = new BrowserWindow({
 
 mainWindow.once('ready-to-show', () => {
   mainWindow.show();
-  
+
   // Set icon asynchronously after window is visible
   if (process.platform === 'win32') {
     setImmediate(() => {
@@ -64,14 +71,17 @@ mainWindow.once('ready-to-show', () => {
 });
 ```
 
-**Impact**: 
+**Impact**:
+
 - Reduces window creation time by deferring non-critical icon file system operations
 - User sees the window faster (perceived performance improvement)
 
 ### 3. Icon Path Caching (main.js)
+
 **Changed**: Added caching to avoid repeated file system operations for icon resolution
 
 **Implementation**:
+
 ```javascript
 let cachedIconPath = null;
 
@@ -79,27 +89,31 @@ function resolveIconPath() {
   if (cachedIconPath !== null) {
     return cachedIconPath;
   }
-  
+
   // ... resolve icon path and cache result
   cachedIconPath = resolvedPath;
   return resolvedPath;
 }
 ```
 
-**Impact**: 
+**Impact**:
+
 - Eliminates redundant file system checks on subsequent icon requests
 - Reduces I/O operations during startup
 
 ### 4. Optimized Menu Building (main.js)
+
 **Changed**: Deferred menu building to run asynchronously after window starts loading
 
 **Before**:
+
 ```javascript
 buildMenu();
 mainWindow.loadURL(devUrl);
 ```
 
 **After**:
+
 ```javascript
 mainWindow.loadURL(devUrl);
 
@@ -110,15 +124,18 @@ setImmediate(async () => {
 });
 ```
 
-**Impact**: 
+**Impact**:
+
 - Window loading starts immediately without waiting for menu construction
 - Menu builds in parallel with window rendering
 - Improved perceived startup time
 
 ### 5. Startup Performance Tracking (main.js)
+
 **Added**: Performance measurement to track time to window ready
 
 **Implementation**:
+
 ```javascript
 const startTime = Date.now();
 
@@ -129,21 +146,26 @@ mainWindow.once('ready-to-show', () => {
 });
 ```
 
-**Impact**: 
+**Impact**:
+
 - Provides measurable feedback on startup performance
 - Helps identify performance regressions in future development
 
 ### 6. Window Title Branding (index.html)
+
 **Changed**: Updated window title from "Log Viewer" to "Lumberjack"
 
-**Impact**: 
+**Impact**:
+
 - Consistent branding across all UI elements
 - Professional appearance in taskbar and window title
 
 ### 7. Code Quality Improvements
+
 **Applied**: Prettier formatting across all source files
 
-**Impact**: 
+**Impact**:
+
 - Consistent code style throughout the project
 - Improved code readability and maintainability
 
@@ -156,6 +178,7 @@ Based on the optimizations implemented:
 3. **Overall Startup**: Expected reduction from ~30 seconds to under 5 seconds
 
 The actual improvement will depend on:
+
 - System performance (disk speed, CPU)
 - Antivirus scanning behavior
 - Windows Defender SmartScreen checks
@@ -166,6 +189,7 @@ The actual improvement will depend on:
 The following Windows-specific configurations are properly set:
 
 ### package.json Build Configuration
+
 ```json
 {
   "build": {
@@ -182,6 +206,7 @@ The following Windows-specific configurations are properly set:
 ```
 
 ### AppUserModelId (main.js)
+
 ```javascript
 if (process.platform === 'win32') {
   app.setAppUserModelId('de.hhla.lumberjack');
@@ -189,6 +214,7 @@ if (process.platform === 'win32') {
 ```
 
 This ensures:
+
 - Proper taskbar grouping
 - Correct icon display in Windows taskbar
 - Professional Windows integration
@@ -209,6 +235,7 @@ If startup time is still above expectations, consider:
 To verify the improvements:
 
 1. **Clean Installation Test**:
+
    ```cmd
    npm run build:portable:x64
    release\win-unpacked\Lumberjack.exe
@@ -232,6 +259,7 @@ To verify the improvements:
 ## Security
 
 All changes have been scanned with CodeQL:
+
 - **Result**: 0 vulnerabilities found
 - **Scope**: JavaScript/TypeScript analysis
 - **Status**: ✅ PASS
