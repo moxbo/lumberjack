@@ -50,6 +50,7 @@
       "package.json"
     ],
     "asar": true,
+    "asarUnpack": [],
     "electronVersion": "38.4.0",
     "electronDist": "node_modules/electron/dist",
     "artifactName": "Lumberjack-${version}-${arch}.${ext}",
