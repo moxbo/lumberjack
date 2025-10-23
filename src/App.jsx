@@ -7,6 +7,7 @@ import DCFilterPanel from './DCFilterPanel.jsx';
 import { LoggingStore } from './store/loggingStore.js';
 import { DiagnosticContextFilter } from './store/dcFilter.js';
 import { DragAndDropManager } from './utils/dnd.js';
+import { compareByTimestampId } from './utils/sort.js';
 
 function levelClass(level) {
   const l = (level || '').toUpperCase();
@@ -286,7 +287,8 @@ export default function App() {
   async function copyTsMsg() {
     try {
       const lines = [];
-      const order = Array.from(selected).sort((a, b) => a - b);
+      // Reihenfolge: sichtbare Sortierung beibehalten
+      const order = filteredIdx.filter((i) => selected.has(i));
       for (const idx of order) {
         const e = entries[idx];
         if (!e) continue;
@@ -368,6 +370,8 @@ export default function App() {
       } catch {}
       out.push(i);
     }
+    // Chronologisch sortieren (aufsteigend nach Zeitstempel)
+    out.sort((ia, ib) => compareByTimestampId(entries[ia], entries[ib]));
     return out;
   }, [entries, filter, dcVersion, stdFiltersEnabled]);
 
@@ -456,10 +460,18 @@ export default function App() {
   function toggleSelectIndex(idx, extendRange, keepOthers) {
     setSelected((prev) => {
       const next = keepOthers || extendRange ? new Set(prev) : new Set();
+      const curPos = filteredIdx.indexOf(idx);
       if (extendRange && lastClicked.current != null) {
-        const a = Math.min(lastClicked.current, idx);
-        const b = Math.max(lastClicked.current, idx);
-        for (let i = a; i <= b; i++) next.add(i);
+        const anchorPos = filteredIdx.indexOf(lastClicked.current);
+        if (anchorPos !== -1 && curPos !== -1) {
+          const a = Math.min(anchorPos, curPos);
+          const b = Math.max(anchorPos, curPos);
+          for (let i = a; i <= b; i++) next.add(filteredIdx[i]);
+        } else {
+          // Fallback: toggeln einzelner Eintrag
+          if (next.has(idx)) next.delete(idx);
+          else next.add(idx);
+        }
       } else {
         if (next.has(idx)) next.delete(idx);
         else next.add(idx);
