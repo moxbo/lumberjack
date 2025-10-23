@@ -1,5 +1,18 @@
 # lumberjack
 
+A fast, lightweight Electron-based log file viewer with advanced filtering capabilities.
+
+## Performance
+
+Lumberjack is optimized for near-instant startup:
+- **Bundle size**: 81KB (gzipped: 26KB)
+- **Startup time**: < 2 seconds (cold start on typical hardware)
+- **Memory efficient**: Lazy-loads features only when needed
+
+See [PERFORMANCE.md](PERFORMANCE.md) for details on optimizations implemented.
+
+## Features
+
 - Message-Filter: & = UND, | = ODER, ! = NICHT (Negation)
   - Case-insensitive Teilstring-Suche
   - Beispiele:
