@@ -75,6 +75,10 @@ export default function App() {
   const [selected, setSelected] = useState(new Set());
   const lastClicked = useRef(null);
 
+  // Follow-Modus: wenn aktiv, wird immer der letzte Eintrag ausgewählt & angezeigt
+  const [follow, setFollow] = useState(false);
+  const [followSmooth, setFollowSmooth] = useState(false);
+
   // Theme Mode: 'system' | 'light' | 'dark'
   const [themeMode, setThemeMode] = useState('system');
   function applyThemeMode(mode) {
@@ -374,12 +378,31 @@ export default function App() {
     }
   }, [filteredIdx, selected]);
 
+  // Follow-Effekt: wenn aktiv, selektiere immer den letzten gefilterten Eintrag und scrolle dorthin
+  const parentRef = useRef(null);
+  const rowH = 36;
+  useEffect(() => {
+    if (!follow) return;
+    if (!filteredIdx.length) return;
+    const last = filteredIdx[filteredIdx.length - 1];
+    const alreadyLast = selected.size === 1 && selected.has(last);
+    if (!alreadyLast) {
+      setSelected(new Set([last]));
+      lastClicked.current = last;
+    }
+    // Scroll an das Ende der Liste (letzter sichtbarer Index)
+    const visIndex = filteredIdx.length - 1;
+    const el = parentRef.current;
+    if (el) {
+      const targetTop = visIndex * rowH;
+      el.scrollTo({ top: targetTop, behavior: followSmooth ? 'smooth' : 'auto' });
+    }
+  }, [follow, filteredIdx, followSmooth]);
+
   const countTotal = entries.length;
   const countFiltered = filteredIdx.length;
   const countSelected = selected.size;
 
-  const parentRef = useRef(null);
-  const rowH = 36;
   const virtualizer = useVirtualizer({
     count: filteredIdx.length,
     getScrollElement: () => parentRef.current,
@@ -539,6 +562,8 @@ export default function App() {
           setThemeMode(mode);
           applyThemeMode(mode);
         }
+        if (typeof r.follow === 'boolean') setFollow(!!r.follow);
+        if (typeof r.followSmooth === 'boolean') setFollowSmooth(!!r.followSmooth);
 
         // CSS Vars
         const root = document.documentElement;
@@ -700,7 +725,7 @@ export default function App() {
     };
   }, [httpPollId, pollMs]);
 
-  // ESC: modal / Kontextmenü schließen
+  // ESC: modal / Kontextmenü schließen + F8: Follow toggeln
   useEffect(() => {
     const onKey = (e) => {
       if (e.key === 'Escape') {
@@ -711,10 +736,20 @@ export default function App() {
         if (ctxMenu.open) setCtxMenu({ open: false, x: 0, y: 0 });
         if (httpMenu.open) setHttpMenu({ open: false, x: 0, y: 0 });
       }
+      if (e.key === 'F8') {
+        // Nicht auslösen, wenn in Eingabefeldern getippt wird
+        const tag = (e.target && e.target.tagName) || '';
+        const isEditable = ['INPUT', 'TEXTAREA', 'SELECT'].includes(String(tag).toUpperCase()) || e.target?.isContentEditable;
+        if (isEditable) return;
+        e.preventDefault();
+        const v = !follow;
+        setFollow(v);
+        try { window.api.settingsSet({ follow: v }); } catch {}
+      }
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [showSettings, showHttpLoadDlg, showHttpPollDlg, showMdcModal, ctxMenu.open, httpMenu.open]);
+  }, [showSettings, showHttpLoadDlg, showHttpPollDlg, showMdcModal, ctxMenu.open, httpMenu.open, follow]);
 
   // Drag & Drop
   useEffect(() => {
@@ -1275,6 +1310,33 @@ export default function App() {
           <button onClick={clearLogs} disabled={entries.length === 0}>
             Logs leeren
           </button>
+          <label style={{ marginLeft: '10px', display: 'inline-flex', alignItems: 'center', gap: '6px' }} title="Immer den letzten Eintrag auswählen & anzeigen">
+            <input
+              type="checkbox"
+              className="native-checkbox"
+              checked={follow}
+              onChange={async (e) => {
+                const v = e.currentTarget.checked;
+                setFollow(v);
+                try { await window.api.settingsSet({ follow: v }); } catch {}
+              }}
+            />
+            <span>Follow</span>
+          </label>
+          <label style={{ marginLeft: '8px', display: 'inline-flex', alignItems: 'center', gap: '6px' }} title="Sanftes Scrollen, wenn Follow aktiv ist">
+            <input
+              type="checkbox"
+              className="native-checkbox"
+              checked={followSmooth}
+              onChange={async (e) => {
+                const v = e.currentTarget.checked;
+                setFollowSmooth(v);
+                try { await window.api.settingsSet({ followSmooth: v }); } catch {}
+              }}
+              disabled={!follow}
+            />
+            <span>Smooth</span>
+          </label>
         </div>
         <div className="section">
           <button
