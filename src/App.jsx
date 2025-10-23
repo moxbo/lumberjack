@@ -3,7 +3,8 @@ import { Fragment } from 'preact';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import { highlightAll } from './utils/highlight.js';
 import { msgMatches } from './utils/msgFilter.js';
-import DCFilterDialog from './DCFilterDialog.jsx';
+// Dynamic import for DCFilterDialog (code splitting)
+// Preact supports dynamic imports directly
 import { LoggingStore } from './store/loggingStore.js';
 import { DiagnosticContextFilter } from './store/dcFilter.js';
 import { DragAndDropManager } from './utils/dnd.js';
@@ -111,6 +112,21 @@ export default function App() {
 
   // Neuer Dialog-State für DC-Filter
   const [showDcDialog, setShowDcDialog] = useState(false);
+  // Lazy-loaded DC Filter Dialog component
+  const [DCFilterDialog, setDCFilterDialog] = useState(null);
+
+  // Load DCFilterDialog on demand
+  useEffect(() => {
+    if (showDcDialog && !DCFilterDialog) {
+      import('./DCFilterDialog.jsx')
+        .then((module) => {
+          setDCFilterDialog(() => module.default);
+        })
+        .catch((err) => {
+          console.error('Failed to load DCFilterDialog:', err);
+        });
+    }
+  }, [showDcDialog, DCFilterDialog]);
 
   // Filter-Historien
   const [histLogger, setHistLogger] = useState([]);
@@ -1044,7 +1060,11 @@ export default function App() {
         <div className="modal-backdrop" onClick={() => setShowDcDialog(false)}>
           <div className="modal modal-wide" onClick={(e) => e.stopPropagation()}>
             <h3>Diagnostic Context Filter</h3>
-            <DCFilterDialog />
+            {DCFilterDialog ? (
+              <DCFilterDialog />
+            ) : (
+              <div style={{ padding: '20px' }}>Lädt...</div>
+            )}
             <div className="modal-actions">
               <button onClick={() => setShowDcDialog(false)}>Schließen</button>
             </div>
