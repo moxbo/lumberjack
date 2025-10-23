@@ -3,10 +3,10 @@ import { Fragment } from 'preact';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import { highlightAll } from './utils/highlight.js';
 import { msgMatches } from './utils/msgFilter.js';
-import { DragAndDropManager } from './utils/dnd.js';
 import DCFilterPanel from './DCFilterPanel.jsx';
 import { LoggingStore } from './store/loggingStore.js';
 import { DiagnosticContextFilter } from './store/dcFilter.js';
+import { DragAndDropManager } from './utils/dnd.js';
 
 function levelClass(level) {
   const l = (level || '').toUpperCase();
@@ -93,7 +93,6 @@ export default function App() {
     logger: '',
     thread: '',
     service: '',
-    trace: '',
     message: '',
   });
   const [stdFiltersEnabled, setStdFiltersEnabled] = useState(true);
@@ -107,7 +106,6 @@ export default function App() {
 
   // Filter-Historien
   const [histLogger, setHistLogger] = useState([]);
-  const [histTrace, setHistTrace] = useState([]); // einzelne Trace-IDs
 
   const [tcpStatus, setTcpStatus] = useState('');
   const [httpStatus, setHttpStatus] = useState('');
@@ -261,7 +259,7 @@ export default function App() {
     });
     setCtxMenu({ open: false, x: 0, y: 0 });
   }
-  // TraceIds aus Auswahl in Filter übernehmen
+  // TraceIds aus Auswahl in Filter übernehmen (kein Standard-Trace-Filter mehr)
   function adoptTraceIds() {
     const tokens = [];
     for (const idx of selected) {
@@ -274,17 +272,9 @@ export default function App() {
     }
     const uniq = Array.from(new Set(tokens)).filter(Boolean);
     if (!uniq.length) return;
-    setStdFiltersEnabled(true);
-    setFilter((f) => {
-      const cur = (f.trace || '')
-        .split('|')
-        .map((s) => s.trim())
-        .filter(Boolean);
-      const all = Array.from(new Set([...cur, ...uniq]));
-      return { ...f, trace: all.join('|') };
-    });
     try {
-      addTraceTokensToHistory(uniq);
+      for (const t of uniq) DiagnosticContextFilter.addMdcEntry('traceId', t);
+      DiagnosticContextFilter.setEnabled(true);
     } catch {}
     setCtxMenu({ open: false, x: 0, y: 0 });
   }
@@ -339,48 +329,15 @@ export default function App() {
     const logger = filter.logger.trim().toLowerCase();
     const thread = (filter.thread ?? '').trim().toLowerCase();
     const service = (filter.service ?? '').trim().toLowerCase();
-    const traceList = (filter.trace.trim().toLowerCase() || '')
-      .split('|')
-      .map((t) => t.trim())
-      .filter(Boolean);
     const msgExpr = filter.message || '';
     const out = [];
     for (let i = 0; i < entries.length; i++) {
       const e = entries[i];
       if (stdFiltersEnabled) {
         if (level && String(e.level || '').toUpperCase() !== level) continue;
-        if (
-          logger &&
-          !String(e.logger || '')
-            .toLowerCase()
-            .includes(logger)
-        )
-          continue;
-        if (
-          thread &&
-          !String(e.thread || '')
-            .toLowerCase()
-            .includes(thread)
-        )
-          continue;
-        if (
-          service &&
-          !String(e.service || '')
-            .toLowerCase()
-            .includes(service)
-        )
-          continue;
-        if (traceList.length) {
-          const et = String(e.traceId || '').toLowerCase();
-          let ok = false;
-          for (const t of traceList) {
-            if (et.includes(t)) {
-              ok = true;
-              break;
-            }
-          }
-          if (!ok) continue;
-        }
+        if (logger && !String(e.logger || '').toLowerCase().includes(logger)) continue;
+        if (thread && !String(e.thread || '').toLowerCase().includes(thread)) continue;
+        if (service && !String(e.service || '').toLowerCase().includes(service)) continue;
         if (!msgMatches(e?.message, msgExpr)) continue;
       }
       // MDC filter muss matchen
@@ -393,17 +350,12 @@ export default function App() {
   }, [entries, filter, dcVersion, stdFiltersEnabled]);
 
   const searchMatchIdx = useMemo(() => {
-    const s = search.trim().toLowerCase();
+    const s = search.trim();
     if (!s) return [];
     const out = [];
     for (const idx of filteredIdx) {
       const e = entries[idx];
-      if (
-        String(e?.message || '')
-          .toLowerCase()
-          .includes(s)
-      )
-        out.push(idx);
+      if (msgMatches(e?.message, s)) out.push(idx);
     }
     return out;
   }, [search, filteredIdx, entries]);
@@ -515,18 +467,50 @@ export default function App() {
   // sortierte MDC-Paare für die Detailansicht
   const mdcPairs = useMemo(() => {
     const m = selectedEntry && selectedEntry.mdc ? selectedEntry.mdc : {};
-    // Only exclude logger/thread from MDC details, keep traceId variants visible here
+    // Only exclude logger/thread from MDC details, keep other keys
     const banned = new Set(['logger', 'thread']);
-    const arr = Object.entries(m)
-      .filter(([k]) => !banned.has(String(k)))
+
+    // Map der Original-Keys (inkl. Original-Value), plus Lowercase-Lookup für Trace-Erkennung
+    const entries = Object.entries(m).filter(([k]) => !banned.has(String(k)));
+    const lowerMap = new Map(entries.map(([k, v]) => [String(k).toLowerCase(), v]));
+
+    // TraceID konsolidieren: verschiedene Varianten case-insensitiv erkennen
+    const traceLowerCandidates = [
+      'traceid',
+      'trace_id',
+      'trace.id',
+      'trace-id',
+      'x-trace-id',
+      'x_trace_id',
+      'x.trace.id',
+      'trace',
+    ];
+    let bestTrace = '';
+    for (const lk of traceLowerCandidates) {
+      const v = lowerMap.get(lk);
+      if (v != null && String(v).trim()) {
+        bestTrace = String(v).trim();
+        break;
+      }
+    }
+
+    // Alle MDC-Paare, aber alle Trace-Varianten (case-insensitiv) entfernen
+    const isTraceKeyLower = (lk) => traceLowerCandidates.includes(lk);
+    const filtered = entries
+      .filter(([k]) => !isTraceKeyLower(String(k).toLowerCase()))
       .map(([k, v]) => [String(k), String(v)]);
-    arr.sort((a, b) => a[0].localeCompare(b[0]) || a[1].localeCompare(b[1]));
-    return arr;
+
+    // Einen Eintrag "TraceID" hinzufügen, falls vorhanden
+    if (bestTrace) filtered.push(['TraceID', bestTrace]);
+
+    filtered.sort((a, b) => a[0].localeCompare(b[0]) || a[1].localeCompare(b[1]));
+    return filtered;
   }, [selectedEntry]);
 
   function addMdcToFilter(k, v) {
     try {
-      DiagnosticContextFilter.addMdcEntry(k, v);
+      const key = k === 'TraceID' ? 'traceId' : k; // konsolidierten Key auf normales traceId mappen
+      DiagnosticContextFilter.addMdcEntry(key, v);
       DiagnosticContextFilter.setEnabled(true);
     } catch {}
   }
@@ -550,7 +534,6 @@ export default function App() {
         if (typeof r.httpUrl === 'string') setHttpUrl(r.httpUrl);
         if (r.httpInterval != null) setHttpInterval(Number(r.httpInterval) || 5000);
         if (Array.isArray(r.histLogger)) setHistLogger(r.histLogger);
-        if (Array.isArray(r.histTrace)) setHistTrace(r.histTrace);
         if (typeof r.themeMode === 'string') {
           const mode = ['light', 'dark', 'system'].includes(r.themeMode) ? r.themeMode : 'system';
           setThemeMode(mode);
@@ -640,10 +623,6 @@ export default function App() {
       setHistLogger(arr);
       window.api.settingsSet({ histLogger: arr });
     }
-    if (kind === 'trace') {
-      setHistTrace(arr);
-      window.api.settingsSet({ histTrace: arr });
-    }
   }
   function addToHistory(kind, value) {
     const v = String(value || '').trim();
@@ -656,29 +635,8 @@ export default function App() {
       setAndPersistHistory('logger', cur.slice(0, 6));
     }
   }
-  function addTraceTokensToHistory(tokens) {
-    const cur = histTrace.slice();
-    const use = new Set(
-      (filter.trace || '')
-        .split('|')
-        .map((s) => s.trim())
-        .filter(Boolean)
-    );
-    for (const t of tokens.map((s) => String(s || '').trim()).filter(Boolean)) {
-      const i = cur.indexOf(t);
-      if (i >= 0) cur.splice(i, 1);
-      cur.unshift(t);
-    }
-    // trim auf 6, aber in-use Tokens nicht löschen
-    const out = [];
-    for (const item of cur) {
-      if (out.length >= 6 && !use.has(item)) continue;
-      if (!out.includes(item)) out.push(item);
-    }
-    setAndPersistHistory('trace', out);
-  }
 
-  // Toolbar HTTP Menü öffnen
+  // HTTP Dropdown-Menü (toolbar)
   function openHttpMenu(ev) {
     ev.preventDefault();
     const btn = httpBtnRef.current;
@@ -1025,7 +983,7 @@ export default function App() {
                     try {
                       // Persistiere URL bequemlichkeitshalber
                       setHttpUrl(url);
-                      window.api.settingsSet({ httpUrl: url });
+                      await window.api.settingsSet({ httpUrl: url });
                       const res = await window.api.httpLoadOnce(url);
                       if (res.ok) appendEntries(res.entries);
                       else setHttpStatus('Fehler: ' + res.error);
@@ -1090,7 +1048,7 @@ export default function App() {
                     // Persistiere URL & Intervall
                     setHttpUrl(url);
                     setHttpInterval(ms);
-                    window.api.settingsSet({ httpUrl: url, httpInterval: ms });
+                    await  window.api.settingsSet({ httpUrl: url, httpInterval: ms });
                     const r = await window.api.httpStartPoll({ url, intervalMs: ms });
                     if (r.ok) {
                       setHttpPollId(r.id);
@@ -1202,6 +1160,7 @@ export default function App() {
                     <label style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                       <input
                         type="checkbox"
+                        className="native-checkbox"
                         checked={!!form.logToFile}
                         onChange={(e) => setForm({ ...form, logToFile: e.currentTarget.checked })}
                       />
@@ -1340,7 +1299,7 @@ export default function App() {
             type="text"
             value={search}
             onInput={(e) => setSearch(e.currentTarget.value)}
-            placeholder="Volltext in message…"
+            placeholder="Volltext in message… (unterstützt &, |, !)"
           />
           <button
             id="btnPrevMatch"
@@ -1363,6 +1322,7 @@ export default function App() {
           <label>
             <input
               type="checkbox"
+              className="native-checkbox"
               checked={stdFiltersEnabled}
               onChange={(e) => setStdFiltersEnabled(e.currentTarget.checked)}
             />{' '}
@@ -1415,26 +1375,11 @@ export default function App() {
             placeholder="Message-Filter: & = UND, | = ODER, ! = NICHT"
             disabled={!stdFiltersEnabled}
           />
-          <label>TraceId</label>
-          <input
-            id="filterTrace"
-            list="traceHistoryList"
-            type="text"
-            value={filter.trace}
-            onInput={(e) => setFilter({ ...filter, trace: e.currentTarget.value })}
-            placeholder="TraceId (| getrennt)"
-            disabled={!stdFiltersEnabled}
-          />
-          <datalist id="traceHistoryList">
-            {histTrace.map((v, i) => (
-              <option key={i} value={v} />
-            ))}
-          </datalist>
           <button
             id="btnClearFilters"
             onClick={() => {
               setSearch('');
-              setFilter({ level: '', logger: '', thread: '', service: '', trace: '', message: '' });
+              setFilter({ level: '', logger: '', thread: '', service: '', message: '' });
             }}
           >
             Filter leeren
@@ -1461,12 +1406,8 @@ export default function App() {
         </div>
       </header>
 
-      {/* Aktive Filter-Chips */}
+      {/* Aktive Filter-Chips: ohne TraceId-Chips */}
       {(() => {
-        const traceTokens = (filter.trace || '')
-          .split('|')
-          .map((s) => s.trim())
-          .filter(Boolean);
         const stdFilterChips = [];
         if (filter.level)
           stdFilterChips.push({
@@ -1492,22 +1433,7 @@ export default function App() {
             label: `Message: ${filter.message}`,
             onRemove: () => setFilter((f) => ({ ...f, message: '' })),
           });
-        const allChips = [
-          ...stdFilterChips.map((c) => ({ ...c, type: 'std' })),
-          ...traceTokens.map((t) => ({
-            key: `trace:${t}`,
-            type: 'trace',
-            label: `TraceId: ${t}`,
-            onRemove: () =>
-              setFilter((f) => ({
-                ...f,
-                trace: (f.trace || '')
-                  .split('|')
-                  .filter((x) => x.trim() !== t)
-                  .join('|'),
-              })),
-          })),
-        ];
+        const allChips = [...stdFilterChips.map((c) => ({ ...c, type: 'std' }))];
         return allChips.length > 0 ? (
           <div style={{ padding: '6px 12px' }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
@@ -1524,14 +1450,7 @@ export default function App() {
               </div>
               <button
                 onClick={() =>
-                  setFilter((f) => ({
-                    ...f,
-                    level: '',
-                    logger: '',
-                    thread: '',
-                    message: '',
-                    trace: '',
-                  }))
+                  setFilter((f) => ({ ...f, level: '', logger: '', thread: '', message: '' }))
                 }
                 title="Alle Filter-Chips löschen"
               >
@@ -1656,13 +1575,10 @@ export default function App() {
               <div id="detailsView">
                 {/* Meta-Infos kompakt in zwei Spalten */}
                 <div className="meta-grid">
+                  {/* Reihe 1: Zeit + Logger */}
                   <div className="kv">
                     <span>Zeit</span>
                     <code id="dTime">{fmtTimestamp(selectedEntry.timestamp)}</code>
-                  </div>
-                  <div className="kv">
-                    <span>Level</span>
-                    <code id="dLevel">{fmt(selectedEntry.level)}</code>
                   </div>
                   <div className="kv">
                     <span>Logger</span>
@@ -1688,6 +1604,11 @@ export default function App() {
                       </button>
                     </div>
                   </div>
+                  {/* Reihe 2: Level + Thread */}
+                  <div className="kv">
+                    <span>Level</span>
+                    <code id="dLevel">{fmt(selectedEntry.level)}</code>
+                  </div>
                   <div className="kv">
                     <span>Thread</span>
                     <div
@@ -1711,7 +1632,8 @@ export default function App() {
                       </button>
                     </div>
                   </div>
-                  <div className="kv">
+                  {/* Rest wie zuvor */}
+                  <div className="kv" style={{ gridColumn: '1 / span 2' }}>
                     <span>Source</span>
                     <code id="dSource">{fmt(selectedEntry.source)}</code>
                   </div>
@@ -1914,7 +1836,7 @@ export default function App() {
           </div>
           <div className="sep" />
           <div className="item" onClick={adoptTraceIds}>
-            TraceId(s) in Filter übernehmen
+            TraceId(s) in MDC-Filter übernehmen
           </div>
           <div className="item" onClick={copyTsMsg}>
             Kopieren: Zeit und Message

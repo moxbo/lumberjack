@@ -655,7 +655,8 @@ button:disabled {
   opacity: 0.6;
   cursor: default;
 }
-input,
+/* WICHTIG: Nur Text-/Select-Inputs generisch stylen, NICHT Checkboxes/Radios */
+input:not([type='checkbox']):not([type='radio']),
 select {
   appearance: none;
   border: 1px solid var(--color-border);
@@ -665,78 +666,79 @@ select {
   padding: 6px 8px;
 }
 
-/* --- Drop overlay --- */
-.drop-overlay {
-  position: fixed;
-  inset: 0;
-  display: grid;
-  place-items: center;
-  background: rgba(0, 0, 0, 0.4);
-  color: #fff;
-  font-size: 18px;
-  z-index: var(--z-backdrop);
-  pointer-events: none;
+/* Checkboxen: harte Rücksetzung auf native Darstellung */
+input[type='checkbox'] {
+  appearance: auto !important;
+  -webkit-appearance: checkbox !important;
+  background: initial !important;
+  border: initial !important;
+  width: 16px;
+  height: 16px;
+  margin: 0;
+  vertical-align: middle;
+  accent-color: var(--color-primary);
 }
 
-/* --- DC filter panel minimal --- */
-.dc-panel .context-menu {
-  min-width: 160px;
-}
-.dc-panel .context-menu .item {
-  padding: 6px 10px;
-}
-
-/* --- Details layout helpers --- */
-.meta-grid {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 8px 16px;
-  margin-bottom: 8px;
-}
-@media (max-width: 900px) {
-  .meta-grid {
-    grid-template-columns: 1fr;
-  }
-}
-
+/* MDC-Grid: kompakte 2+1 Spalten; Werte ohne Box-Dekor anzeigen */
 .mdc-grid {
   display: grid;
   grid-template-columns: 140px 1fr auto;
-  gap: 8px 12px;
+  gap: 6px 12px; /* etwas kompakter */
   align-items: center;
 }
 .mdc-key {
   color: var(--color-text-secondary);
   word-break: break-word;
 }
+/* Entferne Box-/Hintergrund-Styling für Werte */
 .mdc-val code {
-  display: inline-flex;
-  max-width: 100%;
-  overflow: auto;
-  padding: 3px 6px;
-  background: var(--color-bg-hover);
-  border: 1px solid var(--color-divider);
-  border-radius: 6px;
+  display: inline;
+  padding: 0;
+  background: transparent;
+  border: 0;
+  border-radius: 0;
 }
 .mdc-act {
   text-align: right;
 }
 
-/* Markierte Zeilen: Farbstreifen links sorgt für Lesbarkeit (Box-Shadow via Inline-Style) */
-.row.sel {
-  background: rgba(10, 132, 255, 0.12);
+/* Entferne getönte Sonderbehandlung für MDC-Werte */
+.details[data-tinted="1"] .mdc-val code {
+  background: transparent;
 }
 
 /* Tinted details: Kinder-Elemente nutzen gläserische (halbtransparente) Flächen,
    damit die Tönung sichtbar bleibt und der Text lesbar ist. */
 .details[data-tinted="1"] button,
-.details[data-tinted="1"] input,
+.details[data-tinted="1"] input:not([type='checkbox']),
 .details[data-tinted="1"] select {
   background: var(--glass-bg);
 }
-.details[data-tinted="1"] .mdc-val code {
-  background: var(--glass-bg);
+
+/* Klasse für sicher native Checkbox-Darstellung */
+.native-checkbox {
+  appearance: auto !important;
+  -webkit-appearance: checkbox !important;
+  background: initial !important;
+  border: initial !important;
+  width: 16px;
+  height: 16px;
+  margin: 0;
+  vertical-align: middle;
+  accent-color: var(--color-primary);
 }
-.details[data-tinted="1"] {
-  background-image: linear-gradient(0deg, var(--details-tint, transparent), var(--details-tint, transparent));
+
+/* --- Meta grid in Details: 2 Spalten (Zeit+Logger, Level+Thread) --- */
+.meta-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px 16px; /* Reihen-, Spaltenabstand */
+  align-items: start;
 }
+/* Bei sehr schmalen Breiten untereinander stapeln */
+@media (max-width: 720px) {
+  .meta-grid {
+    grid-template-columns: 1fr;
+  }
+}
+

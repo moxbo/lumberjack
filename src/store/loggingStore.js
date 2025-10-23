@@ -35,6 +35,16 @@ function findExternalId(raw) {
   return null;
 }
 
+function findTraceId(raw) {
+  if (!raw || typeof raw !== 'object') return null;
+  const candidates = ['traceId', 'trace_id', 'trace', 'trace.id', 'TraceID'];
+  for (const k of candidates) {
+    const v = raw[k];
+    if (isString(v) && v.trim()) return v.trim();
+  }
+  return null;
+}
+
 export function computeMdcFromRaw(raw) {
   const mdc = {};
   if (!raw || typeof raw !== 'object') return mdc;
@@ -48,6 +58,9 @@ export function computeMdcFromRaw(raw) {
   }
   const ext = findExternalId(raw);
   if (ext && !mdc.externalId) mdc.externalId = ext;
+  // Normalisierte TraceId zusätzlich bereitstellen, um MDC-Filterung über einen Key zu ermöglichen
+  const tid = findTraceId(raw);
+  if (tid && !mdc.traceId) mdc.traceId = tid;
   return mdc;
 }
 

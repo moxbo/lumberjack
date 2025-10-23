@@ -270,9 +270,58 @@ function updateMenu() {
   buildMenu();
 }
 
+function resolveIconPath() {
+  const resPath = process.resourcesPath || '';
+  const candidates = [
+    // Bevorzuge entpackte Ressourcen
+    path.join(resPath, 'app.asar.unpacked', 'images', 'icon.ico'),
+    path.join(resPath, 'images', 'icon.ico'),
+    // Danach Pfad innerhalb des asar (funktioniert nicht immer zuverlässig unter Windows)
+    path.join(__dirname, 'images', 'icon.ico'),
+    // Fallback: Projekt-Root im Dev
+    path.join(process.cwd(), 'images', 'icon.ico'),
+  ];
+  for (const p of candidates) {
+    try {
+      if (fs.existsSync(p)) {
+        // Wenn die Datei innerhalb von app.asar liegt, extrahiere sie in userData für Windows
+        if (p.includes('.asar' + path.sep) || p.endsWith('.asar') || p.includes('.asar/')) {
+          try {
+            const buf = fs.readFileSync(p);
+            const outDir = path.join(app.getPath('userData'), 'assets');
+            fs.mkdirSync(outDir, { recursive: true });
+            const outPath = path.join(outDir, 'app-icon.ico');
+            fs.writeFileSync(outPath, buf);
+            return outPath;
+          } catch (e) {
+            // Fallback: trotzdem Originalpfad zurückgeben
+            return p;
+          }
+        }
+        return p;
+      }
+    } catch {}
+  }
+  return null;
+}
+
 function createWindow() {
   // Create window immediately with default settings for faster startup
   const { width, height, x, y } = settings.windowBounds || {};
+
+  // Icon nur unter Windows setzen
+  let winIconOpt = {};
+  if (process.platform === 'win32') {
+    const iconPath = resolveIconPath();
+    if (iconPath) {
+      console.log('App-Icon verwendet:', iconPath);
+      // Unter Windows bevorzugt Electron einen Dateipfad zur ICO
+      winIconOpt = { icon: iconPath };
+    } else {
+      console.warn('Kein Icon gefunden (images/icon.ico).');
+    }
+  }
+
   mainWindow = new BrowserWindow({
     width: width || 1200,
     height: height || 800,
@@ -284,6 +333,7 @@ function createWindow() {
       sandbox: false,
     },
     show: false, // Don't show until ready for smoother experience
+    ...winIconOpt,
   });
 
   // Verhindert, dass ein Datei-/Link-Drop die App zu einer Datei/URL navigiert
@@ -336,12 +386,21 @@ function createWindow() {
   });
 }
 
+// Unter Windows AppUserModelID setzen (wichtig für Taskbar/Startmenü-Icon und Gruppierung)
+if (process.platform === 'win32') {
+  try {
+    app.setAppUserModelId('de.hhla.lumberjack');
+  } catch {}
+}
+
 app.whenReady().then(() => {
   createWindow();
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();
   });
 });
+
+
 
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') {

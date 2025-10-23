@@ -57,7 +57,14 @@ export default function DCFilterPanel() {
   function onAdd() {
     const key = String(selectedKey || '').trim();
     if (!key) return;
-    DiagnosticContextFilter.addMdcEntry(key, val);
+    const raw = String(val ?? '');
+    const parts = raw.split('|').map((s) => s.trim()).filter((s) => s.length > 0);
+    if (parts.length === 0) {
+      // Wildcard: nur Key muss vorhanden sein
+      DiagnosticContextFilter.addMdcEntry(key, '');
+    } else {
+      for (const p of parts) DiagnosticContextFilter.addMdcEntry(key, p);
+    }
     setVal('');
   }
   function onRemoveSelected() {
@@ -116,6 +123,11 @@ export default function DCFilterPanel() {
     setCtx({ open: false, x: 0, y: 0 });
   }
 
+  function toggleActive(e, checked) {
+    if (checked) DiagnosticContextFilter.activateMdcEntry(e.key, e.val);
+    else DiagnosticContextFilter.deactivateMdcEntry(e.key, e.val);
+  }
+
   // F2: show known values modal for selectedKey
   const [showValues, setShowValues] = useState(false);
   const [values, setValues] = useState([]);
@@ -130,6 +142,12 @@ export default function DCFilterPanel() {
       setShowValues(true);
     }
   }
+  function openValuePicker() {
+    const k = String(selectedKey || '').trim();
+    const vals = k ? MDCListener.getSortedValues(k) : [];
+    setValues(vals);
+    setShowValues(true);
+  }
   function chooseValue(v) {
     setVal(v);
     setShowValues(false);
@@ -142,8 +160,8 @@ export default function DCFilterPanel() {
     <div class="dc-panel" style="border-top:1px solid #ddd; padding:8px 12px;">
       <div style="display:flex; gap:12px; align-items:end; flex-wrap:wrap; justify-content:space-between;">
         <div style="display:flex; gap:12px; align-items:end; flex-wrap:wrap;">
-          <div style="display:flex; flex-direction:column;">
-            <label style="font-size:12px; color:#555;">MDC Key</label>
+          <div class="form-field">
+            <label>MDC Key</label>
             <input
               class="bright-input"
               list="dc-keys"
@@ -157,17 +175,20 @@ export default function DCFilterPanel() {
               ))}
             </datalist>
           </div>
-          <div style="display:flex; flex-direction:column; min-width:220px;">
-            <label style="font-size:12px; color:#555;">MDC Value</label>
-            <input
-              class="bright-input"
-              ref={valueInputRef}
-              value={val}
-              onInput={(e) => setVal(e.currentTarget.value)}
-              onKeyDown={onValueKeyDown}
-              title="Mögliche Werte mit F2 (Kein Eintrag findet alle MDC-Einträge mit dem Schlüssel)"
-              placeholder="Wert oder leer für alle…"
-            />
+          <div class="form-field" style="min-width:260px;">
+            <label>MDC Value</label>
+            <div style="display:flex; gap:6px; align-items:center;">
+              <input
+                class="bright-input"
+                ref={valueInputRef}
+                value={val}
+                onInput={(e) => setVal(e.currentTarget.value)}
+                onKeyDown={onValueKeyDown}
+                title="Mehrere Werte mit | trennen. F2 oder Button öffnet Vorschläge. Leer = alle Werte dieses Keys."
+                placeholder="Wert(e) oder leer für alle…"
+              />
+              <button title="Vorschläge anzeigen (F2)" onClick={openValuePicker}>Werte…</button>
+            </div>
           </div>
           <div style="display:flex; gap:6px; align-items:center; padding-bottom:2px;">
             <button onClick={onAdd} disabled={addDisabled}>
@@ -184,6 +205,7 @@ export default function DCFilterPanel() {
         <label style="display:inline-flex; gap:6px; align-items:center; white-space:nowrap;">
           <input
             type="checkbox"
+            class="native-checkbox"
             checked={enabled}
             onChange={(e) => DiagnosticContextFilter.setEnabled(e.currentTarget.checked)}
           />
@@ -193,33 +215,53 @@ export default function DCFilterPanel() {
 
       <div style="margin-top:8px;">
         <div style="font-size:12px; color:#666; margin-bottom:4px;">Diagnostic Context Filter</div>
-        <div class="dc-table" style="border:1px solid #ddd; max-height:200px; overflow:auto;">
-          <div
-            class="dc-header"
-            style="display:grid; grid-template-columns: 1fr 1fr 70px; font-weight:600; background:#f8f8f8; border-bottom:1px solid #ddd; padding:4px 8px;"
-          >
-            <div>Key</div>
-            <div>Value</div>
-            <div>Active</div>
-          </div>
-          {rows.map((e) => {
-            const id = dcEntryId(e);
-            const isSel = sel.includes(id);
-            return (
-              <div
-                key={id}
-                class={`dc-row${isSel ? ' sel' : ''}`}
-                style="display:grid; grid-template-columns: 1fr 1fr 70px; padding:4px 8px; border-bottom:1px solid #eee; cursor:default;"
-                onClick={(ev) => toggleRow(id, ev.shiftKey, ev.ctrlKey || ev.metaKey)}
-                onContextMenu={(ev) => openCtx(ev, id)}
-              >
-                <div>{e.key}</div>
-                <div>{e.val}</div>
-                <div>{e.active ? 'yes' : 'no'}</div>
-              </div>
-            );
-          })}
-          {rows.length === 0 && <div style="padding:8px; color:#777;">Keine Einträge</div>}
+        <div class="table-wrap">
+          <table class="data-table">
+            <thead>
+              <tr>
+                <th>Key</th>
+                <th>Value</th>
+                <th class="col-active">Aktiv</th>
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((e) => {
+                const id = dcEntryId(e);
+                const isSel = sel.includes(id);
+                const rowCls = `${isSel ? 'selected ' : ''}${!e.active ? 'inactive' : ''}`.trim();
+                return (
+                  <tr
+                    key={id}
+                    class={rowCls}
+                    onClick={(ev) => toggleRow(id, ev.shiftKey, ev.ctrlKey || ev.metaKey)}
+                    onContextMenu={(ev) => openCtx(ev, id)}
+                    style="cursor: default;"
+                  >
+                    <td>{e.key}</td>
+                    <td>{e.val || <span style="color:#888">(alle)</span>}</td>
+                    <td>
+                      <div style="display:flex; align-items:center; gap:8px;">
+                        <input
+                          type="checkbox"
+                          class="native-checkbox"
+                          checked={!!e.active}
+                          onChange={(ev) => toggleActive(e, ev.currentTarget.checked)}
+                          aria-label={e.active ? 'aktiv' : 'aus'}
+                          title={e.active ? 'aktiv' : 'aus'}
+                        />
+                        <span class={`badge ${e.active ? 'on' : 'off'}`}>{e.active ? 'Aktiv' : 'Aus'}</span>
+                      </div>
+                    </td>
+                  </tr>
+                );
+              })}
+              {rows.length === 0 && (
+                <tr>
+                  <td colSpan={3} style="padding:8px; color:#777;">Keine Einträge</td>
+                </tr>
+              )}
+            </tbody>
+          </table>
         </div>
       </div>
 
@@ -230,10 +272,10 @@ export default function DCFilterPanel() {
           style={{ position: 'fixed', left: ctx.x + 'px', top: ctx.y + 'px' }}
         >
           <div class="item" onClick={() => activateSelected(true)}>
-            Aktiviere
+            Aktivieren
           </div>
           <div class="item" onClick={() => activateSelected(false)}>
-            Deaktiviere
+            Deaktivieren
           </div>
           <div
             class="item"
@@ -242,7 +284,7 @@ export default function DCFilterPanel() {
               setCtx({ open: false, x: 0, y: 0 });
             }}
           >
-            Remove
+            Entfernen
           </div>
         </div>
       )}
