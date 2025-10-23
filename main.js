@@ -2,6 +2,9 @@ const { app, BrowserWindow, ipcMain, dialog, Menu } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const net = require('net');
+
+// Track startup performance
+const startTime = Date.now();
 // Lazy-load heavy modules only when needed
 let AdmZip = null;
 function getAdmZip() {
@@ -409,6 +412,8 @@ function createWindow() {
 
   // Show window as soon as it's ready to paint
   mainWindow.once('ready-to-show', () => {
+    const readyTime = Date.now() - startTime;
+    console.log(`Window ready in ${readyTime}ms`);
     mainWindow.show();
     
     // Set icon asynchronously after window is shown (Windows only)
