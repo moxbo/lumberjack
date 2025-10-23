@@ -509,8 +509,10 @@ export default function App() {
   }
 
   // Initial Settings laden (inkl. CSS-Variablen und Historien)
+  // Deferred to avoid blocking initial render
   useEffect(() => {
-    (async () => {
+    // Use setTimeout to defer loading until after first paint
+    const timeoutId = setTimeout(async () => {
       try {
         const result = await window.api.settingsGet?.();
         if (!result || !result.ok) {
@@ -552,7 +554,8 @@ export default function App() {
       } catch (e) {
         console.error('Error loading settings:', e);
       }
-    })();
+    }, 0);
+    return () => clearTimeout(timeoutId);
   }, []);
 
   function openSettingsModal(initialTab) {
