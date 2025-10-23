@@ -58,7 +58,10 @@ export default function DCFilterPanel() {
     const key = String(selectedKey || '').trim();
     if (!key) return;
     const raw = String(val ?? '');
-    const parts = raw.split('|').map((s) => s.trim()).filter((s) => s.length > 0);
+    const parts = raw
+      .split('|')
+      .map((s) => s.trim())
+      .filter((s) => s.length > 0);
     if (parts.length === 0) {
       // Wildcard: nur Key muss vorhanden sein
       DiagnosticContextFilter.addMdcEntry(key, '');
@@ -187,7 +190,9 @@ export default function DCFilterPanel() {
                 title="Mehrere Werte mit | trennen. F2 oder Button öffnet Vorschläge. Leer = alle Werte dieses Keys."
                 placeholder="Wert(e) oder leer für alle…"
               />
-              <button title="Vorschläge anzeigen (F2)" onClick={openValuePicker}>Werte…</button>
+              <button title="Vorschläge anzeigen (F2)" onClick={openValuePicker}>
+                Werte…
+              </button>
             </div>
           </div>
           <div style="display:flex; gap:6px; align-items:center; padding-bottom:2px;">
@@ -249,7 +254,9 @@ export default function DCFilterPanel() {
                           aria-label={e.active ? 'aktiv' : 'aus'}
                           title={e.active ? 'aktiv' : 'aus'}
                         />
-                        <span class={`badge ${e.active ? 'on' : 'off'}`}>{e.active ? 'Aktiv' : 'Aus'}</span>
+                        <span class={`badge ${e.active ? 'on' : 'off'}`}>
+                          {e.active ? 'Aktiv' : 'Aus'}
+                        </span>
                       </div>
                     </td>
                   </tr>
@@ -257,7 +264,9 @@ export default function DCFilterPanel() {
               })}
               {rows.length === 0 && (
                 <tr>
-                  <td colSpan={3} style="padding:8px; color:#777;">Keine Einträge</td>
+                  <td colSpan={3} style="padding:8px; color:#777;">
+                    Keine Einträge
+                  </td>
                 </tr>
               )}
             </tbody>

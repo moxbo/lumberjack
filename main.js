@@ -201,7 +201,6 @@ function isRendererReady() {
     if (!wc) return false;
     if (wc.isDestroyed && wc.isDestroyed()) return false;
     return !wc.isLoading?.();
-
   } catch {
     return false;
   }
@@ -461,8 +460,6 @@ app.whenReady().then(() => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();
   });
 });
-
-
 
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') {

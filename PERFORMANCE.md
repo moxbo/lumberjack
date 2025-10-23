@@ -1,9 +1,11 @@
 # Startup Performance Optimizations
 
 ## Problem
+
 The application was experiencing slow startup times of 20+ seconds, which is unacceptable for user experience.
 
 ## Root Causes Identified
+
 1. **Synchronous File I/O**: Settings were loaded synchronously using `fs.readFileSync`, blocking the main process
 2. **Heavy Dependencies Loaded Eagerly**:
    - `moment.js` (~67KB) loaded at module initialization
@@ -15,9 +17,11 @@ The application was experiencing slow startup times of 20+ seconds, which is una
 ## Optimizations Implemented
 
 ### 1. Lazy Loading of Dependencies
+
 **Impact**: Reduces initial load time by deferring non-critical module loading
 
 - **adm-zip**: Now loaded only when actually processing ZIP files
+
   ```javascript
   // Before: const AdmZip = require('adm-zip');
   // After: Lazy-loaded via getAdmZip() function
@@ -33,6 +37,7 @@ The application was experiencing slow startup times of 20+ seconds, which is una
   - Zero performance impact - native Date is faster
 
 ### 2. Asynchronous Settings Loading
+
 **Impact**: Prevents main process blocking during startup
 
 - Changed `loadSettings()` from synchronous to async
@@ -50,6 +55,7 @@ async function loadSettings() {
 ```
 
 ### 3. Deferred Window Display
+
 **Impact**: Smoother perceived startup - window appears only when ready
 
 ```javascript
@@ -64,6 +70,7 @@ mainWindow.once('ready-to-show', () => {
 ```
 
 ### 4. Deferred Feature Initialization
+
 **Impact**: Reduces time-to-interactive by prioritizing UI rendering
 
 - **Log stream**: Opens asynchronously after window creation
@@ -71,6 +78,7 @@ mainWindow.once('ready-to-show', () => {
 - **Icon generation**: Removed canvas-based icon generation entirely
 
 ### 5. Optimized Renderer Loading
+
 **Impact**: Faster initial render and settings application
 
 - Settings loading deferred with `setTimeout(async () => {...}, 0)`
@@ -78,6 +86,7 @@ mainWindow.once('ready-to-show', () => {
 - Non-blocking progressive enhancement
 
 ### 6. Build Optimizations
+
 **Impact**: Smaller, faster-to-parse bundles
 
 - **Vite configuration**:
@@ -92,12 +101,15 @@ mainWindow.once('ready-to-show', () => {
 ## Performance Results
 
 ### Bundle Size
+
 - **Before**: 142.05 kB (gzipped: 46.00 kB)
 - **After**: 80.99 kB (gzipped: 26.10 kB)
 - **Improvement**: 43% reduction
 
 ### Startup Sequence
+
 **Before**:
+
 1. Load moment.js, adm-zip, canvas
 2. Synchronously read settings file
 3. Open log stream
@@ -107,6 +119,7 @@ mainWindow.once('ready-to-show', () => {
 7. Load renderer
 
 **After**:
+
 1. Create window immediately (show: false)
 2. Build menu with defaults
 3. Load renderer
@@ -116,6 +129,7 @@ mainWindow.once('ready-to-show', () => {
 7. Open log stream if enabled
 
 ### Expected Improvements
+
 - **Cold start**: Should be < 2 seconds on typical hardware
 - **Warm start**: Should be < 1 second
 - **Time-to-interactive**: Immediate - window shows and responds immediately
@@ -123,6 +137,7 @@ mainWindow.once('ready-to-show', () => {
 ## Testing Recommendations
 
 ### Manual Testing
+
 1. **Cold Start**: Close app, clear cache, start fresh
    - Time from click to interactive window
    - Verify all features work (file loading, TCP, HTTP, settings)
@@ -141,6 +156,7 @@ mainWindow.once('ready-to-show', () => {
    - All filters work ✓
 
 ### Performance Profiling
+
 ```bash
 # Build portable version
 npm run build:portable:x64
@@ -161,22 +177,27 @@ Measure-Command { Start-Process ".\release\Lumberjack-1.0.0-x64.exe" -Wait }
 ## Maintenance Notes
 
 ### When Adding New Dependencies
+
 - Consider lazy-loading if not needed at startup
 - Measure bundle size impact: `npm run build:renderer`
 - Prefer native APIs over large libraries
 
 ### When Modifying Startup Code
+
 - Keep `createWindow()` minimal
 - Defer non-critical operations with `setImmediate()` or `setTimeout()`
 - Test cold start performance after changes
 
 ### Monitoring
+
 Watch these metrics:
-- Bundle size (dist/assets/*.js)
+
+- Bundle size (dist/assets/\*.js)
 - Module count in build output
 - Startup time on target hardware
 
 ## References
+
 - [Electron Performance Best Practices](https://www.electronjs.org/docs/latest/tutorial/performance)
 - [V8 Optimization Tips](https://v8.dev/blog/elements-kinds)
 - [Web Vitals](https://web.dev/vitals/)

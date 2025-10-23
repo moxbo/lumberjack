@@ -395,8 +395,12 @@ body {
   position: relative;
   z-index: 1;
 }
-.details[data-tinted="1"] {
-  background-image: linear-gradient(0deg, var(--details-tint, transparent), var(--details-tint, transparent));
+.details[data-tinted='1'] {
+  background-image: linear-gradient(
+    0deg,
+    var(--details-tint, transparent),
+    var(--details-tint, transparent)
+  );
 }
 
 /* --- Loglist and table basics --- */
@@ -620,13 +624,13 @@ pre.stack-trace {
   white-space: pre-wrap;
   margin: 0;
   font-family: var(--font-family-mono), monospace;
-  background: rgba(0,0,0,0.04);
+  background: rgba(0, 0, 0, 0.04);
   border: 1px solid var(--color-divider);
   border-radius: 8px;
   padding: 8px 10px;
 }
 :root[data-theme='dark'] pre.stack-trace {
-  background: rgba(255,255,255,0.06);
+  background: rgba(255, 255, 255, 0.06);
 }
 /* Grafischer Trenner zwischen Abschnitten in Details */
 .section-sep {
@@ -722,15 +726,15 @@ input[type='checkbox'] {
 }
 
 /* Entferne getönte Sonderbehandlung für MDC-Werte */
-.details[data-tinted="1"] .mdc-val code {
+.details[data-tinted='1'] .mdc-val code {
   background: transparent;
 }
 
 /* Tinted details: Kinder-Elemente nutzen gläserische (halbtransparente) Flächen,
    damit die Tönung sichtbar bleibt und der Text lesbar ist. */
-.details[data-tinted="1"] button,
-.details[data-tinted="1"] input:not([type='checkbox']),
-.details[data-tinted="1"] select {
+.details[data-tinted='1'] button,
+.details[data-tinted='1'] input:not([type='checkbox']),
+.details[data-tinted='1'] select {
   background: var(--glass-bg);
 }
 
@@ -760,4 +764,3 @@ input[type='checkbox'] {
     grid-template-columns: 1fr;
   }
 }
-

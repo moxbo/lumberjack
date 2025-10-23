@@ -1,5 +1,5 @@
 module.exports = {
   packerConfig: {
-    icon: 'images/icon'
-  }
-}
+    icon: 'images/icon',
+  },
+};

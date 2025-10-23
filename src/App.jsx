@@ -339,9 +339,27 @@ export default function App() {
       const e = entries[i];
       if (stdFiltersEnabled) {
         if (level && String(e.level || '').toUpperCase() !== level) continue;
-        if (logger && !String(e.logger || '').toLowerCase().includes(logger)) continue;
-        if (thread && !String(e.thread || '').toLowerCase().includes(thread)) continue;
-        if (service && !String(e.service || '').toLowerCase().includes(service)) continue;
+        if (
+          logger &&
+          !String(e.logger || '')
+            .toLowerCase()
+            .includes(logger)
+        )
+          continue;
+        if (
+          thread &&
+          !String(e.thread || '')
+            .toLowerCase()
+            .includes(thread)
+        )
+          continue;
+        if (
+          service &&
+          !String(e.service || '')
+            .toLowerCase()
+            .includes(service)
+        )
+          continue;
         if (!msgMatches(e?.message, msgExpr)) continue;
       }
       // MDC filter muss matchen
@@ -739,17 +757,29 @@ export default function App() {
       if (e.key === 'F8') {
         // Nicht auslösen, wenn in Eingabefeldern getippt wird
         const tag = (e.target && e.target.tagName) || '';
-        const isEditable = ['INPUT', 'TEXTAREA', 'SELECT'].includes(String(tag).toUpperCase()) || e.target?.isContentEditable;
+        const isEditable =
+          ['INPUT', 'TEXTAREA', 'SELECT'].includes(String(tag).toUpperCase()) ||
+          e.target?.isContentEditable;
         if (isEditable) return;
         e.preventDefault();
         const v = !follow;
         setFollow(v);
-        try { window.api.settingsSet({ follow: v }); } catch {}
+        try {
+          window.api.settingsSet({ follow: v });
+        } catch {}
       }
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [showSettings, showHttpLoadDlg, showHttpPollDlg, showMdcModal, ctxMenu.open, httpMenu.open, follow]);
+  }, [
+    showSettings,
+    showHttpLoadDlg,
+    showHttpPollDlg,
+    showMdcModal,
+    ctxMenu.open,
+    httpMenu.open,
+    follow,
+  ]);
 
   // Drag & Drop
   useEffect(() => {
@@ -1083,7 +1113,7 @@ export default function App() {
                     // Persistiere URL & Intervall
                     setHttpUrl(url);
                     setHttpInterval(ms);
-                    await  window.api.settingsSet({ httpUrl: url, httpInterval: ms });
+                    await window.api.settingsSet({ httpUrl: url, httpInterval: ms });
                     const r = await window.api.httpStartPoll({ url, intervalMs: ms });
                     if (r.ok) {
                       setHttpPollId(r.id);
@@ -1310,7 +1340,10 @@ export default function App() {
           <button onClick={clearLogs} disabled={entries.length === 0}>
             Logs leeren
           </button>
-          <label style={{ marginLeft: '10px', display: 'inline-flex', alignItems: 'center', gap: '6px' }} title="Immer den letzten Eintrag auswählen & anzeigen">
+          <label
+            style={{ marginLeft: '10px', display: 'inline-flex', alignItems: 'center', gap: '6px' }}
+            title="Immer den letzten Eintrag auswählen & anzeigen"
+          >
             <input
               type="checkbox"
               className="native-checkbox"
@@ -1318,12 +1351,17 @@ export default function App() {
               onChange={async (e) => {
                 const v = e.currentTarget.checked;
                 setFollow(v);
-                try { await window.api.settingsSet({ follow: v }); } catch {}
+                try {
+                  await window.api.settingsSet({ follow: v });
+                } catch {}
               }}
             />
             <span>Follow</span>
           </label>
-          <label style={{ marginLeft: '8px', display: 'inline-flex', alignItems: 'center', gap: '6px' }} title="Sanftes Scrollen, wenn Follow aktiv ist">
+          <label
+            style={{ marginLeft: '8px', display: 'inline-flex', alignItems: 'center', gap: '6px' }}
+            title="Sanftes Scrollen, wenn Follow aktiv ist"
+          >
             <input
               type="checkbox"
               className="native-checkbox"
@@ -1331,7 +1369,9 @@ export default function App() {
               onChange={async (e) => {
                 const v = e.currentTarget.checked;
                 setFollowSmooth(v);
-                try { await window.api.settingsSet({ followSmooth: v }); } catch {}
+                try {
+                  await window.api.settingsSet({ followSmooth: v });
+                } catch {}
               }}
               disabled={!follow}
             />
