@@ -61,7 +61,7 @@
     --glass-bg: var(--color-bg-elevated);
     --glass-border: rgba(0, 0, 0, 0.08);
     --glass-shadow: 0 8px 24px rgba(0, 0, 0, 0.08);
-    --glass-blur: saturate(180%) blur(10px);
+    --glass-blur: saturate(180%) blur(18px);
 
     /* Typography */
     --font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Segoe UI', Roboto, 'Helvetica Neue', Arial,
@@ -112,6 +112,10 @@
     --details-tint: transparent;
     /* Laufzeit: Breite der nativen Scrollbar (per JS gemessen) */
     --scrollbar-w: 0px;
+
+    /* Visueller Glow fürs Overlay + Höhe des Dividers */
+    --overlay-glow-color: rgba(0, 0, 0, 0.22);
+    --divider-h: 8px;
 }
 
 @media (prefers-color-scheme: dark) {
@@ -146,6 +150,9 @@
         --level-bg-error: rgba(239, 68, 68, 0.26);
         --level-bg-fatal: rgba(220, 38, 38, 0.3);
         --level-bright-text: #f5f7fa;
+
+        /* Spezifischer Hintergrund nur für Details (etwas transparenter als Toolbar) */
+        --details-glass-bg: rgba(28, 32, 38, 0.35);
     }
 }
 
@@ -181,6 +188,8 @@
     --level-bg-error: rgba(239, 68, 68, 0.26);
     --level-bg-fatal: rgba(220, 38, 38, 0.3);
     --level-bright-text: #f5f7fa;
+
+    --details-glass-bg: rgba(28, 32, 38, 0.35);
 }
 
 :root[data-theme='light'] {
@@ -213,6 +222,8 @@
     --level-bg-error: rgba(239, 68, 68, 0.14);
     --level-bg-fatal: rgba(220, 38, 38, 0.16);
     --level-bright-text: #0b0b0c;
+
+    --details-glass-bg: rgba(255, 255, 255, 0.55);
 }
 
 html,
@@ -330,10 +341,31 @@ body {
 /* Die Liste füllt weiterhin den verfügbaren Raum und scrollt */
 .list {
     overflow: auto;
+    /* volle Höhe für sichtbaren Blur-Hintergrund unter den Details */
     height: 100%;
-    min-height: 0;
-    /* Platz für das unten liegende Details-Overlay schaffen: */
-    padding-bottom: calc(var(--detail-height) + 8px);
+    /* unten Platz, damit Inhalte nicht unter dem Overlay verschwinden */
+    padding-bottom: calc(var(--detail-height) + var(--divider-h));
+}
+
+/* Sichtbare Scrollbar (WebKit/macOS) */
+.list::-webkit-scrollbar {
+    width: 12px;
+    height: 12px;
+}
+
+.list::-webkit-scrollbar-thumb {
+    background-color: rgba(0, 0, 0, 0.25);
+    border-radius: 8px;
+    border: 3px solid transparent;
+    background-clip: content-box;
+}
+
+.list::-webkit-scrollbar-thumb:hover {
+    background-color: rgba(0, 0, 0, 0.35);
+}
+
+.list::-webkit-scrollbar-track {
+    background: transparent;
 }
 
 /* Overlay-Container für Divider + Details als gläserisches Panel
@@ -341,54 +373,57 @@ body {
 .overlay {
     position: absolute;
     left: 0;
-    /* rechts Platz für die Scrollbar der Liste lassen */
-    right: var(--scrollbar-w, 0px);
+    right: max(var(--scrollbar-w, 0px), 12px); /* immer min. 12px freilassen */
     bottom: 0;
-    /* Divider (8px) + Detailbereich */
-    height: calc(var(--detail-height) + 8px);
+    height: calc(var(--detail-height) + var(--divider-h));
     pointer-events: none; /* nur Kinder interaktiv machen */
+    z-index: 1010; /* sicher über der Liste */
 }
 
-.overlay .divider {
+/* Divider: interaktiver Drag-Bereich mit Grifflinie */
+.divider {
     position: absolute;
     top: 0;
     left: 0;
-    right: 0;
-    height: 5px;
+    right: 0; /* Overlay lässt bereits Scrollbar-Platz, daher hier volle Breite */
+    height: var(--divider-h);
     cursor: row-resize;
-    pointer-events: auto;
+    background: linear-gradient(to bottom, rgba(0,0,0,0.06), rgba(0,0,0,0.02));
+    border-top: 1px solid var(--glass-border);
+    border-bottom: 1px solid var(--glass-border);
+    box-shadow: 0 -1px 0 rgba(0,0,0,0.04) inset, 0 1px 0 rgba(255,255,255,0.04) inset;
+    pointer-events: auto; /* trotz Overlay klick-/drag-bar */
 }
 
-/* Divider */
-.divider {
-    height: 5px;
-    width: 100%;
-    cursor: row-resize;
-    background: linear-gradient(180deg, transparent 0%, var(--color-divider) 50%, transparent 100%);
-    transition: background var(--transition-fast);
+/* kleine Griff-Markierung in der Mitte */
+.divider::before {
+    content: "";
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    width: 56px;
+    height: 3px;
+    border-radius: 2px;
+    background: rgba(0,0,0,0.18);
 }
-
-.divider:hover {
-    background: linear-gradient(
-            180deg,
-            transparent 0%,
-            var(--color-primary-light) 50%,
-            transparent 100%
-    );
+:root[data-theme='dark'] .divider::before {
+    background: rgba(255,255,255,0.22);
 }
 
 /* Details panel als gläserisches Overlay über der Liste */
 .details {
     position: absolute;
     left: 0;
-    right: 0;
+    right: 0; /* Overlay begrenzt rechts bereits die Breite */
     bottom: 0;
-    top: 5px; /* unter dem Divider */
+    top: var(--divider-h); /* direkt unter dem Divider */
     overflow: auto;
     /* Glaslook */
-    background: var(--glass-bg);
+    background: var(--details-glass-bg);
     backdrop-filter: var(--glass-blur);
     -webkit-backdrop-filter: var(--glass-blur);
+    z-index: 1; /* sicher über Liste, unter Divider */
     border-top: 1px solid var(--glass-border);
     box-shadow: 0 -8px 24px rgba(0, 0, 0, 0.08);
     padding: 18px 20px;
@@ -396,19 +431,9 @@ body {
     pointer-events: auto; /* Overlay ist interaktiv */
 }
 
-.details > #detailsView,
-.details > #detailsEmpty {
-    position: relative;
-    z-index: 1;
-}
-
-.details[data-tinted='1'] {
-    background-image: linear-gradient(
-            0deg,
-            var(--details-tint, transparent),
-            var(--details-tint, transparent)
-    );
-}
+/* Überdeckende Füllfläche entfernen – Scrollbar bleibt vollständig sichtbar */
+/* .overlay::after entfernt */
+.overlay::after { display: none; }
 
 /* --- Loglist and table basics --- */
 .list-header {
