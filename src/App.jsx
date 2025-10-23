@@ -1060,11 +1060,7 @@ export default function App() {
         <div className="modal-backdrop" onClick={() => setShowDcDialog(false)}>
           <div className="modal modal-wide" onClick={(e) => e.stopPropagation()}>
             <h3>Diagnostic Context Filter</h3>
-            {DCFilterDialog ? (
-              <DCFilterDialog />
-            ) : (
-              <div style={{ padding: '20px' }}>Lädt...</div>
-            )}
+            {DCFilterDialog ? <DCFilterDialog /> : <div style={{ padding: '20px' }}>Lädt...</div>}
             <div className="modal-actions">
               <button onClick={() => setShowDcDialog(false)}>Schließen</button>
             </div>

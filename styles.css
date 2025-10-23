@@ -1,164 +1,127 @@
 /* Apple-inspired modern theme with glassmorphism and vibrant accents */
 * {
-    box-sizing: border-box;
+  box-sizing: border-box;
 }
 
 :root {
-    /* Column widths */
-    --detail-height: 300px;
-    --col-ts: 220px;
-    --col-lvl: 100px;
-    --col-logger: 300px;
+  /* Column widths */
+  --detail-height: 300px;
+  --col-ts: 220px;
+  --col-lvl: 100px;
+  --col-logger: 300px;
 
-    /* Accent & gradients */
-    --accent: #0a84ff; /* macOS blue */
-    --accent-2: #7d7aff; /* purple tint */
-    --accent-gradient: linear-gradient(135deg, var(--accent) 0%, var(--accent-2) 100%);
+  /* Accent & gradients */
+  --accent: #0a84ff; /* macOS blue */
+  --accent-2: #7d7aff; /* purple tint */
+  --accent-gradient: linear-gradient(135deg, var(--accent) 0%, var(--accent-2) 100%);
 
-    /* Light palette (Apple-like) */
-    --color-bg-default: #f5f5f7; /* Apple background */
-    --color-bg-paper: #ffffff;
-    --color-bg-elevated: rgba(255, 255, 255, 0.7);
-    --color-bg-hover: rgba(0, 0, 0, 0.04);
+  /* Light palette (Apple-like) */
+  --color-bg-default: #f5f5f7; /* Apple background */
+  --color-bg-paper: #ffffff;
+  --color-bg-elevated: rgba(255, 255, 255, 0.7);
+  --color-bg-hover: rgba(0, 0, 0, 0.04);
 
-    --color-text-primary: #1d1d1f;
-    --color-text-secondary: #6e6e73;
-    --color-text-disabled: #9d9da1;
+  --color-text-primary: #1d1d1f;
+  --color-text-secondary: #6e6e73;
+  --color-text-disabled: #9d9da1;
 
-    --color-divider: rgba(0, 0, 0, 0.08);
-    --color-border: rgba(0, 0, 0, 0.12);
+  --color-divider: rgba(0, 0, 0, 0.08);
+  --color-border: rgba(0, 0, 0, 0.12);
 
-    /* Primary set aligned to accent */
-    --color-primary: var(--accent);
-    --color-primary-light: #54a8ff;
-    --color-primary-dark: #0066cc;
-    --color-primary-contrast: #ffffff;
+  /* Primary set aligned to accent */
+  --color-primary: var(--accent);
+  --color-primary-light: #54a8ff;
+  --color-primary-dark: #0066cc;
+  --color-primary-contrast: #ffffff;
 
-    /* Status colors */
-    --color-success: #00c853;
-    --color-warning: #ffb300;
-    --color-error: #ff3b30;
-    --color-info: #30b0ff;
+  /* Status colors */
+  --color-success: #00c853;
+  --color-warning: #ffb300;
+  --color-error: #ff3b30;
+  --color-info: #30b0ff;
 
-    /* Log levels */
-    --color-level-trace: #8b5cf6;
-    --color-level-debug: #06b6d4;
-    --color-level-info: #10b981;
-    --color-level-warn: #f59e0b;
-    --color-level-error: #ef4444;
-    --color-level-fatal: #dc2626;
+  /* Log levels */
+  --color-level-trace: #8b5cf6;
+  --color-level-debug: #06b6d4;
+  --color-level-info: #10b981;
+  --color-level-warn: #f59e0b;
+  --color-level-error: #ef4444;
+  --color-level-fatal: #dc2626;
 
-    /* Tinted level backgrounds (light) */
-    --level-bg-trace: rgba(139, 92, 246, 0.12);
-    --level-bg-debug: rgba(6, 182, 212, 0.12);
-    --level-bg-info: rgba(16, 185, 129, 0.12);
-    --level-bg-warn: rgba(245, 158, 11, 0.14);
-    --level-bg-error: rgba(239, 68, 68, 0.14);
-    --level-bg-fatal: rgba(220, 38, 38, 0.16);
-    --level-bright-text: #0b0b0c;
+  /* Tinted level backgrounds (light) */
+  --level-bg-trace: rgba(139, 92, 246, 0.12);
+  --level-bg-debug: rgba(6, 182, 212, 0.12);
+  --level-bg-info: rgba(16, 185, 129, 0.12);
+  --level-bg-warn: rgba(245, 158, 11, 0.14);
+  --level-bg-error: rgba(239, 68, 68, 0.14);
+  --level-bg-fatal: rgba(220, 38, 38, 0.16);
+  --level-bright-text: #0b0b0c;
 
-    /* Glass */
-    --glass-bg: var(--color-bg-elevated);
-    --glass-border: rgba(0, 0, 0, 0.08);
-    --glass-shadow: 0 8px 24px rgba(0, 0, 0, 0.08);
-    --glass-blur: saturate(180%) blur(18px);
+  /* Glass */
+  --glass-bg: var(--color-bg-elevated);
+  --glass-border: rgba(0, 0, 0, 0.08);
+  --glass-shadow: 0 8px 24px rgba(0, 0, 0, 0.08);
+  --glass-blur: saturate(180%) blur(18px);
 
-    /* Typography */
-    --font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Segoe UI', Roboto, 'Helvetica Neue', Arial,
+  /* Typography */
+  --font-family:
+    -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Segoe UI', Roboto, 'Helvetica Neue', Arial,
     sans-serif;
-    --font-family-mono: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Monaco, Consolas, 'Liberation Mono',
+  --font-family-mono:
+    ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Monaco, Consolas, 'Liberation Mono',
     'Courier New', monospace;
-    --font-size-xs: 0.75rem;
-    --font-size-sm: 0.875rem;
-    --font-size-base: 1rem;
-    --font-size-lg: 1.125rem;
-    --font-size-xl: 1.25rem;
+  --font-size-xs: 0.75rem;
+  --font-size-sm: 0.875rem;
+  --font-size-base: 1rem;
+  --font-size-lg: 1.125rem;
+  --font-size-xl: 1.25rem;
 
-    /* Spacing */
-    --spacing-1: 0.25rem;
-    --spacing-2: 0.5rem;
-    --spacing-3: 0.75rem;
-    --spacing-4: 1rem;
-    --spacing-5: 1.25rem;
-    --spacing-6: 1.5rem;
-    --spacing-8: 2rem;
+  /* Spacing */
+  --spacing-1: 0.25rem;
+  --spacing-2: 0.5rem;
+  --spacing-3: 0.75rem;
+  --spacing-4: 1rem;
+  --spacing-5: 1.25rem;
+  --spacing-6: 1.5rem;
+  --spacing-8: 2rem;
 
-    /* Radius */
-    --radius-sm: 0.25rem;
-    --radius-base: 0.5rem;
-    --radius-md: 0.625rem;
-    --radius-lg: 0.75rem;
-    --radius-xl: 1rem;
-    --radius-full: 9999px;
+  /* Radius */
+  --radius-sm: 0.25rem;
+  --radius-base: 0.5rem;
+  --radius-md: 0.625rem;
+  --radius-lg: 0.75rem;
+  --radius-xl: 1rem;
+  --radius-full: 9999px;
 
-    /* Shadows */
-    --shadow-sm: 0 1px 2px 0 rgba(0, 0, 0, 0.04);
-    --shadow-base: 0 1px 4px rgba(0, 0, 0, 0.06);
-    --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.08);
-    --shadow-lg: 0 10px 24px rgba(0, 0, 0, 0.12);
-    --shadow-xl: 0 20px 40px rgba(0, 0, 0, 0.14);
+  /* Shadows */
+  --shadow-sm: 0 1px 2px 0 rgba(0, 0, 0, 0.04);
+  --shadow-base: 0 1px 4px rgba(0, 0, 0, 0.06);
+  --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.08);
+  --shadow-lg: 0 10px 24px rgba(0, 0, 0, 0.12);
+  --shadow-xl: 0 20px 40px rgba(0, 0, 0, 0.14);
 
-    /* Transitions */
-    --transition-fast: 150ms cubic-bezier(0.4, 0, 0.2, 1);
-    --transition-base: 220ms cubic-bezier(0.4, 0, 0.2, 1);
-    --transition-slow: 320ms cubic-bezier(0.4, 0, 0.2, 1);
+  /* Transitions */
+  --transition-fast: 150ms cubic-bezier(0.4, 0, 0.2, 1);
+  --transition-base: 220ms cubic-bezier(0.4, 0, 0.2, 1);
+  --transition-slow: 320ms cubic-bezier(0.4, 0, 0.2, 1);
 
-    /* Z-index */
-    --z-dropdown: 1000;
-    --z-sticky: 1020;
-    --z-backdrop: 1040;
-    --z-modal: 1050;
-    /* Default-Tönung für Details (wird zur Laufzeit überschrieben) */
-    --details-tint: transparent;
-    /* Laufzeit: Breite der nativen Scrollbar (per JS gemessen) */
-    --scrollbar-w: 0px;
+  /* Z-index */
+  --z-dropdown: 1000;
+  --z-sticky: 1020;
+  --z-backdrop: 1040;
+  --z-modal: 1050;
+  /* Default-Tönung für Details (wird zur Laufzeit überschrieben) */
+  --details-tint: transparent;
+  /* Laufzeit: Breite der nativen Scrollbar (per JS gemessen) */
+  --scrollbar-w: 0px;
 
-    /* Visueller Glow fürs Overlay + Höhe des Dividers */
-    --overlay-glow-color: rgba(0, 0, 0, 0.22);
-    --divider-h: 8px;
+  /* Visueller Glow fürs Overlay + Höhe des Dividers */
+  --overlay-glow-color: rgba(0, 0, 0, 0.22);
+  --divider-h: 8px;
 }
 
 @media (prefers-color-scheme: dark) {
-    :root {
-        /* lighten dark theme and increase transparency */
-        --color-bg-default: #15181c;
-        --color-bg-paper: #1c2127;
-        --color-bg-elevated: rgba(36, 40, 46, 0.5);
-        --color-bg-hover: rgba(255, 255, 255, 0.08);
-
-        --color-text-primary: #eef2f6;
-        --color-text-secondary: #cbd5df;
-        --color-text-disabled: #8f97a1;
-
-        --color-divider: rgba(255, 255, 255, 0.1);
-        --color-border: rgba(255, 255, 255, 0.16);
-
-        --color-primary: #76b0ff;
-        --color-primary-light: #a3c9ff;
-        --color-primary-dark: #4f96ff;
-        --color-primary-contrast: #0a0f14;
-
-        --glass-bg: rgba(28, 32, 38, 0.45);
-        --glass-border: rgba(255, 255, 255, 0.1);
-        --glass-shadow: 0 10px 28px rgba(0, 0, 0, 0.5);
-
-        /* Level tints (dark) */
-        --level-bg-trace: rgba(139, 92, 246, 0.2);
-        --level-bg-debug: rgba(6, 182, 212, 0.22);
-        --level-bg-info: rgba(16, 185, 129, 0.22);
-        --level-bg-warn: rgba(245, 158, 11, 0.26);
-        --level-bg-error: rgba(239, 68, 68, 0.26);
-        --level-bg-fatal: rgba(220, 38, 38, 0.3);
-        --level-bright-text: #f5f7fa;
-
-        /* Spezifischer Hintergrund nur für Details (etwas transparenter als Toolbar) */
-        --details-glass-bg: rgba(28, 32, 38, 0.35);
-    }
-}
-
-/* Explicit theme overrides (user choice) */
-:root[data-theme='dark'] {
-    color-scheme: dark;
+  :root {
     /* lighten dark theme and increase transparency */
     --color-bg-default: #15181c;
     --color-bg-paper: #1c2127;
@@ -181,6 +144,7 @@
     --glass-border: rgba(255, 255, 255, 0.1);
     --glass-shadow: 0 10px 28px rgba(0, 0, 0, 0.5);
 
+    /* Level tints (dark) */
     --level-bg-trace: rgba(139, 92, 246, 0.2);
     --level-bg-debug: rgba(6, 182, 212, 0.22);
     --level-bg-info: rgba(16, 185, 129, 0.22);
@@ -189,48 +153,87 @@
     --level-bg-fatal: rgba(220, 38, 38, 0.3);
     --level-bright-text: #f5f7fa;
 
+    /* Spezifischer Hintergrund nur für Details (etwas transparenter als Toolbar) */
     --details-glass-bg: rgba(28, 32, 38, 0.35);
+  }
+}
+
+/* Explicit theme overrides (user choice) */
+:root[data-theme='dark'] {
+  color-scheme: dark;
+  /* lighten dark theme and increase transparency */
+  --color-bg-default: #15181c;
+  --color-bg-paper: #1c2127;
+  --color-bg-elevated: rgba(36, 40, 46, 0.5);
+  --color-bg-hover: rgba(255, 255, 255, 0.08);
+
+  --color-text-primary: #eef2f6;
+  --color-text-secondary: #cbd5df;
+  --color-text-disabled: #8f97a1;
+
+  --color-divider: rgba(255, 255, 255, 0.1);
+  --color-border: rgba(255, 255, 255, 0.16);
+
+  --color-primary: #76b0ff;
+  --color-primary-light: #a3c9ff;
+  --color-primary-dark: #4f96ff;
+  --color-primary-contrast: #0a0f14;
+
+  --glass-bg: rgba(28, 32, 38, 0.45);
+  --glass-border: rgba(255, 255, 255, 0.1);
+  --glass-shadow: 0 10px 28px rgba(0, 0, 0, 0.5);
+
+  --level-bg-trace: rgba(139, 92, 246, 0.2);
+  --level-bg-debug: rgba(6, 182, 212, 0.22);
+  --level-bg-info: rgba(16, 185, 129, 0.22);
+  --level-bg-warn: rgba(245, 158, 11, 0.26);
+  --level-bg-error: rgba(239, 68, 68, 0.26);
+  --level-bg-fatal: rgba(220, 38, 38, 0.3);
+  --level-bright-text: #f5f7fa;
+
+  --details-glass-bg: rgba(28, 32, 38, 0.35);
 }
 
 :root[data-theme='light'] {
-    color-scheme: light;
-    --color-bg-default: #f5f5f7;
-    --color-bg-paper: #ffffff;
-    --color-bg-elevated: rgba(255, 255, 255, 0.7);
-    --color-bg-hover: rgba(0, 0, 0, 0.04);
+  color-scheme: light;
+  --color-bg-default: #f5f5f7;
+  --color-bg-paper: #ffffff;
+  --color-bg-elevated: rgba(255, 255, 255, 0.7);
+  --color-bg-hover: rgba(0, 0, 0, 0.04);
 
-    --color-text-primary: #1d1d1f;
-    --color-text-secondary: #6e6e73;
-    --color-text-disabled: #9d9da1;
+  --color-text-primary: #1d1d1f;
+  --color-text-secondary: #6e6e73;
+  --color-text-disabled: #9d9da1;
 
-    --color-divider: rgba(0, 0, 0, 0.08);
-    --color-border: rgba(0, 0, 0, 0.12);
+  --color-divider: rgba(0, 0, 0, 0.08);
+  --color-border: rgba(0, 0, 0, 0.12);
 
-    --color-primary: var(--accent);
-    --color-primary-light: #54a8ff;
-    --color-primary-dark: #0066cc;
-    --color-primary-contrast: #ffffff;
+  --color-primary: var(--accent);
+  --color-primary-light: #54a8ff;
+  --color-primary-dark: #0066cc;
+  --color-primary-contrast: #ffffff;
 
-    --glass-bg: rgba(255, 255, 255, 0.7);
-    --glass-border: rgba(0, 0, 0, 0.08);
-    --glass-shadow: 0 8px 24px rgba(0, 0, 0, 0.08);
+  --glass-bg: rgba(255, 255, 255, 0.7);
+  --glass-border: rgba(0, 0, 0, 0.08);
+  --glass-shadow: 0 8px 24px rgba(0, 0, 0, 0.08);
 
-    --level-bg-trace: rgba(139, 92, 246, 0.12);
-    --level-bg-debug: rgba(6, 182, 212, 0.12);
-    --level-bg-info: rgba(16, 185, 129, 0.12);
-    --level-bg-warn: rgba(245, 158, 11, 0.14);
-    --level-bg-error: rgba(239, 68, 68, 0.14);
-    --level-bg-fatal: rgba(220, 38, 38, 0.16);
-    --level-bright-text: #0b0b0c;
+  --level-bg-trace: rgba(139, 92, 246, 0.12);
+  --level-bg-debug: rgba(6, 182, 212, 0.12);
+  --level-bg-info: rgba(16, 185, 129, 0.12);
+  --level-bg-warn: rgba(245, 158, 11, 0.14);
+  --level-bg-error: rgba(239, 68, 68, 0.14);
+  --level-bg-fatal: rgba(220, 38, 38, 0.16);
+  --level-bright-text: #0b0b0c;
 
-    --details-glass-bg: rgba(255, 255, 255, 0.55);
+  --details-glass-bg: rgba(255, 255, 255, 0.55);
 }
 
 html,
 body {
-    height: 100vh;
-    margin: 0;
-    font-family: var(--font-family),
+  height: 100vh;
+  margin: 0;
+  font-family:
+    var(--font-family),
     -apple-system,
     BlinkMacSystemFont,
     'Segoe UI',
@@ -238,636 +241,643 @@ body {
     'Helvetica Neue',
     Arial,
     sans-serif;
-    font-size: var(--font-size-base);
-    color: var(--color-text-primary);
-    background: var(--color-bg-default);
-    line-height: 1.5;
-    -webkit-font-smoothing: antialiased;
-    -moz-osx-font-smoothing: grayscale;
-    color-scheme: light dark;
+  font-size: var(--font-size-base);
+  color: var(--color-text-primary);
+  background: var(--color-bg-default);
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  color-scheme: light dark;
 }
 
 body {
-    display: flex;
-    flex-direction: column;
-    overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
 }
 
 #app {
-    height: 100%;
-    min-height: 0;
-    display: flex;
-    flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
 }
 
 /* Glass AppBar */
 .toolbar {
-    flex: 0 0 auto;
-    display: flex;
-    flex-wrap: wrap;
-    gap: var(--spacing-4);
-    align-items: center;
-    padding: 12px 18px; /* slightly tighter */
-    background: var(--glass-bg);
-    backdrop-filter: var(--glass-blur);
-    -webkit-backdrop-filter: var(--glass-blur);
-    border-bottom: 1px solid var(--glass-border);
-    box-shadow: 0 1px 0 var(--glass-border);
-    position: sticky;
-    top: 0;
-    z-index: var(--z-sticky);
+  flex: 0 0 auto;
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--spacing-4);
+  align-items: center;
+  padding: 12px 18px; /* slightly tighter */
+  background: var(--glass-bg);
+  backdrop-filter: var(--glass-blur);
+  -webkit-backdrop-filter: var(--glass-blur);
+  border-bottom: 1px solid var(--glass-border);
+  box-shadow: 0 1px 0 var(--glass-border);
+  position: sticky;
+  top: 0;
+  z-index: var(--z-sticky);
 }
 
 .toolbar .section {
-    display: inline-flex;
-    align-items: center;
-    gap: var(--spacing-2);
-    flex-wrap: wrap;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--spacing-2);
+  flex-wrap: wrap;
 }
 
 .toolbar label {
-    color: var(--color-text-secondary);
-    font-size: var(--font-size-sm);
-    font-weight: 500;
-    user-select: none;
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-sm);
+  font-weight: 500;
+  user-select: none;
 }
 
 .toolbar .status {
-    margin-left: var(--spacing-2);
-    font-size: var(--font-size-sm);
-    color: var(--color-text-secondary);
+  margin-left: var(--spacing-2);
+  font-size: var(--font-size-sm);
+  color: var(--color-text-secondary);
 }
 
 .toolbar .counts {
-    color: var(--color-text-secondary);
-    font-size: var(--font-size-sm);
-    font-weight: 600;
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-sm);
+  font-weight: 600;
 }
 
 .toolbar .busy {
-    display: inline-flex;
-    align-items: center;
-    gap: var(--spacing-2);
-    color: var(--color-primary);
-    font-size: var(--font-size-sm);
-    font-weight: 600;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--spacing-2);
+  color: var(--color-primary);
+  font-size: var(--font-size-sm);
+  font-weight: 600;
 }
 
 .spinner {
-    width: 16px;
-    height: 16px;
-    border: 2px solid var(--color-divider);
-    border-top-color: var(--color-primary);
-    border-radius: 50%;
-    animation: spin 0.8s linear infinite;
+  width: 16px;
+  height: 16px;
+  border: 2px solid var(--color-divider);
+  border-top-color: var(--color-primary);
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
 }
 
 @keyframes spin {
-    to {
-        transform: rotate(360deg);
-    }
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 /* Layout grid */
 .layout {
-    /* war: grid mit drei Zeilen; jetzt relativer Container für Overlay-Details */
-    flex: 1 1 auto;
-    width: 100%;
-    min-height: 0;
-    overflow: hidden;
-    position: relative;
+  /* war: grid mit drei Zeilen; jetzt relativer Container für Overlay-Details */
+  flex: 1 1 auto;
+  width: 100%;
+  min-height: 0;
+  overflow: hidden;
+  position: relative;
 }
 
 /* Die Liste füllt weiterhin den verfügbaren Raum und scrollt */
 .list {
-    overflow: auto;
-    /* volle Höhe für sichtbaren Blur-Hintergrund unter den Details */
-    height: 100%;
-    /* unten Platz, damit Inhalte nicht unter dem Overlay verschwinden */
-    padding-bottom: calc(var(--detail-height) + var(--divider-h));
+  overflow: auto;
+  /* volle Höhe für sichtbaren Blur-Hintergrund unter den Details */
+  height: 100%;
+  /* unten Platz, damit Inhalte nicht unter dem Overlay verschwinden */
+  padding-bottom: calc(var(--detail-height) + var(--divider-h));
 }
 
 /* Sichtbare Scrollbar (WebKit/macOS) */
 .list::-webkit-scrollbar {
-    width: 12px;
-    height: 12px;
+  width: 12px;
+  height: 12px;
 }
 
 .list::-webkit-scrollbar-thumb {
-    background-color: rgba(0, 0, 0, 0.25);
-    border-radius: 8px;
-    border: 3px solid transparent;
-    background-clip: content-box;
+  background-color: rgba(0, 0, 0, 0.25);
+  border-radius: 8px;
+  border: 3px solid transparent;
+  background-clip: content-box;
 }
 
 .list::-webkit-scrollbar-thumb:hover {
-    background-color: rgba(0, 0, 0, 0.35);
+  background-color: rgba(0, 0, 0, 0.35);
 }
 
 .list::-webkit-scrollbar-track {
-    background: transparent;
+  background: transparent;
 }
 
 /* Overlay-Container für Divider + Details als gläserisches Panel
    liegt über der Liste und nutzt die variable --detail-height */
 .overlay {
-    position: absolute;
-    left: 0;
-    right: max(var(--scrollbar-w, 0px), 12px); /* immer min. 12px freilassen */
-    bottom: 0;
-    height: calc(var(--detail-height) + var(--divider-h));
-    pointer-events: none; /* nur Kinder interaktiv machen */
-    z-index: 1010; /* sicher über der Liste */
+  position: absolute;
+  left: 0;
+  right: max(var(--scrollbar-w, 0px), 12px); /* immer min. 12px freilassen */
+  bottom: 0;
+  height: calc(var(--detail-height) + var(--divider-h));
+  pointer-events: none; /* nur Kinder interaktiv machen */
+  z-index: 1010; /* sicher über der Liste */
 }
 
 /* Divider: interaktiver Drag-Bereich mit Grifflinie */
 .divider {
-    position: absolute;
-    top: 0;
-    left: 0;
-    right: 0; /* Overlay lässt bereits Scrollbar-Platz, daher hier volle Breite */
-    height: var(--divider-h);
-    cursor: row-resize;
-    background: linear-gradient(to bottom, rgba(0,0,0,0.06), rgba(0,0,0,0.02));
-    border-top: 1px solid var(--glass-border);
-    border-bottom: 1px solid var(--glass-border);
-    box-shadow: 0 -1px 0 rgba(0,0,0,0.04) inset, 0 1px 0 rgba(255,255,255,0.04) inset;
-    pointer-events: auto; /* trotz Overlay klick-/drag-bar */
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0; /* Overlay lässt bereits Scrollbar-Platz, daher hier volle Breite */
+  height: var(--divider-h);
+  cursor: row-resize;
+  background: linear-gradient(to bottom, rgba(0, 0, 0, 0.06), rgba(0, 0, 0, 0.02));
+  border-top: 1px solid var(--glass-border);
+  border-bottom: 1px solid var(--glass-border);
+  box-shadow:
+    0 -1px 0 rgba(0, 0, 0, 0.04) inset,
+    0 1px 0 rgba(255, 255, 255, 0.04) inset;
+  pointer-events: auto; /* trotz Overlay klick-/drag-bar */
 }
 
 /* kleine Griff-Markierung in der Mitte */
 .divider::before {
-    content: "";
-    position: absolute;
-    top: 50%;
-    left: 50%;
-    transform: translate(-50%, -50%);
-    width: 56px;
-    height: 3px;
-    border-radius: 2px;
-    background: rgba(0,0,0,0.18);
+  content: '';
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: 56px;
+  height: 3px;
+  border-radius: 2px;
+  background: rgba(0, 0, 0, 0.18);
 }
 :root[data-theme='dark'] .divider::before {
-    background: rgba(255,255,255,0.22);
+  background: rgba(255, 255, 255, 0.22);
 }
 
 /* Details panel als gläserisches Overlay über der Liste */
 .details {
-    position: absolute;
-    left: 0;
-    right: 0; /* Overlay begrenzt rechts bereits die Breite */
-    bottom: 0;
-    top: var(--divider-h); /* direkt unter dem Divider */
-    overflow: auto;
-    /* Glaslook */
-    background: var(--details-glass-bg);
-    backdrop-filter: var(--glass-blur);
-    -webkit-backdrop-filter: var(--glass-blur);
-    z-index: 1; /* sicher über Liste, unter Divider */
-    border-top: 1px solid var(--glass-border);
-    box-shadow: 0 -8px 24px rgba(0, 0, 0, 0.08);
-    padding: 18px 20px;
-    min-height: 0;
-    pointer-events: auto; /* Overlay ist interaktiv */
+  position: absolute;
+  left: 0;
+  right: 0; /* Overlay begrenzt rechts bereits die Breite */
+  bottom: 0;
+  top: var(--divider-h); /* direkt unter dem Divider */
+  overflow: auto;
+  /* Glaslook */
+  background: var(--details-glass-bg);
+  backdrop-filter: var(--glass-blur);
+  -webkit-backdrop-filter: var(--glass-blur);
+  z-index: 1; /* sicher über Liste, unter Divider */
+  border-top: 1px solid var(--glass-border);
+  box-shadow: 0 -8px 24px rgba(0, 0, 0, 0.08);
+  padding: 18px 20px;
+  min-height: 0;
+  pointer-events: auto; /* Overlay ist interaktiv */
 }
 
 /* Überdeckende Füllfläche entfernen – Scrollbar bleibt vollständig sichtbar */
 /* .overlay::after entfernt */
-.overlay::after { display: none; }
+.overlay::after {
+  display: none;
+}
 
 /* --- Loglist and table basics --- */
 .list-header {
-    position: sticky;
-    top: 0;
-    z-index: var(--z-sticky);
-    display: grid;
-    grid-template-columns: var(--col-ts) var(--col-lvl) var(--col-logger) 1fr;
-    gap: 0;
-    align-items: center;
-    height: 32px;
-    padding: 0 8px 0 8px;
-    background: var(--color-bg-paper);
-    border-bottom: 1px solid var(--color-divider);
+  position: sticky;
+  top: 0;
+  z-index: var(--z-sticky);
+  display: grid;
+  grid-template-columns: var(--col-ts) var(--col-lvl) var(--col-logger) 1fr;
+  gap: 0;
+  align-items: center;
+  height: 32px;
+  padding: 0 8px 0 8px;
+  background: var(--color-bg-paper);
+  border-bottom: 1px solid var(--color-divider);
 }
 
 .list-header .cell {
-    position: relative;
-    font-size: var(--font-size-sm);
-    color: var(--color-text-secondary);
-    user-select: none;
+  position: relative;
+  font-size: var(--font-size-sm);
+  color: var(--color-text-secondary);
+  user-select: none;
 }
 
 .list-header .cell:not(:last-child) {
-    border-right: 1px solid var(--color-divider);
+  border-right: 1px solid var(--color-divider);
 }
 
 .list-header .cell:nth-child(2) {
-    text-align: center;
+  text-align: center;
 }
 
 .list-header .resizer {
-    position: absolute;
-    top: 0;
-    right: 0;
-    width: 6px;
-    height: 100%;
-    cursor: col-resize;
+  position: absolute;
+  top: 0;
+  right: 0;
+  width: 6px;
+  height: 100%;
+  cursor: col-resize;
 }
 
 .log-list {
-    list-style: none;
-    margin: 0;
-    padding: 0;
-    font-size: 13px;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  font-size: 13px;
 }
 
 .row {
-    display: grid;
-    grid-template-columns: var(--col-ts) var(--col-lvl) var(--col-logger) 1fr;
-    gap: 0;
-    align-items: center;
-    border-bottom: 1px solid var(--color-divider);
-    background: transparent;
+  display: grid;
+  grid-template-columns: var(--col-ts) var(--col-lvl) var(--col-logger) 1fr;
+  gap: 0;
+  align-items: center;
+  border-bottom: 1px solid var(--color-divider);
+  background: transparent;
 }
 
 .row:hover {
-    background: var(--color-bg-hover);
+  background: var(--color-bg-hover);
 }
 
 .row.sel {
-    background: rgba(10, 132, 255, 0.12);
+  background: rgba(10, 132, 255, 0.12);
 }
 
 .col {
-    padding: 0 8px;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
+  padding: 0 8px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .col.ts {
-    font-family: var(--font-family-mono), monospace;
-    color: var(--color-text-secondary);
+  font-family: var(--font-family-mono), monospace;
+  color: var(--color-text-secondary);
 }
 
 .col.lvl {
-    font-weight: 600;
-    text-transform: uppercase;
-    font-size: 12px;
-    text-align: center;
-    justify-self: center;
+  font-weight: 600;
+  text-transform: uppercase;
+  font-size: 12px;
+  text-align: center;
+  justify-self: center;
 }
 
 .col.logger {
-    color: var(--color-text-secondary);
+  color: var(--color-text-secondary);
 }
 
 .col.msg {
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 /* Level coloring */
 .lev-trace {
-    color: var(--color-level-trace);
-    background: var(--level-bg-trace);
-    border-radius: 4px;
-    padding: 2px 6px;
-    display: inline-block;
+  color: var(--color-level-trace);
+  background: var(--level-bg-trace);
+  border-radius: 4px;
+  padding: 2px 6px;
+  display: inline-block;
 }
 
 .lev-debug {
-    color: var(--color-level-debug);
-    background: var(--level-bg-debug);
-    border-radius: 4px;
-    padding: 2px 6px;
-    display: inline-block;
+  color: var(--color-level-debug);
+  background: var(--level-bg-debug);
+  border-radius: 4px;
+  padding: 2px 6px;
+  display: inline-block;
 }
 
 .lev-info {
-    color: var(--color-level-info);
-    background: var(--level-bg-info);
-    border-radius: 4px;
-    padding: 2px 6px;
-    display: inline-block;
+  color: var(--color-level-info);
+  background: var(--level-bg-info);
+  border-radius: 4px;
+  padding: 2px 6px;
+  display: inline-block;
 }
 
 .lev-warn {
-    color: var(--color-level-warn);
-    background: var(--level-bg-warn);
-    border-radius: 4px;
-    padding: 2px 6px;
-    display: inline-block;
+  color: var(--color-level-warn);
+  background: var(--level-bg-warn);
+  border-radius: 4px;
+  padding: 2px 6px;
+  display: inline-block;
 }
 
 .lev-error {
-    color: var(--color-level-error);
-    background: var(--level-bg-error);
-    border-radius: 4px;
-    padding: 2px 6px;
-    display: inline-block;
+  color: var(--color-level-error);
+  background: var(--level-bg-error);
+  border-radius: 4px;
+  padding: 2px 6px;
+  display: inline-block;
 }
 
 .lev-fatal {
-    color: var(--color-level-fatal);
-    background: var(--level-bg-fatal);
-    border-radius: 4px;
-    padding: 2px 6px;
-    display: inline-block;
+  color: var(--color-level-fatal);
+  background: var(--level-bg-fatal);
+  border-radius: 4px;
+  padding: 2px 6px;
+  display: inline-block;
 }
 
 /* --- Context menu --- */
 .context-menu {
-    position: fixed;
-    min-width: 200px;
-    background: var(--color-bg-paper);
-    border: 1px solid var(--color-border);
-    border-radius: 8px;
-    box-shadow: var(--shadow-lg);
-    z-index: var(--z-dropdown);
-    overflow: hidden;
+  position: fixed;
+  min-width: 200px;
+  background: var(--color-bg-paper);
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  box-shadow: var(--shadow-lg);
+  z-index: var(--z-dropdown);
+  overflow: hidden;
 }
 
 .context-menu .item {
-    padding: 8px 12px;
-    cursor: pointer;
-    user-select: none;
+  padding: 8px 12px;
+  cursor: pointer;
+  user-select: none;
 }
 
 .context-menu .item:hover {
-    background: var(--color-bg-hover);
+  background: var(--color-bg-hover);
 }
 
 .context-menu .sep {
-    height: 1px;
-    background: var(--color-divider);
-    margin: 4px 0;
+  height: 1px;
+  background: var(--color-divider);
+  margin: 4px 0;
 }
 
 .context-menu .colors {
-    display: grid;
-    grid-template-columns: repeat(6, 20px);
-    gap: 6px;
-    padding: 8px 12px;
+  display: grid;
+  grid-template-columns: repeat(6, 20px);
+  gap: 6px;
+  padding: 8px 12px;
 }
 
 .context-menu .swatch {
-    width: 20px;
-    height: 20px;
-    border-radius: 4px;
-    cursor: pointer;
-    border: 1px solid var(--color-border);
+  width: 20px;
+  height: 20px;
+  border-radius: 4px;
+  cursor: pointer;
+  border: 1px solid var(--color-border);
 }
 
 /* --- Modal --- */
 .modal-backdrop {
-    position: fixed;
-    inset: 0;
-    background: rgba(0, 0, 0, 0.35);
-    z-index: var(--z-backdrop);
-    display: grid;
-    place-items: center;
-    padding: 24px;
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.35);
+  z-index: var(--z-backdrop);
+  display: grid;
+  place-items: center;
+  padding: 24px;
 }
 
 .modal {
-    width: min(720px, 95vw);
-    max-height: 85vh;
-    overflow: auto;
-    background: var(--glass-bg);
-    backdrop-filter: var(--glass-blur);
-    -webkit-backdrop-filter: var(--glass-blur);
-    border: 1px solid var(--glass-border);
-    border-radius: 12px;
-    box-shadow: var(--shadow-xl);
-    padding: 16px 18px;
+  width: min(720px, 95vw);
+  max-height: 85vh;
+  overflow: auto;
+  background: var(--glass-bg);
+  backdrop-filter: var(--glass-blur);
+  -webkit-backdrop-filter: var(--glass-blur);
+  border: 1px solid var(--glass-border);
+  border-radius: 12px;
+  box-shadow: var(--shadow-xl);
+  padding: 16px 18px;
 }
 
 .modal h3 {
-    margin: 0 0 12px 0;
+  margin: 0 0 12px 0;
 }
 
 .modal .modal-actions {
-    display: flex;
-    justify-content: flex-end;
-    gap: 8px;
-    padding-top: 12px;
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding-top: 12px;
 }
 
 /* --- Settings modal: fixed, consistent size across tabs --- */
 .modal.modal-settings {
-    width: min(720px, 95vw);
-    max-width: 95vw;
-    height: clamp(420px, 60vh, 560px); /* konstante, responsive Höhe */
-    display: flex;
-    flex-direction: column;
+  width: min(720px, 95vw);
+  max-width: 95vw;
+  height: clamp(420px, 60vh, 560px); /* konstante, responsive Höhe */
+  display: flex;
+  flex-direction: column;
 }
 
 .modal.modal-settings .modal-actions {
-    flex: 0 0 auto;
+  flex: 0 0 auto;
 }
 
 /* --- Tabs as button group --- */
 .tabs {
-    display: flex;
-    flex-direction: column;
-    gap: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
 }
 
 .tablist {
-    display: inline-flex;
-    align-self: flex-start;
-    background: var(--color-bg-paper);
-    border: 1px solid var(--color-border);
-    border-radius: 10px;
-    overflow: hidden;
-    box-shadow: var(--shadow-sm);
+  display: inline-flex;
+  align-self: flex-start;
+  background: var(--color-bg-paper);
+  border: 1px solid var(--color-border);
+  border-radius: 10px;
+  overflow: hidden;
+  box-shadow: var(--shadow-sm);
 }
 
 .tablist .tab {
-    appearance: none;
-    border: 0;
-    background: transparent;
-    color: var(--color-text-primary);
-    padding: 8px 14px;
-    margin: 0;
-    cursor: pointer;
-    font-weight: 600;
-    border-right: 1px solid var(--color-divider);
-    border-radius: 0;
-    transition: background var(--transition-fast), color var(--transition-fast), box-shadow var(--transition-fast);
+  appearance: none;
+  border: 0;
+  background: transparent;
+  color: var(--color-text-primary);
+  padding: 8px 14px;
+  margin: 0;
+  cursor: pointer;
+  font-weight: 600;
+  border-right: 1px solid var(--color-divider);
+  border-radius: 0;
+  transition:
+    background var(--transition-fast),
+    color var(--transition-fast),
+    box-shadow var(--transition-fast);
 }
 
 .tablist .tab:last-child {
-    border-right: 0;
+  border-right: 0;
 }
 
 .tablist .tab:not(.active):hover {
-    background: var(--color-bg-hover);
+  background: var(--color-bg-hover);
 }
 
 .tablist .tab.active {
-    background: var(--accent-gradient);
-    color: var(--color-primary-contrast);
-    box-shadow: inset 0 -2px 0 rgba(0, 0, 0, 0.06);
+  background: var(--accent-gradient);
+  color: var(--color-primary-contrast);
+  box-shadow: inset 0 -2px 0 rgba(0, 0, 0, 0.06);
 }
 
 /* Panels occupy remaining space with scroll, keeping modal size constant */
 .tabpanels {
-    flex: 1 1 auto;
-    min-height: 0; /* wichtig für korrektes Scrollen in flex-Containern */
-    overflow: auto;
-    padding: 4px 2px 0 2px;
+  flex: 1 1 auto;
+  min-height: 0; /* wichtig für korrektes Scrollen in flex-Containern */
+  overflow: auto;
+  padding: 4px 2px 0 2px;
 }
 
 .tabpanel {
-    /* optional spezifische Panel-Styles */
+  /* optional spezifische Panel-Styles */
 }
 
 /* --- Key/Value rows --- */
 .kv {
-    display: grid;
-    grid-template-columns: 140px 1fr;
-    gap: 10px;
-    align-items: center;
-    padding: 6px 0;
+  display: grid;
+  grid-template-columns: 140px 1fr;
+  gap: 10px;
+  align-items: center;
+  padding: 6px 0;
 }
 
 .kv.full {
-    grid-template-columns: 140px 1fr;
+  grid-template-columns: 140px 1fr;
 }
 
 .kv > span {
-    color: var(--color-text-secondary);
-    font-size: var(--font-size-sm);
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-sm);
 }
 
 pre#dMessage {
-    white-space: pre-wrap;
-    margin: 0;
-    font-family: var(--font-family-mono), monospace;
+  white-space: pre-wrap;
+  margin: 0;
+  font-family: var(--font-family-mono), monospace;
 }
 
 /* Stacktrace im Detailbereich */
 pre.stack-trace {
-    white-space: pre-wrap;
-    margin: 0;
-    font-family: var(--font-family-mono), monospace;
-    background: rgba(0, 0, 0, 0.04);
-    border: 1px solid var(--color-divider);
-    border-radius: 8px;
-    padding: 8px 10px;
+  white-space: pre-wrap;
+  margin: 0;
+  font-family: var(--font-family-mono), monospace;
+  background: rgba(0, 0, 0, 0.04);
+  border: 1px solid var(--color-divider);
+  border-radius: 8px;
+  padding: 8px 10px;
 }
 
 :root[data-theme='dark'] pre.stack-trace {
-    background: rgba(255, 255, 255, 0.06);
+  background: rgba(255, 255, 255, 0.06);
 }
 
 /* Grafischer Trenner zwischen Abschnitten in Details */
 .section-sep {
-    height: 1px;
-    background: var(--color-divider);
-    margin: 10px 0;
+  height: 1px;
+  background: var(--color-divider);
+  margin: 10px 0;
 }
 
 /* --- Chips --- */
 .chips {
-    gap: 6px;
+  gap: 6px;
 }
 
 .chip {
-    display: inline-flex;
-    align-items: center;
-    gap: 6px;
-    padding: 2px 8px;
-    border-radius: 999px;
-    background: var(--color-bg-hover);
-    border: 1px solid var(--color-divider);
-    font-size: 12px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: var(--color-bg-hover);
+  border: 1px solid var(--color-divider);
+  font-size: 12px;
 }
 
 .chip button {
-    border: 0;
-    background: transparent;
-    cursor: pointer;
-    font-size: 14px;
-    line-height: 1;
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+  font-size: 14px;
+  line-height: 1;
 }
 
 /* --- Buttons & Inputs baseline --- */
 button {
-    appearance: none;
-    border: 1px solid var(--color-border);
-    background: var(--color-bg-paper);
-    color: var(--color-text-primary);
-    border-radius: 8px;
-    padding: 6px 10px;
-    cursor: pointer;
+  appearance: none;
+  border: 1px solid var(--color-border);
+  background: var(--color-bg-paper);
+  color: var(--color-text-primary);
+  border-radius: 8px;
+  padding: 6px 10px;
+  cursor: pointer;
 }
 
 button:hover {
-    background: var(--color-bg-hover);
+  background: var(--color-bg-hover);
 }
 
 button:disabled {
-    opacity: 0.6;
-    cursor: default;
+  opacity: 0.6;
+  cursor: default;
 }
 
 /* WICHTIG: Nur Text-/Select-Inputs generisch stylen, NICHT Checkboxes/Radios */
 input:not([type='checkbox']):not([type='radio']),
 select {
-    appearance: none;
-    border: 1px solid var(--color-border);
-    background: var(--color-bg-paper);
-    color: var(--color-text-primary);
-    border-radius: 8px;
-    padding: 6px 8px;
+  appearance: none;
+  border: 1px solid var(--color-border);
+  background: var(--color-bg-paper);
+  color: var(--color-text-primary);
+  border-radius: 8px;
+  padding: 6px 8px;
 }
 
 /* Checkboxen: harte Rücksetzung auf native Darstellung */
 input[type='checkbox'] {
-    appearance: auto !important;
-    -webkit-appearance: checkbox !important;
-    background: initial !important;
-    border: initial !important;
-    width: 16px;
-    height: 16px;
-    margin: 0;
-    vertical-align: middle;
-    accent-color: var(--color-primary);
+  appearance: auto !important;
+  -webkit-appearance: checkbox !important;
+  background: initial !important;
+  border: initial !important;
+  width: 16px;
+  height: 16px;
+  margin: 0;
+  vertical-align: middle;
+  accent-color: var(--color-primary);
 }
 
 /* MDC-Grid: kompakte 2+1 Spalten; Werte ohne Box-Dekor anzeigen */
 .mdc-grid {
-    display: grid;
-    grid-template-columns: 140px 1fr auto;
-    gap: 6px 12px; /* etwas kompakter */
-    align-items: center;
+  display: grid;
+  grid-template-columns: 140px 1fr auto;
+  gap: 6px 12px; /* etwas kompakter */
+  align-items: center;
 }
 
 .mdc-key {
-    color: var(--color-text-secondary);
-    word-break: break-word;
+  color: var(--color-text-secondary);
+  word-break: break-word;
 }
 
 /* Entferne Box-/Hintergrund-Styling für Werte */
 .mdc-val code {
-    display: inline;
-    padding: 0;
-    background: transparent;
-    border: 0;
-    border-radius: 0;
+  display: inline;
+  padding: 0;
+  background: transparent;
+  border: 0;
+  border-radius: 0;
 }
 
 .mdc-act {
-    text-align: right;
+  text-align: right;
 }
 
 /* Entferne getönte Sonderbehandlung für MDC-Werte */
 .details[data-tinted='1'] .mdc-val code {
-    background: transparent;
+  background: transparent;
 }
 
 /* Tinted details: Kinder-Elemente nutzen gläserische (halbtransparente) Flächen,
@@ -875,165 +885,165 @@ input[type='checkbox'] {
 .details[data-tinted='1'] button,
 .details[data-tinted='1'] input:not([type='checkbox']),
 .details[data-tinted='1'] select {
-    background: var(--glass-bg);
+  background: var(--glass-bg);
 }
 
 /* Klasse für sicher native Checkbox-Darstellung */
 .native-checkbox {
-    appearance: auto !important;
-    -webkit-appearance: checkbox !important;
-    background: initial !important;
-    border: initial !important;
-    width: 16px;
-    height: 16px;
-    margin: 0;
-    vertical-align: middle;
-    accent-color: var(--color-primary);
+  appearance: auto !important;
+  -webkit-appearance: checkbox !important;
+  background: initial !important;
+  border: initial !important;
+  width: 16px;
+  height: 16px;
+  margin: 0;
+  vertical-align: middle;
+  accent-color: var(--color-primary);
 }
 
 /* --- Meta grid in Details: 2 Spalten (Zeit+Logger, Level+Thread) --- */
 .meta-grid {
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: 6px 16px; /* Reihen-, Spaltenabstand */
-    align-items: start;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px 16px; /* Reihen-, Spaltenabstand */
+  align-items: start;
 }
 
 /* Bei sehr schmalen Breiten untereinander stapeln */
 @media (max-width: 720px) {
-    .meta-grid {
-        grid-template-columns: 1fr;
-    }
+  .meta-grid {
+    grid-template-columns: 1fr;
+  }
 }
 
 /* --- Generic table wrapper (horizontal scroll) --- */
 .table-wrap {
-    overflow: auto;
-    border: 1px solid var(--color-divider);
-    border-radius: 10px;
-    background: var(--color-bg-paper);
+  overflow: auto;
+  border: 1px solid var(--color-divider);
+  border-radius: 10px;
+  background: var(--color-bg-paper);
 }
 
 /* --- Generic data table used in dialogs (e.g., DCFilterDialog) --- */
 .data-table {
-    width: 100%;
-    border-collapse: separate;
-    border-spacing: 0;
-    min-width: 600px; /* erlaubt horizontales Scrollen bei schmalen Viewports */
-    font-size: var(--font-size-sm);
+  width: 100%;
+  border-collapse: separate;
+  border-spacing: 0;
+  min-width: 600px; /* erlaubt horizontales Scrollen bei schmalen Viewports */
+  font-size: var(--font-size-sm);
 }
 
 .data-table thead th {
-    position: sticky;
-    top: 0;
-    z-index: 1;
-    background: var(--color-bg-paper);
-    color: var(--color-text-secondary);
-    font-weight: 600;
-    text-align: left;
-    padding: 8px 10px;
-    border-bottom: 1px solid var(--color-divider);
-    white-space: nowrap;
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: var(--color-bg-paper);
+  color: var(--color-text-secondary);
+  font-weight: 600;
+  text-align: left;
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--color-divider);
+  white-space: nowrap;
 }
 
 .data-table thead th.col-active {
-    width: 120px;
-    text-align: left;
+  width: 120px;
+  text-align: left;
 }
 
 .data-table tbody td {
-    padding: 8px 10px;
-    border-bottom: 1px solid var(--color-divider);
-    white-space: nowrap; /* wichtig für horizontales Scrollen */
-    vertical-align: middle;
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--color-divider);
+  white-space: nowrap; /* wichtig für horizontales Scrollen */
+  vertical-align: middle;
 }
 
 .data-table tbody tr:nth-child(even) {
-    background: var(--color-bg-hover);
+  background: var(--color-bg-hover);
 }
 
 .data-table tbody tr.selected {
-    background: rgba(10, 132, 255, 0.12);
+  background: rgba(10, 132, 255, 0.12);
 }
 
 .data-table tbody tr.inactive {
-    opacity: 0.75;
+  opacity: 0.75;
 }
 
 /* Zell-Typen */
 .data-table td.cell-key {
-    color: var(--color-text-primary);
+  color: var(--color-text-primary);
 }
 
 .data-table td.cell-val code {
-    font-family: var(--font-family-mono), monospace;
-    background: transparent;
-    border: 0;
-    padding: 0;
+  font-family: var(--font-family-mono), monospace;
+  background: transparent;
+  border: 0;
+  padding: 0;
 }
 
 .data-table td.cell-act {
-    white-space: nowrap;
+  white-space: nowrap;
 }
 
 /* Badges für Aktiv/Aus */
 .badge {
-    display: inline-block;
-    padding: 2px 8px;
-    border-radius: 999px;
-    font-size: 11px;
-    line-height: 1.4;
-    border: 1px solid var(--color-divider);
-    user-select: none;
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  line-height: 1.4;
+  border: 1px solid var(--color-divider);
+  user-select: none;
 }
 
 .badge.on {
-    color: var(--color-success);
-    background: rgba(16, 185, 129, 0.12);
-    border-color: rgba(16, 185, 129, 0.3);
+  color: var(--color-success);
+  background: rgba(16, 185, 129, 0.12);
+  border-color: rgba(16, 185, 129, 0.3);
 }
 
 .badge.off {
-    color: var(--color-text-secondary);
-    background: var(--color-bg-hover);
+  color: var(--color-text-secondary);
+  background: var(--color-bg-hover);
 }
 
 /* DC-Dialog: breiter und ohne horizontales Scrollen */
 .modal.modal-wide {
-    width: min(1000px, 96vw);
-    max-width: 96vw;
+  width: min(1000px, 96vw);
+  max-width: 96vw;
 }
 
 /* Innerhalb des DC-Dialogs: Tabelle passt sich an, Zellen umbrechen */
 .dc-dialog .table-wrap {
-    overflow-x: hidden; /* keine seitliche Scrollleiste */
+  overflow-x: hidden; /* keine seitliche Scrollleiste */
 }
 
 .dc-dialog .data-table {
-    min-width: 0; /* keine starre Mindestbreite erzwingen */
-    table-layout: fixed; /* Spalten teilen Breite gleichmäßig auf, verhindert Overflow */
-    width: 100%;
+  min-width: 0; /* keine starre Mindestbreite erzwingen */
+  table-layout: fixed; /* Spalten teilen Breite gleichmäßig auf, verhindert Overflow */
+  width: 100%;
 }
 
 .dc-dialog .data-table thead th,
 .dc-dialog .data-table tbody td {
-    white-space: normal; /* Zeilenumbruch zulassen */
+  white-space: normal; /* Zeilenumbruch zulassen */
 }
 
 .dc-dialog .data-table td.cell-key {
-    word-break: break-word;
-    overflow-wrap: anywhere; /* lange Keys umbrechen */
+  word-break: break-word;
+  overflow-wrap: anywhere; /* lange Keys umbrechen */
 }
 
 .dc-dialog .data-table td.cell-val code {
-    white-space: pre-wrap; /* Werte mehrzeilig anzeigen */
-    word-break: break-word;
-    overflow-wrap: anywhere; /* lange Tokens umbrechen (z.B. UUIDs) */
+  white-space: pre-wrap; /* Werte mehrzeilig anzeigen */
+  word-break: break-word;
+  overflow-wrap: anywhere; /* lange Tokens umbrechen (z.B. UUIDs) */
 }
 
 /* Aktionsspalte schmal halten */
 .dc-dialog .data-table th.col-active,
 .dc-dialog .data-table td.cell-act {
-    width: 120px;
-    white-space: nowrap;
+  width: 120px;
+  white-space: nowrap;
 }
