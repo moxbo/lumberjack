@@ -948,7 +948,10 @@ export default function App() {
       const total = layout ? layout.clientHeight : document.body.clientHeight || window.innerHeight;
       const minDetail = 150;
       const minList = 140;
-      const dividerSize = 6;
+      // Divider-Höhe dynamisch aus CSS-Variable lesen
+      const csRoot = getComputedStyle(document.documentElement);
+      const divVar = csRoot.getPropertyValue('--divider-h').trim();
+      const dividerSize = Math.max(0, parseInt(divVar.replace('px', ''), 10) || 8);
       const maxDetail = Math.max(minDetail, total - minList - dividerSize);
       if (newH < minDetail) newH = minDetail;
       if (newH > maxDetail) newH = maxDetail;
@@ -1166,7 +1169,7 @@ export default function App() {
       {/* Einstellungen (Tabs) */}
       {showSettings && (
         <div className="modal-backdrop" onClick={() => setShowSettings(false)}>
-          <div className="modal" onClick={(e) => e.stopPropagation()}>
+          <div className="modal modal-settings" onClick={(e) => e.stopPropagation()}>
             <h3>Einstellungen</h3>
 
             <div className="tabs">
@@ -1205,143 +1208,146 @@ export default function App() {
                 </button>
               </div>
 
-              {settingsTab === 'tcp' && (
-                <div className="tabpanel" role="tabpanel">
-                  <div className="kv">
-                    <span>TCP Port</span>
-                    <input
-                      type="number"
-                      min="1"
-                      max="65535"
-                      value={form.tcpPort}
-                      onInput={(e) =>
-                        setForm({ ...form, tcpPort: Number(e.currentTarget.value || 0) })
-                      }
-                    />
-                  </div>
-                </div>
-              )}
-
-              {settingsTab === 'http' && (
-                <div className="tabpanel" role="tabpanel">
-                  <div className="kv">
-                    <span>HTTP URL</span>
-                    <input
-                      type="text"
-                      value={form.httpUrl}
-                      onInput={(e) => setForm({ ...form, httpUrl: e.currentTarget.value })}
-                      placeholder="https://…/logs.json"
-                      autoFocus
-                    />
-                  </div>
-                  <div className="kv">
-                    <span>Intervall (ms)</span>
-                    <input
-                      type="number"
-                      min="500"
-                      step="500"
-                      value={form.httpInterval}
-                      onInput={(e) =>
-                        setForm({ ...form, httpInterval: Number(e.currentTarget.value || 5000) })
-                      }
-                    />
-                  </div>
-                </div>
-              )}
-
-              {settingsTab === 'logging' && (
-                <div className="tabpanel" role="tabpanel">
-                  <div className="kv">
-                    <label style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+              <div className="tabpanels">
+                {settingsTab === 'tcp' && (
+                  <div className="tabpanel" role="tabpanel">
+                    <div className="kv">
+                      <span>TCP Port</span>
                       <input
-                        type="checkbox"
-                        className="native-checkbox"
-                        checked={!!form.logToFile}
-                        onChange={(e) => setForm({ ...form, logToFile: e.currentTarget.checked })}
+                        type="number"
+                        min="1"
+                        max="65535"
+                        value={form.tcpPort}
+                        onInput={(e) =>
+                          setForm({ ...form, tcpPort: Number(e.currentTarget.value || 0) })
+                        }
                       />
-                      <span>In Datei schreiben</span>
-                    </label>
+                    </div>
                   </div>
-                  <div className="kv">
-                    <span>Datei</span>
-                    <div style={{ display: 'grid', gridTemplateColumns: '1fr auto', gap: '6px' }}>
+                )}
+
+                {settingsTab === 'http' && (
+                  <div className="tabpanel" role="tabpanel">
+                    <div className="kv">
+                      <span>HTTP URL</span>
                       <input
                         type="text"
-                        value={form.logFilePath}
-                        onInput={(e) => setForm({ ...form, logFilePath: e.currentTarget.value })}
-                        placeholder="(Standardpfad)"
+                        value={form.httpUrl}
+                        onInput={(e) => setForm({ ...form, httpUrl: e.currentTarget.value })}
+                        placeholder="https://…/logs.json"
+                        autoFocus
+                      />
+                    </div>
+                    <div className="kv">
+                      <span>Intervall (ms)</span>
+                      <input
+                        type="number"
+                        min="500"
+                        step="500"
+                        value={form.httpInterval}
+                        onInput={(e) =>
+                          setForm({ ...form, httpInterval: Number(e.currentTarget.value || 5000) })
+                        }
+                      />
+                    </div>
+                  </div>
+                )}
+
+                {settingsTab === 'logging' && (
+                  <div className="tabpanel" role="tabpanel">
+                    <div className="kv">
+                      <label style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                        <input
+                          type="checkbox"
+                          className="native-checkbox"
+                          checked={!!form.logToFile}
+                          onChange={(e) => setForm({ ...form, logToFile: e.currentTarget.checked })}
+                        />
+                        <span>In Datei schreiben</span>
+                      </label>
+                    </div>
+                    <div className="kv">
+                      <span>Datei</span>
+                      <div style={{ display: 'grid', gridTemplateColumns: '1fr auto', gap: '6px' }}>
+                        <input
+                          type="text"
+                          value={form.logFilePath}
+                          onInput={(e) => setForm({ ...form, logFilePath: e.currentTarget.value })}
+                          placeholder="(Standardpfad)"
+                          disabled={!form.logToFile}
+                        />
+                        <button
+                          onClick={async () => {
+                            try {
+                              const p = await window.api.chooseLogFile();
+                              if (p) setForm({ ...form, logFilePath: p });
+                            } catch {}
+                          }}
+                          disabled={!form.logToFile}
+                        >
+                          Wählen…
+                        </button>
+                      </div>
+                    </div>
+                    <div className="kv">
+                      <span>Max. Größe (MB)</span>
+                      <input
+                        type="number"
+                        min="1"
+                        step="1"
+                        value={form.logMaxMB}
+                        onInput={(e) =>
+                          setForm({ ...form, logMaxMB: Number(e.currentTarget.value || 5) })
+                        }
                         disabled={!form.logToFile}
                       />
-                      <button
-                        onClick={async () => {
-                          try {
-                            const p = await window.api.chooseLogFile();
-                            if (p) setForm({ ...form, logFilePath: p });
-                          } catch {}
-                        }}
+                    </div>
+                    <div className="kv">
+                      <span>Max. Backups</span>
+                      <input
+                        type="number"
+                        min="0"
+                        step="1"
+                        value={form.logMaxBackups}
+                        onInput={(e) =>
+                          setForm({ ...form, logMaxBackups: Number(e.currentTarget.value || 0) })
+                        }
                         disabled={!form.logToFile}
-                      >
-                        Wählen…
-                      </button>
+                      />
                     </div>
                   </div>
-                  <div className="kv">
-                    <span>Max. Größe (MB)</span>
-                    <input
-                      type="number"
-                      min="1"
-                      step="1"
-                      value={form.logMaxMB}
-                      onInput={(e) =>
-                        setForm({ ...form, logMaxMB: Number(e.currentTarget.value || 5) })
-                      }
-                      disabled={!form.logToFile}
-                    />
-                  </div>
-                  <div className="kv">
-                    <span>Max. Backups</span>
-                    <input
-                      type="number"
-                      min="0"
-                      step="1"
-                      value={form.logMaxBackups}
-                      onInput={(e) =>
-                        setForm({ ...form, logMaxBackups: Number(e.currentTarget.value || 0) })
-                      }
-                      disabled={!form.logToFile}
-                    />
-                  </div>
-                </div>
-              )}
+                )}
 
-              {settingsTab === 'appearance' && (
-                <div className="tabpanel" role="tabpanel">
-                  <div className="kv">
-                    <span>Theme</span>
-                    <select
-                      value={form.themeMode}
-                      onChange={(e) => {
-                        const v = e.currentTarget.value;
-                        setForm({ ...form, themeMode: v });
-                        // Live-Vorschau, ohne zu speichern
-                        applyThemeMode(['light', 'dark'].includes(v) ? v : 'system');
-                      }}
-                    >
-                      <option value="system">System</option>
-                      <option value="light">Hell</option>
-                      <option value="dark">Dunkel</option>
-                    </select>
-                  </div>
-                  <div className="kv">
-                    <span>Akzent</span>
-                    <div>
-                      <small style={{ color: '#6b7280' }}>
-                        Akzentfarbe kann in styles.css über --accent / --accent-2 angepasst werden.
-                      </small>
+                {settingsTab === 'appearance' && (
+                  <div className="tabpanel" role="tabpanel">
+                    <div className="kv">
+                      <span>Theme</span>
+                      <select
+                        value={form.themeMode}
+                        onChange={(e) => {
+                          const v = e.currentTarget.value;
+                          setForm({ ...form, themeMode: v });
+                          // Live-Vorschau, ohne zu speichern
+                          applyThemeMode(['light', 'dark'].includes(v) ? v : 'system');
+                        }}
+                      >
+                        <option value="system">System</option>
+                        <option value="light">Hell</option>
+                        <option value="dark">Dunkel</option>
+                      </select>
+                    </div>
+                    <div className="kv">
+                      <span>Akzent</span>
+                      <div>
+                        <small style={{ color: '#6b7280' }}>
+                          Akzentfarbe kann in styles.css über --accent / --accent-2 angepasst
+                          werden.
+                        </small>
+                      </div>
                     </div>
                   </div>
-                </div>
-              )}
+                )}
+              </div>
             </div>
 
             <div className="modal-actions">
