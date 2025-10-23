@@ -94,6 +94,9 @@ function saveSettings() {
   }
 }
 
+// Cache the resolved icon path to avoid repeated filesystem operations
+let cachedIconPath = null;
+
 // Datei-Logging: Stream + Rotation
 function defaultLogFilePath() {
   const portableDir = process.env.PORTABLE_EXECUTABLE_DIR;
@@ -321,6 +324,10 @@ function updateMenu() {
 }
 
 function resolveIconPath() {
+  if (cachedIconPath !== null) {
+    return cachedIconPath;
+  }
+  
   const resPath = process.resourcesPath || '';
   const candidates = [
     // Bevorzuge entpackte Ressourcen
@@ -331,6 +338,7 @@ function resolveIconPath() {
     // Fallback: Projekt-Root im Dev
     path.join(process.cwd(), 'images', 'icon.ico'),
   ];
+  
   for (const p of candidates) {
     try {
       if (fs.existsSync(p)) {
@@ -342,35 +350,27 @@ function resolveIconPath() {
             fs.mkdirSync(outDir, { recursive: true });
             const outPath = path.join(outDir, 'app-icon.ico');
             fs.writeFileSync(outPath, buf);
+            cachedIconPath = outPath;
             return outPath;
           } catch (e) {
             // Fallback: trotzdem Originalpfad zurückgeben
+            cachedIconPath = p;
             return p;
           }
         }
+        cachedIconPath = p;
         return p;
       }
     } catch {}
   }
+  
+  cachedIconPath = '';
   return null;
 }
 
 function createWindow() {
   // Create window immediately with default settings for faster startup
   const { width, height, x, y } = settings.windowBounds || {};
-
-  // Icon nur unter Windows setzen
-  let winIconOpt = {};
-  if (process.platform === 'win32') {
-    const iconPath = resolveIconPath();
-    if (iconPath) {
-      console.log('App-Icon verwendet:', iconPath);
-      // Unter Windows bevorzugt Electron einen Dateipfad zur ICO
-      winIconOpt = { icon: iconPath };
-    } else {
-      console.warn('Kein Icon gefunden (images/icon.ico).');
-    }
-  }
 
   mainWindow = new BrowserWindow({
     width: width || 1200,
@@ -383,7 +383,6 @@ function createWindow() {
       sandbox: false,
     },
     show: false, // Don't show until ready for smoother experience
-    ...winIconOpt,
   });
 
   // Verhindert, dass ein Datei-/Link-Drop die App zu einer Datei/URL navigiert
@@ -411,6 +410,23 @@ function createWindow() {
   // Show window as soon as it's ready to paint
   mainWindow.once('ready-to-show', () => {
     mainWindow.show();
+    
+    // Set icon asynchronously after window is shown (Windows only)
+    if (process.platform === 'win32') {
+      setImmediate(() => {
+        const iconPath = resolveIconPath();
+        if (iconPath) {
+          try {
+            mainWindow.setIcon(iconPath);
+            console.log('App-Icon verwendet:', iconPath);
+          } catch (err) {
+            console.warn('Could not set icon:', err.message);
+          }
+        } else {
+          console.warn('Kein Icon gefunden (images/icon.ico).');
+        }
+      });
+    }
   });
 
   // persist bounds on close
@@ -426,9 +442,7 @@ function createWindow() {
     // (Auf macOS kann später ein neues Fenster erscheinen und den Puffer flushen)
   });
 
-  // Build menu first (without icons for speed)
-  buildMenu();
-
+  // Load URL immediately for faster perceived startup
   const devUrl = process.env.VITE_DEV_SERVER_URL;
   if (devUrl) {
     mainWindow.loadURL(devUrl);
@@ -438,10 +452,15 @@ function createWindow() {
     else mainWindow.loadFile('index.html');
   }
 
-  // Load settings and initialize features asynchronously after window is created
+  // Build menu and load settings asynchronously after window starts loading
   setImmediate(async () => {
+    // Build menu first (before settings load)
+    buildMenu();
+    
+    // Then load settings
     await loadSettings();
     if (settings.logToFile) openLogStream();
+    
     // Update menu with potentially changed settings
     updateMenu();
   });
