@@ -65,12 +65,14 @@ Main Process
 **Trigger:** New log events arrive via `logs:append`
 
 **Effect:**
+
 - MDCListener extracts MDC keys/values
 - ComboBox key list updates
 - F2 value suggestions update
 - **Table does NOT update** (filter state unchanged)
 
 **Implementation:**
+
 ```javascript
 // DCFilterPanel.jsx, lines 30-44
 useEffect(() => {
@@ -91,11 +93,13 @@ useEffect(() => {
 **Trigger:** User actions (Add/Remove/Activate/Deactivate/Reset)
 
 **Effect:**
+
 - DiagnosticContextFilter emits `onChange`
 - Table re-renders with updated entries
 - **Suggestions do NOT update** (MDC data unchanged)
 
 **Implementation:**
+
 ```javascript
 // DCFilterPanel.jsx, lines 47-55
 useEffect(() => {
@@ -110,6 +114,7 @@ useEffect(() => {
 ### 3. Add Operation
 
 **Behavior:**
+
 - Reads key from ComboBox and value from text field
 - Supports pipe-separated values: `value1|value2|value3`
 - Empty value creates wildcard entry (matches any value for that key)
@@ -117,13 +122,17 @@ useEffect(() => {
 - Table updates to show new entries
 
 **Implementation:**
+
 ```javascript
 // DCFilterPanel.jsx, lines 57-69
 function onAdd() {
   const key = String(selectedKey || '').trim();
   if (!key) return;
   const raw = String(val ?? '');
-  const parts = raw.split('|').map((s) => s.trim()).filter((s) => s.length > 0);
+  const parts = raw
+    .split('|')
+    .map((s) => s.trim())
+    .filter((s) => s.length > 0);
   if (parts.length === 0) {
     DiagnosticContextFilter.addMdcEntry(key, '');
   } else {
@@ -138,11 +147,13 @@ function onAdd() {
 **Trigger:** F2 key in value field, or "Werte…" button
 
 **Behavior:**
+
 - Opens dialog showing known values for selected key
 - Values populated from MDCListener.getSortedValues(key)
 - Selecting a value fills text field and triggers Add
 
 **Implementation:**
+
 ```javascript
 // DCFilterPanel.jsx, lines 135-155
 function onValueKeyDown(e) {
@@ -166,11 +177,13 @@ function chooseValue(v) {
 ### 5. Context Menu Operations
 
 **Supported on multi-selection:**
+
 - **Aktivieren**: Activates selected entries
 - **Deaktivieren**: Deactivates selected entries
 - **Entfernen**: Removes selected entries
 
 **Implementation:**
+
 ```javascript
 // DCFilterPanel.jsx, lines 114-124
 function activateSelected(active) {
@@ -189,11 +202,13 @@ function activateSelected(active) {
 ### 6. Reset/Clear
 
 **Reset (DiagnosticContextFilter.reset()):**
+
 - Clears all filter entries
 - Table updates to show empty state
 - **Does not** clear suggestions (MDC data persists)
 
 **Clear Logs (App.jsx clearLogs()):**
+
 - Calls LoggingStore.reset()
 - Clears suggestions (MDCListener clears keys Map)
 - Clears filter entries
@@ -202,11 +217,13 @@ function activateSelected(active) {
 ## Table Display
 
 The table shows filter entries with three columns:
+
 - **Key**: MDC key
 - **Value**: MDC value (or "(alle)" for wildcard)
 - **Active**: Checkbox and badge showing active state
 
 **Key characteristics:**
+
 - Read-only (no inline editing)
 - Updates only on filter state changes
 - Supports multi-selection (Shift/Ctrl+Click)
@@ -224,6 +241,7 @@ The filter uses AND logic across keys and OR logic within a key:
 ```
 
 **Wildcard entries (empty value):**
+
 - Match any value for the key
 - Key must be present in the log's MDC
 
@@ -236,6 +254,7 @@ node scripts/verify-mdc-flow.mjs
 ```
 
 **Test coverage:**
+
 - MDC extraction from log events
 - Incremental suggestion updates
 - Change event optimization
@@ -249,22 +268,27 @@ All tests pass ✅
 ## Acceptance Criteria Met
 
 ✅ **Suggestion sources updated exclusively by incoming logs**
+
 - MDCListener only updates on loggingEventsAdded
 - Keys/values accumulated from all log events
 
 ✅ **Table refreshes exclusively on filter state changes**
+
 - Table state bound to DiagnosticContextFilter.onChange
 - Log events do not trigger table updates
 
 ✅ **F2 dialog shows known values per key**
+
 - Dialog populated from MDCListener.getSortedValues(key)
 - Auto-triggers Add on value selection
 
 ✅ **Context menu operations work on multi-selection**
+
 - Activate/Deactivate/Remove iterate over selected entries
 - Operations respect multi-selection via Shift/Ctrl+Click
 
 ✅ **Reset clears suggestions, filter, and table**
+
 - LoggingStore.reset() → MDCListener clears keys
 - DiagnosticContextFilter.reset() → table clears
 - App.jsx clearLogs() ties both together
@@ -272,6 +296,7 @@ All tests pass ✅
 ## Future Enhancements
 
 Potential improvements (not required):
+
 - Bulk import/export of filter configurations
 - Filter templates/presets
 - Regex support for value matching
@@ -281,6 +306,7 @@ Potential improvements (not required):
 ## Conclusion
 
 The MDC filter implementation is **complete and functional**. All required behaviors are implemented correctly:
+
 - Log events update suggestions only
 - Filter operations update table only
 - Clear separation of concerns

@@ -145,7 +145,7 @@ class MockDCFilter {
   }
   getDcEntries() {
     return Array.from(this._map.values()).sort(
-      (a, b) => a.key.localeCompare(b.key) || a.val.localeCompare(b.val),
+      (a, b) => a.key.localeCompare(b.key) || a.val.localeCompare(b.val)
     );
   }
 }
@@ -189,7 +189,7 @@ test('MDCListener updates suggestions incrementally', () => {
   assertEqual(
     listener.getSortedKeys(),
     ['sessionId', 'userId'],
-    'Should have both keys after second batch',
+    'Should have both keys after second batch'
   );
 
   // Third batch with new value for existing key
@@ -343,7 +343,7 @@ for (const { name, fn } of tests) {
 }
 
 console.log(
-  `\n${tests.length} tests: ${passed} passed, ${failed} failed${failed > 0 ? ' ❌' : ' ✅'}`,
+  `\n${tests.length} tests: ${passed} passed, ${failed} failed${failed > 0 ? ' ❌' : ' ✅'}`
 );
 
 process.exit(failed > 0 ? 1 : 0);
