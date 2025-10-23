@@ -330,7 +330,7 @@ function resolveIconPath() {
   if (cachedIconPath !== null) {
     return cachedIconPath;
   }
-  
+
   const resPath = process.resourcesPath || '';
   const candidates = [
     // Bevorzuge entpackte Ressourcen
@@ -341,7 +341,7 @@ function resolveIconPath() {
     // Fallback: Projekt-Root im Dev
     path.join(process.cwd(), 'images', 'icon.ico'),
   ];
-  
+
   for (const p of candidates) {
     try {
       if (fs.existsSync(p)) {
@@ -366,7 +366,7 @@ function resolveIconPath() {
       }
     } catch {}
   }
-  
+
   cachedIconPath = '';
   return null;
 }
@@ -415,7 +415,7 @@ function createWindow() {
     const readyTime = Date.now() - startTime;
     console.log(`Window ready in ${readyTime}ms`);
     mainWindow.show();
-    
+
     // Set icon asynchronously after window is shown (Windows only)
     if (process.platform === 'win32') {
       setImmediate(() => {
@@ -461,11 +461,11 @@ function createWindow() {
   setImmediate(async () => {
     // Build menu first (before settings load)
     buildMenu();
-    
+
     // Then load settings
     await loadSettings();
     if (settings.logToFile) openLogStream();
-    
+
     // Update menu with potentially changed settings
     updateMenu();
   });

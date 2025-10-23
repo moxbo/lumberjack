@@ -856,22 +856,22 @@ input[type='checkbox'] {
   overflow-x: hidden; /* keine seitliche Scrollleiste */
 }
 .dc-dialog .data-table {
-  min-width: 0;            /* keine starre Mindestbreite erzwingen */
-  table-layout: fixed;     /* Spalten teilen Breite gleichmäßig auf, verhindert Overflow */
+  min-width: 0; /* keine starre Mindestbreite erzwingen */
+  table-layout: fixed; /* Spalten teilen Breite gleichmäßig auf, verhindert Overflow */
   width: 100%;
 }
 .dc-dialog .data-table thead th,
 .dc-dialog .data-table tbody td {
-  white-space: normal;      /* Zeilenumbruch zulassen */
+  white-space: normal; /* Zeilenumbruch zulassen */
 }
 .dc-dialog .data-table td.cell-key {
   word-break: break-word;
-  overflow-wrap: anywhere;  /* lange Keys umbrechen */
+  overflow-wrap: anywhere; /* lange Keys umbrechen */
 }
 .dc-dialog .data-table td.cell-val code {
-  white-space: pre-wrap;    /* Werte mehrzeilig anzeigen */
+  white-space: pre-wrap; /* Werte mehrzeilig anzeigen */
   word-break: break-word;
-  overflow-wrap: anywhere;  /* lange Tokens umbrechen (z.B. UUIDs) */
+  overflow-wrap: anywhere; /* lange Tokens umbrechen (z.B. UUIDs) */
 }
 /* Aktionsspalte schmal halten */
 .dc-dialog .data-table th.col-active,

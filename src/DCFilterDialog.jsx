@@ -190,13 +190,21 @@ export default function DCFilterDialog() {
                 title="Mehrere Werte mit | trennen. F2 oder Button öffnet Vorschläge. Leer = alle Werte dieses Keys."
                 placeholder="Wert(e) oder leer für alle…"
               />
-              <button title="Vorschläge anzeigen (F2)" onClick={openValuePicker}>Werte…</button>
+              <button title="Vorschläge anzeigen (F2)" onClick={openValuePicker}>
+                Werte…
+              </button>
             </div>
           </div>
           <div style="display:flex; gap:6px; align-items:center; padding-bottom:2px;">
-            <button onClick={onAdd} disabled={addDisabled}>Hinzufügen</button>
-            <button onClick={onRemoveSelected} disabled={sel.length === 0}>Entfernen</button>
-            <button onClick={onClear} disabled={rows.length === 0}>Leeren</button>
+            <button onClick={onAdd} disabled={addDisabled}>
+              Hinzufügen
+            </button>
+            <button onClick={onRemoveSelected} disabled={sel.length === 0}>
+              Entfernen
+            </button>
+            <button onClick={onClear} disabled={rows.length === 0}>
+              Leeren
+            </button>
           </div>
         </div>
         {/* Aktiv-Schalter */}
@@ -235,7 +243,9 @@ export default function DCFilterDialog() {
                   style="cursor: default;"
                 >
                   <td class="cell-key">{e.key}</td>
-                  <td class="cell-val">{e.val ? <code>{e.val}</code> : <span style="color:#888">(alle)</span>}</td>
+                  <td class="cell-val">
+                    {e.val ? <code>{e.val}</code> : <span style="color:#888">(alle)</span>}
+                  </td>
                   <td class="cell-act">
                     <div style="display:flex; align-items:center; gap:8px;">
                       <input
@@ -246,7 +256,9 @@ export default function DCFilterDialog() {
                         aria-label={e.active ? 'aktiv' : 'aus'}
                         title={e.active ? 'aktiv' : 'aus'}
                       />
-                      <span class={`badge ${e.active ? 'on' : 'off'}`}>{e.active ? 'Aktiv' : 'Aus'}</span>
+                      <span class={`badge ${e.active ? 'on' : 'off'}`}>
+                        {e.active ? 'Aktiv' : 'Aus'}
+                      </span>
                     </div>
                   </td>
                 </tr>
@@ -254,7 +266,9 @@ export default function DCFilterDialog() {
             })}
             {rows.length === 0 && (
               <tr>
-                <td colSpan={3} style="padding:8px; color:#777;">Keine Einträge</td>
+                <td colSpan={3} style="padding:8px; color:#777;">
+                  Keine Einträge
+                </td>
               </tr>
             )}
           </tbody>
@@ -268,8 +282,12 @@ export default function DCFilterDialog() {
           class="context-menu"
           style={{ position: 'fixed', left: ctx.x + 'px', top: ctx.y + 'px' }}
         >
-          <div class="item" onClick={() => activateSelected(true)}>Aktivieren</div>
-          <div class="item" onClick={() => activateSelected(false)}>Deaktivieren</div>
+          <div class="item" onClick={() => activateSelected(true)}>
+            Aktivieren
+          </div>
+          <div class="item" onClick={() => activateSelected(false)}>
+            Deaktivieren
+          </div>
           <div
             class="item"
             onClick={() => {
