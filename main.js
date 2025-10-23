@@ -21,12 +21,14 @@ function getParsers() {
   }
   return parsers;
 }
-const {
-  getDefaultSettings,
-  parseSettingsJSON,
-  stringifySettingsJSON,
-  mergeSettings,
-} = require('./src/utils/settings');
+// Lazy-load settings utilities only when needed
+let settingsUtils = null;
+function getSettingsUtils() {
+  if (!settingsUtils) {
+    settingsUtils = require('./src/utils/settings');
+  }
+  return settingsUtils;
+}
 
 let mainWindow;
 let tcpServer = null;
@@ -34,8 +36,17 @@ let tcpRunning = false;
 let httpPollers = new Map(); // id -> {timer, url, seen}
 let httpPollerSeq = 1;
 
-// settings with defaults from schema
-let settings = getDefaultSettings();
+// settings with defaults from schema (initialized lazily on first use)
+let settings = null;
+
+// Ensure settings is initialized
+function ensureSettings() {
+  if (settings === null) {
+    const { getDefaultSettings } = getSettingsUtils();
+    settings = getDefaultSettings();
+  }
+  return settings;
+}
 
 const settingsPath = () => {
   // Use a local data folder next to the portable EXE if available
@@ -52,6 +63,9 @@ const settingsPath = () => {
  */
 async function loadSettings() {
   try {
+    // Initialize settings with defaults if not already done
+    ensureSettings();
+
     const p = settingsPath();
     if (!fs.existsSync(p)) {
       console.log('Settings file not found, using defaults');
@@ -59,6 +73,7 @@ async function loadSettings() {
     }
 
     const raw = await fs.promises.readFile(p, 'utf8');
+    const { parseSettingsJSON } = getSettingsUtils();
     const result = parseSettingsJSON(raw);
 
     if (result.success) {
@@ -79,6 +94,7 @@ async function loadSettings() {
  */
 function saveSettings() {
   try {
+    const { stringifySettingsJSON } = getSettingsUtils();
     const result = stringifySettingsJSON(settings);
 
     if (!result.success) {
@@ -121,6 +137,7 @@ function closeLogStream() {
   logPath = '';
 }
 function openLogStream() {
+  ensureSettings();
   if (!settings.logToFile) return;
   const p = (settings.logFilePath && String(settings.logFilePath).trim()) || defaultLogFilePath();
   try {
@@ -373,6 +390,7 @@ function resolveIconPath() {
 
 function createWindow() {
   // Create window immediately with default settings for faster startup
+  ensureSettings();
   const { width, height, x, y } = settings.windowBounds || {};
 
   mainWindow = new BrowserWindow({
@@ -500,6 +518,7 @@ app.on('quit', () => {
  */
 ipcMain.handle('settings:get', () => {
   try {
+    ensureSettings();
     // Return a deep copy to prevent accidental mutations
     return { ok: true, settings: structuredClone(settings) };
   } catch (err) {
@@ -513,6 +532,7 @@ ipcMain.handle('settings:get', () => {
  */
 ipcMain.handle('settings:set', (_event, patch) => {
   try {
+    ensureSettings();
     if (!patch || typeof patch !== 'object') {
       return { ok: false, error: 'Invalid patch: not an object' };
     }
@@ -525,6 +545,7 @@ ipcMain.handle('settings:set', (_event, patch) => {
     };
 
     // Merge with validation
+    const { mergeSettings } = getSettingsUtils();
     settings = mergeSettings(patch, settings);
 
     // Save to disk
