@@ -5,6 +5,7 @@
 ### Input Controls
 
 #### 1. MDC Key (ComboBox)
+
 ```jsx
 <input
   list="dc-keys"
@@ -18,12 +19,14 @@
 ```
 
 **Behavior:**
+
 - ✅ Editable combobox (can type or select)
 - ✅ Populated from `MDCListener.getSortedKeys()`
 - ✅ Updates when new logs arrive with new MDC keys
 - ✅ Clears on `LoggingStore.reset()`
 
 #### 2. MDC Value (Text Field)
+
 ```jsx
 <input
   ref={valueInputRef}
@@ -37,6 +40,7 @@
 ```
 
 **Behavior:**
+
 - ✅ Accepts pipe-separated values: `value1|value2|value3`
 - ✅ Empty value = wildcard (all values for the key)
 - ✅ F2 key opens value picker dialog
@@ -45,6 +49,7 @@
 - ✅ Not cleared on selection change
 
 #### 3. Action Buttons
+
 ```jsx
 <button onClick={onAdd} disabled={addDisabled}>Hinzufügen</button>
 <button onClick={onRemoveSelected} disabled={sel.length === 0}>Entfernen</button>
@@ -52,11 +57,13 @@
 ```
 
 **Behavior:**
+
 - ✅ **Add**: Disabled if no key selected
 - ✅ **Remove**: Disabled if no rows selected
 - ✅ **Clear**: Disabled if table empty
 
 #### 4. Enable/Disable Toggle
+
 ```jsx
 <input
   type="checkbox"
@@ -67,12 +74,14 @@
 ```
 
 **Behavior:**
+
 - ✅ Toggles entire MDC filter on/off
 - ✅ When off, all logs pass through (no filtering)
 
 ### Table Display
 
 #### Structure
+
 ```jsx
 <table>
   <thead>
@@ -103,6 +112,7 @@
 ```
 
 **Behavior:**
+
 - ✅ **Read-only** (no inline editing)
 - ✅ **Data source**: `DiagnosticContextFilter.getDcEntries()`
 - ✅ **Updates**: Only on `DiagnosticContextFilter.onChange()`
@@ -124,6 +134,7 @@
 ```
 
 **Behavior:**
+
 - ✅ **Opens on**: Right-click on table row
 - ✅ **Selection**: Auto-selects row if not already selected
 - ✅ **Multi-select aware**: Operates on all selected rows
@@ -150,6 +161,7 @@
 ```
 
 **Behavior:**
+
 - ✅ **Trigger**: F2 key in value field, or "Werte…" button
 - ✅ **Data source**: `MDCListener.getSortedValues(selectedKey)`
 - ✅ **Selection**: Click on value
@@ -302,81 +314,83 @@ SUGGESTIONS UNCHANGED (MDC data still available)
 
 ### Add Button
 
-| Condition | State |
-|-----------|-------|
-| No key selected | Disabled |
-| Key selected, no value | Enabled (wildcard) |
-| Key selected, value entered | Enabled |
+| Condition                   | State              |
+| --------------------------- | ------------------ |
+| No key selected             | Disabled           |
+| Key selected, no value      | Enabled (wildcard) |
+| Key selected, value entered | Enabled            |
 
 ### Remove Button
 
-| Condition | State |
-|-----------|-------|
-| No rows selected | Disabled |
-| One or more rows selected | Enabled |
+| Condition                 | State    |
+| ------------------------- | -------- |
+| No rows selected          | Disabled |
+| One or more rows selected | Enabled  |
 
 ### Clear Button
 
-| Condition | State |
-|-----------|-------|
-| Table empty | Disabled |
-| Table has entries | Enabled |
+| Condition         | State    |
+| ----------------- | -------- |
+| Table empty       | Disabled |
+| Table has entries | Enabled  |
 
 ### Table Rows
 
-| Selection Mode | Keys | Effect |
-|----------------|------|--------|
-| Click | None | Toggle single row |
-| Click | Shift | Select range from last to current |
-| Click | Ctrl/Cmd | Add/remove single row |
-| Right-click | None | Select row and open menu |
-| Right-click | Any | Keep selection and open menu |
+| Selection Mode | Keys     | Effect                            |
+| -------------- | -------- | --------------------------------- |
+| Click          | None     | Toggle single row                 |
+| Click          | Shift    | Select range from last to current |
+| Click          | Ctrl/Cmd | Add/remove single row             |
+| Right-click    | None     | Select row and open menu          |
+| Right-click    | Any      | Keep selection and open menu      |
 
 ### Context Menu Items
 
-| Item | Effect on Selected Rows |
-|------|------------------------|
-| Aktivieren | Set active=true |
-| Deaktivieren | Set active=false |
-| Entfernen | Remove from filter |
+| Item         | Effect on Selected Rows |
+| ------------ | ----------------------- |
+| Aktivieren   | Set active=true         |
+| Deaktivieren | Set active=false        |
+| Entfernen    | Remove from filter      |
 
 ## Visual Indicators
 
 ### Active Column
 
-| State | Checkbox | Badge |
-|-------|----------|-------|
-| Active | ☑ (checked) | "Aktiv" (green) |
-| Inactive | ☐ (unchecked) | "Aus" (gray) |
+| State    | Checkbox      | Badge           |
+| -------- | ------------- | --------------- |
+| Active   | ☑ (checked)  | "Aktiv" (green) |
+| Inactive | ☐ (unchecked) | "Aus" (gray)    |
 
 ### Value Display
 
-| Value | Display |
-|-------|---------|
-| "user1" | user1 |
+| Value      | Display            |
+| ---------- | ------------------ |
+| "user1"    | user1              |
 | "" (empty) | (alle) - gray text |
 
 ### Row Selection
 
-| State | Visual |
-|-------|--------|
-| Selected | Highlighted background |
-| Not selected | Normal background |
-| Inactive entry | Dimmed text |
+| State          | Visual                 |
+| -------------- | ---------------------- |
+| Selected       | Highlighted background |
+| Not selected   | Normal background      |
+| Inactive entry | Dimmed text            |
 
 ## Accessibility
 
 ✅ **ARIA labels**: Active checkboxes have aria-label
 ✅ **Titles**: Buttons have title attributes for tooltips
 ✅ **Keyboard support**:
-  - F2 in value field opens dialog
-  - ESC closes modals
-  - Checkbox keyboard toggle
-✅ **Focus management**: Auto-focus on dialog inputs
+
+- F2 in value field opens dialog
+- ESC closes modals
+- Checkbox keyboard toggle
+  ✅ **Focus management**: Auto-focus on dialog inputs
 
 ## Conclusion
 
 All UI elements are correctly implemented and functional:
+
 - ✅ Input controls work as specified
 - ✅ Table displays filter state only
 - ✅ Context menu supports multi-selection
