@@ -27,20 +27,20 @@ manualChunks: (id) => {
     }
     return 'vendor-lazy'; // Other dependencies
   }
-  
+
   // Feature-based splitting
   if (id.includes('DCFilterDialog') || id.includes('DCFilterPanel')) {
     return 'dc-filter'; // Diagnostic Context Filter (rarely used)
   }
-  
+
   if (id.includes('/store/') && !id.includes('loggingStore')) {
     return 'store-utils'; // Store utilities
   }
-  
+
   if (id.includes('/utils/') && !id.includes('highlight') && !id.includes('msgFilter')) {
     return 'utils-lazy'; // Lazy utilities
   }
-}
+};
 ```
 
 ### Benefits
@@ -89,7 +89,7 @@ const DCFilterDialog = lazy(() => import('./DCFilterDialog.jsx'));
 // Render with Suspense
 <Suspense fallback={<div>Lädt...</div>}>
   <DCFilterDialog />
-</Suspense>
+</Suspense>;
 ```
 
 ## 2. Web Workers
@@ -125,15 +125,16 @@ class WorkerPool {
 
 ### Performance Impact
 
-| Operation | Before (Main Thread) | After (Worker) | Improvement |
-|-----------|---------------------|----------------|-------------|
-| Parse 10MB log | UI frozen 2-3s | UI responsive | 100% better |
-| Parse 5 files | Sequential | Parallel | 2x faster |
-| Large JSON parse | UI frozen | Background | No blocking |
+| Operation        | Before (Main Thread) | After (Worker) | Improvement |
+| ---------------- | -------------------- | -------------- | ----------- |
+| Parse 10MB log   | UI frozen 2-3s       | UI responsive  | 100% better |
+| Parse 5 files    | Sequential           | Parallel       | 2x faster   |
+| Large JSON parse | UI frozen            | Background     | No blocking |
 
 ### Fallback Strategy
 
 If workers are unavailable (older browsers or Electron issues):
+
 - Falls back to main-thread parsing
 - Graceful degradation
 - No functionality loss
@@ -148,11 +149,7 @@ Caches static assets for instant subsequent loads:
 
 ```javascript
 const CACHE_NAME = 'lumberjack-v1.0.1';
-const STATIC_ASSETS = [
-  '/',
-  '/index.html',
-  '/styles.css',
-];
+const STATIC_ASSETS = ['/', '/index.html', '/styles.css'];
 
 // Cache-first strategy for static assets
 // Network fallback for dynamic content
@@ -179,7 +176,7 @@ if ('serviceWorker' in navigator && !import.meta.env.DEV) {
 ### Caching Strategy
 
 1. **Install Phase**: Cache critical static assets
-2. **Fetch Phase**: 
+2. **Fetch Phase**:
    - Serve from cache if available
    - Fetch from network and cache for future
    - Cache JS, CSS, images automatically
@@ -187,17 +184,18 @@ if ('serviceWorker' in navigator && !import.meta.env.DEV) {
 
 ### Load Time Comparison
 
-| Scenario | Without SW | With SW | Improvement |
-|----------|-----------|---------|-------------|
-| First load | 1.2s | 1.2s | Same |
-| Second load | 1.2s | 0.2s | 6x faster |
-| Offline | Fails | Works | ∞ |
+| Scenario    | Without SW | With SW | Improvement |
+| ----------- | ---------- | ------- | ----------- |
+| First load  | 1.2s       | 1.2s    | Same        |
+| Second load | 1.2s       | 0.2s    | 6x faster   |
+| Offline     | Fails      | Works   | ∞           |
 
 ## 4. Virtual Scrolling Optimization
 
 ### Current Implementation
 
 Already using `@tanstack/react-virtual` with:
+
 - Dynamic row height estimation
 - Overscan of 10 items
 - Transform-based positioning
@@ -212,11 +210,11 @@ Already using `@tanstack/react-virtual` with:
 
 ### Performance
 
-| Metric | Value |
-|--------|-------|
-| Visible rows | 20-30 (depending on height) |
-| Total rows | 100,000+ supported |
-| Scroll FPS | 60 FPS stable |
+| Metric       | Value                             |
+| ------------ | --------------------------------- |
+| Visible rows | 20-30 (depending on height)       |
+| Total rows   | 100,000+ supported                |
+| Scroll FPS   | 60 FPS stable                     |
 | Memory usage | Constant (only visible DOM nodes) |
 
 ## 5. V8 Snapshot Support (Infrastructure)
@@ -228,6 +226,7 @@ V8 snapshots allow pre-compiling JavaScript code into a binary snapshot that can
 ### Current Status
 
 **Infrastructure in place, but not yet activated:**
+
 - Worker configuration supports ES modules
 - Build system supports snapshot generation
 - Electron version supports custom snapshots
@@ -237,11 +236,11 @@ V8 snapshots allow pre-compiling JavaScript code into a binary snapshot that can
 To create a V8 snapshot:
 
 1. **Identify Hot Paths**: Profile startup to find code that runs early
-2. **Create Snapshot Script**: 
+2. **Create Snapshot Script**:
    ```bash
    mksnapshot --startup_blob snapshot_blob.bin app-bundle.js
    ```
-3. **Configure Electron**: 
+3. **Configure Electron**:
    ```javascript
    app.commandLine.appendSwitch('snapshot_blob', 'path/to/snapshot_blob.bin');
    ```
@@ -278,6 +277,7 @@ Not applicable - app doesn't use images in virtual list
 ### Incremental Parsing
 
 For very large files, consider streaming/chunked parsing:
+
 ```javascript
 // Future enhancement
 async function* parseFileStreaming(filePath) {
@@ -299,14 +299,14 @@ async function* parseFileStreaming(filePath) {
 ```
 Before optimizations:
   index.js: 142 KB (46 KB gzipped)
-  
+
 After code splitting:
   index.js: 60 KB (20 KB gzipped)
   vendor.js: 45 KB (15 KB gzipped)
   dc-filter.js: 12 KB (4 KB gzipped)
   store-utils.js: 8 KB (3 KB gzipped)
   utils-lazy.js: 5 KB (2 KB gzipped)
-  
+
 Total initial: 105 KB (35 KB gzipped) - loaded on demand
 Loaded on startup: 105 KB vs 142 KB
 Improvement: 26% smaller initial load
@@ -318,11 +318,11 @@ Improvement: 26% smaller initial load
 Cold start (no cache):
   Before: ~1.5s
   After: ~1.2s (20% faster)
-  
+
 Warm start (with cache):
   Before: ~1.2s
   After: ~0.3s (4x faster)
-  
+
 Time to interactive:
   Before: ~1.5s
   After: ~0.8s (47% faster)
@@ -334,11 +334,11 @@ Time to interactive:
 Parse 1000 log entries:
   Main thread: ~200ms (UI frozen)
   Worker thread: ~220ms (UI responsive)
-  
+
 Parse 10,000 log entries:
   Main thread: ~2000ms (UI frozen)
   Worker thread: ~2100ms (UI responsive)
-  
+
 Conclusion: Workers have minimal overhead (~5-10%)
            but huge UX benefit (non-blocking)
 ```
@@ -378,6 +378,7 @@ npx vite-bundle-visualizer
 ### Automated Tests
 
 Existing tests continue to pass:
+
 ```bash
 npm test
 # All tests pass with new optimizations
@@ -399,6 +400,7 @@ VITE_WORKER_DEBUG=true
 ### Build Configuration
 
 **File: `vite.config.mjs`**
+
 - Code splitting enabled via `manualChunks`
 - Worker support enabled via `worker.format = 'es'`
 - Production builds automatically optimize

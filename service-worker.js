@@ -4,11 +4,7 @@
  */
 
 const CACHE_NAME = 'lumberjack-v1.0.1';
-const STATIC_ASSETS = [
-  '/',
-  '/index.html',
-  '/styles.css',
-];
+const STATIC_ASSETS = ['/', '/index.html', '/styles.css'];
 
 // Install event: cache static assets
 self.addEventListener('install', (event) => {
@@ -82,9 +78,7 @@ self.addEventListener('fetch', (event) => {
           const responseToCache = response.clone();
 
           // Cache static assets only (JS, CSS, images)
-          if (
-            event.request.url.match(/\.(js|css|png|jpg|jpeg|gif|svg|ico|woff|woff2|ttf|eot)$/)
-          ) {
+          if (event.request.url.match(/\.(js|css|png|jpg|jpeg|gif|svg|ico|woff|woff2|ttf|eot)$/)) {
             caches.open(CACHE_NAME).then((cache) => {
               cache.put(event.request, responseToCache);
             });
