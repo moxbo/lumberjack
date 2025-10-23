@@ -14,6 +14,50 @@ function getAdmZip() {
 
 // Normalize one entry into a standard object
 function toEntry(obj = {}, fallbackMessage = '', source = '') {
+  // Normalisiere Stacktrace aus gängigen Feldern
+  function normalizeStack(o) {
+    if (!o || typeof o !== 'object') return null;
+    const candVals = [];
+    try {
+      const direct = o.stack_trace || o.stackTrace || o.stacktrace;
+      if (direct != null) candVals.push(direct);
+    } catch {}
+    try {
+      const err = o.error || o.err;
+      if (err) {
+        if (err.stack != null) candVals.push(err.stack);
+        if (err.trace != null) candVals.push(err.trace);
+        if (typeof err === 'string') candVals.push(err);
+      }
+    } catch {}
+    try {
+      const ex = o.exception || o.cause || o.throwable;
+      if (ex) {
+        if (ex.stack != null) candVals.push(ex.stack);
+        if (ex.stackTrace != null) candVals.push(ex.stackTrace);
+        if (typeof ex === 'string') candVals.push(ex);
+      }
+    } catch {}
+    try {
+      if (o['exception.stacktrace'] != null) candVals.push(o['exception.stacktrace']);
+      if (o['error.stacktrace'] != null) candVals.push(o['error.stacktrace']);
+    } catch {}
+
+    for (const v of candVals) {
+      if (v == null) continue;
+      if (Array.isArray(v)) {
+        const s = v.map((x) => (x == null ? '' : String(x))).join('\n');
+        if (s.trim()) return s;
+      } else {
+        const s = String(v);
+        if (s.trim()) return s;
+      }
+    }
+    return null;
+  }
+
+  const stackTrace = normalizeStack(obj);
+
   return {
     timestamp: obj.timestamp || obj['@timestamp'] || obj.time || null,
     level: obj.level || obj.severity || obj.loglevel || null,
@@ -21,6 +65,7 @@ function toEntry(obj = {}, fallbackMessage = '', source = '') {
     thread: obj.thread || obj.thread_name || null,
     message: obj.message || obj.msg || obj.log || fallbackMessage || '',
     traceId: obj.traceId || obj.trace_id || obj.trace || obj['trace.id'] || obj.TraceID || null,
+    stackTrace: stackTrace || null,
     raw: obj,
     source,
   };
@@ -42,7 +87,7 @@ function parseTextLines(filename, text) {
     let obj = tryParseJson(line.trim());
     if (!obj) {
       // try to extract {...} json inside line
-      const match = line.match(/\{[\s\S]*\}$/);
+      const match = line.match(/{[\s\S]*}$/);
       if (match) obj = tryParseJson(match[0]);
     }
     if (obj) {

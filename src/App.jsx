@@ -1710,30 +1710,44 @@ export default function App() {
                     }}
                   />
                 </div>
-                {mdcPairs.length > 0 && (
+                {selectedEntry?.stackTrace ? (
                   <div className="kv full">
-                    <span>MDC</span>
-                    <div>
-                      <div className="mdc-grid">
-                        {mdcPairs.map(([k, v]) => (
-                          <Fragment key={`${k}|${v}`}>
-                            <div className="mdc-key">{k}</div>
-                            <div className="mdc-val">
-                              <code>{v}</code>
-                            </div>
-                            <div className="mdc-act">
-                              <button
-                                title="Zum DC-Filter hinzufügen"
-                                onClick={() => addMdcToFilter(k, v)}
-                              >
-                                + Filter
-                              </button>
-                            </div>
-                          </Fragment>
-                        ))}
+                    <span>Stack Trace</span>
+                    <pre
+                      className="stack-trace"
+                      dangerouslySetInnerHTML={{
+                        __html: highlightAll(selectedEntry.stackTrace, search),
+                      }}
+                    />
+                  </div>
+                ) : null}
+                {mdcPairs.length > 0 && (
+                  <Fragment>
+                    <div className="section-sep" />
+                    <div className="kv full">
+                      <span>MDC</span>
+                      <div>
+                        <div className="mdc-grid">
+                          {mdcPairs.map(([k, v]) => (
+                            <Fragment key={`${k}|${v}`}>
+                              <div className="mdc-key">{k}</div>
+                              <div className="mdc-val">
+                                <code>{v}</code>
+                              </div>
+                              <div className="mdc-act">
+                                <button
+                                  title="Zum DC-Filter hinzufügen"
+                                  onClick={() => addMdcToFilter(k, v)}
+                                >
+                                  + Filter
+                                </button>
+                              </div>
+                            </Fragment>
+                          ))}
+                        </div>
                       </div>
                     </div>
-                  </div>
+                  </Fragment>
                 )}
               </div>
             )}

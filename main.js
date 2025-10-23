@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, dialog, Menu, nativeImage } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, Menu } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const net = require('net');
@@ -174,18 +174,69 @@ function writeEntriesToFile(entries) {
 
 let pendingMenuCmds = [];
 function sendMenuCmd(cmd) {
-  if (!mainWindow) return;
-  const wc = mainWindow.webContents;
-  if (wc.isLoading()) {
+  if (!isRendererReady()) {
     pendingMenuCmds.push(cmd);
     return;
   }
-  wc.send('menu:cmd', cmd);
+  try {
+    mainWindow.webContents.send('menu:cmd', cmd);
+  } catch {
+    // Im Zweifel puffern (z. B. Reload mitten im Senden)
+    pendingMenuCmds.push(cmd);
+  }
 }
 
 // Lazy load icons only when needed (removed canvas dependency for faster startup)
 let iconPlay = null;
 let iconStop = null;
+
+// Puffer für Logs, wenn der Renderer (neu) lädt oder das Fenster nicht bereit ist
+const MAX_PENDING_APPENDS = 5000;
+let pendingAppends = [];
+function isRendererReady() {
+  try {
+    if (!mainWindow) return false;
+    if (mainWindow.isDestroyed && mainWindow.isDestroyed()) return false;
+    const wc = mainWindow.webContents;
+    if (!wc) return false;
+    if (wc.isDestroyed && wc.isDestroyed()) return false;
+    return !wc.isLoading?.();
+
+  } catch {
+    return false;
+  }
+}
+function enqueueAppends(entries) {
+  if (!Array.isArray(entries) || entries.length === 0) return;
+  // begrenze auf MAX_PENDING_APPENDS (älteste zuerst verwerfen)
+  const room = Math.max(0, MAX_PENDING_APPENDS - pendingAppends.length);
+  if (entries.length <= room) {
+    pendingAppends.push(...entries);
+  } else {
+    // verwerfe Überschuss am Anfang
+    const take = entries.slice(entries.length - room);
+    const overflow = pendingAppends.length + take.length - MAX_PENDING_APPENDS;
+    if (overflow > 0) pendingAppends.splice(0, overflow);
+    pendingAppends.push(...take);
+  }
+}
+function flushPendingAppends() {
+  if (!isRendererReady()) return;
+  if (!pendingAppends.length) return;
+  const wc = mainWindow.webContents;
+  // in moderaten Paketen senden
+  const CHUNK = 1000;
+  try {
+    for (let i = 0; i < pendingAppends.length; i += CHUNK) {
+      const slice = pendingAppends.slice(i, i + CHUNK);
+      wc.send('logs:append', slice);
+    }
+  } catch {
+    // Wenn während des Flushs ein Reload begonnen hat, behalten wir die restlichen im Puffer
+    return;
+  }
+  pendingAppends = [];
+}
 
 function buildMenu() {
   const isMac = process.platform === 'darwin';
@@ -341,6 +392,10 @@ function createWindow() {
     event.preventDefault();
   });
 
+  mainWindow.webContents.on('did-start-loading', () => {
+    // Während Reload nicht senden
+  });
+
   mainWindow.webContents.on('did-finish-load', () => {
     if (pendingMenuCmds.length) {
       for (const cmd of pendingMenuCmds) {
@@ -350,6 +405,8 @@ function createWindow() {
       }
       pendingMenuCmds = [];
     }
+    // Nach erfolgreichem Laden aufgelaufene Logs senden
+    flushPendingAppends();
   });
 
   // Show window as soon as it's ready to paint
@@ -363,6 +420,11 @@ function createWindow() {
       settings.windowBounds = mainWindow.getBounds();
     } catch {}
     saveSettings();
+  });
+
+  mainWindow.on('closed', () => {
+    // Fenster ist weg; weitere Sends werden gepuffert
+    // (Auf macOS kann später ein neues Fenster erscheinen und den Puffer flushen)
   });
 
   // Build menu first (without icons for speed)
@@ -559,11 +621,21 @@ ipcMain.handle('logs:parseRaw', async (_event, files) => {
 
 // Helper: send appended logs to renderer
 function sendAppend(entries) {
-  if (!mainWindow) return;
   try {
     writeEntriesToFile(entries);
   } catch {}
-  mainWindow.webContents.send('logs:append', entries);
+
+  // Nur senden, wenn der Renderer bereit ist; sonst puffern
+  if (!isRendererReady()) {
+    enqueueAppends(entries);
+    return;
+  }
+  try {
+    mainWindow.webContents.send('logs:append', entries);
+  } catch (e) {
+    // z.B. während eines Reloads: puffern
+    enqueueAppends(entries);
+  }
 }
 
 // TCP server controls
