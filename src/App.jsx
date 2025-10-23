@@ -3,7 +3,7 @@ import { Fragment } from 'preact';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import { highlightAll } from './utils/highlight.js';
 import { msgMatches } from './utils/msgFilter.js';
-import DCFilterPanel from './DCFilterPanel.jsx';
+import DCFilterDialog from './DCFilterDialog.jsx';
 import { LoggingStore } from './store/loggingStore.js';
 import { DiagnosticContextFilter } from './store/dcFilter.js';
 import { DragAndDropManager } from './utils/dnd.js';
@@ -108,6 +108,9 @@ export default function App() {
     const off = DiagnosticContextFilter.onChange(() => setDcVersion((v) => v + 1));
     return () => off?.();
   }, []);
+
+  // Neuer Dialog-State für DC-Filter
+  const [showDcDialog, setShowDcDialog] = useState(false);
 
   // Filter-Historien
   const [histLogger, setHistLogger] = useState([]);
@@ -765,6 +768,7 @@ export default function App() {
         if (showMdcModal) setShowMdcModal(false);
         if (ctxMenu.open) setCtxMenu({ open: false, x: 0, y: 0 });
         if (httpMenu.open) setHttpMenu({ open: false, x: 0, y: 0 });
+        if (showDcDialog) setShowDcDialog(false);
       }
       if (e.key === 'F8') {
         // Nicht auslösen, wenn in Eingabefeldern getippt wird
@@ -791,6 +795,7 @@ export default function App() {
     ctxMenu.open,
     httpMenu.open,
     follow,
+    showDcDialog,
   ]);
 
   // Drag & Drop
@@ -1031,6 +1036,19 @@ export default function App() {
   return (
     <div style="height:100%; display:flex; flex-direction:column;">
       {dragActive && <div className="drop-overlay">Dateien hierher ziehen (.log, .json, .zip)</div>}
+      {/* DC-Filter Dialog */}
+      {showDcDialog && (
+        <div className="modal-backdrop" onClick={() => setShowDcDialog(false)}>
+          <div className="modal modal-wide" onClick={(e) => e.stopPropagation()}>
+            <h3>Diagnostic Context Filter</h3>
+            <DCFilterDialog />
+            <div className="modal-actions">
+              <button onClick={() => setShowDcDialog(false)}>Schließen</button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* HTTP Load Dialog */}
       {showHttpLoadDlg && (
         <div className="modal-backdrop" onClick={() => setShowHttpLoadDlg(false)}>
@@ -1499,6 +1517,26 @@ export default function App() {
             Filter leeren
           </button>
         </div>
+        {/* DC-Filter Steuerung + Hinweis */}
+        <div className="section">
+          <button onClick={() => setShowDcDialog(true)} title="Diagnostic Context Filter öffnen">
+            DC-Filter…
+          </button>
+          {(() => {
+            const dcCount = DiagnosticContextFilter.getDcEntries().length;
+            const dcEnabled = DiagnosticContextFilter.isEnabled();
+            if (dcCount === 0) return null;
+            return (
+              <span
+                className="status"
+                title={dcEnabled ? 'DC-Filter aktiv' : 'DC-Filter gesetzt, aber deaktiviert'}
+                style={{ marginLeft: '6px' }}
+              >
+                {dcEnabled ? `DC ${dcCount} aktiv` : `DC ${dcCount} aus`}
+              </span>
+            );
+          })()}
+        </div>
         <div className="section">
           <button ref={httpBtnRef} onClick={openHttpMenu}>
             HTTP ▾
@@ -1605,8 +1643,6 @@ export default function App() {
         </div>
       )}
 
-      {/* Diagnostic Context Filter Panel */}
-      <DCFilterPanel />
 
       {/* Hauptlayout: Liste + Details als Overlay */}
       <main className="layout" style="min-height:0;" ref={layoutRef}>

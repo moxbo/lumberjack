@@ -24,6 +24,41 @@ function entryKey(key, val) {
   return `${key}\u241F${val}`;
 } // UNIT SEPARATOR-like delimiter
 
+// Mappe diverse Trace-Key-Varianten auf den kanonischen Anzeigenamen
+function normalizeTraceKeyName(k) {
+  const lk = String(k || '').trim().toLowerCase();
+  const variants = new Set([
+    'traceid',
+    'trace_id',
+    'trace.id',
+    'trace-id',
+    'x-trace-id',
+    'x_trace_id',
+    'x.trace.id',
+    'trace',
+  ]);
+  return variants.has(lk) ? 'TraceID' : null;
+}
+
+// Liefert alle Event-Key-Varianten zu einem kanonischen Key
+function eventKeyVariantsForCanonical(k) {
+  const canon = normalizeTraceKeyName(k) || String(k || '').trim();
+  if (canon === 'TraceID') {
+    return [
+      'TraceID',
+      'traceId',
+      'trace_id',
+      'trace.id',
+      'trace-id',
+      'x-trace-id',
+      'x_trace_id',
+      'x.trace.id',
+      'trace',
+    ];
+  }
+  return [canon];
+}
+
 class DiagnosticContextFilterImpl {
   constructor() {
     this._map = new Map();
@@ -44,10 +79,36 @@ class DiagnosticContextFilterImpl {
     }
   }
   _normalizeKey(k) {
-    return String(k || '').trim();
+    const raw = String(k || '').trim();
+    if (!raw) return '';
+    const canonical = normalizeTraceKeyName(raw);
+    return canonical || raw;
   }
   _normalizeVal(v) {
     return v == null ? '' : String(v);
+  }
+  // Re-mappe vorhandene Einträge auf kanonische Keys (z. B. traceId -> TraceID) und merge Duplicates
+  _recanonicalize() {
+    const next = new Map();
+    for (const e of this._map.values()) {
+      const k = this._normalizeKey(e.key);
+      const v = this._normalizeVal(e.val);
+      const id = entryKey(k, v);
+      const prev = next.get(id);
+      if (prev) {
+        // merge: aktiv wenn einer aktiv ist
+        prev.active = !!(prev.active || e.active);
+      } else {
+        next.set(id, { key: k, val: v, active: !!e.active });
+      }
+    }
+    if (next.size !== this._map.size) {
+      this._map = next;
+      this._em.emit();
+    } else {
+      // auch wenn gleich groß, können Keys/IDs geändert worden sein
+      this._map = next;
+    }
   }
   addMdcEntry(key, val) {
     const k = this._normalizeKey(key);
@@ -97,6 +158,8 @@ class DiagnosticContextFilterImpl {
     this._em.emit();
   }
   getDcEntries() {
+    // Vor Rückgabe sicherstellen, dass alles kanonisch ist
+    this._recanonicalize();
     return Array.from(this._map.values()).sort(
       (a, b) => a.key.localeCompare(b.key) || a.val.localeCompare(b.val)
     );
@@ -105,30 +168,41 @@ class DiagnosticContextFilterImpl {
     for (const e of this._map.values()) if (e.active) return true;
     return false;
   }
-  // matches: AND über Keys, OR innerhalb eines Keys. val=='' => Wildcard für alle Werte dieses Keys (Key muss vorhanden sein)
+  // matches: AND über Keys, OR innerhalb eines Keys. val=='' => Wildcard
   matches(mdc) {
     if (!this.isEnabled()) return true;
     if (!this.hasActive()) return true;
+
+    // gruppiere aktive Einträge je Key
     const groups = new Map();
     for (const e of this._map.values()) {
       if (!e.active) continue;
-      if (!groups.has(e.key)) groups.set(e.key, []);
-      groups.get(e.key).push(e);
+      const k = this._normalizeKey(e.key);
+      if (!groups.has(k)) groups.set(k, []);
+      groups.get(k).push(e);
     }
-    // Für jede Key-Gruppe muss mindestens ein Eintrag matchen
+
     const hasOwn = (obj, k) => Object.prototype.hasOwnProperty.call(obj, k);
-    for (const [k, arr] of groups) {
-      const evHas = mdc && typeof mdc === 'object' ? hasOwn(mdc, k) : false;
-      const evVal = evHas ? String(mdc[k] ?? '') : '';
+
+    for (const [canonKey, arr] of groups) {
+      const candidates = eventKeyVariantsForCanonical(canonKey);
+      // Sammle vorhandene Event-Werte für alle Kandidaten
+      const present = [];
+      if (mdc && typeof mdc === 'object') {
+        for (const k of candidates) if (hasOwn(mdc, k)) present.push(String(mdc[k] ?? ''));
+      }
+
       let ok = false;
       for (const it of arr) {
         if (it.val === '') {
-          if (evHas) {
+          // Wildcard: Key muss vorhanden sein (mind. ein Kandidat)
+          if (present.length > 0) {
             ok = true;
             break;
           }
         } else {
-          if (evHas && evVal === it.val) {
+          // Match, wenn einer der vorhandenen Werte exakt gleich ist
+          if (present.includes(String(it.val))) {
             ok = true;
             break;
           }

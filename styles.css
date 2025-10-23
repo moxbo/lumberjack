@@ -764,3 +764,118 @@ input[type='checkbox'] {
     grid-template-columns: 1fr;
   }
 }
+
+/* --- Generic table wrapper (horizontal scroll) --- */
+.table-wrap {
+  overflow: auto;
+  border: 1px solid var(--color-divider);
+  border-radius: 10px;
+  background: var(--color-bg-paper);
+}
+
+/* --- Generic data table used in dialogs (e.g., DCFilterDialog) --- */
+.data-table {
+  width: 100%;
+  border-collapse: separate;
+  border-spacing: 0;
+  min-width: 600px; /* erlaubt horizontales Scrollen bei schmalen Viewports */
+  font-size: var(--font-size-sm);
+}
+.data-table thead th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: var(--color-bg-paper);
+  color: var(--color-text-secondary);
+  font-weight: 600;
+  text-align: left;
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--color-divider);
+  white-space: nowrap;
+}
+.data-table thead th.col-active {
+  width: 120px;
+  text-align: left;
+}
+.data-table tbody td {
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--color-divider);
+  white-space: nowrap; /* wichtig für horizontales Scrollen */
+  vertical-align: middle;
+}
+.data-table tbody tr:nth-child(even) {
+  background: var(--color-bg-hover);
+}
+.data-table tbody tr.selected {
+  background: rgba(10, 132, 255, 0.12);
+}
+.data-table tbody tr.inactive {
+  opacity: 0.75;
+}
+/* Zell-Typen */
+.data-table td.cell-key {
+  color: var(--color-text-primary);
+}
+.data-table td.cell-val code {
+  font-family: var(--font-family-mono), monospace;
+  background: transparent;
+  border: 0;
+  padding: 0;
+}
+.data-table td.cell-act {
+  white-space: nowrap;
+}
+
+/* Badges für Aktiv/Aus */
+.badge {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  line-height: 1.4;
+  border: 1px solid var(--color-divider);
+  user-select: none;
+}
+.badge.on {
+  color: var(--color-success);
+  background: rgba(16, 185, 129, 0.12);
+  border-color: rgba(16, 185, 129, 0.3);
+}
+.badge.off {
+  color: var(--color-text-secondary);
+  background: var(--color-bg-hover);
+}
+
+/* DC-Dialog: breiter und ohne horizontales Scrollen */
+.modal.modal-wide {
+  width: min(1000px, 96vw);
+  max-width: 96vw;
+}
+/* Innerhalb des DC-Dialogs: Tabelle passt sich an, Zellen umbrechen */
+.dc-dialog .table-wrap {
+  overflow-x: hidden; /* keine seitliche Scrollleiste */
+}
+.dc-dialog .data-table {
+  min-width: 0;            /* keine starre Mindestbreite erzwingen */
+  table-layout: fixed;     /* Spalten teilen Breite gleichmäßig auf, verhindert Overflow */
+  width: 100%;
+}
+.dc-dialog .data-table thead th,
+.dc-dialog .data-table tbody td {
+  white-space: normal;      /* Zeilenumbruch zulassen */
+}
+.dc-dialog .data-table td.cell-key {
+  word-break: break-word;
+  overflow-wrap: anywhere;  /* lange Keys umbrechen */
+}
+.dc-dialog .data-table td.cell-val code {
+  white-space: pre-wrap;    /* Werte mehrzeilig anzeigen */
+  word-break: break-word;
+  overflow-wrap: anywhere;  /* lange Tokens umbrechen (z.B. UUIDs) */
+}
+/* Aktionsspalte schmal halten */
+.dc-dialog .data-table th.col-active,
+.dc-dialog .data-table td.cell-act {
+  width: 120px;
+  white-space: nowrap;
+}
