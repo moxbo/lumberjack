@@ -13,7 +13,10 @@
     "icon:generate": "node ./scripts/make-icon.js",
     "build:portable": "npm run build:renderer && cross-env CSC_IDENTITY_AUTO_DISCOVERY=false electron-builder --win portable",
     "build:portable:x64": "npm run build:renderer && cross-env CSC_IDENTITY_AUTO_DISCOVERY=false electron-builder --win portable --x64",
-    "build:zip:x64": "npm run build:renderer && cross-env CSC_IDENTITY_AUTO_DISCOVERY=false electron-builder --win zip --x64"
+    "build:zip:x64": "npm run build:renderer && cross-env CSC_IDENTITY_AUTO_DISCOVERY=false electron-builder --win zip --x64",
+    "build:mac:dmg": "npm run build:renderer && cross-env ELECTRON_BUILDER_DISABLE_PUBLISH=true CSC_IDENTITY_AUTO_DISCOVERY=false electron-builder --mac dmg --publish never",
+    "build:mac:zip": "npm run build:renderer && cross-env ELECTRON_BUILDER_DISABLE_PUBLISH=true CSC_IDENTITY_AUTO_DISCOVERY=false electron-builder --mac zip --publish never",
+    "build:mac:all": "npm run build:renderer && cross-env ELECTRON_BUILDER_DISABLE_PUBLISH=true CSC_IDENTITY_AUTO_DISCOVERY=false electron-builder --mac dmg --x64 --arm64 --publish never"
   },
   "author": "",
   "license": "ISC",
@@ -69,6 +72,7 @@
     "electronDist": "node_modules/electron/dist",
     "artifactName": "Lumberjack-${version}-${arch}.${ext}",
     "compression": "store",
+    "publish": [],
     "electronLanguages": [
       "de",
       "en-US"
@@ -92,6 +96,15 @@
       "forceCodeSigning": false,
       "signExts": [],
       "icon": "icon.ico"
+    },
+    "mac": {
+      "target": [
+        "dmg",
+        "zip"
+      ],
+      "category": "public.app-category.developer-tools",
+      "icon": "icon.icns",
+      "identity": null
     }
   },
   "overrides": {

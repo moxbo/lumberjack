@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, dialog, Menu } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, Menu, nativeImage } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const net = require('net');
@@ -388,6 +388,29 @@ function resolveIconPath() {
   return null;
 }
 
+function resolveMacIconPath() {
+  const resPath = process.resourcesPath || '';
+  const candidates = [
+    // bevorzugt entpackte Ressourcen
+    path.join(resPath, 'app.asar.unpacked', 'images', 'icon.icns'),
+    path.join(resPath, 'images', 'icon.icns'),
+    // innerhalb asar
+    path.join(__dirname, 'images', 'icon.icns'),
+    // Fallback: Projekt-Root im Dev
+    path.join(process.cwd(), 'images', 'icon.icns'),
+    // als letzter Fallback eine große PNG
+    path.join(resPath, 'images', 'lumberjack_v4_dark_1024.png'),
+    path.join(__dirname, 'images', 'lumberjack_v4_dark_1024.png'),
+    path.join(process.cwd(), 'images', 'lumberjack_v4_dark_1024.png'),
+  ];
+  for (const p of candidates) {
+    try {
+      if (fs.existsSync(p)) return p;
+    } catch {}
+  }
+  return null;
+}
+
 function createWindow() {
   // Create window immediately with default settings for faster startup
   ensureSettings();
@@ -497,6 +520,19 @@ if (process.platform === 'win32') {
 }
 
 app.whenReady().then(() => {
+  // macOS Dock-Icon setzen (nur Dev-relevant; in Builds kommt das aus icon.icns im Bundle)
+  if (process.platform === 'darwin' && app.dock) {
+    const macIconPath = resolveMacIconPath();
+    if (macIconPath) {
+      try {
+        const img = nativeImage.createFromPath(macIconPath);
+        if (!img.isEmpty()) app.dock.setIcon(img);
+      } catch (e) {
+        console.warn('Dock-Icon konnte nicht gesetzt werden:', e?.message || e);
+      }
+    }
+  }
+
   createWindow();
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();
