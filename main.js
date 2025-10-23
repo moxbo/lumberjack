@@ -2,7 +2,14 @@ const { app, BrowserWindow, ipcMain, dialog, Menu, nativeImage } = require('elec
 const path = require('path');
 const fs = require('fs');
 const net = require('net');
-const AdmZip = require('adm-zip');
+// Lazy-load AdmZip only when needed
+let AdmZip = null;
+function getAdmZip() {
+  if (!AdmZip) {
+    AdmZip = require('adm-zip');
+  }
+  return AdmZip;
+}
 const { parsePaths, toEntry } = require('./src/parsers');
 const {
   getDefaultSettings,
@@ -31,9 +38,9 @@ const settingsPath = () => {
 };
 
 /**
- * Load settings with validation and error handling
+ * Load settings with validation and error handling (async for better startup)
  */
-function loadSettings() {
+async function loadSettings() {
   try {
     const p = settingsPath();
     if (!fs.existsSync(p)) {
@@ -41,7 +48,7 @@ function loadSettings() {
       return;
     }
 
-    const raw = fs.readFileSync(p, 'utf8');
+    const raw = await fs.promises.readFile(p, 'utf8');
     const result = parseSettingsJSON(raw);
 
     if (result.success) {
@@ -169,43 +176,9 @@ function sendMenuCmd(cmd) {
   wc.send('menu:cmd', cmd);
 }
 
-function makeIcon(color) {
-  // Simple generated PNG icon (10x10) with a circle; use emoji fallback on macOS menu if icons not shown
-  const { createCanvas } = (() => {
-    try {
-      return require('canvas');
-    } catch {
-      return {};
-    }
-  })();
-  if (!createCanvas) return null;
-  const canvas = createCanvas(16, 16);
-  const ctx = canvas.getContext('2d');
-  ctx.clearRect(0, 0, 16, 16);
-  ctx.fillStyle = color;
-  ctx.beginPath();
-  ctx.arc(8, 8, 6, 0, Math.PI * 2);
-  ctx.fill();
-  try {
-    return nativeImage.createFromBuffer(canvas.toBuffer('image/png'));
-  } catch {
-    return null;
-  }
-}
-const iconPlay = (() => {
-  try {
-    return makeIcon('#22c55e');
-  } catch {
-    return null;
-  }
-})();
-const iconStop = (() => {
-  try {
-    return makeIcon('#ef4444');
-  } catch {
-    return null;
-  }
-})();
+// Lazy load icons only when needed (removed canvas dependency for faster startup)
+let iconPlay = null;
+let iconStop = null;
 
 function buildMenu() {
   const isMac = process.platform === 'darwin';
@@ -291,8 +264,7 @@ function updateMenu() {
 }
 
 function createWindow() {
-  loadSettings();
-  if (settings.logToFile) openLogStream();
+  // Create window immediately with default settings for faster startup
   const { width, height, x, y } = settings.windowBounds || {};
   mainWindow = new BrowserWindow({
     width: width || 1200,
@@ -304,6 +276,7 @@ function createWindow() {
       nodeIntegration: false,
       sandbox: false,
     },
+    show: false, // Don't show until ready for smoother experience
   });
 
   // Verhindert, dass ein Datei-/Link-Drop die App zu einer Datei/URL navigiert
@@ -322,6 +295,11 @@ function createWindow() {
     }
   });
 
+  // Show window as soon as it's ready to paint
+  mainWindow.once('ready-to-show', () => {
+    mainWindow.show();
+  });
+
   // persist bounds on close
   mainWindow.on('close', () => {
     try {
@@ -330,6 +308,7 @@ function createWindow() {
     saveSettings();
   });
 
+  // Build menu first (without icons for speed)
   buildMenu();
 
   const devUrl = process.env.VITE_DEV_SERVER_URL;
@@ -340,6 +319,14 @@ function createWindow() {
     if (fs.existsSync(distIndex)) mainWindow.loadFile(distIndex);
     else mainWindow.loadFile('index.html');
   }
+
+  // Load settings and initialize features asynchronously after window is created
+  setImmediate(async () => {
+    await loadSettings();
+    if (settings.logToFile) openLogStream();
+    // Update menu with potentially changed settings
+    updateMenu();
+  });
 }
 
 app.whenReady().then(() => {
@@ -461,6 +448,7 @@ ipcMain.handle('logs:parseRaw', async (_event, files) => {
   try {
     if (!Array.isArray(files) || !files.length) return { ok: true, entries: [] };
     const { parseJsonFile, parseTextLines } = require('./src/parsers');
+    const ZipClass = getAdmZip();
     const all = [];
     for (const f of files) {
       const name = String(f?.name || '');
@@ -471,7 +459,7 @@ ipcMain.handle('logs:parseRaw', async (_event, files) => {
       if (ext === '.zip') {
         // decode base64 to Buffer and iterate entries
         const buf = Buffer.from(data, enc === 'base64' ? 'base64' : 'utf8');
-        const zip = new AdmZip(buf);
+        const zip = new ZipClass(buf);
         zip.getEntries().forEach((zEntry) => {
           const ename = zEntry.entryName;
           const eext = path.extname(ename).toLowerCase();

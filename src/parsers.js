@@ -3,7 +3,14 @@
 
 const fs = require('fs');
 const path = require('path');
-const AdmZip = require('adm-zip');
+// Lazy-load AdmZip only when needed to speed up startup
+let AdmZip = null;
+function getAdmZip() {
+  if (!AdmZip) {
+    AdmZip = require('adm-zip');
+  }
+  return AdmZip;
+}
 
 // Normalize one entry into a standard object
 function toEntry(obj = {}, fallbackMessage = '', source = '') {
@@ -70,7 +77,8 @@ function parseJsonFile(filename, text) {
 }
 
 function parseZipFile(zipPath) {
-  const zip = new AdmZip(zipPath, null);
+  const ZipClass = getAdmZip();
+  const zip = new ZipClass(zipPath, null);
   const entries = [];
   zip.getEntries().forEach((zEntry) => {
     const name = zEntry.entryName;

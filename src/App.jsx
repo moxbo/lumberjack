@@ -1,7 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import { Fragment } from 'preact';
 import { useVirtualizer } from '@tanstack/react-virtual';
-import moment from 'moment';
 import { highlightAll } from './utils/highlight.js';
 import { msgMatches } from './utils/msgFilter.js';
 import { DragAndDropManager } from './utils/dnd.js';
@@ -25,8 +24,23 @@ function levelClass(level) {
 function fmt(v) {
   return v == null ? '' : String(v);
 }
+// Lightweight timestamp formatter (replaces moment.js for faster startup)
 function fmtTimestamp(ts) {
-  return ts ? moment(ts).format('YYYY-MM-DD HH:mm:ss.SSS') : '-';
+  if (!ts) return '-';
+  try {
+    const d = new Date(ts);
+    if (isNaN(d.getTime())) return String(ts);
+    const year = d.getFullYear();
+    const month = String(d.getMonth() + 1).padStart(2, '0');
+    const day = String(d.getDate()).padStart(2, '0');
+    const hours = String(d.getHours()).padStart(2, '0');
+    const minutes = String(d.getMinutes()).padStart(2, '0');
+    const seconds = String(d.getSeconds()).padStart(2, '0');
+    const ms = String(d.getMilliseconds()).padStart(3, '0');
+    return `${year}-${month}-${day} ${hours}:${minutes}:${seconds}.${ms}`;
+  } catch (e) {
+    return String(ts);
+  }
 }
 
 // Hilfsfunktion: erzeugt halbtransparente Tönung als rgba()-String
