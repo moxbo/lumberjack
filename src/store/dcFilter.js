@@ -26,7 +26,9 @@ function entryKey(key, val) {
 
 // Mappe diverse Trace-Key-Varianten auf den kanonischen Anzeigenamen
 function normalizeTraceKeyName(k) {
-  const lk = String(k || '').trim().toLowerCase();
+  const lk = String(k || '')
+    .trim()
+    .toLowerCase();
   const variants = new Set([
     'traceid',
     'trace_id',

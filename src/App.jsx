@@ -1643,7 +1643,6 @@ export default function App() {
         </div>
       )}
 
-
       {/* Hauptlayout: Liste + Details als Overlay */}
       <main className="layout" style="min-height:0;" ref={layoutRef}>
         <aside className="list" id="listPane" ref={parentRef}>
