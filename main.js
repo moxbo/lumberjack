@@ -2,7 +2,7 @@ const { app, BrowserWindow, ipcMain, dialog, Menu, nativeImage } = require('elec
 const path = require('path');
 const fs = require('fs');
 const net = require('net');
-// Lazy-load AdmZip only when needed
+// Lazy-load heavy modules only when needed
 let AdmZip = null;
 function getAdmZip() {
   if (!AdmZip) {
@@ -10,7 +10,14 @@ function getAdmZip() {
   }
   return AdmZip;
 }
-const { parsePaths, toEntry } = require('./src/parsers');
+// Lazy-load parsers only when files are opened
+let parsers = null;
+function getParsers() {
+  if (!parsers) {
+    parsers = require('./src/parsers');
+  }
+  return parsers;
+}
 const {
   getDefaultSettings,
   parseSettingsJSON,
@@ -435,6 +442,7 @@ ipcMain.handle('dialog:chooseLogFile', async () => {
 // IPC: parse paths
 ipcMain.handle('logs:parsePaths', async (_event, filePaths) => {
   try {
+    const { parsePaths } = getParsers();
     const entries = parsePaths(filePaths);
     writeEntriesToFile(entries);
     return { ok: true, entries };
@@ -447,7 +455,7 @@ ipcMain.handle('logs:parsePaths', async (_event, filePaths) => {
 ipcMain.handle('logs:parseRaw', async (_event, files) => {
   try {
     if (!Array.isArray(files) || !files.length) return { ok: true, entries: [] };
-    const { parseJsonFile, parseTextLines } = require('./src/parsers');
+    const { parseJsonFile, parseTextLines } = getParsers();
     const ZipClass = getAdmZip();
     const all = [];
     for (const f of files) {
@@ -505,6 +513,7 @@ ipcMain.on('tcp:start', (_event, { port }) => {
     _event.reply('tcp:status', { ok: false, message: 'TCP server already running' });
     return;
   }
+  const { toEntry } = getParsers();
   tcpServer = net.createServer((socket) => {
     let buffer = '';
     socket.on('data', (chunk) => {
@@ -592,9 +601,9 @@ function dedupeNewEntries(entries, seen) {
 
 ipcMain.handle('http:loadOnce', async (_event, url) => {
   try {
+    const { parseJsonFile, parseTextLines } = getParsers();
     const text = await httpFetchText(url);
     // try parse as JSON or NDJSON or text lines
-    const { parseJsonFile, parseTextLines } = require('./src/parsers');
     const isJson = text.trim().startsWith('[') || text.trim().startsWith('{');
     const entries = isJson ? parseJsonFile(url, text) : parseTextLines(url, text);
     writeEntriesToFile(entries);
@@ -607,7 +616,7 @@ ipcMain.handle('http:loadOnce', async (_event, url) => {
 ipcMain.handle('http:startPoll', async (_event, { url, intervalMs }) => {
   const id = httpPollerSeq++;
   const seen = new Set();
-  const { parseJsonFile, parseTextLines } = require('./src/parsers');
+  const { parseJsonFile, parseTextLines, toEntry } = getParsers();
 
   async function tick() {
     try {
