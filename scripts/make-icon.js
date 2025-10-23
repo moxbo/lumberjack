@@ -30,7 +30,10 @@ if (pngToIco && typeof pngToIco !== 'function' && typeof pngToIco.default === 'f
     const src = fs.readFileSync(srcPng);
     for (const s of sizes) {
       const out = path.join(tmpDir, `icon-${s}.png`);
-      await sharp(src).resize({ width: s, height: s, kernel: sharp.kernel.cubic }).png().toFile(out);
+      await sharp(src)
+        .resize({ width: s, height: s, kernel: sharp.kernel.cubic })
+        .png()
+        .toFile(out);
       tmpPngs.push(out);
     }
 
@@ -41,9 +44,13 @@ if (pngToIco && typeof pngToIco !== 'function' && typeof pngToIco.default === 'f
 
     // Aufräumen
     for (const f of tmpPngs) {
-      try { fs.unlinkSync(f); } catch {}
+      try {
+        fs.unlinkSync(f);
+      } catch {}
     }
-    try { fs.rmdirSync(tmpDir); } catch {}
+    try {
+      fs.rmdirSync(tmpDir);
+    } catch {}
   } catch (err) {
     console.error('Fehler beim Erzeugen der ICO:', err);
     process.exit(1);

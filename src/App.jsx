@@ -335,9 +335,27 @@ export default function App() {
       const e = entries[i];
       if (stdFiltersEnabled) {
         if (level && String(e.level || '').toUpperCase() !== level) continue;
-        if (logger && !String(e.logger || '').toLowerCase().includes(logger)) continue;
-        if (thread && !String(e.thread || '').toLowerCase().includes(thread)) continue;
-        if (service && !String(e.service || '').toLowerCase().includes(service)) continue;
+        if (
+          logger &&
+          !String(e.logger || '')
+            .toLowerCase()
+            .includes(logger)
+        )
+          continue;
+        if (
+          thread &&
+          !String(e.thread || '')
+            .toLowerCase()
+            .includes(thread)
+        )
+          continue;
+        if (
+          service &&
+          !String(e.service || '')
+            .toLowerCase()
+            .includes(service)
+        )
+          continue;
         if (!msgMatches(e?.message, msgExpr)) continue;
       }
       // MDC filter muss matchen
@@ -1048,7 +1066,7 @@ export default function App() {
                     // Persistiere URL & Intervall
                     setHttpUrl(url);
                     setHttpInterval(ms);
-                    await  window.api.settingsSet({ httpUrl: url, httpInterval: ms });
+                    await window.api.settingsSet({ httpUrl: url, httpInterval: ms });
                     const r = await window.api.httpStartPoll({ url, intervalMs: ms });
                     if (r.ok) {
                       setHttpPollId(r.id);

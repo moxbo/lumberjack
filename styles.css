@@ -395,8 +395,12 @@ body {
   position: relative;
   z-index: 1;
 }
-.details[data-tinted="1"] {
-  background-image: linear-gradient(0deg, var(--details-tint, transparent), var(--details-tint, transparent));
+.details[data-tinted='1'] {
+  background-image: linear-gradient(
+    0deg,
+    var(--details-tint, transparent),
+    var(--details-tint, transparent)
+  );
 }
 
 /* --- Loglist and table basics --- */
@@ -703,15 +707,15 @@ input[type='checkbox'] {
 }
 
 /* Entferne getönte Sonderbehandlung für MDC-Werte */
-.details[data-tinted="1"] .mdc-val code {
+.details[data-tinted='1'] .mdc-val code {
   background: transparent;
 }
 
 /* Tinted details: Kinder-Elemente nutzen gläserische (halbtransparente) Flächen,
    damit die Tönung sichtbar bleibt und der Text lesbar ist. */
-.details[data-tinted="1"] button,
-.details[data-tinted="1"] input:not([type='checkbox']),
-.details[data-tinted="1"] select {
+.details[data-tinted='1'] button,
+.details[data-tinted='1'] input:not([type='checkbox']),
+.details[data-tinted='1'] select {
   background: var(--glass-bg);
 }
 
@@ -741,4 +745,3 @@ input[type='checkbox'] {
     grid-template-columns: 1fr;
   }
 }
-
