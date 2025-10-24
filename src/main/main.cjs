@@ -2,10 +2,13 @@ const { app, BrowserWindow, ipcMain, dialog, Menu, nativeImage } = require('elec
 const path = require('path');
 const fs = require('fs');
 const net = require('net');
-const log = require('electron-log');
+const log = require('electron-log/main');
+const crypto = require('crypto');
+const { safeStorage } = require('electron');
 
 // Configure electron-log based on environment
 const isDev = process.env.NODE_ENV === 'development' || process.env.VITE_DEV_SERVER_URL;
+log.initialize();
 log.transports.console.level = 'debug';
 // In development, disable file logging; in production, enable it
 log.transports.file.level = isDev ? false : 'info';
@@ -24,7 +27,7 @@ function getAdmZip() {
 let parsers = null;
 function getParsers() {
   if (!parsers) {
-    parsers = require('./src/parsers.js');
+    parsers = require('./parsers.cjs');
   }
   return parsers;
 }
@@ -32,7 +35,7 @@ function getParsers() {
 let settingsUtils = null;
 function getSettingsUtils() {
   if (!settingsUtils) {
-    settingsUtils = require('./src/utils/settings.js');
+    settingsUtils = require('../utils/settings.cjs');
   }
   return settingsUtils;
 }
@@ -45,6 +48,7 @@ let httpPollerSeq = 1;
 
 // settings with defaults from schema (initialized lazily on first use)
 let settings = null;
+let settingsLoaded = false;
 
 // Ensure settings is initialized
 function ensureSettings() {
@@ -55,15 +59,37 @@ function ensureSettings() {
   return settings;
 }
 
-const settingsPath = () => {
+function settingsPath() {
+  return settings_path_compat();
+}
+const settings_path_compat = () => {
   // Use a local data folder next to the portable EXE if available
-  // electron-builder portable sets PORTABLE_EXECUTABLE_DIR at runtime
   const portableDir = process.env.PORTABLE_EXECUTABLE_DIR;
   if (portableDir && typeof portableDir === 'string' && portableDir.length) {
     return path.join(portableDir, 'data', 'settings.json');
   }
   return path.join(app.getPath('userData'), 'settings.json');
 };
+
+function loadSettingsSyncSafe() {
+  try {
+    ensureSettings();
+    const p = settingsPath();
+    if (!fs.existsSync(p)) {
+      settingsLoaded = true; // nothing to load
+      return;
+    }
+    const raw = fs.readFileSync(p, 'utf8');
+    const { parseSettingsJSON } = getSettingsUtils();
+    const result = parseSettingsJSON(raw);
+    if (result.success) {
+      settings = result.settings;
+    }
+    settingsLoaded = true;
+  } catch (e) {
+    settingsLoaded = true; // avoid repeated sync loads
+  }
+}
 
 /**
  * Load settings with validation and error handling (async for better startup)
@@ -74,8 +100,10 @@ async function loadSettings() {
     ensureSettings();
 
     const p = settingsPath();
+    log.info('Settings loaded from', p);
     if (!fs.existsSync(p)) {
       log.info('Settings file not found, using defaults');
+      settingsLoaded = true;
       return;
     }
 
@@ -93,6 +121,8 @@ async function loadSettings() {
   } catch (err) {
     log.error('Error loading settings:', err.message);
     log.info('Using default settings');
+  } finally {
+    settingsLoaded = true;
   }
 }
 
@@ -418,6 +448,63 @@ function resolveMacIconPath() {
   return null;
 }
 
+// Secret encryption helpers for storing passwords securely in settings
+function encryptSecret(plain) {
+  try {
+    if (
+      safeStorage &&
+      typeof safeStorage.isEncryptionAvailable === 'function' &&
+      safeStorage.isEncryptionAvailable()
+    ) {
+      const buf = safeStorage.encryptString(String(plain));
+      return 'ss1:' + Buffer.from(buf).toString('base64');
+    }
+  } catch (e) {
+    // fall through to AES
+  }
+  try {
+    const key = crypto
+      .createHash('sha256')
+      .update(app.getPath('userData') + '|lumberjack')
+      .digest();
+    const iv = crypto.randomBytes(12);
+    const cipher = crypto.createCipheriv('aes-256-gcm', key, iv);
+    const enc = Buffer.concat([cipher.update(String(plain), 'utf8'), cipher.final()]);
+    const tag = cipher.getAuthTag();
+    return 'gcm1:' + Buffer.concat([iv, tag, enc]).toString('base64');
+  } catch (e) {
+    return '';
+  }
+}
+function decryptSecret(enc) {
+  if (!enc || typeof enc !== 'string') return '';
+  try {
+    if (enc.startsWith('ss1:')) {
+      const b = Buffer.from(enc.slice(4), 'base64');
+      if (safeStorage && typeof safeStorage.decryptString === 'function') {
+        return safeStorage.decryptString(b);
+      }
+      return '';
+    }
+    if (enc.startsWith('gcm1:')) {
+      const buf = Buffer.from(enc.slice(5), 'base64');
+      const iv = buf.subarray(0, 12);
+      const tag = buf.subarray(12, 28);
+      const data = buf.subarray(28);
+      const key = crypto
+        .createHash('sha256')
+        .update(app.getPath('userData') + '|lumberjack')
+        .digest();
+      const decipher = crypto.createDecipheriv('aes-256-gcm', key, iv);
+      decipher.setAuthTag(tag);
+      return Buffer.concat([decipher.update(data), decipher.final()]).toString('utf8');
+    }
+  } catch (e) {
+    return '';
+  }
+  return '';
+}
+
 function createWindow() {
   // Create window immediately with default settings for faster startup
   ensureSettings();
@@ -503,7 +590,7 @@ function createWindow() {
     __dirname,
     'process.resourcesPath=',
     process.resourcesPath,
-    'process.cwd()=',
+    'process.cwd=',
     process.cwd()
   );
   if (devUrl) {
@@ -544,9 +631,7 @@ function createWindow() {
     }
 
     if (!loaded) {
-      log.info(
-        'No production dist index.html found; falling back to root index.html (likely dev)'
-      );
+      log.info('No production dist index.html found; falling back to root index.html (likely dev)');
       try {
         mainWindow.loadFile('index.html');
       } catch (e) {
@@ -580,7 +665,6 @@ function createWindow() {
     // Forward renderer console messages to main log to capture runtime errors during startup
     wc.on('console-message', (...args) => {
       try {
-        // args[0] is the event, args[1] is either the params object or the level
         let level, message, line, sourceId;
         const maybeParams = args[1];
         if (
@@ -588,21 +672,23 @@ function createWindow() {
           typeof maybeParams === 'object' &&
           ('message' in maybeParams || 'level' in maybeParams)
         ) {
-          // New signature: (event, params)
           level = maybeParams.level;
           message = maybeParams.message;
           line = maybeParams.line;
           sourceId = maybeParams.sourceId;
         } else {
-          // Old signature: (event, level, message, line, sourceId)
           level = args[1];
           message = args[2];
           line = args[3];
           sourceId = args[4];
         }
-
-        const lvl =
-          ['LOG', 'WARNING', 'ERROR'][Math.max(0, Math.min(2, Number(level) || 0))] || 'LOG';
+        const lvlNum = Number(level) || 0; // 0=LOG,1=WARNING,2=ERROR
+        const forwardWarnings = process.env.LJ_FORWARD_WARNINGS === '1';
+        if (lvlNum < 2 && !forwardWarnings) {
+          // Ignore logs and warnings to avoid flooding main log by default
+          return;
+        }
+        const lvl = ['LOG', 'WARNING', 'ERROR'][Math.max(0, Math.min(2, lvlNum))] || 'LOG';
         log.info(`Renderer console (${lvl}) ${sourceId || ''}:${line || 0} - ${message || ''}`);
       } catch (e) {}
     });
@@ -678,6 +764,9 @@ app.on('quit', () => {
 ipcMain.handle('settings:get', () => {
   try {
     ensureSettings();
+    if (!settingsLoaded) {
+      loadSettingsSyncSafe();
+    }
     // Return a deep copy to prevent accidental mutations
     return { ok: true, settings: structuredClone(settings) };
   } catch (err) {
@@ -703,9 +792,27 @@ ipcMain.handle('settings:set', (_event, patch) => {
       logMaxBackups: settings.logMaxBackups,
     };
 
+    // Handle sensitive fields not in schema: elasticPassPlain and elasticPassClear
+    const passPlain = typeof patch.elasticPassPlain === 'string' ? patch.elasticPassPlain : null;
+    const passClear = !!patch.elasticPassClear;
+
+    // Build patch sans sensitive transient fields
+    const clone = { ...patch };
+    delete clone.elasticPassPlain;
+    delete clone.elasticPassClear;
+
     // Merge with validation
     const { mergeSettings } = getSettingsUtils();
-    settings = mergeSettings(patch, settings);
+    let merged = mergeSettings(clone, settings);
+
+    // Apply password updates after merge
+    if (passClear) {
+      merged.elasticPassEnc = '';
+    } else if (passPlain && passPlain.trim()) {
+      merged.elasticPassEnc = encryptSecret(passPlain.trim());
+    }
+
+    settings = merged;
 
     // Save to disk
     const saved = saveSettings();
@@ -977,4 +1084,35 @@ ipcMain.handle('http:stopPoll', async (_event, id) => {
   clearInterval(p.timer);
   httpPollers.delete(id);
   return { ok: true };
+});
+
+// IPC: Elasticsearch search
+ipcMain.handle('elastic:search', async (_event, opts) => {
+  try {
+    ensureSettings();
+    const { fetchElasticLogs } = getParsers();
+    const s = settings;
+    const url = (opts && opts.url) || s.elasticUrl || '';
+    const size = (opts && opts.size) || s.elasticSize || 1000;
+    const auth = (() => {
+      const user = s.elasticUser || '';
+      const pass = decryptSecret(s.elasticPassEnc || '');
+      if (user && pass) return { type: 'basic', username: user, password: pass };
+      return undefined;
+    })();
+    const mergedOpts = {
+      ...opts,
+      url,
+      size,
+      auth: opts?.auth || auth,
+    };
+    if (!mergedOpts.url) throw new Error('Elasticsearch URL ist nicht konfiguriert');
+
+    const entries = await fetchElasticLogs(mergedOpts);
+    writeEntriesToFile(entries);
+    return { ok: true, entries };
+  } catch (err) {
+    log.error('Elasticsearch search failed:', err?.message || err);
+    return { ok: false, error: err?.message || String(err) };
+  }
 });

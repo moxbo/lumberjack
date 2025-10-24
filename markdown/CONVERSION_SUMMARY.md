@@ -47,8 +47,8 @@
 - Vite handles TypeScript compilation for renderer process
 
 #### Generated Files
-- `src/parsers.js` (generated from parsers.ts)
-- `src/utils/settings.js` (generated from settings.ts)
+- `src/parsers.ts` (generated from parsers.ts)
+- `src/utils/settings.ts` (generated from settings.ts)
 - Added to `.gitignore`
 
 ### 4. Import Updates ✅

@@ -1,11 +1,24 @@
 // Drag & Drop Manager: kapselt Events, extrahiert Pfade und meldet Aktiv-Status
-import logger from './logger.ts';
+import logger from './logger';
+
+export type RawFilePayload = { name: string; data: string; encoding: 'utf8' | 'base64' };
+export type DnDOptions = {
+  onFiles: (paths: string[]) => void | Promise<void>;
+  onActiveChange?: (active: boolean) => void;
+  onRawFiles?: (files: RawFilePayload[]) => void | Promise<void>;
+};
 
 export class DragAndDropManager {
+  private onFiles: (paths: string[]) => void | Promise<void>;
+  private onActiveChange: (active: boolean) => void;
+  private onRawFiles: ((files: RawFilePayload[]) => void | Promise<void>) | null;
+  private _dragCounter: number;
+  private _handlers: any;
+
   /**
-   * @param {{ onFiles: (paths: string[]) => void|Promise<void>, onActiveChange?: (active: boolean) => void, onRawFiles?: (files: {name: string, data: string, encoding: 'utf8'|'base64'}[]) => void|Promise<void> }} opts
+   * @param opts Drag & Drop Callbacks
    */
-  constructor(opts) {
+  constructor(opts: DnDOptions) {
     this.onFiles = opts.onFiles;
     this.onActiveChange = opts.onActiveChange || (() => {});
     this.onRawFiles = opts.onRawFiles || null;
@@ -13,28 +26,29 @@ export class DragAndDropManager {
     this._handlers = null;
   }
 
-  attach(target = window) {
+  attach(target: Window | HTMLElement = window) {
     if (this._handlers) return;
-    const debug = typeof window !== 'undefined' && !!window.__DEBUG_DND__;
-    const onDragOverBlockAll = (e) => {
+    const debug = typeof window !== 'undefined' && !!(window as any).__DEBUG_DND__;
+
+    const onDragOverBlockAll = (e: DragEvent) => {
       e.preventDefault();
     };
 
-    const isFileDrag = (e) => {
+    const isFileDrag = (e: DragEvent) => {
       const dt = e.dataTransfer;
       if (!dt) return false;
       if (debug) {
         try {
-          const types = Array.from(dt.types || []);
+          const types = Array.from(dt.types || [] as any);
           logger.log('[DnD] drag types:', types);
         } catch {}
       }
       // DataTransfer.types ist array-ähnlich, iterierbar
       let hasFiles = false;
-      const types = dt.types;
-      if (types && typeof types.length === 'number') {
-        for (let i = 0; i < types.length; i++) {
-          const t = types[i];
+      const types: any = dt.types as any;
+      if (types && typeof (types as any).length === 'number') {
+        for (let i = 0; i < (types as any).length; i++) {
+          const t = (types as any)[i];
           if (
             t === 'Files' ||
             t === 'public.file-url' ||
@@ -47,19 +61,19 @@ export class DragAndDropManager {
         }
       }
       if (hasFiles) return true;
-      const items = dt.items;
-      if (items && typeof items.length === 'number') {
+      const items = dt.items as DataTransferItemList | null;
+      if (items) {
         for (let i = 0; i < items.length; i++) {
-          if (items[i] && (items[i].kind === 'file' || items[i].type === 'text/uri-list'))
-            return true;
+          const it = items[i];
+          if (it && (it.kind === 'file' || it.type === 'text/uri-list')) return true;
         }
       }
       return false;
     };
 
-    const fileUrlsToPaths = (data) => {
-      if (!data) return [];
-      const out = [];
+    const fileUrlsToPaths = (data: string) => {
+      if (!data) return [] as string[];
+      const out: string[] = [];
       let start = 0;
       // einfache Zeilen-Split ohne Regex/Allokationen in Hot-Path
       for (let i = 0; i <= data.length; i++) {
@@ -85,9 +99,9 @@ export class DragAndDropManager {
       return out;
     };
 
-    const extractPaths = (e) => {
+    const extractPaths = (e: DragEvent) => {
       const dt = e.dataTransfer;
-      const out = [];
+      const out: string[] = [];
       if (!dt) return out;
       // Prefer URI list/public.file-url for sandboxed renderers on macOS
       try {
@@ -108,24 +122,24 @@ export class DragAndDropManager {
       } catch {}
       // Fallback 1: FileList .path (benötigt sandbox=false)
       try {
-        const files = dt.files;
-        if (files && typeof files.length === 'number') {
+        const files = dt.files as FileList | undefined;
+        if (files) {
           for (let i = 0; i < files.length; i++) {
-            const f = files[i];
-            const p = /** @type {any} */ (f).path || '';
+            const f = files[i] as any;
+            const p = (f && f.path) || '';
             if (p) out.push(p);
           }
         }
       } catch {}
       // Fallback 2: DataTransferItem.getAsFile().path
       try {
-        const items = dt.items;
-        if (items && typeof items.length === 'number') {
+        const items = dt.items as DataTransferItemList | null;
+        if (items) {
           for (let i = 0; i < items.length; i++) {
             const it = items[i];
             if (it && it.kind === 'file') {
               const f = it.getAsFile?.();
-              const p = f && /** @type {any} */ (f).path;
+              const p = f && (f as any).path;
               if (p) out.push(p);
             }
           }
@@ -134,8 +148,8 @@ export class DragAndDropManager {
       if (debug) logger.log('[DnD] extracted paths before dedupe:', out.slice());
       // Deduplizieren ohne Set
       if (out.length > 1) {
-        const seen = Object.create(null);
-        const dedup = [];
+        const seen: Record<string, 1> = Object.create(null);
+        const dedup: string[] = [];
         for (let i = 0; i < out.length; i++) {
           const p = out[i];
           if (!seen[p]) {
@@ -149,20 +163,20 @@ export class DragAndDropManager {
       return out;
     };
 
-    const readFilesAsPayloads = async (fileList) => {
-      const out = [];
-      if (!fileList || typeof fileList.length !== 'number') return out;
-      /** @type {(f: File) => Promise<{name: string, data: string, encoding: 'utf8'|'base64'}>} */
-      const readOne = (f) =>
-        new Promise((resolve) => {
+    const readFilesAsPayloads = async (fileList: FileList): Promise<RawFilePayload[]> => {
+      const out: RawFilePayload[] = [];
+      if (!fileList) return out;
+      const readOne = (f: File) =>
+        new Promise<RawFilePayload>((resolve) => {
           try {
-            const name = String(f?.name || '');
+            const name = String((f as any)?.name || '');
             const ext = name.toLowerCase().slice(name.lastIndexOf('.'));
             const fr = new FileReader();
             if (ext === '.zip') {
               fr.onload = () => {
                 try {
-                  const buf = new Uint8Array(fr.result);
+                  const res = fr.result;
+                  const buf = res instanceof ArrayBuffer ? new Uint8Array(res) : new Uint8Array();
                   // zu base64
                   let bin = '';
                   for (let i = 0; i < buf.length; i++) bin += String.fromCharCode(buf[i]);
@@ -180,18 +194,18 @@ export class DragAndDropManager {
               fr.readAsText(f, 'utf-8');
             }
           } catch {
-            resolve({ name: String(f?.name || ''), data: '', encoding: 'utf8' });
+            resolve({ name: String((f as any)?.name || ''), data: '', encoding: 'utf8' });
           }
         });
-      for (let i = 0; i < fileList.length; i++) out.push(await readOne(fileList[i]));
+      for (let i = 0; i < fileList.length; i++) out.push(await readOne(fileList[i]!));
       return out;
     };
 
-    const extractPathsFromItemsAsync = async (e) => {
+    const extractPathsFromItemsAsync = async (e: DragEvent) => {
       const dt = e.dataTransfer;
-      if (!dt || !dt.items || !dt.items.length) return [];
+      if (!dt || !dt.items || !dt.items.length) return [] as string[];
       const wanted = new Set(['text/uri-list', 'public.file-url', 'text/plain']);
-      const promises = [];
+      const promises: Promise<string[]>[] = [];
       for (let i = 0; i < dt.items.length; i++) {
         const it = dt.items[i];
         if (!it) continue;
@@ -199,7 +213,7 @@ export class DragAndDropManager {
         if (!wanted.has(t)) continue;
         if (typeof it.getAsString === 'function') {
           promises.push(
-            new Promise((resolve) => {
+            new Promise<string[]>((resolve) => {
               try {
                 it.getAsString((str) => {
                   try {
@@ -216,10 +230,10 @@ export class DragAndDropManager {
         }
       }
       const chunks = await Promise.all(promises);
-      const out = [].concat(...chunks);
+      const out = ([] as string[]).concat(...chunks);
       if (out.length > 1) {
-        const seen = Object.create(null);
-        const dedup = [];
+        const seen: Record<string, 1> = Object.create(null);
+        const dedup: string[] = [];
         for (let i = 0; i < out.length; i++) {
           const p = out[i];
           if (!seen[p]) {
@@ -232,27 +246,27 @@ export class DragAndDropManager {
       return out;
     };
 
-    const onDragEnter = (e) => {
+    const onDragEnter = (e: DragEvent) => {
       if (!isFileDrag(e)) return;
       e.preventDefault();
       e.stopPropagation();
       this._dragCounter++;
       if (this._dragCounter === 1) this.onActiveChange(true);
     };
-    const onDragOver = (e) => {
+    const onDragOver = (e: DragEvent) => {
       if (!isFileDrag(e)) return;
       e.preventDefault();
       e.stopPropagation();
       if (e.dataTransfer) e.dataTransfer.dropEffect = 'copy';
     };
-    const onDragLeave = (e) => {
+    const onDragLeave = (e: DragEvent) => {
       if (!isFileDrag(e)) return;
       e.preventDefault();
       e.stopPropagation();
       this._dragCounter = Math.max(0, this._dragCounter - 1);
       if (this._dragCounter === 0) this.onActiveChange(false);
     };
-    const onDrop = async (e) => {
+    const onDrop = async (e: DragEvent) => {
       if (!isFileDrag(e)) return;
       e.preventDefault();
       e.stopPropagation();
@@ -291,13 +305,13 @@ export class DragAndDropManager {
     };
 
     // Two layers: block default navigation and add functional handlers (with capture)
-    target.addEventListener('dragover', onDragOverBlockAll, { capture: true });
-    target.addEventListener('drop', onDragOverBlockAll, { capture: true });
+    (target as any).addEventListener('dragover', onDragOverBlockAll as any, { capture: true } as any);
+    (target as any).addEventListener('drop', onDragOverBlockAll as any, { capture: true } as any);
 
-    target.addEventListener('dragenter', onDragEnter, { capture: true });
-    target.addEventListener('dragover', onDragOver, { capture: true });
-    target.addEventListener('dragleave', onDragLeave, { capture: true });
-    target.addEventListener('drop', onDrop, { capture: true });
+    (target as any).addEventListener('dragenter', onDragEnter as any, { capture: true } as any);
+    (target as any).addEventListener('dragover', onDragOver as any, { capture: true } as any);
+    (target as any).addEventListener('dragleave', onDragLeave as any, { capture: true } as any);
+    (target as any).addEventListener('drop', onDrop as any, { capture: true } as any);
 
     this._handlers = { onDragOverBlockAll, onDragEnter, onDragOver, onDragLeave, onDrop, target };
   }
@@ -305,14 +319,14 @@ export class DragAndDropManager {
   detach() {
     const h = this._handlers;
     if (!h) return;
-    const t = h.target;
-    t.removeEventListener('dragover', h.onDragOverBlockAll, { capture: true });
-    t.removeEventListener('drop', h.onDragOverBlockAll, { capture: true });
+    const t: any = h.target;
+    t.removeEventListener('dragover', h.onDragOverBlockAll, { capture: true } as any);
+    t.removeEventListener('drop', h.onDragOverBlockAll, { capture: true } as any);
 
-    t.removeEventListener('dragenter', h.onDragEnter, { capture: true });
-    t.removeEventListener('dragover', h.onDragOver, { capture: true });
-    t.removeEventListener('dragleave', h.onDragLeave, { capture: true });
-    t.removeEventListener('drop', h.onDrop, { capture: true });
+    t.removeEventListener('dragenter', h.onDragEnter, { capture: true } as any);
+    t.removeEventListener('dragover', h.onDragOver, { capture: true } as any);
+    t.removeEventListener('dragleave', h.onDragLeave, { capture: true } as any);
+    t.removeEventListener('drop', h.onDrop, { capture: true } as any);
 
     this._handlers = null;
   }

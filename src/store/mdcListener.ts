@@ -1,13 +1,13 @@
 // MDCListener: sammelt bekannte MDC-Schlüssel und Werte aus dem LoggingStore
 // keys: Map<string, Set<string>>; hält interne Sortierung nicht, liefert aber sortierte Arrays per Getter
 
-import { lazyInstance } from './_lazy.js';
+import { lazyInstance } from './_lazy';
 
 class SimpleEmitter {
   constructor() {
     this._ls = new Set();
   }
-  on(fn) {
+  on(fn: any) {
     if (typeof fn === 'function') {
       this._ls.add(fn);
       return () => this._ls.delete(fn);
@@ -37,12 +37,12 @@ class MDCListenerImpl {
       if (this._started) return;
       this._started = true;
       // Load LoggingStore dynamically to avoid a static circular import
-      import('./loggingStore.js')
+      import('./loggingStore')
         .then((mod) => {
           const LS = mod?.LoggingStore || mod?.default;
           try {
             LS?.addLoggingStoreListener({
-              loggingEventsAdded: (events) => this._onAdded(events),
+              loggingEventsAdded: (events: any) => this._onAdded(events),
               loggingStoreReset: () => this._onReset(),
             });
           } catch (e) {}

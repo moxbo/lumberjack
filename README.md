@@ -181,8 +181,8 @@ Lumberjack is highly optimized for fast startup, responsive UI, and efficient me
 
 ### Details
 
-- Startup optimizations: [PERFORMANCE.md](PERFORMANCE.md)
-- Advanced optimizations: [ADVANCED_OPTIMIZATIONS.md](ADVANCED_OPTIMIZATIONS.md)
+- Startup optimizations: [PERFORMANCE.md](markdown/PERFORMANCE.md)
+- Advanced optimizations: [ADVANCED_OPTIMIZATIONS.md](markdown/ADVANCED_OPTIMIZATIONS.md)
 
 ## Lizenz
 

@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'preact/hooks';
-import { MDCListener } from './store/mdcListener.js';
-import { DiagnosticContextFilter, dcEntryId } from './store/dcFilter.js';
-import { LoggingStore } from './store/loggingStore.js';
+import { MDCListener } from '../store/mdcListener.js';
+import { DiagnosticContextFilter, dcEntryId } from '../store/dcFilter.js';
+import { LoggingStore } from '../store/loggingStore.js';
 
 export default function DCFilterPanel() {
   const [keys, setKeys] = useState([]);

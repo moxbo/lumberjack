@@ -2,10 +2,10 @@
   "name": "lumberjack",
   "version": "1.0.1",
   "description": "Lumberjack - A log file viewer",
-  "main": "main.cjs",
+  "main": "src/main/main.cjs",
   "type": "module",
   "scripts": {
-    "prebuild": "esbuild src/parsers.ts src/utils/settings.ts --outdir=src --out-extension:.js=.js --format=esm --platform=node",
+    "prebuild": "esbuild src/main/parsers.ts src/utils/settings.ts --outdir=src --out-extension:.js=.cjs --format=cjs --platform=node",
     "build:renderer": "vite build",
     "start": "npm run prebuild && npm run build:renderer && electron .",
     "dev": "npm run prebuild && concurrently -k -s first -n \"VITE,ELECTRON\" -c \"cyan,magenta\" \"cross-env NODE_ENV=development vite --open=false\" \"wait-on http://localhost:5173 && cross-env NODE_ENV=development VITE_DEV_SERVER_URL=http://localhost:5173 electron .\"",
@@ -29,7 +29,7 @@
   "license": "ISC",
   "devDependencies": {
     "@preact/preset-vite": "^2.10.2",
-    "@types/electron": "^1.4.38",
+    "@types/electron": "^1.6.12",
     "@types/node": "^24.9.1",
     "concurrently": "^9.2.1",
     "cross-env": "^10.1.0",
@@ -43,7 +43,7 @@
     "ts-node": "^10.9.2",
     "tsx": "^4.20.6",
     "typescript": "^5.9.3",
-    "vite": "^7.1.11",
+    "vite": "^7.1.12",
     "wait-on": "^9.0.1"
   },
   "dependencies": {
@@ -66,6 +66,8 @@
       "preload.js",
       "src/**/*.ts",
       "src/**/*.tsx",
+      "src/**/*.js",
+      "src/**/*.cjs",
       "index.html",
       "styles.css",
       "package.json",

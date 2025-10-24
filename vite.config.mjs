@@ -4,6 +4,9 @@ import preact from '@preact/preset-vite';
 export default defineConfig({
   plugins: [preact()],
   base: './',
+  resolve: {
+    dedupe: ['preact', 'preact/hooks', 'preact/compat'],
+  },
   build: {
     // Optimize build for faster startup
     minify: 'esbuild',

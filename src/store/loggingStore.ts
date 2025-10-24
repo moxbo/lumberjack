@@ -30,11 +30,11 @@ const RESERVED_STD_FIELDS = new Set([
   // trace id variants intentionally NOT excluded to show in MDC only
 ]);
 
-function isString(v) {
+function isString(v: unknown) {
   return typeof v === 'string';
 }
 
-function findExternalId(raw) {
+function findExternalId(raw: { [x: string]: any }) {
   if (!raw || typeof raw !== 'object') return null;
   const candidates = ['externalId', 'external_id', 'external.id', 'extId', 'traceparent', 'id'];
   for (const k of candidates) {
@@ -44,7 +44,7 @@ function findExternalId(raw) {
   return null;
 }
 
-function findTraceId(raw) {
+function findTraceId(raw: { [x: string]: any }) {
   if (!raw || typeof raw !== 'object') return null;
   const candidates = ['traceId', 'trace_id', 'trace', 'trace.id', 'TraceID'];
   for (const k of candidates) {
@@ -54,7 +54,7 @@ function findTraceId(raw) {
   return null;
 }
 
-export function computeMdcFromRaw(raw) {
+export function computeMdcFromRaw(raw: { [s: string]: unknown } | ArrayLike<unknown>) {
   const mdc = {};
   if (!raw || typeof raw !== 'object') return mdc;
   for (const [k, v] of Object.entries(raw)) {
@@ -78,7 +78,7 @@ class LoggingStoreImpl {
     this._listeners = new Set();
     this._events = []; // optional, not strictly required for MDC
   }
-  addLoggingStoreListener(listener) {
+  addLoggingStoreListener(listener: any) {
     if (listener && typeof listener === 'object') {
       this._listeners.add(listener);
       return () => this._listeners.delete(listener);
@@ -111,7 +111,7 @@ class LoggingStoreImpl {
   }
 }
 
-import { lazyInstance } from './_lazy.js';
+import { lazyInstance } from './_lazy';
 
 // Export the singleton lazily to avoid temporal-dead-zone issues when modules
 // import each other during initialization (bundlers can reorder/rename symbols).

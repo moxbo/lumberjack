@@ -136,7 +136,7 @@ Savings: ███████████████████████�
 - Added native `fmtTimestamp()` function
 - Settings fetch deferred with `setTimeout`
 
-### src/parsers.js (8 lines changed)
+### src/parsers.ts (8 lines changed)
 
 - Added `getAdmZip()` lazy loader
 - Updated `parseZipFile()` to use lazy loader

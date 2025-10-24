@@ -1,15 +1,22 @@
+// @ts-nocheck
 import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import { Fragment } from 'preact';
 import { useVirtualizer } from '@tanstack/react-virtual';
-import { highlightAll } from './utils/highlight.ts';
-import { msgMatches } from './utils/msgFilter.ts';
-import logger from './utils/logger.ts';
-import DCFilterDialog from './DCFilterDialog.tsx';
-import { LoggingStore } from './store/loggingStore.ts';
-import { DiagnosticContextFilter } from './store/dcFilter.ts';
-import { MDCListener } from './store/mdcListener.ts';
-import { DragAndDropManager } from './utils/dnd.ts';
-import { compareByTimestampId } from './utils/sort.ts';
+import { highlightAll } from '../utils/highlight';
+import { msgMatches } from '../utils/msgFilter';
+import logger from '../utils/logger';
+// Dynamic import for DCFilterDialog (code splitting)
+// Preact supports dynamic imports directly
+import { LoggingStore } from '../store/loggingStore';
+import { DiagnosticContextFilter } from '../store/dcFilter';
+import { DragAndDropManager } from '../utils/dnd';
+import { compareByTimestampId } from '../utils/sort';
+import { TimeFilter } from '../store/timeFilter';
+import { lazy, Suspense } from 'preact/compat';
+
+// Lazy-load DCFilterDialog as a component
+const DCFilterDialog = lazy(() => import('./DCFilterDialog'));
+const ElasticSearchDialog = lazy(() => import('./ElasticSearchDialog'));
 
 function levelClass(level: string | null | undefined): string {
   const l = (level || '').toUpperCase();
@@ -110,9 +117,29 @@ export default function App() {
     const off = DiagnosticContextFilter.onChange(() => setDcVersion((v) => v + 1));
     return () => off?.();
   }, []);
+  // re-render trigger for Time filter changes
+  const [timeVersion, setTimeVersion] = useState(0);
+  useEffect(() => {
+    const off = TimeFilter.onChange(() => setTimeVersion((v) => v + 1));
+    return () => off?.();
+  }, []);
 
   // Neuer Dialog-State für DC-Filter
   const [showDcDialog, setShowDcDialog] = useState(false);
+  // Zeit-Filter Dialog-State
+  const [showTimeDialog, setShowTimeDialog] = useState(false);
+  const [timeForm, setTimeForm] = useState({
+    enabled: true,
+    mode: 'relative', // 'relative' | 'absolute'
+    duration: '15m',
+    from: '',
+    to: '',
+    // Elastic-Suchfelder
+    application_name: '',
+    logger: '',
+    level: '',
+    environment: '',
+  });
 
   // Filter-Historien
   const [histLogger, setHistLogger] = useState([]);
@@ -136,6 +163,12 @@ export default function App() {
     logMaxMB: 5,
     logMaxBackups: 3,
     themeMode: 'system',
+    // Elasticsearch form fields (nur im Dialog benutzt)
+    elasticUrl: '',
+    elasticSize: 1000,
+    elasticUser: '',
+    elasticPassNew: '',
+    elasticPassClear: false,
   });
   // Neue Dialog-States: HTTP einmal laden & Poll starten
   const [showHttpLoadDlg, setShowHttpLoadDlg] = useState(false);
@@ -148,6 +181,12 @@ export default function App() {
   const [logFilePath, setLogFilePath] = useState('');
   const [logMaxBytes, setLogMaxBytes] = useState(5 * 1024 * 1024);
   const [logMaxBackups, setLogMaxBackups] = useState(3);
+
+  // Elasticsearch-Settings (persisted state)
+  const [elasticUrl, setElasticUrl] = useState('');
+  const [elasticSize, setElasticSize] = useState(1000);
+  const [elasticUser, setElasticUser] = useState('');
+  const [elasticHasPass, setElasticHasPass] = useState(false); // nur Anzeige
 
   // HTTP Dropdown-Menü (toolbar)
   const [httpMenu, setHttpMenu] = useState({ open: false, x: 0, y: 0 });
@@ -344,6 +383,10 @@ export default function App() {
     const out = [];
     for (let i = 0; i < entries.length; i++) {
       const e = entries[i];
+      // Zeit-Filter prüfen
+      try {
+        if (!TimeFilter.matchesTs(e?.timestamp)) continue;
+      } catch {}
       if (stdFiltersEnabled) {
         if (level && String(e.level || '').toUpperCase() !== level) continue;
         if (
@@ -378,7 +421,7 @@ export default function App() {
     // Chronologisch sortieren (aufsteigend nach Zeitstempel)
     out.sort((ia, ib) => compareByTimestampId(entries[ia], entries[ib]));
     return out;
-  }, [entries, filter, dcVersion, stdFiltersEnabled]);
+  }, [entries, filter, dcVersion, stdFiltersEnabled, timeVersion]);
 
   const searchMatchIdx = useMemo(() => {
     const s = search.trim();
@@ -791,6 +834,12 @@ export default function App() {
         setLogFilePath(String(r.logFilePath || ''));
         setLogMaxBytes(Number(r.logMaxBytes || 5 * 1024 * 1024));
         setLogMaxBackups(Number(r.logMaxBackups || 3));
+
+        // Elasticsearch
+        setElasticUrl(String(r.elasticUrl || ''));
+        setElasticSize(Number(r.elasticSize || 1000));
+        setElasticUser(String(r.elasticUser || ''));
+        setElasticHasPass(!!String(r.elasticPassEnc || '').trim());
       } catch (e) {
         logger.error('Error loading settings:', e);
       }
@@ -798,7 +847,22 @@ export default function App() {
     return () => clearTimeout(timeoutId);
   }, []);
 
-  function openSettingsModal(initialTab) {
+  async function openSettingsModal(initialTab) {
+    // Hole den aktuell persistierten Zustand (Race-Condition direkt nach App-Start vermeiden)
+    let curMode = themeMode;
+    try {
+      const result = await window.api.settingsGet?.();
+      const r = result?.ok ? result.settings : null;
+      if (r && typeof r.themeMode === 'string') {
+        const mode = ['light', 'dark', 'system'].includes(r.themeMode) ? r.themeMode : 'system';
+        curMode = mode;
+        setThemeMode(mode);
+        applyThemeMode(mode);
+      }
+      if (r && typeof r.follow === 'boolean') setFollow(!!r.follow);
+      if (r && typeof r.followSmooth === 'boolean') setFollowSmooth(!!r.followSmooth);
+    } catch {}
+
     setForm({
       tcpPort,
       httpUrl,
@@ -807,7 +871,13 @@ export default function App() {
       logFilePath,
       logMaxMB: Math.max(1, Math.round((logMaxBytes || 5 * 1024 * 1024) / (1024 * 1024))),
       logMaxBackups,
-      themeMode,
+      themeMode: curMode,
+      // Elasticsearch (aus persistierten States)
+      elasticUrl,
+      elasticSize,
+      elasticUser,
+      elasticPassNew: '',
+      elasticPassClear: false,
     });
     setSettingsTab(initialTab || 'tcp');
     setShowSettings(true);
@@ -825,17 +895,33 @@ export default function App() {
     const maxBytes = Math.round(maxMB * 1024 * 1024);
     const backups = Math.max(0, Number(form.logMaxBackups || 0));
     const mode = ['light', 'dark', 'system'].includes(form.themeMode) ? form.themeMode : 'system';
+
+    const patch = {
+      tcpPort: port,
+      httpUrl: String(form.httpUrl || '').trim(),
+      httpInterval: interval,
+      logToFile: toFile,
+      logFilePath: path,
+      logMaxBytes: maxBytes,
+      logMaxBackups: backups,
+      themeMode: mode,
+      // Elasticsearch
+      elasticUrl: String(form.elasticUrl || '').trim(),
+      elasticSize: Math.max(1, Number(form.elasticSize || 1000)),
+      elasticUser: String(form.elasticUser || '').trim(),
+    };
+    const newPass = String(form.elasticPassNew || '').trim();
+    if (form.elasticPassClear) {
+      patch['elasticPassClear'] = true;
+    } else if (newPass) {
+      patch['elasticPassPlain'] = newPass;
+    }
+
     try {
-      await window.api.settingsSet({
-        tcpPort: port,
-        httpUrl: String(form.httpUrl || '').trim(),
-        httpInterval: interval,
-        logToFile: toFile,
-        logFilePath: path,
-        logMaxBytes: maxBytes,
-        logMaxBackups: backups,
-        themeMode: mode,
-      });
+      const res = await window.api.settingsSet(patch);
+      if (!res || !res.ok) throw new Error(res?.error || 'Unbekannter Fehler');
+
+      // Apply to local states
       setTcpPort(port);
       setHttpUrl(String(form.httpUrl || '').trim());
       setHttpInterval(interval);
@@ -845,6 +931,14 @@ export default function App() {
       setLogMaxBackups(backups);
       setThemeMode(mode);
       applyThemeMode(mode);
+
+      // Elasticsearch
+      setElasticUrl(String(form.elasticUrl || '').trim());
+      setElasticSize(Math.max(1, Number(form.elasticSize || 1000)));
+      setElasticUser(String(form.elasticUser || '').trim());
+      if (form.elasticPassClear) setElasticHasPass(false);
+      else if (newPass) setElasticHasPass(true);
+
       setShowSettings(false);
     } catch (e) {
       alert('Speichern fehlgeschlagen: ' + (e?.message || String(e)));
@@ -891,117 +985,120 @@ export default function App() {
     setHttpPollForm({ url, interval: ms });
     setShowHttpPollDlg(true);
   }
-
-  // Clicks außerhalb: schließe Menü (nutzt composedPath + Refs statt querySelector)
-  useEffect(() => {
-    function onDocClick(e) {
-      if (!httpMenu.open) return;
-      const btn = httpBtnRef.current;
-      const menu = httpMenuRef.current;
-      // Nutzen Sie composedPath, um DOM-Traversal zu vermeiden
-      const path = typeof e.composedPath === 'function' ? e.composedPath() : [];
-      if (btn && (btn === e.target || btn.contains(e.target) || (path && path.includes(btn))))
-        return;
-      if (menu && (menu === e.target || menu.contains(e.target) || (path && path.includes(menu))))
-        return;
-      setHttpMenu({ open: false, x: 0, y: 0 });
+  // Zeit-Filter Modal öffnen
+  function openTimeFilterDialog() {
+    try {
+      const s = TimeFilter.getState();
+      const toLocal = (iso) => {
+        if (!iso) return '';
+        const d = new Date(iso);
+        if (isNaN(d.getTime())) return '';
+        const pad = (n) => String(n).padStart(2, '0');
+        const y = d.getFullYear();
+        const m = pad(d.getMonth() + 1);
+        const da = pad(d.getDate());
+        const hh = pad(d.getHours());
+        const mm = pad(d.getMinutes());
+        return `${y}-${m}-${da}T${hh}:${mm}`;
+      };
+      setTimeForm({
+        enabled: true,
+        mode: s.mode || 'relative',
+        duration: s.duration || '15m',
+        from: toLocal(s.from),
+        to: toLocal(s.to),
+        application_name: '',
+        logger: '',
+        level: '',
+        environment: '',
+        loadMode: 'append',
+      });
+    } catch {
+      setTimeForm({
+        enabled: true,
+        mode: 'relative',
+        duration: '15m',
+        from: '',
+        to: '',
+        application_name: '',
+        logger: '',
+        level: '',
+        environment: '',
+        loadMode: 'append',
+      });
     }
-    window.addEventListener('mousedown', onDocClick, { capture: true, passive: true });
-    return () => window.removeEventListener('mousedown', onDocClick, { capture: true });
-  }, [httpMenu.open]);
-
-  // Poll-Countdown aktualisieren
-  useEffect(() => {
-    if (httpPollId == null || !pollMs) {
-      setNextPollIn('');
-      return;
+    setShowTimeDialog(true);
+  }
+  function applyTimeFilter() {
+    const f = timeForm;
+    // 1) Lokalen Zeitfilter weiter pflegen, damit UI-Filter wie gehabt funktionieren
+    if (f.mode === 'relative') {
+      TimeFilter.setRelative(String(f.duration || '').trim());
+    } else {
+      // convert datetime-local values to Date for ISO in store
+      const toDate = (s) => {
+        const t = String(s || '').trim();
+        if (!t) return null;
+        // treat as local time
+        const d = new Date(t);
+        return isNaN(d.getTime()) ? null : d;
+      };
+      TimeFilter.setAbsolute(toDate(f.from), toDate(f.to));
     }
-    let rafId = null;
-    const tick = () => {
-      const now = Date.now();
-      let due = nextPollDueAt || now + pollMs;
-      // rolle vor, falls vergangen
-      while (due && now > due) due += pollMs;
-      setNextPollDueAt(due);
-      const remain = Math.max(0, (due || now) - now);
-      const txt = (remain / 1000).toFixed(remain < 10000 ? 1 : 0) + 's';
-      setNextPollIn(txt);
-      rafId = requestAnimationFrame(tick);
-    };
-    rafId = requestAnimationFrame(tick);
-    return () => {
-      if (rafId) cancelAnimationFrame(rafId);
-    };
-  }, [httpPollId, pollMs]);
+    TimeFilter.setEnabled(!!f.enabled);
 
-  // ESC: modal / Kontextmenü schließen + F8: Follow toggeln
-  useEffect(() => {
-    const onKey = (e) => {
-      // In Eingaben keine Shortcuts auslösen
-      const tag = (e.target && e.target.tagName) || '';
-      const isEditable =
-        ['INPUT', 'TEXTAREA', 'SELECT'].includes(String(tag).toUpperCase()) ||
-        e.target?.isContentEditable;
+    // 2) Elasticsearch-Suche auslösen und Ergebnisse anhängen
+    withBusy(async () => {
+      try {
+        const opts = {};
+        // Zeit einschränken nur wenn aktiviert
+        if (f.enabled) {
+          if (f.mode === 'relative') {
+            const dur = String(f.duration || '').trim();
+            if (dur) opts['duration'] = dur;
+          } else {
+            const fromD = toDate(f.from);
+            const toD = toDate(f.to);
+            if (fromD) opts['from'] = fromD;
+            if (toD) opts['to'] = toD;
+          }
+        }
+        // Zusatzfelder einbeziehen
+        const app = String(f.application_name || '').trim();
+        const lg = String(f.logger || '').trim();
+        const lvl = String(f.level || '').trim();
+        const env = String(f.environment || '').trim();
+        if (app) opts['application_name'] = app;
+        if (lg) opts['logger'] = lg;
+        if (lvl) opts['level'] = lvl;
+        if (env) opts['environment'] = env;
 
-      if (e.key === 'Escape') {
-        if (showSettings) setShowSettings(false);
-        if (showHttpLoadDlg) setShowHttpLoadDlg(false);
-        if (showHttpPollDlg) setShowHttpPollDlg(false);
-        if (showMdcModal) setShowMdcModal(false);
-        if (ctxMenu.open) setCtxMenu({ open: false, x: 0, y: 0 });
-        if (httpMenu.open) setHttpMenu({ open: false, x: 0, y: 0 });
-        if (showDcDialog) setShowDcDialog(false);
+        const res = await window.api.elasticSearch?.(opts);
+        if (!res || !res.ok) throw new Error(res?.error || 'Elasticsearch-Fehler');
+        if (Array.isArray(res.entries) && res.entries.length) appendEntries(res.entries);
+      } catch (e) {
+        alert('Elastic-Suche fehlgeschlagen: ' + (e?.message || String(e)));
       }
-      if (e.key === 'F8') {
-        if (isEditable) return;
-        e.preventDefault();
-        const v = !follow;
-        setFollow(v);
-        try {
-          window.api.settingsSet({ follow: v });
-        } catch {}
-      }
+    });
 
-      // Pfeiltasten / Home/Ende / PageUp/Down nur außerhalb von Eingaben
-      if (isEditable) return;
-      if (e.key === 'ArrowDown') {
-        e.preventDefault();
-        gotoRelative(1);
-      } else if (e.key === 'ArrowUp') {
-        e.preventDefault();
-        gotoRelative(-1);
-      } else if (e.key === 'End') {
-        e.preventDefault();
-        gotoListEnd();
-      } else if (e.key === 'Home') {
-        e.preventDefault();
-        gotoListStart();
-      } else if (e.key === 'PageDown') {
-        e.preventDefault();
-        const el = parentRef.current;
-        const page = el ? Math.max(1, Math.floor(el.clientHeight / rowH) - 1) : 10;
-        gotoRelative(page);
-      } else if (e.key === 'PageUp') {
-        e.preventDefault();
-        const el = parentRef.current;
-        const page = el ? Math.max(1, Math.floor(el.clientHeight / rowH) - 1) : 10;
-        gotoRelative(-page);
-      }
-    };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, [
-    showSettings,
-    showHttpLoadDlg,
-    showHttpPollDlg,
-    showMdcModal,
-    ctxMenu.open,
-    httpMenu.open,
-    follow,
-    showDcDialog,
-    filteredIdx,
-    selected,
-  ]);
+    setShowTimeDialog(false);
+  }
+  function clearTimeFilter() {
+    TimeFilter.reset();
+    setTimeForm({
+      enabled: true,
+      mode: 'relative',
+      duration: '15m',
+      from: '',
+      to: '',
+      application_name: '',
+      logger: '',
+      level: '',
+      environment: '',
+      loadMode: 'append',
+    });
+    setShowTimeDialog(false);
+  }
 
   // Drag & Drop
   useEffect(() => {
@@ -1249,7 +1346,9 @@ export default function App() {
         <div className="modal-backdrop" onClick={() => setShowDcDialog(false)}>
           <div className="modal modal-wide" onClick={(e) => e.stopPropagation()}>
             <h3>Diagnostic Context Filter</h3>
-            <DCFilterDialog />
+            <Suspense fallback={<div style={{ padding: '20px' }}>Lädt...</div>}>
+              <DCFilterDialog />
+            </Suspense>
             <div className="modal-actions">
               <button onClick={() => setShowDcDialog(false)}>Schließen</button>
             </div>
@@ -1373,7 +1472,16 @@ export default function App() {
 
       {/* Einstellungen (Tabs) */}
       {showSettings && (
-        <div className="modal-backdrop" onClick={() => setShowSettings(false)}>
+        <div
+          className="modal-backdrop"
+          onClick={() => {
+            // Revert live preview when closing without saving
+            try {
+              applyThemeMode(themeMode);
+            } catch {}
+            setShowSettings(false);
+          }}
+        >
           <div className="modal modal-settings" onClick={(e) => e.stopPropagation()}>
             <h3>Einstellungen</h3>
 
@@ -1394,6 +1502,14 @@ export default function App() {
                   onClick={() => setSettingsTab('http')}
                 >
                   HTTP
+                </button>
+                <button
+                  className={`tab${settingsTab === 'elastic' ? ' active' : ''}`}
+                  role="tab"
+                  aria-selected={settingsTab === 'elastic'}
+                  onClick={() => setSettingsTab('elastic')}
+                >
+                  Elasticsearch
                 </button>
                 <button
                   className={`tab${settingsTab === 'logging' ? ' active' : ''}`}
@@ -1454,6 +1570,80 @@ export default function App() {
                           setForm({ ...form, httpInterval: Number(e.currentTarget.value || 5000) })
                         }
                       />
+                    </div>
+                  </div>
+                )}
+
+                {settingsTab === 'elastic' && (
+                  <div className="tabpanel" role="tabpanel">
+                    <div className="kv">
+                      <span>Elasticsearch URL</span>
+                      <input
+                        type="text"
+                        value={form.elasticUrl}
+                        onInput={(e) => setForm({ ...form, elasticUrl: e.currentTarget.value })}
+                        placeholder="https://es:9200"
+                        autoFocus
+                      />
+                    </div>
+                    <div className="kv">
+                      <span>Ergebnismenge (size)</span>
+                      <input
+                        type="number"
+                        min="1"
+                        max="10000"
+                        value={form.elasticSize}
+                        onInput={(e) =>
+                          setForm({
+                            ...form,
+                            elasticSize: Math.max(1, Number(e.currentTarget.value || 1000)),
+                          })
+                        }
+                      />
+                    </div>
+                    <div className="kv">
+                      <span>Benutzer</span>
+                      <input
+                        type="text"
+                        value={form.elasticUser}
+                        onInput={(e) => setForm({ ...form, elasticUser: e.currentTarget.value })}
+                        placeholder="user"
+                      />
+                    </div>
+                    <div className="kv">
+                      <span>Passwort</span>
+                      <div style={{ display: 'grid', gridTemplateColumns: '1fr auto', gap: '6px' }}>
+                        <input
+                          type="password"
+                          value={form.elasticPassNew}
+                          onInput={(e) =>
+                            setForm({
+                              ...form,
+                              elasticPassNew: e.currentTarget.value,
+                              elasticPassClear: false,
+                            })
+                          }
+                          placeholder={
+                            elasticHasPass
+                              ? '(gesetzt) neues Passwort eingeben'
+                              : 'neues Passwort eingeben'
+                          }
+                        />
+                        <button
+                          type="button"
+                          onClick={() =>
+                            setForm({ ...form, elasticPassNew: '', elasticPassClear: true })
+                          }
+                          title="Gespeichertes Passwort löschen"
+                        >
+                          Löschen
+                        </button>
+                      </div>
+                      <small style={{ color: '#6b7280' }}>
+                        {elasticHasPass && !form.elasticPassClear
+                          ? 'Aktuell: gesetzt'
+                          : 'Aktuell: nicht gesetzt'}
+                      </small>
                     </div>
                   </div>
                 )}
@@ -1762,13 +1952,28 @@ export default function App() {
           })()}
         </div>
         <div className="section">
-          <button ref={httpBtnRef} onClick={openHttpMenu}>
-            HTTP ▾
+          <button onClick={openTimeFilterDialog} title="Elastic-Search öffnen">
+            Elastic-Search…
           </button>
-          <span id="httpStatus" className="status">
-            {httpStatus}
-            {httpPollId != null && nextPollIn ? ` • Nächstes in ${nextPollIn}` : ''}
-          </span>
+          {(() => {
+            try {
+              const s = TimeFilter.getState();
+              if (!s.enabled) return null;
+              const label =
+                s.mode === 'relative' && s.duration
+                  ? `Elastic: ${s.duration}`
+                  : s.from || s.to
+                    ? `Elastic: ${s.from ? 'von' : ''} ${s.from || ''} ${s.to ? 'bis ' + s.to : ''}`
+                    : 'Elastic aktiv';
+              return (
+                <span className="status" style={{ marginLeft: '6px' }} title="Elastic-Search aktiv">
+                  {label}
+                </span>
+              );
+            } catch {
+              return null;
+            }
+          })()}
         </div>
         <div className="section">
           {busy && (
@@ -2198,6 +2403,189 @@ export default function App() {
             </div>
           </div>
         </div>
+      )}
+
+      {/* Elastic-Search Dialog */}
+      {showTimeDialog && (
+        <Suspense
+          fallback={
+            <div className="modal-backdrop">
+              <div className="modal">Lädt…</div>
+            </div>
+          }
+        >
+          <ElasticSearchDialog
+            open={showTimeDialog}
+            initial={timeForm}
+            firstTs={(() => {
+              let best = Number.POSITIVE_INFINITY;
+              for (const idx of filteredIdx) {
+                const e = entries[idx];
+                const ms = e?.timestamp != null ? Number(new Date(e.timestamp)) : NaN;
+                if (!isNaN(ms) && ms < best) best = ms;
+              }
+              return best !== Number.POSITIVE_INFINITY ? new Date(best) : null;
+            })()}
+            lastTs={(() => {
+              let best = Number.NEGATIVE_INFINITY;
+              for (const idx of filteredIdx) {
+                const e = entries[idx];
+                const ms = e?.timestamp != null ? Number(new Date(e.timestamp)) : NaN;
+                if (!isNaN(ms) && ms > best) best = ms;
+              }
+              return best !== Number.NEGATIVE_INFINITY ? new Date(best) : null;
+            })()}
+            onApply={(f) => {
+              setTimeForm(f);
+              try {
+                const ff = f;
+
+                // Helpers
+                const getFirstTs = () => {
+                  let best = Number.POSITIVE_INFINITY;
+                  for (const idx of filteredIdx) {
+                    const e = entries[idx];
+                    const ms = e?.timestamp != null ? Number(new Date(e.timestamp)) : NaN;
+                    if (!isNaN(ms) && ms < best) best = ms;
+                  }
+                  return best !== Number.POSITIVE_INFINITY ? new Date(best) : null;
+                };
+                const getLastTs = () => {
+                  let best = Number.NEGATIVE_INFINITY;
+                  for (const idx of filteredIdx) {
+                    const e = entries[idx];
+                    const ms = e?.timestamp != null ? Number(new Date(e.timestamp)) : NaN;
+                    if (!isNaN(ms) && ms > best) best = ms;
+                  }
+                  return best !== Number.NEGATIVE_INFINITY ? new Date(best) : null;
+                };
+                const isTokenFirst = (s) => /^(first|ersten|erster)$/i.test(String(s || '').trim());
+                const isTokenLast = (s) =>
+                  /^(last|letzen|letzten|letzter)$/i.test(String(s || '').trim());
+
+                const formatIso = (d) => {
+                  if (!d) return null;
+                  if ((ff.tzMode || 'utc') === 'local') {
+                    // local with offset ±HH:MM
+                    const pad = (n, w = 2) => String(Math.floor(Math.abs(n))).padStart(w, '0');
+                    const offMin = -d.getTimezoneOffset(); // minutes east of UTC
+                    const sign = offMin >= 0 ? '+' : '-';
+                    const hh = pad(offMin / 60);
+                    const mm = pad(offMin % 60);
+                    const yyyy = d.getFullYear();
+                    const MM = pad(d.getMonth() + 1);
+                    const DD = pad(d.getDate());
+                    const HH = pad(d.getHours());
+                    const mi = pad(d.getMinutes());
+                    const ss = pad(d.getSeconds());
+                    const ms = String(d.getMilliseconds()).padStart(3, '0');
+                    return `${yyyy}-${MM}-${DD}T${HH}:${mi}:${ss}.${ms}${sign}${hh}:${mm}`;
+                  }
+                  // UTC Z
+                  return new Date(d.getTime()).toISOString();
+                };
+
+                // Apply local TimeFilter (store expects Date/ISO; we pass Date so it computes ISO internally)
+                if (ff.mode === 'relative') {
+                  TimeFilter.setRelative(String(ff.duration || '').trim());
+                } else {
+                  const resolveDateExclusive = (s, kind) => {
+                    const t = String(s || '').trim();
+                    if (!t) return null;
+                    if (kind === 'from' && isTokenLast(t)) {
+                      const d = getLastTs();
+                      return d ? new Date(d.getTime() + 1) : null;
+                    }
+                    if (kind === 'to' && isTokenFirst(t)) {
+                      const d = getFirstTs();
+                      return d ? new Date(Math.max(0, d.getTime() - 1)) : null;
+                    }
+                    const d = new Date(t);
+                    return isNaN(d.getTime()) ? null : d;
+                  };
+                  const fromD = resolveDateExclusive(ff.from, 'from');
+                  const toD = resolveDateExclusive(ff.to, 'to');
+                  TimeFilter.setAbsolute(fromD, toD);
+                }
+                TimeFilter.setEnabled(true);
+
+                withBusy(async () => {
+                  try {
+                    const opts = {};
+                    if (ff.mode === 'relative') {
+                      const dur = String(ff.duration || '').trim();
+                      if (dur) opts['duration'] = dur;
+                    } else {
+                      const resolveIsoExclusive = (s, kind) => {
+                        const t = String(s || '').trim();
+                        if (!t) return null;
+                        if (kind === 'from' && isTokenLast(t)) {
+                          const d = getLastTs();
+                          return d ? formatIso(new Date(d.getTime() + 1)) : null;
+                        }
+                        if (kind === 'to' && isTokenFirst(t)) {
+                          const d = getFirstTs();
+                          return d ? formatIso(new Date(Math.max(0, d.getTime() - 1))) : null;
+                        }
+                        const d = new Date(t);
+                        return isNaN(d.getTime()) ? null : formatIso(d);
+                      };
+                      const fromIso = resolveIsoExclusive(ff.from, 'from');
+                      const toIsoV = resolveIsoExclusive(ff.to, 'to');
+                      if (fromIso) opts['from'] = fromIso;
+                      if (toIsoV) opts['to'] = toIsoV;
+                    }
+                    const app = String(ff.application_name || '').trim();
+                    const lg = String(ff.logger || '').trim();
+                    const lvl = String(ff.level || '').trim();
+                    const env = String(ff.environment || ff.enviornment || '').trim();
+                    if (app) opts['application_name'] = app;
+                    if (lg) opts['logger'] = lg;
+                    if (lvl) opts['level'] = lvl;
+                    if (env) opts['environment'] = env;
+
+                    const res = await window.api.elasticSearch?.(opts);
+                    if (!res || !res.ok) throw new Error(res?.error || 'Elasticsearch-Fehler');
+                    const newEntries = Array.isArray(res.entries) ? res.entries : [];
+
+                    if ((ff.loadMode || 'append') === 'replace') {
+                      setEntries([]);
+                      setSelected(new Set());
+                      setNextId(1);
+                      try {
+                        LoggingStore.reset();
+                      } catch {}
+                      if (newEntries.length) setTimeout(() => appendEntries(newEntries), 0);
+                    } else {
+                      if (newEntries.length) appendEntries(newEntries);
+                    }
+                  } catch (e) {
+                    alert('Elastic-Suche fehlgeschlagen: ' + (e?.message || String(e)));
+                  }
+                });
+              } finally {
+                setShowTimeDialog(false);
+              }
+            }}
+            onClear={() => {
+              TimeFilter.reset();
+              setTimeForm({
+                enabled: true,
+                mode: 'relative',
+                duration: '15m',
+                from: '',
+                to: '',
+                application_name: '',
+                logger: '',
+                level: '',
+                environment: '',
+                loadMode: 'append',
+              });
+              setShowTimeDialog(false);
+            }}
+            onClose={() => setShowTimeDialog(false)}
+          />
+        </Suspense>
       )}
 
       {/* Kontextmenü */}

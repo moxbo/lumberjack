@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'preact/hooks';
-import { MDCListener } from './store/mdcListener.js';
-import { DiagnosticContextFilter, dcEntryId } from './store/dcFilter.js';
-import { LoggingStore } from './store/loggingStore.js';
+import { MDCListener } from '../store/mdcListener';
+import { DiagnosticContextFilter, dcEntryId } from '../store/dcFilter';
+import { LoggingStore } from '../store/loggingStore';
 
 // Dialog-Inhalt für den Diagnostic Context Filter
 export default function DCFilterDialog() {

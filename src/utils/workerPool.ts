@@ -2,29 +2,49 @@
  * Worker Pool Manager for Parser Workers
  * Manages a pool of web workers for parallel parsing
  */
-import logger from './logger.ts';
+import logger from './logger';
+
+type PoolTask = {
+  id: number;
+  type: string;
+  data: any;
+  resolve: (value: any) => void;
+  reject: (reason?: any) => void;
+};
+
+type PWorker = Worker & { busy: boolean };
 
 class WorkerPool {
-  constructor(workerPath, poolSize = 2) {
+  private workerPath: string;
+  private poolSize: number;
+  private workers: PWorker[];
+  private taskQueue: PoolTask[];
+  private nextTaskId: number;
+  private pendingTasks: Map<number, PoolTask>;
+  private unavailable: boolean;
+
+  constructor(workerPath: string, poolSize = 2) {
     this.workerPath = workerPath;
     this.poolSize = poolSize;
     this.workers = [];
     this.taskQueue = [];
     this.nextTaskId = 1;
     this.pendingTasks = new Map();
+    this.unavailable = false;
 
     // Initialize worker pool
     this.initializePool();
   }
 
-  initializePool() {
+  private initializePool() {
     for (let i = 0; i < this.poolSize; i++) {
       try {
-        const worker = new Worker(new URL('../workers/parser.worker.js', import.meta.url), {
+        // Use provided path relative to this module so bundlers (Vite) can locate the worker at build time
+        const worker = new Worker(new URL(this.workerPath, import.meta.url), {
           type: 'module',
-        });
-        worker.onmessage = (e) => this.handleWorkerMessage(e);
-        worker.onerror = (err) => this.handleWorkerError(err);
+        }) as PWorker;
+        worker.onmessage = (e: MessageEvent) => this.handleWorkerMessage(e);
+        worker.onerror = (err: any) => this.handleWorkerError(err);
         worker.busy = false;
         this.workers.push(worker);
       } catch (err) {
@@ -39,12 +59,12 @@ class WorkerPool {
     }
   }
 
-  handleWorkerMessage(e) {
-    const { type, id, result, error } = e.data;
+  private handleWorkerMessage(e: MessageEvent) {
+    const { id, result, error } = (e as any).data || {};
 
     // Find the worker that sent this message
-    const worker = e.target;
-    worker.busy = false;
+    const worker = (e as any).target as PWorker;
+    if (worker) worker.busy = false;
 
     // Resolve or reject the pending task
     const task = this.pendingTasks.get(id);
@@ -61,23 +81,23 @@ class WorkerPool {
     this.processNextTask();
   }
 
-  handleWorkerError(err) {
+  private handleWorkerError(err: any) {
     logger.error('[WorkerPool] Worker error:', err);
     // Find the worker that errored
-    const worker = err.target;
-    worker.busy = false;
+    const worker = (err as any).target as PWorker;
+    if (worker) worker.busy = false;
 
     // Process next task
     this.processNextTask();
   }
 
-  processNextTask() {
+  private processNextTask() {
     if (this.taskQueue.length === 0) return;
 
     const availableWorker = this.workers.find((w) => !w.busy);
     if (!availableWorker) return;
 
-    const task = this.taskQueue.shift();
+    const task = this.taskQueue.shift()!;
     availableWorker.busy = true;
     availableWorker.postMessage({
       type: task.type,
@@ -89,15 +109,15 @@ class WorkerPool {
   /**
    * Execute a task using a worker from the pool
    */
-  execute(type, data) {
+  private execute(type: string, data: any) {
     // If workers unavailable, return rejected promise
     if (this.unavailable) {
       return Promise.reject(new Error('Workers unavailable'));
     }
 
-    return new Promise((resolve, reject) => {
+    return new Promise<any>((resolve, reject) => {
       const taskId = this.nextTaskId++;
-      const task = {
+      const task: PoolTask = {
         id: taskId,
         type,
         data,
@@ -126,21 +146,21 @@ class WorkerPool {
   /**
    * Parse text lines using worker
    */
-  parseLines(lines, filename) {
+  parseLines(lines: string[], filename: string) {
     return this.execute('parseLines', { lines, filename });
   }
 
   /**
    * Parse JSON using worker
    */
-  parseJSON(text, filename) {
+  parseJSON(text: string, filename: string) {
     return this.execute('parseJSON', { text, filename });
   }
 
   /**
    * Parse zip entries using worker
    */
-  parseZipEntries(entries, zipName) {
+  parseZipEntries(entries: any[], zipName: string) {
     return this.execute('parseZipEntries', { entries, zipName });
   }
 
@@ -157,24 +177,27 @@ class WorkerPool {
   }
 }
 
-// Create and export a singleton instance
-let workerPool = null;
+// Singleton helpers stored on globalThis to avoid module resolution quirks
+const WP_KEY = '__ljWorkerPool__';
 
-export function getWorkerPool() {
-  if (!workerPool) {
-    try {
-      // Use 2 workers by default for balance between parallelism and memory
-      workerPool = new WorkerPool('/workers/parser.worker.js', 2);
-    } catch (err) {
-      logger.warn('[WorkerPool] Failed to initialize:', err);
-    }
+export function getWorkerPool(): WorkerPool | null {
+  const existing = (globalThis as any)[WP_KEY] as WorkerPool | null | undefined;
+  if (existing) return existing;
+  try {
+    // Use 2 workers by default for balance between parallelism and memory
+    const wp = new WorkerPool('../workers/parser.worker.js', 2);
+    (globalThis as any)[WP_KEY] = wp;
+    return wp;
+  } catch (err) {
+    logger.warn('[WorkerPool] Failed to initialize:', err);
+    return null;
   }
-  return workerPool;
 }
 
 export function terminateWorkerPool() {
-  if (workerPool) {
-    workerPool.terminate();
-    workerPool = null;
+  const wp = (globalThis as any)[WP_KEY] as WorkerPool | null | undefined;
+  if (wp) {
+    wp.terminate();
+    (globalThis as any)[WP_KEY] = null;
   }
 }

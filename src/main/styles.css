@@ -1062,3 +1062,29 @@ input[type='checkbox'] {
   width: 120px;
   white-space: nowrap;
 }
+
+/* Prevent wrapping for checkbox/radio labels inside dialogs */
+.modal .kv label {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  white-space: nowrap; /* Beschreibung nicht umbrechen */
+  min-width: 0; /* korrektes Shrinken im Grid erlauben */
+  max-width: 100%;
+}
+
+.modal .kv label > span {
+  white-space: nowrap; /* Text neben Checkbox/Radio in einer Zeile halten */
+}
+
+/* Sicherheitshalber: Checkboxen/Radios in Modals leicht vertikal mittig halten */
+.modal input[type='checkbox'].native-checkbox,
+.modal input[type='radio'] {
+  vertical-align: middle;
+}
+
+/* In .kv: Wenn nur ein Kind vorhanden ist (z. B. ein Label mit Checkbox), über beide Spalten spannen */
+.kv > *:only-child {
+  grid-column: 1 / -1;
+  min-width: 0;
+}

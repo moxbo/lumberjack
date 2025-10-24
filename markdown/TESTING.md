@@ -52,7 +52,7 @@ Measure-Command {
 
 - `main.js`: Lazy-loading, async settings, deferred window display
 - `src/App.jsx`: Native Date formatter, deferred settings load
-- `src/parsers.js`: Lazy-load adm-zip
+- `src/parsers.ts`: Lazy-load adm-zip
 - `vite.config.mjs`: Build optimizations
 - `package.json`: Build configuration tweaks
 

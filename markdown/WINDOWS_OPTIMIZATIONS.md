@@ -109,11 +109,11 @@ function resolveIconPath() {
 
 ```javascript
 const {
-  getDefaultSettings,
-  parseSettingsJSON,
-  stringifySettingsJSON,
-  mergeSettings,
-} = require('./src/utils/settings');
+    getDefaultSettings,
+    parseSettingsJSON,
+    stringifySettingsJSON,
+    mergeSettings,
+} = require('./settings');
 
 let settings = getDefaultSettings(); // Loaded immediately at startup
 ```

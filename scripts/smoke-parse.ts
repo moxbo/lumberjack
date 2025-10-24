@@ -1,8 +1,8 @@
-#!/usr/bin/env node
+#!/usr/bin/env tsx
 import path from 'path';
 import fs from 'fs';
 import { fileURLToPath } from 'url';
-import { parsePaths } from '../src/parsers.js';
+import { parsePaths } from '../src/main/parsers.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);

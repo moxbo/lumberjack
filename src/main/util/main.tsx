@@ -1,7 +1,7 @@
 import { render } from 'preact';
-import App from './App.tsx';
+import App from '../../renderer/App';
 import '../styles.css';
-import logger from './utils/logger.ts';
+import logger from '../../utils/logger';
 
 // Register service worker for caching static assets
 // Guard registration: service workers require a secure origin (https:// or localhost)
@@ -10,7 +10,7 @@ import logger from './utils/logger.ts';
 // Only attempt registration when not in dev and not loaded from file: protocol.
 if (
   'serviceWorker' in navigator &&
-  !import.meta.env.DEV &&
+  !(import.meta as any).env?.DEV &&
   window?.location?.protocol !== 'file:'
 ) {
   window.addEventListener('load', () => {
@@ -25,4 +25,7 @@ if (
   });
 }
 
-render(<App />, document.getElementById('app'));
+const root = document.getElementById('app');
+if (root) {
+  render(<App />, root);
+}
