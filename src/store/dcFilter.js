@@ -216,7 +216,11 @@ class DiagnosticContextFilterImpl {
   }
 }
 
-export const DiagnosticContextFilter = new DiagnosticContextFilterImpl();
+import { lazyInstance } from './_lazy.js';
+
+// Export the singleton lazily to avoid temporal-dead-zone issues when modules
+// import each other during initialization (bundlers can reorder/rename symbols).
+export const DiagnosticContextFilter = lazyInstance(() => new DiagnosticContextFilterImpl());
 export function dcEntryId(e) {
   return entryKey(e.key, e.val);
 }

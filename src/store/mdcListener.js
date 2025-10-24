@@ -1,7 +1,7 @@
 // MDCListener: sammelt bekannte MDC-Schlüssel und Werte aus dem LoggingStore
 // keys: Map<string, Set<string>>; hält interne Sortierung nicht, liefert aber sortierte Arrays per Getter
 
-import { LoggingStore } from './loggingStore.js';
+import { lazyInstance } from './_lazy.js';
 
 class SimpleEmitter {
   constructor() {
@@ -27,12 +27,32 @@ class MDCListenerImpl {
   constructor() {
     this.keys = new Map(); // key -> Set(values)
     this._em = new SimpleEmitter();
-    // auto-subscribe to LoggingStore
-    LoggingStore.addLoggingStoreListener({
-      loggingEventsAdded: (events) => this._onAdded(events),
-      loggingStoreReset: () => this._onReset(),
-    });
+    // No automatic subscription here. Call startListening() from app startup
+    // (e.g. in App.jsx) to wire this listener after modules are initialized.
   }
+
+  startListening() {
+    try {
+      // guard: multiple calls should not add duplicate listeners
+      if (this._started) return;
+      this._started = true;
+      // Load LoggingStore dynamically to avoid a static circular import
+      import('./loggingStore.js')
+        .then((mod) => {
+          const LS = mod?.LoggingStore || mod?.default;
+          try {
+            LS?.addLoggingStoreListener({
+              loggingEventsAdded: (events) => this._onAdded(events),
+              loggingStoreReset: () => this._onReset(),
+            });
+          } catch (e) {}
+        })
+        .catch(() => {});
+    } catch (e) {
+      // ignore failures (defensive)
+    }
+  }
+
   _onReset() {
     this.keys.clear();
     this._em.emit();
@@ -69,4 +89,6 @@ class MDCListenerImpl {
   }
 }
 
-export const MDCListener = new MDCListenerImpl();
+// Export the singleton lazily to avoid circular-init TDZ problems when modules
+// import each other during startup / bundling.
+export const MDCListener = lazyInstance(() => new MDCListenerImpl());

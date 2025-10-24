@@ -111,4 +111,8 @@ class LoggingStoreImpl {
   }
 }
 
-export const LoggingStore = new LoggingStoreImpl();
+import { lazyInstance } from './_lazy.js';
+
+// Export the singleton lazily to avoid temporal-dead-zone issues when modules
+// import each other during initialization (bundlers can reorder/rename symbols).
+export const LoggingStore = lazyInstance(() => new LoggingStoreImpl());

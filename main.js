@@ -490,12 +490,127 @@ function createWindow() {
 
   // Load URL immediately for faster perceived startup
   const devUrl = process.env.VITE_DEV_SERVER_URL;
+  // Diagnostic logs to help packaged builds: show key paths and which file we try to load
+  console.log(
+    'Startup: __dirname=',
+    __dirname,
+    'process.resourcesPath=',
+    process.resourcesPath,
+    'process.cwd()=',
+    process.cwd()
+  );
   if (devUrl) {
+    console.log('Loading dev server URL:', devUrl);
     mainWindow.loadURL(devUrl);
   } else {
-    const distIndex = path.join(__dirname, 'dist', 'index.html');
-    if (fs.existsSync(distIndex)) mainWindow.loadFile(distIndex);
-    else mainWindow.loadFile('index.html');
+    // Check multiple candidate locations for the production-built index.html
+    const resPath = process.resourcesPath || '';
+    const distCandidates = [
+      // Typical when running from packaged asar (relative to __dirname)
+      path.join(__dirname, 'dist', 'index.html'),
+      // If app was unpacked by electron-builder into resources/app.asar.unpacked
+      path.join(resPath, 'app.asar.unpacked', 'dist', 'index.html'),
+      // Inside the asar archive
+      path.join(resPath, 'app.asar', 'dist', 'index.html'),
+      // Directly under resources (some builders put dist there)
+      path.join(resPath, 'dist', 'index.html'),
+    ];
+
+    let loaded = false;
+    for (const candidate of distCandidates) {
+      try {
+        const exists = fs.existsSync(candidate);
+        console.log('Checking for dist index at', candidate, 'exists=', exists);
+        if (exists) {
+          console.log('Loading dist index from', candidate);
+          try {
+            mainWindow.loadFile(candidate);
+            loaded = true;
+            break;
+          } catch (e) {
+            console.error('Failed to load file', candidate, e?.message || e);
+          }
+        }
+      } catch (e) {
+        console.warn('Error while checking candidate', candidate, e?.message || e);
+      }
+    }
+
+    if (!loaded) {
+      console.log(
+        'No production dist index.html found; falling back to root index.html (likely dev)'
+      );
+      try {
+        mainWindow.loadFile('index.html');
+      } catch (e) {
+        console.error('Failed to load fallback index.html:', e?.message || e);
+      }
+    }
+  }
+
+  // Attach renderer failure handlers and console forwarding for diagnostics
+  try {
+    const wc = mainWindow.webContents;
+
+    wc.on('did-fail-load', (event, errorCode, errorDescription, validatedURL, isMainFrame) => {
+      console.error('Renderer did-fail-load:', {
+        errorCode,
+        errorDescription,
+        validatedURL,
+        isMainFrame,
+      });
+    });
+
+    // Newer Electron versions emit 'render-process-gone' for renderer crashes
+    wc.on('render-process-gone', (event, details) => {
+      console.error('Renderer process gone:', details);
+    });
+
+    wc.on('crashed', () => {
+      console.error('Renderer crashed');
+    });
+
+    // Forward renderer console messages to main log to capture runtime errors during startup
+    wc.on('console-message', (...args) => {
+      try {
+        // args[0] is the event, args[1] is either the params object or the level
+        let level, message, line, sourceId;
+        const maybeParams = args[1];
+        if (
+          maybeParams &&
+          typeof maybeParams === 'object' &&
+          ('message' in maybeParams || 'level' in maybeParams)
+        ) {
+          // New signature: (event, params)
+          level = maybeParams.level;
+          message = maybeParams.message;
+          line = maybeParams.line;
+          sourceId = maybeParams.sourceId;
+        } else {
+          // Old signature: (event, level, message, line, sourceId)
+          level = args[1];
+          message = args[2];
+          line = args[3];
+          sourceId = args[4];
+        }
+
+        const lvl =
+          ['LOG', 'WARNING', 'ERROR'][Math.max(0, Math.min(2, Number(level) || 0))] || 'LOG';
+        console.log(`Renderer console (${lvl}) ${sourceId || ''}:${line || 0} - ${message || ''}`);
+      } catch (e) {}
+    });
+
+    // Optionally open devtools in packaged builds for debugging when env var set
+    if (process.env.LJ_DEBUG_RENDERER === '1') {
+      try {
+        console.log('LJ_DEBUG_RENDERER=1 -> opening DevTools');
+        wc.openDevTools({ mode: 'bottom' });
+      } catch (e) {
+        console.warn('Could not open DevTools:', e?.message || e);
+      }
+    }
+  } catch (e) {
+    console.warn('Failed to attach renderer diagnostics:', e?.message || e);
   }
 
   // Build menu and load settings asynchronously after window starts loading
@@ -776,14 +891,10 @@ ipcMain.on('tcp:stop', (_event) => {
 
 // HTTP load utils
 async function httpFetchText(url) {
-  try {
-    if (typeof fetch === 'function') {
-      const res = await fetch(url, { cache: 'no-store' });
-      if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
-      return await res.text();
-    }
-  } catch (e) {
-    throw e;
+  if (typeof fetch === 'function') {
+    const res = await fetch(url, { cache: 'no-store' });
+    if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
+    return await res.text();
   }
   throw new Error('fetch unavailable');
 }

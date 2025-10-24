@@ -1,14 +1,15 @@
-import {useEffect, useMemo, useRef, useState} from 'preact/hooks';
-import {Fragment} from 'preact';
-import {useVirtualizer} from '@tanstack/react-virtual';
-import {highlightAll} from './utils/highlight.js';
-import {msgMatches} from './utils/msgFilter.js';
+import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
+import { Fragment } from 'preact';
+import { useVirtualizer } from '@tanstack/react-virtual';
+import { highlightAll } from './utils/highlight.js';
+import { msgMatches } from './utils/msgFilter.js';
 // Dynamic import for DCFilterDialog (code splitting)
 // Preact supports dynamic imports directly
-import {LoggingStore} from './store/loggingStore.js';
-import {DiagnosticContextFilter} from './store/dcFilter.js';
-import {DragAndDropManager} from './utils/dnd.js';
-import {compareByTimestampId} from './utils/sort.js';
+import { LoggingStore } from './store/loggingStore.js';
+import { DiagnosticContextFilter } from './store/dcFilter.js';
+import { MDCListener } from './store/mdcListener.js';
+import { DragAndDropManager } from './utils/dnd.js';
+import { compareByTimestampId } from './utils/sort.js';
 
 function levelClass(level) {
   const l = (level || '').toUpperCase();
@@ -685,7 +686,8 @@ export default function App() {
     // Use multiple attempts to ensure last entry is not hidden behind overlay
     ensureVisibleByIndex(filteredIdx.length - 1, 'smooth');
     const retries = [30, 120, 300];
-    for (const t of retries) setTimeout(() => ensureVisibleByIndex(filteredIdx.length - 1, 'auto'), t);
+    for (const t of retries)
+      setTimeout(() => ensureVisibleByIndex(filteredIdx.length - 1, 'auto'), t);
   }
 
   const selectedOneIdx = useMemo(() => (selected.size === 1 ? [...selected][0] : null), [selected]);
@@ -1634,7 +1636,11 @@ export default function App() {
         </div>
         <div className="section">
           {/* NEU: Anfang/Ende */}
-          <button title="Zum Anfang springen" onClick={gotoListStart} disabled={countFiltered === 0}>
+          <button
+            title="Zum Anfang springen"
+            onClick={gotoListStart}
+            disabled={countFiltered === 0}
+          >
             ⬆ Anfang
           </button>
           <button title="Zum Ende springen" onClick={gotoListEnd} disabled={countFiltered === 0}>
