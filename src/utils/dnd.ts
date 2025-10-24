@@ -1,4 +1,6 @@
 // Drag & Drop Manager: kapselt Events, extrahiert Pfade und meldet Aktiv-Status
+import logger from './logger.ts';
+
 export class DragAndDropManager {
   /**
    * @param {{ onFiles: (paths: string[]) => void|Promise<void>, onActiveChange?: (active: boolean) => void, onRawFiles?: (files: {name: string, data: string, encoding: 'utf8'|'base64'}[]) => void|Promise<void> }} opts
@@ -24,7 +26,7 @@ export class DragAndDropManager {
       if (debug) {
         try {
           const types = Array.from(dt.types || []);
-          console.log('[DnD] drag types:', types);
+          logger.log('[DnD] drag types:', types);
         } catch {}
       }
       // DataTransfer.types ist array-ähnlich, iterierbar
@@ -129,7 +131,7 @@ export class DragAndDropManager {
           }
         }
       } catch {}
-      if (debug) console.log('[DnD] extracted paths before dedupe:', out.slice());
+      if (debug) logger.log('[DnD] extracted paths before dedupe:', out.slice());
       // Deduplizieren ohne Set
       if (out.length > 1) {
         const seen = Object.create(null);
@@ -141,7 +143,7 @@ export class DragAndDropManager {
             dedup.push(p);
           }
         }
-        if (debug) console.log('[DnD] deduped paths:', dedup.slice());
+        if (debug) logger.log('[DnD] deduped paths:', dedup.slice());
         return dedup;
       }
       return out;
@@ -263,12 +265,12 @@ export class DragAndDropManager {
           if (fromItems && fromItems.length) paths = fromItems;
         } catch {}
       }
-      if (debug) console.log('[DnD] final paths:', (paths || []).slice());
+      if (debug) logger.log('[DnD] final paths:', (paths || []).slice());
       if (paths && paths.length) {
         try {
           await this.onFiles(paths);
         } catch (err) {
-          console.error('DnD onFiles error:', err);
+          logger.error('DnD onFiles error:', err);
         }
         return;
       }
@@ -277,14 +279,14 @@ export class DragAndDropManager {
         if (this.onRawFiles && e?.dataTransfer?.files?.length) {
           const payloads = await readFilesAsPayloads(e.dataTransfer.files);
           if (debug)
-            console.log(
+            logger.log(
               '[DnD] raw file payloads:',
               payloads.map((p) => ({ name: p.name, enc: p.encoding, size: p.data?.length || 0 }))
             );
           if (payloads && payloads.length) await this.onRawFiles(payloads);
         }
       } catch (err) {
-        console.error('DnD onRawFiles error:', err);
+        logger.error('DnD onRawFiles error:', err);
       }
     };
 
