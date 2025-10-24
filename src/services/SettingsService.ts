@@ -1,0 +1,272 @@
+/**
+ * SettingsService
+ * Manages application settings with validation, persistence, and encryption
+ */
+
+import type { Settings } from '../types/ipc';
+import * as fs from 'fs';
+import * as path from 'path';
+import * as crypto from 'crypto';
+import { app, safeStorage } from 'electron';
+import log from 'electron-log/main';
+
+/**
+ * Default settings values
+ */
+const DEFAULT_SETTINGS: Settings = {
+  windowBounds: {
+    width: 1200,
+    height: 800,
+  },
+  tcpPort: 9999,
+  logToFile: false,
+  logFilePath: '',
+  logMaxBytes: 10 * 1024 * 1024, // 10 MB
+  logMaxBackups: 3,
+  elasticUrl: '',
+  elasticUser: '',
+  elasticPassEnc: '',
+  elasticSize: 1000,
+  themeMode: 'system',
+  histLogger: [],
+  httpUrl: '',
+  httpPollInterval: 5000,
+};
+
+/**
+ * Settings validation result
+ */
+interface ValidationResult {
+  success: boolean;
+  error?: string;
+}
+
+/**
+ * SettingsService manages application settings
+ */
+export class SettingsService {
+  private settings: Settings;
+  private settingsPath: string;
+  private loaded = false;
+
+  constructor() {
+    this.settings = { ...DEFAULT_SETTINGS };
+    this.settingsPath = this.resolveSettingsPath();
+  }
+
+  /**
+   * Resolve settings file path (portable vs. standard)
+   */
+  private resolveSettingsPath(): string {
+    const portableDir = process.env.PORTABLE_EXECUTABLE_DIR;
+    if (portableDir && typeof portableDir === 'string' && portableDir.length) {
+      return path.join(portableDir, 'data', 'settings.json');
+    }
+    return path.join(app.getPath('userData'), 'settings.json');
+  }
+
+  /**
+   * Load settings from disk asynchronously
+   */
+  async load(): Promise<void> {
+    try {
+      if (!fs.existsSync(this.settingsPath)) {
+        log.info('Settings file not found, using defaults');
+        this.loaded = true;
+        return;
+      }
+
+      const raw = await fs.promises.readFile(this.settingsPath, 'utf8');
+      const parsed = JSON.parse(raw) as Partial<Settings>;
+      
+      // Merge with defaults to ensure all required fields exist
+      this.settings = { ...DEFAULT_SETTINGS, ...parsed };
+      this.loaded = true;
+      log.info('Settings loaded successfully from', this.settingsPath);
+    } catch (err) {
+      log.error('Error loading settings:', err instanceof Error ? err.message : String(err));
+      log.info('Using default settings');
+      this.loaded = true;
+    }
+  }
+
+  /**
+   * Load settings synchronously (for emergency/startup use only)
+   */
+  loadSync(): void {
+    try {
+      if (!fs.existsSync(this.settingsPath)) {
+        this.loaded = true;
+        return;
+      }
+
+      const raw = fs.readFileSync(this.settingsPath, 'utf8');
+      const parsed = JSON.parse(raw) as Partial<Settings>;
+      this.settings = { ...DEFAULT_SETTINGS, ...parsed };
+      this.loaded = true;
+    } catch (err) {
+      log.error('Error loading settings sync:', err instanceof Error ? err.message : String(err));
+      this.loaded = true;
+    }
+  }
+
+  /**
+   * Save settings to disk
+   */
+  async save(): Promise<boolean> {
+    try {
+      const json = JSON.stringify(this.settings, null, 2);
+      const dir = path.dirname(this.settingsPath);
+      
+      await fs.promises.mkdir(dir, { recursive: true });
+      await fs.promises.writeFile(this.settingsPath, json, 'utf8');
+      
+      log.info('Settings saved successfully');
+      return true;
+    } catch (err) {
+      log.error('Error saving settings:', err instanceof Error ? err.message : String(err));
+      return false;
+    }
+  }
+
+  /**
+   * Save settings synchronously
+   */
+  saveSync(): boolean {
+    try {
+      const json = JSON.stringify(this.settings, null, 2);
+      const dir = path.dirname(this.settingsPath);
+      
+      fs.mkdirSync(dir, { recursive: true });
+      fs.writeFileSync(this.settingsPath, json, 'utf8');
+      
+      log.info('Settings saved successfully (sync)');
+      return true;
+    } catch (err) {
+      log.error('Error saving settings sync:', err instanceof Error ? err.message : String(err));
+      return false;
+    }
+  }
+
+  /**
+   * Get current settings (deep copy to prevent mutations)
+   */
+  get(): Settings {
+    if (!this.loaded) {
+      this.loadSync();
+    }
+    return JSON.parse(JSON.stringify(this.settings)) as Settings;
+  }
+
+  /**
+   * Update settings with a partial patch
+   */
+  update(patch: Partial<Settings>): Settings {
+    if (!this.loaded) {
+      this.loadSync();
+    }
+
+    // Merge patch into current settings
+    this.settings = { ...this.settings, ...patch };
+    
+    return this.get();
+  }
+
+  /**
+   * Validate settings
+   */
+  validate(settings: Partial<Settings>): ValidationResult {
+    // Add validation logic here
+    if (settings.logMaxBytes !== undefined && settings.logMaxBytes < 0) {
+      return { success: false, error: 'logMaxBytes must be >= 0' };
+    }
+    
+    if (settings.logMaxBackups !== undefined && settings.logMaxBackups < 0) {
+      return { success: false, error: 'logMaxBackups must be >= 0' };
+    }
+    
+    if (settings.tcpPort !== undefined && (settings.tcpPort < 1 || settings.tcpPort > 65535)) {
+      return { success: false, error: 'tcpPort must be between 1 and 65535' };
+    }
+
+    return { success: true };
+  }
+
+  /**
+   * Encrypt a secret using Electron's safeStorage or fallback to AES
+   */
+  encryptSecret(plaintext: string): string {
+    try {
+      // Try Electron safeStorage first
+      if (
+        safeStorage &&
+        typeof safeStorage.isEncryptionAvailable === 'function' &&
+        safeStorage.isEncryptionAvailable()
+      ) {
+        const buf = safeStorage.encryptString(plaintext);
+        return 'ss1:' + Buffer.from(buf).toString('base64');
+      }
+    } catch (err) {
+      log.warn('safeStorage encryption failed, falling back to AES:', err);
+    }
+
+    // Fallback to AES-256-GCM
+    try {
+      const key = crypto
+        .createHash('sha256')
+        .update(app.getPath('userData') + '|lumberjack')
+        .digest();
+      const iv = crypto.randomBytes(12);
+      const cipher = crypto.createCipheriv('aes-256-gcm', key, iv);
+      const enc = Buffer.concat([cipher.update(plaintext, 'utf8'), cipher.final()]);
+      const tag = cipher.getAuthTag();
+      return 'gcm1:' + Buffer.concat([iv, tag, enc]).toString('base64');
+    } catch (err) {
+      log.error('AES encryption failed:', err);
+      return '';
+    }
+  }
+
+  /**
+   * Decrypt a secret
+   */
+  decryptSecret(encrypted: string): string {
+    if (!encrypted || typeof encrypted !== 'string') return '';
+
+    try {
+      if (encrypted.startsWith('ss1:')) {
+        const b = Buffer.from(encrypted.slice(4), 'base64');
+        if (safeStorage && typeof safeStorage.decryptString === 'function') {
+          return safeStorage.decryptString(b);
+        }
+        return '';
+      }
+
+      if (encrypted.startsWith('gcm1:')) {
+        const buf = Buffer.from(encrypted.slice(5), 'base64');
+        const iv = buf.subarray(0, 12);
+        const tag = buf.subarray(12, 28);
+        const data = buf.subarray(28);
+        const key = crypto
+          .createHash('sha256')
+          .update(app.getPath('userData') + '|lumberjack')
+          .digest();
+        const decipher = crypto.createDecipheriv('aes-256-gcm', key, iv);
+        decipher.setAuthTag(tag);
+        return Buffer.concat([decipher.update(data), decipher.final()]).toString('utf8');
+      }
+    } catch (err) {
+      log.error('Decryption failed:', err);
+      return '';
+    }
+
+    return '';
+  }
+
+  /**
+   * Get default settings
+   */
+  static getDefaults(): Settings {
+    return { ...DEFAULT_SETTINGS };
+  }
+}
