@@ -26,11 +26,38 @@ This ensures the files are always treated as CommonJS regardless of the package.
 ## Why Keep "type": "module"?
 
 The project keeps `"type": "module"` in package.json to support ES modules for:
-- Renderer process code (built with Vite)
-- Development scripts
-- Other ES module dependencies
+- **Renderer process code** (built with Vite) - Vite expects and requires ESM
+- **Development scripts** - Scripts use modern ESM imports
+- **Other ES module dependencies** - Many modern packages are ESM-only
 
 By using `.cjs` extension for the main process bundle, we can have CommonJS for the main process while keeping ES modules elsewhere.
+
+### Can "type": "module" be removed?
+
+**Short answer**: Removing it would break the build pipeline and require significant rework.
+
+**Detailed analysis**:
+
+**If removed** (`"type": "module"` deleted from package.json):
+- ✅ All `.js` files would default to CommonJS
+- ✅ Main process wouldn't need `.cjs` extension
+- ❌ Vite build would fail (expects ESM)
+- ❌ Development scripts would need conversion to CommonJS
+- ❌ Would lose ability to use modern ESM packages
+- ❌ Goes against modern JavaScript ecosystem trends
+
+**Current approach** (keep `"type": "module"`, use `.cjs` for main):
+- ✅ Full ESM support for renderer and scripts
+- ✅ Works with modern tooling (Vite, esbuild)
+- ✅ Stable - explicit file extensions prevent ambiguity
+- ✅ Follows Electron best practices for mixed module systems
+- ❌ Requires explicit `.cjs` extension for main process
+
+**Recommendation**: Keep `"type": "module"`. The current solution is actually **more stable** because:
+1. File extensions are explicit (`.cjs` = CommonJS, `.mjs` = ESM, `.js` = follows package.json)
+2. No ambiguity about module format
+3. Works with modern tooling ecosystem
+4. Follows Node.js and Electron recommended patterns
 
 ## Alternative Solutions (Not Used)
 
