@@ -252,6 +252,49 @@ function sendAppend(entries: LogEntry[]): void {
 // Cache the resolved icon path to avoid repeated filesystem operations
 let cachedIconPath: string | null = null;
 
+async function resolveIconPathAsync(): Promise<string | null> {
+  if (cachedIconPath !== null) {
+    return cachedIconPath;
+  }
+
+  const resPath = process.resourcesPath || '';
+  const candidates = [
+    path.join(resPath, 'app.asar.unpacked', 'images', 'icon.ico'),
+    path.join(resPath, 'images', 'icon.ico'),
+    path.join(__dirname, 'images', 'icon.ico'),
+    path.join(process.cwd(), 'images', 'icon.ico'),
+  ];
+
+  for (const p of candidates) {
+    try {
+      const exists = await fs.promises.access(p).then(() => true).catch(() => false);
+      if (exists) {
+        if (p.includes('.asar' + path.sep) || p.endsWith('.asar') || p.includes('.asar/')) {
+          try {
+            const buf = await fs.promises.readFile(p);
+            const outDir = path.join(app.getPath('userData'), 'assets');
+            await fs.promises.mkdir(outDir, { recursive: true });
+            const outPath = path.join(outDir, 'app-icon.ico');
+            await fs.promises.writeFile(outPath, buf);
+            cachedIconPath = outPath;
+            return outPath;
+          } catch {
+            cachedIconPath = p;
+            return p;
+          }
+        }
+        cachedIconPath = p;
+        return p;
+      }
+    } catch {
+      // Continue to next candidate
+    }
+  }
+
+  cachedIconPath = '';
+  return null;
+}
+
 function resolveIconPath(): string | null {
   if (cachedIconPath !== null) {
     return cachedIconPath;
@@ -450,18 +493,26 @@ function createWindow(): void {
     perfService.checkStartupPerformance(5000);
     mainWindow?.show();
 
+    // Defer icon loading completely after window is visible (Windows performance optimization)
     if (process.platform === 'win32') {
-      setImmediate(() => {
-        const iconPath = resolveIconPath();
-        if (iconPath) {
-          try {
-            mainWindow?.setIcon(iconPath);
-            log.info('App-Icon verwendet:', iconPath);
-          } catch (err) {
-            log.warn('Could not set icon:', err instanceof Error ? err.message : String(err));
+      setImmediate(async () => {
+        try {
+          perfService.mark('icon-load-start');
+          const iconPath = await resolveIconPathAsync();
+          perfService.mark('icon-load-end');
+          
+          if (iconPath && mainWindow && !mainWindow.isDestroyed()) {
+            try {
+              mainWindow.setIcon(iconPath);
+              log.info('App-Icon verwendet:', iconPath);
+            } catch (err) {
+              log.warn('Could not set icon:', err instanceof Error ? err.message : String(err));
+            }
+          } else if (!iconPath) {
+            log.warn('Kein Icon gefunden (images/icon.ico).');
           }
-        } else {
-          log.warn('Kein Icon gefunden (images/icon.ico).');
+        } catch (err) {
+          log.error('Icon loading failed:', err instanceof Error ? err.message : String(err));
         }
       });
     }
@@ -587,8 +638,13 @@ if (process.platform === 'win32') {
 
 perfService.mark('app-ready-handler-registered');
 
-void app.whenReady().then(() => {
+void app.whenReady().then(async () => {
   perfService.mark('app-ready');
+  
+  // Load settings asynchronously before window creation (critical for Windows performance)
+  perfService.mark('settings-load-start');
+  await settingsService.load();
+  perfService.mark('settings-loaded');
   
   if (process.platform === 'darwin' && app.dock) {
     const macIconPath = resolveMacIconPath();

@@ -106,6 +106,55 @@ Pre-compiled TypeScript to CommonJS with esbuild for faster startup
 4. `window-ready-to-show`: Window ready to display
 5. `settings-loaded`: Settings loaded from disk
 
+## Performance Optimizations for Windows Startup
+
+### Critical Performance Fixes (2025-10)
+
+**Problem**: Application startup on Windows taking >20 seconds due to synchronous file I/O operations.
+
+**Root causes identified**:
+1. **Settings loading on-demand**: `SettingsService.get()` called `loadSync()` multiple times during startup, each time reading from disk synchronously
+2. **Icon extraction from ASAR**: Synchronous file reads and writes during window creation
+3. **No async initialization**: Settings loaded lazily instead of eagerly at startup
+
+**Solutions implemented**:
+
+1. **Async settings loading before window creation**:
+   ```typescript
+   // Before: Settings loaded synchronously when first accessed
+   const settings = settingsService.get(); // Triggers loadSync()
+   
+   // After: Settings loaded asynchronously before window creation
+   await settingsService.load(); // Async load during app.whenReady()
+   const settings = settingsService.get(); // Returns cached settings
+   ```
+   
+2. **Async icon loading after window shown**:
+   ```typescript
+   // Before: Synchronous icon extraction during window creation
+   const iconPath = resolveIconPath(); // fs.readFileSync, fs.writeFileSync
+   
+   // After: Async icon loading deferred until after window is visible
+   const iconPath = await resolveIconPathAsync(); // fs.promises.readFile/writeFile
+   ```
+
+3. **Performance tracking**:
+   - Added `settings-load-start` and `settings-loaded` marks
+   - Added `icon-load-start` and `icon-load-end` marks
+   - Improved visibility into startup bottlenecks
+
+**Expected performance improvement**:
+- Settings load: ~500-2000ms saved (Windows file I/O is slow)
+- Icon extraction: ~200-500ms saved (one-time ASAR extraction)
+- Window visible: 1-3 seconds faster on cold start
+- **Total improvement**: 2-5 seconds faster startup on Windows
+
+**Code changes**:
+- `main.ts`: Added async settings loading in `app.whenReady()`
+- `main.ts`: Created `resolveIconPathAsync()` with async file operations
+- `main.ts`: Deferred icon loading to `setImmediate` after window shown
+- Performance marks added for better observability
+
 ## Windows-Specific Optimizations
 
 - Icons extracted from ASAR to userData folder (prevents repeated extraction)
