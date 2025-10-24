@@ -24,7 +24,6 @@
     "src/**/*",
     "main.ts",
     "preload.ts",
-    "renderer.ts",
     "scripts/**/*",
     "vite.config.mjs"
   ],
