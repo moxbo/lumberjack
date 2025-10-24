@@ -4,13 +4,19 @@
   Zusätzlich (unter macOS) wird images/icon.icns erzeugt, indem eine .iconset
   aus mehreren PNG-Größen gebaut und mit `iconutil` konvertiert wird.
 */
-const path = require('path');
-const fs = require('fs');
-const sharp = require('sharp');
-const cp = require('child_process');
-let pngToIco = require('png-to-ico');
-if (pngToIco && typeof pngToIco !== 'function' && typeof pngToIco.default === 'function') {
-  pngToIco = pngToIco.default;
+import path from 'path';
+import fs from 'fs';
+import sharp from 'sharp';
+import cp from 'child_process';
+import { fileURLToPath } from 'url';
+import pngToIcoModule from 'png-to-ico';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
+let pngToIco = pngToIcoModule;
+if (pngToIco && typeof pngToIco !== 'function' && typeof (pngToIco as any).default === 'function') {
+  pngToIco = (pngToIco as any).default;
 }
 
 (async () => {
@@ -29,7 +35,7 @@ if (pngToIco && typeof pngToIco !== 'function' && typeof pngToIco.default === 'f
     const tmpDir = path.join(imagesDir, '.tmp-icons');
     fs.mkdirSync(tmpDir, { recursive: true });
 
-    const tmpPngs = [];
+    const tmpPngs: string[] = [];
 
     const src = fs.readFileSync(srcPng);
     for (const s of sizesIco) {
@@ -43,10 +49,10 @@ if (pngToIco && typeof pngToIco !== 'function' && typeof pngToIco.default === 'f
 
     const outIco = path.join(imagesDir, 'icon.ico');
     try {
-      const buf = await pngToIco(tmpPngs);
+      const buf = await (pngToIco as any)(tmpPngs);
       fs.writeFileSync(outIco, buf);
       console.log('ICO erzeugt:', outIco, `(${buf.length} bytes)`);
-    } catch (e) {
+    } catch (e: any) {
       console.error('Fehler beim Erzeugen der ICO:', e?.message || e);
     }
 
@@ -95,7 +101,7 @@ if (pngToIco && typeof pngToIco !== 'function' && typeof pngToIco.default === 'f
 
       const outIcns = path.join(imagesDir, 'icon.icns');
       try {
-        await new Promise((resolve, reject) => {
+        await new Promise<void>((resolve, reject) => {
           const child = cp.spawn('iconutil', ['-c', 'icns', iconsetDir, '-o', outIcns]);
           let err = '';
           child.stderr.on('data', (d) => (err += d.toString()));
@@ -106,7 +112,7 @@ if (pngToIco && typeof pngToIco !== 'function' && typeof pngToIco.default === 'f
           });
         });
         console.log('ICNS erzeugt:', outIcns);
-      } catch (e) {
+      } catch (e: any) {
         console.error(
           'Fehler beim Erzeugen der ICNS (ist Xcode Command Line Tools installiert?):',
           e?.message || e

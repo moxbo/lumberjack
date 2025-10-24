@@ -2,6 +2,7 @@ const { app, BrowserWindow, ipcMain, dialog, Menu, nativeImage } = require('elec
 const path = require('path');
 const fs = require('fs');
 const net = require('net');
+const log = require('electron-log');
 
 // Track startup performance
 const startTime = Date.now();
@@ -68,7 +69,7 @@ async function loadSettings() {
 
     const p = settingsPath();
     if (!fs.existsSync(p)) {
-      console.log('Settings file not found, using defaults');
+      log.info('Settings file not found, using defaults');
       return;
     }
 
@@ -78,14 +79,14 @@ async function loadSettings() {
 
     if (result.success) {
       settings = result.settings;
-      console.log('Settings loaded successfully');
+      log.info('Settings loaded successfully');
     } else {
-      console.error('Failed to parse settings:', result.error);
-      console.log('Using default settings');
+      log.error('Failed to parse settings:', result.error);
+      log.info('Using default settings');
     }
   } catch (err) {
-    console.error('Error loading settings:', err.message);
-    console.log('Using default settings');
+    log.error('Error loading settings:', err.message);
+    log.info('Using default settings');
   }
 }
 
@@ -98,17 +99,17 @@ function saveSettings() {
     const result = stringifySettingsJSON(settings);
 
     if (!result.success) {
-      console.error('Failed to stringify settings:', result.error);
+      log.error('Failed to stringify settings:', result.error);
       return false;
     }
 
     const p = settingsPath();
     fs.mkdirSync(path.dirname(p), { recursive: true });
     fs.writeFileSync(p, result.json, 'utf8');
-    console.log('Settings saved successfully');
+    log.info('Settings saved successfully');
     return true;
   } catch (err) {
-    console.error('Error saving settings:', err.message);
+    log.error('Error saving settings:', err.message);
     return false;
   }
 }
@@ -147,7 +148,7 @@ function openLogStream() {
     logStream = fs.createWriteStream(p, { flags: 'a' });
     logPath = p;
   } catch (err) {
-    console.error('Log-Datei kann nicht geöffnet werden:', err.message);
+    log.error('Log-Datei kann nicht geöffnet werden:', err.message);
     closeLogStream();
   }
 }
@@ -191,7 +192,7 @@ function writeEntriesToFile(entries) {
       logBytes += line.length;
     }
   } catch (err) {
-    console.error('Fehler beim Schreiben in Logdatei:', err.message);
+    log.error('Fehler beim Schreiben in Logdatei:', err.message);
   }
 }
 
@@ -454,7 +455,7 @@ function createWindow() {
   // Show window as soon as it's ready to paint
   mainWindow.once('ready-to-show', () => {
     const readyTime = Date.now() - startTime;
-    console.log(`Window ready in ${readyTime}ms`);
+    log.info(`Window ready in ${readyTime}ms`);
     mainWindow.show();
 
     // Set icon asynchronously after window is shown (Windows only)
@@ -464,12 +465,12 @@ function createWindow() {
         if (iconPath) {
           try {
             mainWindow.setIcon(iconPath);
-            console.log('App-Icon verwendet:', iconPath);
+            log.info('App-Icon verwendet:', iconPath);
           } catch (err) {
-            console.warn('Could not set icon:', err.message);
+            log.warn('Could not set icon:', err.message);
           }
         } else {
-          console.warn('Kein Icon gefunden (images/icon.ico).');
+          log.warn('Kein Icon gefunden (images/icon.ico).');
         }
       });
     }
@@ -491,7 +492,7 @@ function createWindow() {
   // Load URL immediately for faster perceived startup
   const devUrl = process.env.VITE_DEV_SERVER_URL;
   // Diagnostic logs to help packaged builds: show key paths and which file we try to load
-  console.log(
+  log.info(
     'Startup: __dirname=',
     __dirname,
     'process.resourcesPath=',
@@ -500,7 +501,7 @@ function createWindow() {
     process.cwd()
   );
   if (devUrl) {
-    console.log('Loading dev server URL:', devUrl);
+    log.info('Loading dev server URL:', devUrl);
     mainWindow.loadURL(devUrl);
   } else {
     // Check multiple candidate locations for the production-built index.html
@@ -520,30 +521,30 @@ function createWindow() {
     for (const candidate of distCandidates) {
       try {
         const exists = fs.existsSync(candidate);
-        console.log('Checking for dist index at', candidate, 'exists=', exists);
+        log.info('Checking for dist index at', candidate, 'exists=', exists);
         if (exists) {
-          console.log('Loading dist index from', candidate);
+          log.info('Loading dist index from', candidate);
           try {
             mainWindow.loadFile(candidate);
             loaded = true;
             break;
           } catch (e) {
-            console.error('Failed to load file', candidate, e?.message || e);
+            log.error('Failed to load file', candidate, e?.message || e);
           }
         }
       } catch (e) {
-        console.warn('Error while checking candidate', candidate, e?.message || e);
+        log.warn('Error while checking candidate', candidate, e?.message || e);
       }
     }
 
     if (!loaded) {
-      console.log(
+      log.info(
         'No production dist index.html found; falling back to root index.html (likely dev)'
       );
       try {
         mainWindow.loadFile('index.html');
       } catch (e) {
-        console.error('Failed to load fallback index.html:', e?.message || e);
+        log.error('Failed to load fallback index.html:', e?.message || e);
       }
     }
   }
@@ -553,7 +554,7 @@ function createWindow() {
     const wc = mainWindow.webContents;
 
     wc.on('did-fail-load', (event, errorCode, errorDescription, validatedURL, isMainFrame) => {
-      console.error('Renderer did-fail-load:', {
+      log.error('Renderer did-fail-load:', {
         errorCode,
         errorDescription,
         validatedURL,
@@ -563,11 +564,11 @@ function createWindow() {
 
     // Newer Electron versions emit 'render-process-gone' for renderer crashes
     wc.on('render-process-gone', (event, details) => {
-      console.error('Renderer process gone:', details);
+      log.error('Renderer process gone:', details);
     });
 
     wc.on('crashed', () => {
-      console.error('Renderer crashed');
+      log.error('Renderer crashed');
     });
 
     // Forward renderer console messages to main log to capture runtime errors during startup
@@ -596,21 +597,21 @@ function createWindow() {
 
         const lvl =
           ['LOG', 'WARNING', 'ERROR'][Math.max(0, Math.min(2, Number(level) || 0))] || 'LOG';
-        console.log(`Renderer console (${lvl}) ${sourceId || ''}:${line || 0} - ${message || ''}`);
+        log.info(`Renderer console (${lvl}) ${sourceId || ''}:${line || 0} - ${message || ''}`);
       } catch (e) {}
     });
 
     // Optionally open devtools in packaged builds for debugging when env var set
     if (process.env.LJ_DEBUG_RENDERER === '1') {
       try {
-        console.log('LJ_DEBUG_RENDERER=1 -> opening DevTools');
+        log.info('LJ_DEBUG_RENDERER=1 -> opening DevTools');
         wc.openDevTools({ mode: 'bottom' });
       } catch (e) {
-        console.warn('Could not open DevTools:', e?.message || e);
+        log.warn('Could not open DevTools:', e?.message || e);
       }
     }
   } catch (e) {
-    console.warn('Failed to attach renderer diagnostics:', e?.message || e);
+    log.warn('Failed to attach renderer diagnostics:', e?.message || e);
   }
 
   // Build menu and load settings asynchronously after window starts loading
@@ -643,7 +644,7 @@ app.whenReady().then(() => {
         const img = nativeImage.createFromPath(macIconPath);
         if (!img.isEmpty()) app.dock.setIcon(img);
       } catch (e) {
-        console.warn('Dock-Icon konnte nicht gesetzt werden:', e?.message || e);
+        log.warn('Dock-Icon konnte nicht gesetzt werden:', e?.message || e);
       }
     }
   }
@@ -673,7 +674,7 @@ ipcMain.handle('settings:get', () => {
     // Return a deep copy to prevent accidental mutations
     return { ok: true, settings: structuredClone(settings) };
   } catch (err) {
-    console.error('Error getting settings:', err.message);
+    log.error('Error getting settings:', err.message);
     return { ok: false, error: err.message };
   }
 });
@@ -721,7 +722,7 @@ ipcMain.handle('settings:set', (_event, patch) => {
 
     return { ok: true, settings: structuredClone(settings) };
   } catch (err) {
-    console.error('Error setting settings:', err.message);
+    log.error('Error setting settings:', err.message);
     return { ok: false, error: err.message };
   }
 });
