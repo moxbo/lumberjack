@@ -475,7 +475,7 @@ function createWindow(): void {
     height: height || 800,
     ...(x != null && y != null ? { x, y } : {}),
     webPreferences: {
-      preload: path.join(__dirname, '..', '..', 'preload.js'),
+      preload: path.join(__dirname, '..', 'preload.js'),
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: false,
