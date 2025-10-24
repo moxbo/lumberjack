@@ -1,7 +1,11 @@
 #!/usr/bin/env node
-const path = require('path');
-const fs = require('fs');
-const { parsePaths } = require('../src/parsers');
+import path from 'path';
+import fs from 'fs';
+import { fileURLToPath } from 'url';
+import { parsePaths } from '../src/parsers.ts';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 function main() {
   const base = path.resolve(__dirname, '..');
@@ -15,7 +19,7 @@ function main() {
   const entries = parsePaths(files);
   console.log('Dateien:', files.map((f) => path.basename(f)).join(', '));
   console.log('Gesamt Einträge:', entries.length);
-  const levels = entries.reduce((acc, e) => {
+  const levels = entries.reduce((acc: any, e: any) => {
     const l = (e.level || 'UNK').toUpperCase();
     acc[l] = (acc[l] || 0) + 1;
     return acc;
