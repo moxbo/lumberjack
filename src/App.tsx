@@ -11,7 +11,7 @@ import { MDCListener } from './store/mdcListener.ts';
 import { DragAndDropManager } from './utils/dnd.ts';
 import { compareByTimestampId } from './utils/sort.ts';
 
-function levelClass(level) {
+function levelClass(level: string | null | undefined): string {
   const l = (level || '').toUpperCase();
   return (
     {
@@ -24,11 +24,11 @@ function levelClass(level) {
     }[l] || 'lev-unk'
   );
 }
-function fmt(v) {
+function fmt(v: unknown): string {
   return v == null ? '' : String(v);
 }
 // Lightweight timestamp formatter (replaces moment.js for faster startup)
-function fmtTimestamp(ts) {
+function fmtTimestamp(ts: string | number | Date | null | undefined): string {
   if (!ts) return '-';
   try {
     const d = new Date(ts);
@@ -47,7 +47,7 @@ function fmtTimestamp(ts) {
 }
 
 // Hilfsfunktion: erzeugt halbtransparente Tönung als rgba()-String
-function computeTint(color, alpha = 0.4) {
+function computeTint(color: string | null | undefined, alpha = 0.4): string {
   if (!color) return '';
   const c = String(color).trim();
   const hex = c.startsWith('#') ? c.slice(1) : null;
@@ -84,7 +84,7 @@ export default function App() {
 
   // Theme Mode: 'system' | 'light' | 'dark'
   const [themeMode, setThemeMode] = useState('system');
-  function applyThemeMode(mode) {
+  function applyThemeMode(mode: string | null | undefined): void {
     const root = document.documentElement;
     if (!mode || mode === 'system') {
       root.removeAttribute('data-theme');
@@ -168,7 +168,7 @@ export default function App() {
   // Fortschritt
   const [busyCount, setBusyCount] = useState(0);
   const busy = busyCount > 0;
-  const withBusy = async (fn) => {
+  const withBusy = async (fn: () => Promise<any>): Promise<any> => {
     setBusyCount((c) => c + 1);
     try {
       return await fn();
