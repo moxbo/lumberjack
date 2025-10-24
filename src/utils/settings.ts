@@ -2,6 +2,7 @@
  * Settings validation and schema utilities
  * Provides type-safe settings validation and migration
  */
+import logger from './logger.ts';
 
 /**
  * Constants for validation bounds
@@ -282,7 +283,7 @@ export function parseSettingsJSON(jsonString) {
     const { settings: validated, errors } = validateSettings(settings);
 
     if (errors.length > 0) {
-      console.warn('Settings validation warnings:', errors);
+      logger.warn('Settings validation warnings:', errors);
     }
 
     // Add current version

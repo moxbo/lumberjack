@@ -1,15 +1,16 @@
 import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import { Fragment } from 'preact';
 import { useVirtualizer } from '@tanstack/react-virtual';
-import { highlightAll } from './utils/highlight.js';
-import { msgMatches } from './utils/msgFilter.js';
+import { highlightAll } from './utils/highlight.ts';
+import { msgMatches } from './utils/msgFilter.ts';
+import logger from './utils/logger.ts';
 // Dynamic import for DCFilterDialog (code splitting)
 // Preact supports dynamic imports directly
-import { LoggingStore } from './store/loggingStore.js';
-import { DiagnosticContextFilter } from './store/dcFilter.js';
-import { MDCListener } from './store/mdcListener.js';
-import { DragAndDropManager } from './utils/dnd.js';
-import { compareByTimestampId } from './utils/sort.js';
+import { LoggingStore } from './store/loggingStore.ts';
+import { DiagnosticContextFilter } from './store/dcFilter.ts';
+import { MDCListener } from './store/mdcListener.ts';
+import { DragAndDropManager } from './utils/dnd.ts';
+import { compareByTimestampId } from './utils/sort.ts';
 
 function levelClass(level) {
   const l = (level || '').toUpperCase();
@@ -124,7 +125,7 @@ export default function App() {
           setDCFilterDialog(() => module.default);
         })
         .catch((err) => {
-          console.error('Failed to load DCFilterDialog:', err);
+          logger.error('Failed to load DCFilterDialog:', err);
         });
     }
   }, [showDcDialog, DCFilterDialog]);
@@ -521,7 +522,7 @@ export default function App() {
         return;
       }
     } catch (e) {
-      console.warn('virtualizer.scrollToIndex failed', e);
+      logger.warn('virtualizer.scrollToIndex failed', e);
     }
 
     // Manual: ensure row is within [viewTop, viewTop + clientHeight - overlayH]
@@ -559,7 +560,7 @@ export default function App() {
       const retries = [30, 120, 300];
       for (const t of retries) setTimeout(() => ensureVisibleByIndex(entry, 'auto'), t);
     } catch (e) {
-      console.warn('follow scroll failed', e);
+      logger.warn('follow scroll failed', e);
     }
   }, [follow, filteredIdx, followSmooth]);
 
@@ -770,7 +771,7 @@ export default function App() {
       try {
         const result = await window.api.settingsGet?.();
         if (!result || !result.ok) {
-          console.warn('Failed to load settings:', result?.error);
+          logger.warn('Failed to load settings:', result?.error);
           return;
         }
         const r = result.settings;
@@ -807,7 +808,7 @@ export default function App() {
         setLogMaxBytes(Number(r.logMaxBytes || 5 * 1024 * 1024));
         setLogMaxBackups(Number(r.logMaxBackups || 3));
       } catch (e) {
-        console.error('Error loading settings:', e);
+        logger.error('Error loading settings:', e);
       }
     }, 0);
     return () => clearTimeout(timeoutId);

@@ -2,6 +2,7 @@
  * Worker Pool Manager for Parser Workers
  * Manages a pool of web workers for parallel parsing
  */
+import logger from './logger.ts';
 
 class WorkerPool {
   constructor(workerPath, poolSize = 2) {
@@ -27,13 +28,13 @@ class WorkerPool {
         worker.busy = false;
         this.workers.push(worker);
       } catch (err) {
-        console.warn('[WorkerPool] Failed to create worker:', err);
+        logger.warn('[WorkerPool] Failed to create worker:', err);
       }
     }
 
     // Fallback: if no workers available, mark pool as unavailable
     if (this.workers.length === 0) {
-      console.warn('[WorkerPool] No workers available, falling back to main thread');
+      logger.warn('[WorkerPool] No workers available, falling back to main thread');
       this.unavailable = true;
     }
   }
@@ -61,7 +62,7 @@ class WorkerPool {
   }
 
   handleWorkerError(err) {
-    console.error('[WorkerPool] Worker error:', err);
+    logger.error('[WorkerPool] Worker error:', err);
     // Find the worker that errored
     const worker = err.target;
     worker.busy = false;
@@ -165,7 +166,7 @@ export function getWorkerPool() {
       // Use 2 workers by default for balance between parallelism and memory
       workerPool = new WorkerPool('/workers/parser.worker.js', 2);
     } catch (err) {
-      console.warn('[WorkerPool] Failed to initialize:', err);
+      logger.warn('[WorkerPool] Failed to initialize:', err);
     }
   }
   return workerPool;

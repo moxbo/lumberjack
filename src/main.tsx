@@ -1,6 +1,7 @@
 import { render } from 'preact';
-import App from './App.jsx';
+import App from './App.tsx';
 import '../styles.css';
+import logger from './utils/logger.ts';
 
 // Register service worker for caching static assets
 // Guard registration: service workers require a secure origin (https:// or localhost)
@@ -16,10 +17,10 @@ if (
     navigator.serviceWorker
       .register('/service-worker.js')
       .then((registration) => {
-        console.log('[App] ServiceWorker registered:', registration.scope);
+        logger.log('[App] ServiceWorker registered:', registration.scope);
       })
       .catch((error) => {
-        console.warn('[App] ServiceWorker registration failed:', error);
+        logger.warn('[App] ServiceWorker registration failed:', error);
       });
   });
 }
