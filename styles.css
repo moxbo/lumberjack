@@ -106,7 +106,7 @@
   --transition-slow: 320ms cubic-bezier(0.4, 0, 0.2, 1);
 
   /* Z-index */
-  --z-dropdown: 1000;
+  --z-dropdown: 1030;
   --z-sticky: 1020;
   --z-backdrop: 1040;
   --z-modal: 1050;
@@ -348,9 +348,19 @@ body {
   height: 100%;
   /* unten Platz, damit Inhalte nicht unter dem Overlay verschwinden */
   padding-bottom: calc(var(--detail-height) + var(--divider-h));
+  /* Scrollbar unsichtbar, aber scrollen weiterhin möglich */
+  scrollbar-width: none; /* Firefox */
+  -ms-overflow-style: none; /* IE/Edge Legacy */
 }
 
-/* Sichtbare Scrollbar (WebKit/macOS) */
+/* Scrollbar komplett ausblenden (WebKit) */
+.list::-webkit-scrollbar {
+  width: 0;
+  height: 0;
+  display: none;
+}
+
+/* Sichtbare Scrollbar (WebKit/macOS) – deaktiviert
 .list::-webkit-scrollbar {
   width: 12px;
   height: 12px;
@@ -370,13 +380,14 @@ body {
 .list::-webkit-scrollbar-track {
   background: transparent;
 }
+*/
 
 /* Overlay-Container für Divider + Details als gläserisches Panel
    liegt über der Liste und nutzt die variable --detail-height */
 .overlay {
   position: absolute;
   left: 0;
-  right: max(var(--scrollbar-w, 0px), 12px); /* immer min. 12px freilassen */
+  right: 0; /* keine Reservierung mehr für Scrollbar – volle Breite nutzen */
   bottom: 0;
   height: calc(var(--detail-height) + var(--divider-h));
   pointer-events: none; /* nur Kinder interaktiv machen */
@@ -426,6 +437,10 @@ body {
   overflow: auto;
   /* Glaslook */
   background: var(--details-glass-bg);
+  /* falls --details-tint gesetzt ist, legen wir eine weitere Ebene darüber, so bleibt die Glas-Optik bestehen
+     und die Tönung wird sichtbar; bei transparenter Tönung hat das keinen Effekt */
+  background-image: linear-gradient(var(--details-tint), var(--details-tint)), none;
+  background-blend-mode: overlay;
   backdrop-filter: var(--glass-blur);
   -webkit-backdrop-filter: var(--glass-blur);
   z-index: 1; /* sicher über Liste, unter Divider */

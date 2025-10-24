@@ -1,14 +1,14 @@
-import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
-import { Fragment } from 'preact';
-import { useVirtualizer } from '@tanstack/react-virtual';
-import { highlightAll } from './utils/highlight.js';
-import { msgMatches } from './utils/msgFilter.js';
+import {useEffect, useMemo, useRef, useState} from 'preact/hooks';
+import {Fragment} from 'preact';
+import {useVirtualizer} from '@tanstack/react-virtual';
+import {highlightAll} from './utils/highlight.js';
+import {msgMatches} from './utils/msgFilter.js';
 // Dynamic import for DCFilterDialog (code splitting)
 // Preact supports dynamic imports directly
-import { LoggingStore } from './store/loggingStore.js';
-import { DiagnosticContextFilter } from './store/dcFilter.js';
-import { DragAndDropManager } from './utils/dnd.js';
-import { compareByTimestampId } from './utils/sort.js';
+import {LoggingStore} from './store/loggingStore.js';
+import {DiagnosticContextFilter} from './store/dcFilter.js';
+import {DragAndDropManager} from './utils/dnd.js';
+import {compareByTimestampId} from './utils/sort.js';
 
 function levelClass(level) {
   const l = (level || '').toUpperCase();
@@ -422,6 +422,123 @@ export default function App() {
   // Follow-Effekt: wenn aktiv, selektiere immer den letzten gefilterten Eintrag und scrolle dorthin
   const parentRef = useRef(null);
   const rowH = 36;
+
+  // Helper: ensure the virtual index is visible and not hidden behind the bottom details overlay
+  function getOverlayHeight() {
+    try {
+      const root = document.documentElement;
+      const detail = parseFloat(getComputedStyle(root).getPropertyValue('--detail-height')) || 0;
+      const divider = parseFloat(getComputedStyle(root).getPropertyValue('--divider-h')) || 0;
+      return detail + divider;
+    } catch (e) {
+      return 0;
+    }
+  }
+
+  function ensureVisibleByIndex(visIndex, behavior = 'auto') {
+    const el = parentRef.current;
+    if (!el || visIndex == null || visIndex < 0) return;
+
+    // Compute row positions (approximate; final check uses DOM)
+    const rowTop = visIndex * rowH;
+    const rowBottom = rowTop + rowH;
+
+    const overlayH = getOverlayHeight();
+    // Effective bottom of the visible area that should keep rows above the overlay
+    const viewTop = el.scrollTop;
+    const viewBottom = viewTop + Math.max(0, el.clientHeight - overlayH);
+
+    // If already visible above the overlay, nothing to do
+    if (rowTop >= viewTop && rowBottom <= viewBottom) return;
+
+    // Compute the real maximum scrollTop (accounts for padding-bottom used to reserve space for overlay)
+    const maxScrollTop = Math.max(0, (el.scrollHeight || 0) - el.clientHeight);
+
+    // Helper: check DOM position of the actual rendered row and nudge scroll if it's covered by the overlay
+    function adjustIfCoveredByOverlay(entryIdx) {
+      try {
+        const rowEl = document.querySelector(`li.row[data-idx=\"${entryIdx}\"]`);
+        if (!rowEl) return;
+        const rowRect = rowEl.getBoundingClientRect();
+        const containerRect = el.getBoundingClientRect();
+        const overlayTop = containerRect.bottom - overlayH;
+        if (rowRect.bottom > overlayTop) {
+          const delta = rowRect.bottom - overlayTop + 4; // small padding
+          const newTop = Math.min(maxScrollTop, Math.max(0, el.scrollTop + delta));
+          if (Math.abs(newTop - el.scrollTop) > 1) el.scrollTo({ top: newTop, behavior });
+        }
+      } catch (e) {
+        // ignore
+      }
+    }
+
+    // If target is the very last virtual index, directly scroll to the true max scrollTop.
+    try {
+      const lastVirtualIndex = Math.max(0, filteredIdx.length - 1);
+      if (visIndex >= lastVirtualIndex) {
+        // Prefer virtualizer to position the last item if available; fall back to maxScrollTop.
+        try {
+          if (virtualizer && typeof virtualizer.scrollToIndex === 'function') {
+            // Use auto to avoid getting stuck in a smooth animation that prevents nudging.
+            virtualizer.scrollToIndex(visIndex, { behavior: 'auto' });
+          } else {
+            el.scrollTo({ top: maxScrollTop, behavior: 'auto' });
+          }
+        } catch (e) {
+          // Fallback to direct scrollTop
+          el.scrollTo({ top: maxScrollTop, behavior: 'auto' });
+        }
+
+        // Retry adjust a couple times in case rendering/virtualizer/smooth scroll race occurs,
+        // include an immediate (0ms) attempt so we catch the DOM as soon as it's rendered.
+        const entryIdx = filteredIdx[visIndex];
+        const attempts = [0, 40, 120, 300];
+        for (const ms of attempts) {
+          setTimeout(() => adjustIfCoveredByOverlay(entryIdx), ms);
+        }
+        return;
+      }
+    } catch (e) {
+      // ignore and continue to virtualizer/manual handling
+    }
+
+    // Prefer virtualizer when it can do a simple scroll, but fall back to manual calculation
+    try {
+      if (virtualizer && typeof virtualizer.scrollToIndex === 'function') {
+        // If caller requested smooth but target is near the end, prefer auto to avoid being locked
+        // into an animated state where we cannot nudge the scroll position reliably.
+        const useBehavior = behavior === 'smooth' ? 'auto' : behavior;
+        virtualizer.scrollToIndex(visIndex, { behavior: useBehavior });
+        // small timeout to allow virtualizer to update scrollTop before we adjust for overlay
+        setTimeout(() => {
+          // If the DOM row is still covered, nudge scrollTop (with retries)
+          const entryIdx = filteredIdx[visIndex];
+          adjustIfCoveredByOverlay(entryIdx);
+          // second attempt shortly after
+          setTimeout(() => adjustIfCoveredByOverlay(entryIdx), 120);
+        }, 60);
+        return;
+      }
+    } catch (e) {
+      console.warn('virtualizer.scrollToIndex failed', e);
+    }
+
+    // Manual: ensure row is within [viewTop, viewTop + clientHeight - overlayH]
+    if (rowTop < viewTop) {
+      // Scroll so top of row is visible (clamped to maxScrollTop)
+      const target = Math.min(maxScrollTop, Math.max(0, rowTop));
+      el.scrollTo({ top: target, behavior });
+      setTimeout(() => adjustIfCoveredByOverlay(filteredIdx[visIndex]), 60);
+    }
+    if (rowBottom > viewBottom) {
+      // Scroll so bottom of row is visible above the overlay (clamped to maxScrollTop)
+      const desiredTop = Math.max(0, rowBottom - Math.max(0, el.clientHeight - overlayH));
+      const newTop = Math.min(maxScrollTop, desiredTop);
+      el.scrollTo({ top: newTop, behavior });
+      setTimeout(() => adjustIfCoveredByOverlay(filteredIdx[visIndex]), 60);
+    }
+  }
+
   useEffect(() => {
     if (!follow) return;
     if (!filteredIdx.length) return;
@@ -433,10 +550,15 @@ export default function App() {
     }
     // Scroll an das Ende der Liste (letzter sichtbarer Index)
     const visIndex = filteredIdx.length - 1;
-    const el = parentRef.current;
-    if (el) {
-      const targetTop = visIndex * rowH;
-      el.scrollTo({ top: targetTop, behavior: followSmooth ? 'smooth' : 'auto' });
+    try {
+      // Do immediate attempt and also schedule retries to survive virtualizer/smooth-scroll races
+      ensureVisibleByIndex(visIndex, followSmooth ? 'smooth' : 'auto');
+      // schedule retries
+      const entry = visIndex;
+      const retries = [30, 120, 300];
+      for (const t of retries) setTimeout(() => ensureVisibleByIndex(entry, 'auto'), t);
+    } catch (e) {
+      console.warn('follow scroll failed', e);
     }
   }, [follow, filteredIdx, followSmooth]);
 
@@ -514,7 +636,7 @@ export default function App() {
     setSelected(new Set([target]));
     lastClicked.current = target;
     const visIndex = filteredIdx.indexOf(target);
-    if (visIndex >= 0) parentRef.current?.scrollTo({ top: visIndex * rowH, behavior: 'smooth' });
+    if (visIndex >= 0) ensureVisibleByIndex(visIndex, 'smooth');
   }
   function gotoMarked(dir) {
     const order = markedIdx;
@@ -530,11 +652,62 @@ export default function App() {
     setSelected(new Set([target]));
     lastClicked.current = target;
     const visIndex = filteredIdx.indexOf(target);
-    if (visIndex >= 0) parentRef.current?.scrollTo({ top: visIndex * rowH, behavior: 'smooth' });
+    if (visIndex >= 0) ensureVisibleByIndex(visIndex, 'smooth');
+  }
+
+  // NEU: Tastaturnavigation in der Liste
+  function gotoRelative(delta) {
+    if (!filteredIdx.length) return;
+    const current = [...selected][0];
+    let pos = filteredIdx.indexOf(current);
+    if (pos === -1) pos = 0;
+    let nextPos = Math.max(0, Math.min(filteredIdx.length - 1, pos + delta));
+    const target = filteredIdx[nextPos];
+    setSelected(new Set([target]));
+    lastClicked.current = target;
+    // Use the helper to scroll and account for the overlay
+    ensureVisibleByIndex(nextPos, followSmooth ? 'smooth' : 'auto');
+  }
+
+  // NEU: Zum Anfang/Ende springen
+  function gotoListStart() {
+    if (!filteredIdx.length) return;
+    const first = filteredIdx[0];
+    setSelected(new Set([first]));
+    lastClicked.current = first;
+    ensureVisibleByIndex(0, 'smooth');
+  }
+  function gotoListEnd() {
+    if (!filteredIdx.length) return;
+    const last = filteredIdx[filteredIdx.length - 1];
+    setSelected(new Set([last]));
+    lastClicked.current = last;
+    // Use multiple attempts to ensure last entry is not hidden behind overlay
+    ensureVisibleByIndex(filteredIdx.length - 1, 'smooth');
+    const retries = [30, 120, 300];
+    for (const t of retries) setTimeout(() => ensureVisibleByIndex(filteredIdx.length - 1, 'auto'), t);
   }
 
   const selectedOneIdx = useMemo(() => (selected.size === 1 ? [...selected][0] : null), [selected]);
   const selectedEntry = selectedOneIdx != null ? entries[selectedOneIdx] : null;
+
+  // NEU: Wenn sich die Liste (entries/filteredIdx) ändert, stelle sicher, dass die Auswahl sichtbar bleibt
+  useEffect(() => {
+    const el = parentRef.current;
+    if (!el) return;
+    if (selectedOneIdx == null) return;
+    const visIndex = filteredIdx.indexOf(selectedOneIdx);
+    if (visIndex < 0) return; // selektierter Eintrag ist gerade nicht in der gefilterten Liste
+    const rowTop = visIndex * rowH;
+    const rowBottom = rowTop + rowH;
+    const viewTop = el.scrollTop;
+    const viewBottom = viewTop + el.clientHeight;
+    // Immer scrollen, wenn die Auswahl außerhalb des sichtbaren Bereichs ist
+    if (rowTop < viewTop || rowBottom > viewBottom) {
+      // Use helper that respects the overlay
+      ensureVisibleByIndex(visIndex, followSmooth ? 'smooth' : 'auto');
+    }
+  }, [entries.length, filteredIdx.length, selectedOneIdx, followSmooth, virtualizer]);
 
   // sortierte MDC-Paare für die Detailansicht
   const mdcPairs = useMemo(() => {
@@ -777,6 +950,12 @@ export default function App() {
   // ESC: modal / Kontextmenü schließen + F8: Follow toggeln
   useEffect(() => {
     const onKey = (e) => {
+      // In Eingaben keine Shortcuts auslösen
+      const tag = (e.target && e.target.tagName) || '';
+      const isEditable =
+        ['INPUT', 'TEXTAREA', 'SELECT'].includes(String(tag).toUpperCase()) ||
+        e.target?.isContentEditable;
+
       if (e.key === 'Escape') {
         if (showSettings) setShowSettings(false);
         if (showHttpLoadDlg) setShowHttpLoadDlg(false);
@@ -787,11 +966,6 @@ export default function App() {
         if (showDcDialog) setShowDcDialog(false);
       }
       if (e.key === 'F8') {
-        // Nicht auslösen, wenn in Eingabefeldern getippt wird
-        const tag = (e.target && e.target.tagName) || '';
-        const isEditable =
-          ['INPUT', 'TEXTAREA', 'SELECT'].includes(String(tag).toUpperCase()) ||
-          e.target?.isContentEditable;
         if (isEditable) return;
         e.preventDefault();
         const v = !follow;
@@ -799,6 +973,32 @@ export default function App() {
         try {
           window.api.settingsSet({ follow: v });
         } catch {}
+      }
+
+      // Pfeiltasten / Home/Ende / PageUp/Down nur außerhalb von Eingaben
+      if (isEditable) return;
+      if (e.key === 'ArrowDown') {
+        e.preventDefault();
+        gotoRelative(1);
+      } else if (e.key === 'ArrowUp') {
+        e.preventDefault();
+        gotoRelative(-1);
+      } else if (e.key === 'End') {
+        e.preventDefault();
+        gotoListEnd();
+      } else if (e.key === 'Home') {
+        e.preventDefault();
+        gotoListStart();
+      } else if (e.key === 'PageDown') {
+        e.preventDefault();
+        const el = parentRef.current;
+        const page = el ? Math.max(1, Math.floor(el.clientHeight / rowH) - 1) : 10;
+        gotoRelative(page);
+      } else if (e.key === 'PageUp') {
+        e.preventDefault();
+        const el = parentRef.current;
+        const page = el ? Math.max(1, Math.floor(el.clientHeight / rowH) - 1) : 10;
+        gotoRelative(-page);
       }
     };
     window.addEventListener('keydown', onKey);
@@ -812,6 +1012,8 @@ export default function App() {
     httpMenu.open,
     follow,
     showDcDialog,
+    filteredIdx,
+    selected,
   ]);
 
   // Drag & Drop
@@ -1429,6 +1631,15 @@ export default function App() {
             />
             <span>Smooth</span>
           </label>
+        </div>
+        <div className="section">
+          {/* NEU: Anfang/Ende */}
+          <button title="Zum Anfang springen" onClick={gotoListStart} disabled={countFiltered === 0}>
+            ⬆ Anfang
+          </button>
+          <button title="Zum Ende springen" onClick={gotoListEnd} disabled={countFiltered === 0}>
+            Ende ⬇
+          </button>
         </div>
         <div className="section">
           <button
