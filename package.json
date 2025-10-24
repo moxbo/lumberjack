@@ -8,7 +8,7 @@
     "build:renderer": "vite build",
     "start": "npm run build:renderer && electron .",
     "dev": "concurrently -k -s first -n \"VITE,ELECTRON\" -c \"cyan,magenta\" \"cross-env NODE_ENV=development vite --open=false\" \"wait-on http://localhost:5173 && cross-env NODE_ENV=development VITE_DEV_SERVER_URL=http://localhost:5173 electron .\"",
-    "test": "tsx ./scripts/smoke-parse.ts && node ./scripts/test-msg-filter.mjs && node ./scripts/verify-mdc-flow.mjs",
+    "test": "tsx ./scripts/smoke-parse.ts && tsx ./scripts/test-msg-filter.ts && node ./scripts/verify-mdc-flow.mjs",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "icon:generate": "tsx ./scripts/make-icon.ts",

@@ -1,10 +1,10 @@
 // Lightweight log parser utilities for main process and tests
 // Supports: .log (text or JSONL), .json (array or JSONL), .zip (containing .log/.json)
 
-const fs = require('fs');
-const path = require('path');
+import fs from 'fs';
+import path from 'path';
 // Lazy-load AdmZip only when needed to speed up startup
-let AdmZip = null;
+let AdmZip: any = null;
 function getAdmZip() {
   if (!AdmZip) {
     AdmZip = require('adm-zip');
@@ -163,10 +163,10 @@ function parsePaths(paths) {
       all.push(toEntry({ level: 'ERROR', message: `Failed to parse ${p}: ${err.message}` }, '', p));
     }
   }
-  return all;
+    return all;
 }
 
-module.exports = {
+export {
   parsePaths,
   parseTextLines,
   parseJsonFile,

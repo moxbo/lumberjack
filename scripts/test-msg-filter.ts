@@ -1,7 +1,7 @@
 #!/usr/bin/env node
-import { msgMatches } from '../src/utils/msgFilter.mjs';
+import { msgMatches } from '../src/utils/msgFilter.ts';
 
-function expect(msg, expr, expected) {
+function expect(msg: string, expr: string, expected: boolean): number {
   const got = msgMatches(msg, expr);
   const ok = got === expected;
   console.log(
