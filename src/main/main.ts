@@ -24,17 +24,23 @@ const perfService = new PerformanceService();
 const settingsService = new SettingsService();
 const networkService = new NetworkService();
 
-// Lazy-load heavy modules only when needed
-let AdmZip: unknown = null;
+/**
+ * Lazy-load heavy AdmZip module only when needed for ZIP file handling
+ * This improves startup performance by deferring module loading
+ */
+let AdmZip: typeof import('adm-zip') | null = null;
 function getAdmZip(): typeof import('adm-zip') {
   if (!AdmZip) {
     // eslint-disable-next-line @typescript-eslint/no-var-requires
     AdmZip = require('adm-zip') as typeof import('adm-zip');
   }
-  return AdmZip as typeof import('adm-zip');
+  return AdmZip;
 }
 
-// Lazy-load parsers only when files are opened
+/**
+ * Lazy-load parsers module only when files are opened
+ * This improves startup performance by deferring module loading
+ */
 let parsers: typeof import('./parsers.cjs') | null = null;
 function getParsers(): typeof import('./parsers.cjs') {
   if (!parsers) {
@@ -48,12 +54,24 @@ let mainWindow: BrowserWindow | null = null;
 let iconPlay: nativeImage | null = null;
 let iconStop: nativeImage | null = null;
 
-// Puffer für Logs, wenn der Renderer (neu) lädt oder das Fenster nicht bereit ist
+/**
+ * Buffer for logs when renderer is loading or window is not ready
+ * Prevents log loss during window transitions
+ */
 const MAX_PENDING_APPENDS = 5000;
 let pendingAppends: LogEntry[] = [];
 let pendingMenuCmds: Array<{ type: string; tab?: string }> = [];
 
-// Datei-Logging: Stream + Rotation
+/**
+ * File logging: stream management and rotation
+ */
+let logStream: fs.WriteStream | null = null;
+let logBytes = 0;
+let logPath = '';
+
+/**
+ * Get default log file path based on portable or standard installation
+ */
 function defaultLogFilePath(): string {
   const portableDir = process.env.PORTABLE_EXECUTABLE_DIR;
   const base =
@@ -63,10 +81,9 @@ function defaultLogFilePath(): string {
   return path.join(base, 'lumberjack.log');
 }
 
-let logStream: fs.WriteStream | null = null;
-let logBytes = 0;
-let logPath = '';
-
+/**
+ * Close the log stream safely
+ */
 function closeLogStream(): void {
   try {
     logStream?.end?.();

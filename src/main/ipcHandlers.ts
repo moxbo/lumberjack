@@ -37,13 +37,18 @@ export function registerIpcHandlers(
       }
 
       // Handle sensitive fields not in schema: elasticPassPlain and elasticPassClear
-      const passPlain = (patch as Record<string, unknown>).elasticPassPlain;
-      const passClear = !!(patch as Record<string, unknown>).elasticPassClear;
+      type SettingsPatch = Partial<Settings> & { 
+        elasticPassPlain?: string; 
+        elasticPassClear?: boolean;
+      };
+      const typedPatch = patch as SettingsPatch;
+      const passPlain = typedPatch.elasticPassPlain;
+      const passClear = !!typedPatch.elasticPassClear;
 
       // Build patch sans sensitive transient fields
-      const clone = { ...patch };
-      delete (clone as Record<string, unknown>).elasticPassPlain;
-      delete (clone as Record<string, unknown>).elasticPassClear;
+      const clone: Partial<Settings> = { ...patch };
+      delete (clone as SettingsPatch).elasticPassPlain;
+      delete (clone as SettingsPatch).elasticPassClear;
 
       // Merge with validation
       const validation = settingsService.validate(clone);
@@ -159,8 +164,7 @@ export function registerIpcHandlers(
               const parsed =
                 eext === '.json' ? parseJsonFile(ename, text) : parseTextLines(ename, text);
               parsed.forEach((e) => {
-                // eslint-disable-next-line @typescript-eslint/no-explicit-any
-                (e as any).source = `${name}::${ename}`;
+                e.source = `${name}::${ename}`;
               });
               all.push(...parsed);
             }
