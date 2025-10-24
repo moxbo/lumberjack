@@ -4,6 +4,12 @@ const fs = require('fs');
 const net = require('net');
 const log = require('electron-log');
 
+// Configure electron-log based on environment
+const isDev = process.env.NODE_ENV === 'development' || process.env.VITE_DEV_SERVER_URL;
+log.transports.console.level = 'debug';
+// In development, disable file logging; in production, enable it
+log.transports.file.level = isDev ? false : 'info';
+
 // Track startup performance
 const startTime = Date.now();
 // Lazy-load heavy modules only when needed
@@ -601,10 +607,11 @@ function createWindow() {
       } catch (e) {}
     });
 
-    // Optionally open devtools in packaged builds for debugging when env var set
-    if (process.env.LJ_DEBUG_RENDERER === '1') {
+    // Open DevTools in development mode or when env var is set
+    if (isDev || process.env.LJ_DEBUG_RENDERER === '1') {
       try {
-        log.info('LJ_DEBUG_RENDERER=1 -> opening DevTools');
+        const reason = isDev ? 'Development mode' : 'LJ_DEBUG_RENDERER=1';
+        log.info(`${reason} -> opening DevTools`);
         wc.openDevTools({ mode: 'bottom' });
       } catch (e) {
         log.warn('Could not open DevTools:', e?.message || e);
