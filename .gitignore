@@ -57,3 +57,6 @@ spec/fixtures/logo.png
 /release/win-unpacked/
 /release/builder-debug.yml
 /release/builder-effective-config.yaml
+
+# Generated JS from TS (for main process)
+src/**/*.js
