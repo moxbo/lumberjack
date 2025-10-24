@@ -37,7 +37,7 @@
     "png-to-ico": "^3.0.1",
     "prettier": "^3.6.2",
     "sharp": "^0.34.4",
-    "vite": "^7.1.11",
+    "vite": "^7.1.12",
     "wait-on": "^9.0.1"
   },
   "dependencies": {
