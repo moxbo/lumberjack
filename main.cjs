@@ -18,7 +18,7 @@ function getAdmZip() {
 let parsers = null;
 function getParsers() {
   if (!parsers) {
-    parsers = require('./src/parsers');
+    parsers = require('./src/parsers.js');
   }
   return parsers;
 }
@@ -26,7 +26,7 @@ function getParsers() {
 let settingsUtils = null;
 function getSettingsUtils() {
   if (!settingsUtils) {
-    settingsUtils = require('./src/utils/settings');
+    settingsUtils = require('./src/utils/settings.js');
   }
   return settingsUtils;
 }
