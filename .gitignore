@@ -60,5 +60,6 @@ spec/fixtures/logo.png
 
 # Generated JS from TS (for main process)
 src/**/*.js
+release/
 preload.js
 /dist-main/
