@@ -796,7 +796,12 @@ export default function App() {
     // Use setTimeout to defer loading until after first paint
     const timeoutId = setTimeout(async () => {
       try {
-        const result = await window.api.settingsGet?.();
+        // Guard against missing window.api
+        if (!window.api?.settingsGet) {
+          logger.error('window.api.settingsGet is not available. Preload script may have failed to load.');
+          return;
+        }
+        const result = await window.api.settingsGet();
         if (!result || !result.ok) {
           logger.warn('Failed to load settings:', result?.error);
           return;
@@ -851,16 +856,20 @@ export default function App() {
     // Hole den aktuell persistierten Zustand (Race-Condition direkt nach App-Start vermeiden)
     let curMode = themeMode;
     try {
-      const result = await window.api.settingsGet?.();
-      const r = result?.ok ? result.settings : null;
-      if (r && typeof r.themeMode === 'string') {
-        const mode = ['light', 'dark', 'system'].includes(r.themeMode) ? r.themeMode : 'system';
-        curMode = mode;
-        setThemeMode(mode);
-        applyThemeMode(mode);
+      if (!window.api?.settingsGet) {
+        logger.warn('window.api.settingsGet is not available');
+      } else {
+        const result = await window.api.settingsGet();
+        const r = result?.ok ? result.settings : null;
+        if (r && typeof r.themeMode === 'string') {
+          const mode = ['light', 'dark', 'system'].includes(r.themeMode) ? r.themeMode : 'system';
+          curMode = mode;
+          setThemeMode(mode);
+          applyThemeMode(mode);
+        }
+        if (r && typeof r.follow === 'boolean') setFollow(!!r.follow);
+        if (r && typeof r.followSmooth === 'boolean') setFollowSmooth(!!r.followSmooth);
       }
-      if (r && typeof r.follow === 'boolean') setFollow(!!r.follow);
-      if (r && typeof r.followSmooth === 'boolean') setFollowSmooth(!!r.followSmooth);
     } catch {}
 
     setForm({
@@ -1105,6 +1114,10 @@ export default function App() {
     const mgr = new DragAndDropManager({
       onFiles: async (paths) => {
         await withBusy(async () => {
+          if (!window.api?.parsePaths) {
+            alert('API nicht verfügbar. Preload-Skript wurde möglicherweise nicht geladen.');
+            return;
+          }
           const res = await window.api.parsePaths(paths);
           if (res?.ok) appendEntries(res.entries);
           else alert('Fehler beim Laden (Drop): ' + (res?.error || 'unbekannt'));
@@ -1114,6 +1127,10 @@ export default function App() {
       onRawFiles: async (files) => {
         await withBusy(async () => {
           try {
+            if (!window.api?.parseRawDrops) {
+              alert('API nicht verfügbar. Preload-Skript wurde möglicherweise nicht geladen.');
+              return;
+            }
             const res = await window.api.parseRawDrops(files);
             if (res?.ok) appendEntries(res.entries);
             else alert('Fehler beim Laden (Drop-Rohdaten): ' + (res?.error || 'unbekannt'));
@@ -1142,6 +1159,12 @@ export default function App() {
   }, [ctxMenu.open]);
 
   useEffect(() => {
+    // Guard against missing window.api (preload script not loaded)
+    if (!window.api) {
+      logger.error('window.api is not available. Preload script may have failed to load.');
+      return;
+    }
+
     const off = window.api.onAppend((arr) => appendEntries(arr));
     const offTcp = window.api.onTcpStatus((s) => setTcpStatus(s.message || ''));
     const offMenu = window.api.onMenu(async (cmd) => {
