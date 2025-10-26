@@ -193,601 +193,335 @@ export default function App() {
   const httpBtnRef = useRef(null);
   const httpMenuRef = useRef(null);
 
-  // Countdown bis zum nächsten Intervall
-  const [nextPollDueAt, setNextPollDueAt] = useState(null);
-  const [pollMs, setPollMs] = useState(0);
-  const [nextPollIn, setNextPollIn] = useState('');
-
-  const dividerRef = useRef(null);
-  const layoutRef = useRef(null);
-  const colResize = useRef({ active: null, startX: 0, startW: 0 });
-
+  // Drag & Drop Overlay state
   const [dragActive, setDragActive] = useState(false);
 
-  // Fortschritt
-  const [busyCount, setBusyCount] = useState(0);
-  const busy = busyCount > 0;
-  const withBusy = async (fn: () => Promise<any>): Promise<any> => {
-    setBusyCount((c) => c + 1);
+  // Busy indicator and helper
+  const [busy, setBusy] = useState(false);
+  const withBusy = async (fn) => {
+    setBusy(true);
     try {
-      return await fn();
+      await fn();
     } finally {
-      setBusyCount((c) => Math.max(0, c - 1));
+      setBusy(false);
     }
   };
 
-  // Kontextmenü
-  const [ctxMenu, setCtxMenu] = useState({ open: false, x: 0, y: 0 });
-  const ctxRef = useRef(null);
-
-  const colorChoices = ['#fffbcc', '#d1fae5', '#bae6fd', '#fecaca', '#e9d5ff', '#f5f5f5'];
-
-  // MDC-Filter Modal aus Auswahl
-  const [showMdcModal, setShowMdcModal] = useState(false);
-  const [mdcAgg, setMdcAgg] = useState([]); // [{ key, values: [{ val, count }] }]
-  const [mdcSelKey, setMdcSelKey] = useState('');
-  const [mdcSelVals, setMdcSelVals] = useState(new Set());
-
-  function openMdcFromSelection() {
-    // Aggregiere MDC-Key/Values aus aktueller Auswahl
-    const map = new Map(); // key -> Map(val->count)
-    for (const idx of selected) {
-      const e = entries[idx];
-      const m = e && e.mdc ? e.mdc : null;
-      if (!m) continue;
-      for (const [k0, v0] of Object.entries(m)) {
-        const k = String(k0);
-        const v = String(v0 ?? '');
-        if (!map.has(k)) map.set(k, new Map());
-        const mm = map.get(k);
-        mm.set(v, (mm.get(v) || 0) + 1);
-      }
-    }
-    const arr = Array.from(map.entries()).map(([key, mm]) => ({
-      key,
-      values: Array.from(mm.entries()).map(([val, count]) => ({ val, count })),
-    }));
-    arr.sort((a, b) => a.key.localeCompare(b.key));
-    for (const it of arr) it.values.sort((a, b) => a.val.localeCompare(b.val));
-    setMdcAgg(arr);
-    setMdcSelKey(arr[0]?.key || '');
-    setMdcSelVals(new Set());
-    setShowMdcModal(true);
-    setCtxMenu({ open: false, x: 0, y: 0 });
-  }
-  function addSelectedMdcToFilter({ presentOnly = false, allValues = false } = {}) {
-    const key = String(mdcSelKey || '').trim();
-    if (!key) return;
-    if (presentOnly) {
-      DiagnosticContextFilter.addMdcEntry(key, ''); // Wildcard: Key vorhanden
-      DiagnosticContextFilter.setEnabled(true);
+  // HTTP polling helper state (for status/next tick display)
+  const [pollMs, setPollMs] = useState(0);
+  const [nextPollDueAt, setNextPollDueAt] = useState(null);
+  const [nextPollIn, setNextPollIn] = useState('');
+  useEffect(() => {
+    if (!nextPollDueAt) {
+      setNextPollIn('');
       return;
     }
-    const item = mdcAgg.find((x) => x.key === key);
-    if (!item) return;
-    const values = allValues ? item.values.map((x) => x.val) : Array.from(mdcSelVals.values());
-    for (const v of values) DiagnosticContextFilter.addMdcEntry(key, v);
-    if (values.length) DiagnosticContextFilter.setEnabled(true);
-  }
-  function removeSelectedMdcFromFilter() {
-    const key = String(mdcSelKey || '').trim();
-    if (!key) return;
-    const item = mdcAgg.find((x) => x.key === key);
-    if (!item) return;
-    const values =
-      mdcSelVals.size > 0 ? Array.from(mdcSelVals.values()) : item.values.map((x) => x.val);
-    for (const v of values) DiagnosticContextFilter.removeMdcEntry(key, v);
-  }
+    let t = 0;
+    const tick = () => {
+      const ms = Math.max(0, Number(nextPollDueAt) - Date.now());
+      setNextPollIn(ms > 0 ? `${Math.ceil(ms / 1000)}s` : '');
+    };
+    tick();
+    t = window.setInterval(tick, 250);
+    return () => clearInterval(t);
+  }, [nextPollDueAt]);
 
-  // Kontextmenü öffnen für Zeile idx
-  function openContextMenu(ev, idx) {
-    ev.preventDefault();
-    // Auswahl auf die Zeile setzen, wenn noch nicht enthalten
-    setSelected((prev) => {
-      if (prev.has(idx)) return prev;
-      lastClicked.current = idx;
-      return new Set([idx]);
-    });
-    setCtxMenu({ open: true, x: ev.clientX, y: ev.clientY });
-  }
-  // Markierungsfarbe auf selektierte Einträge anwenden
-  function applyMarkColor(color) {
-    setEntries((prev) => {
-      if (!prev || !prev.length) return prev;
-      const next = prev.slice();
-      for (const idx of selected) {
-        if (next[idx]) {
-          if (color) next[idx] = { ...next[idx], _mark: color };
-          else {
-            const { _mark, ...rest } = next[idx];
-            next[idx] = rest;
-          }
-        }
-      }
-      return next;
-    });
-    setCtxMenu({ open: false, x: 0, y: 0 });
-  }
-  // TraceIds aus Auswahl in Filter übernehmen (kein Standard-Trace-Filter mehr)
-  function adoptTraceIds() {
-    const tokens = [];
-    for (const idx of selected) {
-      const e = entries[idx];
-      if (!e) continue;
-      const t1 = String(e.traceId || '').trim();
-      const t2 = String(e?.mdc?.traceId || '').trim();
-      if (t1) tokens.push(t1);
-      if (t2 && t2 !== t1) tokens.push(t2);
-    }
-    const uniq = Array.from(new Set(tokens)).filter(Boolean);
-    if (!uniq.length) return;
-    try {
-      for (const t of uniq) DiagnosticContextFilter.addMdcEntry('traceId', t);
-      DiagnosticContextFilter.setEnabled(true);
-    } catch {}
-    setCtxMenu({ open: false, x: 0, y: 0 });
-  }
-  // Zeit+Message der Auswahl kopieren
-  async function copyTsMsg() {
-    try {
-      const lines = [];
-      // Reihenfolge: sichtbare Sortierung beibehalten
-      const order = filteredIdx.filter((i) => selected.has(i));
-      for (const idx of order) {
-        const e = entries[idx];
-        if (!e) continue;
-        const ts = fmtTimestamp(e.timestamp);
-        lines.push(`${ts} ${String(e.message || '')}`);
-      }
-      const text = lines.join('\n');
-      if (!text) return;
-      if (navigator?.clipboard?.writeText) await navigator.clipboard.writeText(text);
-      else {
-        // Fallback
-        const ta = document.createElement('textarea');
-        ta.value = text;
-        ta.style.position = 'fixed';
-        ta.style.left = '-1000px';
-        document.body.appendChild(ta);
-        ta.select();
-        document.execCommand('copy');
-        document.body.removeChild(ta);
-      }
-      setCtxMenu({ open: false, x: 0, y: 0 });
-    } catch (e) {
-      alert('Kopieren fehlgeschlagen: ' + (e?.message || String(e)));
-    }
-  }
+  // Refs for layout and virtualization
+  const parentRef = useRef(null); // scroll container for list
+  const layoutRef = useRef(null);
+  const dividerRef = useRef({ _resizing: false, _startY: 0, _startH: 0 } as any);
+  const colResize = useRef({ active: null as null | string, startX: 0, startW: 0 });
 
-  function ensureIds(arr) {
-    let id = nextId;
-    for (const e of arr) {
-      if (e._id == null) e._id = id++;
-    }
-    if (id !== nextId) setNextId(id);
-  }
-  function appendEntries(arr) {
-    ensureIds(arr);
-    try {
-      LoggingStore.addEvents(arr);
-    } catch {}
-    setEntries((prev) => prev.concat(arr));
-  }
-
+  // Compute filtered indices based on filters, time and MDC
   const filteredIdx = useMemo(() => {
-    const level = filter.level.trim().toUpperCase();
-    const logger = filter.logger.trim().toLowerCase();
-    const thread = (filter.thread ?? '').trim().toLowerCase();
-    const service = (filter.service ?? '').trim().toLowerCase();
-    const msgExpr = filter.message || '';
-    const out = [];
+    const out: number[] = [];
     for (let i = 0; i < entries.length; i++) {
       const e = entries[i];
-      // Zeit-Filter prüfen
-      try {
-        if (!TimeFilter.matchesTs(e?.timestamp)) continue;
-      } catch {}
+      if (!e) continue;
       if (stdFiltersEnabled) {
-        if (level && String(e.level || '').toUpperCase() !== level) continue;
-        if (
-          logger &&
-          !String(e.logger || '')
-            .toLowerCase()
-            .includes(logger)
-        )
-          continue;
-        if (
-          thread &&
-          !String(e.thread || '')
-            .toLowerCase()
-            .includes(thread)
-        )
-          continue;
-        if (
-          service &&
-          !String(e.service || '')
-            .toLowerCase()
-            .includes(service)
-        )
-          continue;
-        if (!msgMatches(e?.message, msgExpr)) continue;
+        if (filter.level) {
+          const lev = String(e.level || '').toUpperCase();
+          if (lev !== String(filter.level).toUpperCase()) continue;
+        }
+        if (filter.logger) {
+          const q = String(filter.logger || '').toLowerCase();
+          if (
+            !String(e.logger || '')
+              .toLowerCase()
+              .includes(q)
+          )
+            continue;
+        }
+        if (filter.thread) {
+          const q = String(filter.thread || '').toLowerCase();
+          if (
+            !String(e.thread || '')
+              .toLowerCase()
+              .includes(q)
+          )
+            continue;
+        }
+        if (filter.message) {
+          if (!msgMatches(e.message, filter.message)) continue;
+        }
       }
-      // MDC filter muss matchen
+      // Time filter and MDC filter
       try {
-        if (!DiagnosticContextFilter.matches(e?.mdc || {})) continue;
+        if (!TimeFilter.matchesTs(e.timestamp)) continue;
+      } catch {}
+      try {
+        if (!DiagnosticContextFilter.matches(e.mdc || {})) continue;
       } catch {}
       out.push(i);
     }
-    // Chronologisch sortieren (aufsteigend nach Zeitstempel)
-    out.sort((ia, ib) => compareByTimestampId(entries[ia], entries[ib]));
     return out;
-  }, [entries, filter, dcVersion, stdFiltersEnabled, timeVersion]);
+  }, [entries, stdFiltersEnabled, filter, dcVersion, timeVersion]);
 
-  const searchMatchIdx = useMemo(() => {
-    const s = search.trim();
-    if (!s) return [];
-    const out = [];
-    for (const idx of filteredIdx) {
-      const e = entries[idx];
-      if (msgMatches(e?.message, s)) out.push(idx);
-    }
-    return out;
-  }, [search, filteredIdx, entries]);
-
-  const markedIdx = useMemo(() => {
-    const out = [];
-    for (const idx of filteredIdx) if (entries[idx]?._mark) out.push(idx);
-    return out;
-  }, [entries, filteredIdx]);
-
-  useEffect(() => {
-    if (lastClicked.current == null && selected.size === 0 && filteredIdx.length > 0) {
-      const idx = filteredIdx[0];
-      setSelected(new Set([idx]));
-      lastClicked.current = idx;
-    }
-  }, [filteredIdx, selected]);
-
-  // Follow-Effekt: wenn aktiv, selektiere immer den letzten gefilterten Eintrag und scrolle dorthin
-  const parentRef = useRef(null);
-  const rowH = 36;
-
-  // Helper: ensure the virtual index is visible and not hidden behind the bottom details overlay
-  function getOverlayHeight() {
-    try {
-      const root = document.documentElement;
-      const detail = parseFloat(getComputedStyle(root).getPropertyValue('--detail-height')) || 0;
-      const divider = parseFloat(getComputedStyle(root).getPropertyValue('--divider-h')) || 0;
-      return detail + divider;
-    } catch (e) {
-      return 0;
-    }
-  }
-
-  function ensureVisibleByIndex(visIndex, behavior = 'auto') {
-    const el = parentRef.current;
-    if (!el || visIndex == null || visIndex < 0) return;
-
-    // Compute row positions (approximate; final check uses DOM)
-    const rowTop = visIndex * rowH;
-    const rowBottom = rowTop + rowH;
-
-    const overlayH = getOverlayHeight();
-    // Effective bottom of the visible area that should keep rows above the overlay
-    const viewTop = el.scrollTop;
-    const viewBottom = viewTop + Math.max(0, el.clientHeight - overlayH);
-
-    // If already visible above the overlay, nothing to do
-    if (rowTop >= viewTop && rowBottom <= viewBottom) return;
-
-    // Compute the real maximum scrollTop (accounts for padding-bottom used to reserve space for overlay)
-    const maxScrollTop = Math.max(0, (el.scrollHeight || 0) - el.clientHeight);
-
-    // Helper: check DOM position of the actual rendered row and nudge scroll if it's covered by the overlay
-    function adjustIfCoveredByOverlay(entryIdx) {
-      try {
-        const rowEl = document.querySelector(`li.row[data-idx=\"${entryIdx}\"]`);
-        if (!rowEl) return;
-        const rowRect = rowEl.getBoundingClientRect();
-        const containerRect = el.getBoundingClientRect();
-        const overlayTop = containerRect.bottom - overlayH;
-        if (rowRect.bottom > overlayTop) {
-          const delta = rowRect.bottom - overlayTop + 4; // small padding
-          const newTop = Math.min(maxScrollTop, Math.max(0, el.scrollTop + delta));
-          if (Math.abs(newTop - el.scrollTop) > 1) el.scrollTo({ top: newTop, behavior });
-        }
-      } catch (e) {
-        // ignore
-      }
-    }
-
-    // If target is the very last virtual index, directly scroll to the true max scrollTop.
-    try {
-      const lastVirtualIndex = Math.max(0, filteredIdx.length - 1);
-      if (visIndex >= lastVirtualIndex) {
-        // Prefer virtualizer to position the last item if available; fall back to maxScrollTop.
-        try {
-          if (virtualizer && typeof virtualizer.scrollToIndex === 'function') {
-            // Use auto to avoid getting stuck in a smooth animation that prevents nudging.
-            virtualizer.scrollToIndex(visIndex, { behavior: 'auto' });
-          } else {
-            el.scrollTo({ top: maxScrollTop, behavior: 'auto' });
-          }
-        } catch (e) {
-          // Fallback to direct scrollTop
-          el.scrollTo({ top: maxScrollTop, behavior: 'auto' });
-        }
-
-        // Retry adjust a couple times in case rendering/virtualizer/smooth scroll race occurs,
-        // include an immediate (0ms) attempt so we catch the DOM as soon as it's rendered.
-        const entryIdx = filteredIdx[visIndex];
-        const attempts = [0, 40, 120, 300];
-        for (const ms of attempts) {
-          setTimeout(() => adjustIfCoveredByOverlay(entryIdx), ms);
-        }
-        return;
-      }
-    } catch (e) {
-      // ignore and continue to virtualizer/manual handling
-    }
-
-    // Prefer virtualizer when it can do a simple scroll, but fall back to manual calculation
-    try {
-      if (virtualizer && typeof virtualizer.scrollToIndex === 'function') {
-        // If caller requested smooth but target is near the end, prefer auto to avoid being locked
-        // into an animated state where we cannot nudge the scroll position reliably.
-        const useBehavior = behavior === 'smooth' ? 'auto' : behavior;
-        virtualizer.scrollToIndex(visIndex, { behavior: useBehavior });
-        // small timeout to allow virtualizer to update scrollTop before we adjust for overlay
-        setTimeout(() => {
-          // If the DOM row is still covered, nudge scrollTop (with retries)
-          const entryIdx = filteredIdx[visIndex];
-          adjustIfCoveredByOverlay(entryIdx);
-          // second attempt shortly after
-          setTimeout(() => adjustIfCoveredByOverlay(entryIdx), 120);
-        }, 60);
-        return;
-      }
-    } catch (e) {
-      logger.warn('virtualizer.scrollToIndex failed', e);
-    }
-
-    // Manual: ensure row is within [viewTop, viewTop + clientHeight - overlayH]
-    if (rowTop < viewTop) {
-      // Scroll so top of row is visible (clamped to maxScrollTop)
-      const target = Math.min(maxScrollTop, Math.max(0, rowTop));
-      el.scrollTo({ top: target, behavior });
-      setTimeout(() => adjustIfCoveredByOverlay(filteredIdx[visIndex]), 60);
-    }
-    if (rowBottom > viewBottom) {
-      // Scroll so bottom of row is visible above the overlay (clamped to maxScrollTop)
-      const desiredTop = Math.max(0, rowBottom - Math.max(0, el.clientHeight - overlayH));
-      const newTop = Math.min(maxScrollTop, desiredTop);
-      el.scrollTo({ top: newTop, behavior });
-      setTimeout(() => adjustIfCoveredByOverlay(filteredIdx[visIndex]), 60);
-    }
-  }
-
-  useEffect(() => {
-    if (!follow) return;
-    if (!filteredIdx.length) return;
-    const last = filteredIdx[filteredIdx.length - 1];
-    const alreadyLast = selected.size === 1 && selected.has(last);
-    if (!alreadyLast) {
-      setSelected(new Set([last]));
-      lastClicked.current = last;
-    }
-    // Scroll an das Ende der Liste (letzter sichtbarer Index)
-    const visIndex = filteredIdx.length - 1;
-    try {
-      // Do immediate attempt and also schedule retries to survive virtualizer/smooth-scroll races
-      ensureVisibleByIndex(visIndex, followSmooth ? 'smooth' : 'auto');
-      // schedule retries
-      const entry = visIndex;
-      const retries = [30, 120, 300];
-      for (const t of retries) setTimeout(() => ensureVisibleByIndex(entry, 'auto'), t);
-    } catch (e) {
-      logger.warn('follow scroll failed', e);
-    }
-  }, [follow, filteredIdx, followSmooth]);
-
+  // Counts for toolbar
   const countTotal = entries.length;
   const countFiltered = filteredIdx.length;
   const countSelected = selected.size;
 
+  // Virtualized list setup
+  const rowHeight = 36;
   const virtualizer = useVirtualizer({
     count: filteredIdx.length,
     getScrollElement: () => parentRef.current,
-    estimateSize: () => rowH,
+    estimateSize: () => rowHeight,
     overscan: 10,
-  });
+  } as any);
   const virtualItems = virtualizer.getVirtualItems();
   const totalHeight = virtualizer.getTotalSize();
 
-  // Breite der nativen Scrollbar messen und als CSS-Variable setzen,
-  // damit das Overlay rechts Platz lässt (Scroll-Buttons bleiben sichtbar)
-  useEffect(() => {
-    function updateScrollbarVar() {
-      const el = parentRef.current;
-      if (!el) return;
-      const w = Math.max(0, Math.round((el.offsetWidth || 0) - (el.clientWidth || 0)));
-      document.documentElement.style.setProperty('--scrollbar-w', w + 'px');
-    }
-    updateScrollbarVar();
-    const onResize = () => updateScrollbarVar();
-    window.addEventListener('resize', onResize);
-    let ro = null;
-    if (window.ResizeObserver) {
-      ro = new ResizeObserver(() => updateScrollbarVar());
-      if (parentRef.current) ro.observe(parentRef.current);
-    }
-    return () => {
-      window.removeEventListener('resize', onResize);
-      if (ro) ro.disconnect();
-    };
-  }, [filteredIdx.length, totalHeight]);
+  function gotoListStart() {
+    if (!filteredIdx.length) return;
+    virtualizer.scrollToIndex(0, { align: 'start', behavior: followSmooth ? 'smooth' : 'auto' });
+  }
+  function gotoListEnd() {
+    if (!filteredIdx.length) return;
+    virtualizer.scrollToIndex(filteredIdx.length - 1, {
+      align: 'end',
+      behavior: followSmooth ? 'smooth' : 'auto',
+    });
+  }
 
-  function toggleSelectIndex(idx, extendRange, keepOthers) {
+  // Selection handling
+  function toggleSelectIndex(idx: number, shift: boolean, meta: boolean) {
     setSelected((prev) => {
-      const next = keepOthers || extendRange ? new Set(prev) : new Set();
-      const curPos = filteredIdx.indexOf(idx);
-      if (extendRange && lastClicked.current != null) {
-        const anchorPos = filteredIdx.indexOf(lastClicked.current);
-        if (anchorPos !== -1 && curPos !== -1) {
-          const a = Math.min(anchorPos, curPos);
-          const b = Math.max(anchorPos, curPos);
-          for (let i = a; i <= b; i++) next.add(filteredIdx[i]);
+      let next = new Set(prev);
+      if (shift && lastClicked.current != null) {
+        const a = filteredIdx.indexOf(lastClicked.current);
+        const b = filteredIdx.indexOf(idx);
+        if (a >= 0 && b >= 0) {
+          const [lo, hi] = a < b ? [a, b] : [b, a];
+          next = new Set(filteredIdx.slice(lo, hi + 1).map((i) => i));
         } else {
-          // Fallback: toggeln einzelner Eintrag
-          if (next.has(idx)) next.delete(idx);
-          else next.add(idx);
+          next = new Set([idx]);
         }
-      } else {
+      } else if (meta) {
         if (next.has(idx)) next.delete(idx);
         else next.add(idx);
+      } else {
+        next = new Set([idx]);
       }
       lastClicked.current = idx;
       return next;
     });
   }
 
-  function gotoSearchMatch(dir) {
-    const order = searchMatchIdx;
-    if (!order.length) return;
-    const current = [...selected][0] ?? -1;
-    const pos = order.indexOf(current);
-    const target =
-      current === -1
-        ? order[0]
-        : pos === -1
-          ? order[0]
-          : order[(pos + (dir > 0 ? 1 : order.length - 1)) % order.length];
-    setSelected(new Set([target]));
-    lastClicked.current = target;
-    const visIndex = filteredIdx.indexOf(target);
-    if (visIndex >= 0) ensureVisibleByIndex(visIndex, 'smooth');
-  }
-  function gotoMarked(dir) {
-    const order = markedIdx;
-    if (!order.length) return;
-    const current = [...selected][0] ?? -1;
-    const pos = order.indexOf(current);
-    const target =
-      current === -1
-        ? order[0]
-        : pos === -1
-          ? order[0]
-          : order[(pos + (dir > 0 ? 1 : order.length - 1)) % order.length];
-    setSelected(new Set([target]));
-    lastClicked.current = target;
-    const visIndex = filteredIdx.indexOf(target);
-    if (visIndex >= 0) ensureVisibleByIndex(visIndex, 'smooth');
-  }
+  const selectedOneIdx = useMemo(() => {
+    if (selected.size === 1) return Array.from(selected)[0];
+    if (selected.size > 1) return lastClicked.current ?? Array.from(selected).slice(-1)[0];
+    return null;
+  }, [selected]);
+  const selectedEntry = useMemo(() => {
+    return selectedOneIdx != null ? entries[selectedOneIdx] || null : null;
+  }, [selectedOneIdx, entries]);
 
-  // NEU: Tastaturnavigation in der Liste
-  function gotoRelative(delta) {
-    if (!filteredIdx.length) return;
-    const current = [...selected][0];
-    let pos = filteredIdx.indexOf(current);
-    if (pos === -1) pos = 0;
-    let nextPos = Math.max(0, Math.min(filteredIdx.length - 1, pos + delta));
-    const target = filteredIdx[nextPos];
-    setSelected(new Set([target]));
-    lastClicked.current = target;
-    // Use the helper to scroll and account for the overlay
-    ensureVisibleByIndex(nextPos, followSmooth ? 'smooth' : 'auto');
-  }
-
-  // NEU: Zum Anfang/Ende springen
-  function gotoListStart() {
-    if (!filteredIdx.length) return;
-    const first = filteredIdx[0];
-    setSelected(new Set([first]));
-    lastClicked.current = first;
-    ensureVisibleByIndex(0, 'smooth');
-  }
-  function gotoListEnd() {
-    if (!filteredIdx.length) return;
-    const last = filteredIdx[filteredIdx.length - 1];
-    setSelected(new Set([last]));
-    lastClicked.current = last;
-    // Use multiple attempts to ensure last entry is not hidden behind overlay
-    ensureVisibleByIndex(filteredIdx.length - 1, 'smooth');
-    const retries = [30, 120, 300];
-    for (const t of retries)
-      setTimeout(() => ensureVisibleByIndex(filteredIdx.length - 1, 'auto'), t);
-  }
-
-  const selectedOneIdx = useMemo(() => (selected.size === 1 ? [...selected][0] : null), [selected]);
-  const selectedEntry = selectedOneIdx != null ? entries[selectedOneIdx] : null;
-
-  // NEU: Wenn sich die Liste (entries/filteredIdx) ändert, stelle sicher, dass die Auswahl sichtbar bleibt
-  useEffect(() => {
-    const el = parentRef.current;
-    if (!el) return;
-    if (selectedOneIdx == null) return;
-    const visIndex = filteredIdx.indexOf(selectedOneIdx);
-    if (visIndex < 0) return; // selektierter Eintrag ist gerade nicht in der gefilterten Liste
-    const rowTop = visIndex * rowH;
-    const rowBottom = rowTop + rowH;
-    const viewTop = el.scrollTop;
-    const viewBottom = viewTop + el.clientHeight;
-    // Immer scrollen, wenn die Auswahl außerhalb des sichtbaren Bereichs ist
-    if (rowTop < viewTop || rowBottom > viewBottom) {
-      // Use helper that respects the overlay
-      ensureVisibleByIndex(visIndex, followSmooth ? 'smooth' : 'auto');
-    }
-  }, [entries.length, filteredIdx.length, selectedOneIdx, followSmooth, virtualizer]);
-
-  // sortierte MDC-Paare für die Detailansicht
   const mdcPairs = useMemo(() => {
-    const m = selectedEntry && selectedEntry.mdc ? selectedEntry.mdc : {};
-    // Only exclude logger/thread from MDC details, keep other keys
-    const banned = new Set(['logger', 'thread']);
-
-    // Map der Original-Keys (inkl. Original-Value), plus Lowercase-Lookup für Trace-Erkennung
-    const entries = Object.entries(m).filter(([k]) => !banned.has(String(k)));
-    const lowerMap = new Map(entries.map(([k, v]) => [String(k).toLowerCase(), v]));
-
-    // TraceID konsolidieren: verschiedene Varianten case-insensitiv erkennen
-    const traceLowerCandidates = [
-      'traceid',
-      'trace_id',
-      'trace.id',
-      'trace-id',
-      'x-trace-id',
-      'x_trace_id',
-      'x.trace.id',
-      'trace',
-    ];
-    let bestTrace = '';
-    for (const lk of traceLowerCandidates) {
-      const v = lowerMap.get(lk);
-      if (v != null && String(v).trim()) {
-        bestTrace = String(v).trim();
-        break;
-      }
-    }
-
-    // Alle MDC-Paare, aber alle Trace-Varianten (case-insensitiv) entfernen
-    const isTraceKeyLower = (lk) => traceLowerCandidates.includes(lk);
-    const filtered = entries
-      .filter(([k]) => !isTraceKeyLower(String(k).toLowerCase()))
-      .map(([k, v]) => [String(k), String(v)]);
-
-    // Einen Eintrag "TraceID" hinzufügen, falls vorhanden
-    if (bestTrace) filtered.push(['TraceID', bestTrace]);
-
-    filtered.sort((a, b) => a[0].localeCompare(b[0]) || a[1].localeCompare(b[1]));
-    return filtered;
+    const e = selectedEntry as any;
+    if (!e || !e.mdc || typeof e.mdc !== 'object') return [] as [string, string][];
+    return Object.entries(e.mdc)
+      .map(([k, v]) => [String(k), String(v ?? '')] as [string, string])
+      .sort((a, b) => a[0].localeCompare(b[0]) || a[1].localeCompare(b[1]));
   }, [selectedEntry]);
 
-  function addMdcToFilter(k, v) {
+  // Marked rows and navigation
+  const markedIdx = useMemo(() => {
+    const out: number[] = [];
+    for (let vi = 0; vi < filteredIdx.length; vi++) {
+      const idx = filteredIdx[vi];
+      if (entries[idx]?._mark) out.push(vi);
+    }
+    return out;
+  }, [filteredIdx, entries]);
+
+  const searchMatchIdx = useMemo(() => {
+    const s = String(search || '').trim();
+    if (!s) return [] as number[];
+    const out: number[] = [];
+    for (let vi = 0; vi < filteredIdx.length; vi++) {
+      const idx = filteredIdx[vi];
+      const e = entries[idx];
+      if (msgMatches(e?.message, s)) out.push(vi);
+    }
+    return out;
+  }, [search, filteredIdx, entries]);
+
+  function gotoMarked(dir: number) {
+    if (!markedIdx.length) return;
+    const curVi = selectedOneIdx != null ? filteredIdx.indexOf(selectedOneIdx) : -1;
+    let targetVi: number;
+    if (dir > 0) {
+      targetVi = markedIdx.find((vi) => vi > curVi) ?? markedIdx[0];
+    } else {
+      let prev = -1;
+      for (const vi of markedIdx) if (vi < curVi) prev = vi;
+      targetVi = prev >= 0 ? prev : markedIdx[markedIdx.length - 1];
+    }
+    const globalIdx = filteredIdx[targetVi];
+    setSelected(new Set([globalIdx]));
+    lastClicked.current = globalIdx as any;
+    virtualizer.scrollToIndex(targetVi, {
+      align: 'center',
+      behavior: followSmooth ? 'smooth' : 'auto',
+    });
+  }
+
+  function gotoSearchMatch(dir: number) {
+    if (!searchMatchIdx.length) return;
+    const curVi = selectedOneIdx != null ? filteredIdx.indexOf(selectedOneIdx) : -1;
+    let targetVi: number;
+    if (dir > 0) {
+      targetVi = searchMatchIdx.find((vi) => vi > curVi) ?? searchMatchIdx[0];
+    } else {
+      let prev = -1;
+      for (const vi of searchMatchIdx) if (vi < curVi) prev = vi;
+      targetVi = prev >= 0 ? prev : searchMatchIdx[searchMatchIdx.length - 1];
+    }
+    const globalIdx = filteredIdx[targetVi];
+    setSelected(new Set([globalIdx]));
+    lastClicked.current = globalIdx as any;
+    virtualizer.scrollToIndex(targetVi, {
+      align: 'center',
+      behavior: followSmooth ? 'smooth' : 'auto',
+    });
+  }
+
+  // Append entries helper (assigns _id and merges + sorts)
+  function appendEntries(newEntries: any[]) {
+    if (!Array.isArray(newEntries) || newEntries.length === 0) return;
+    const toAdd = newEntries.map((e, i) => ({ ...e, _id: nextId + i }));
     try {
-      const key = k === 'TraceID' ? 'traceId' : k; // konsolidierten Key auf normales traceId mappen
-      DiagnosticContextFilter.addMdcEntry(key, v);
+      // Attach MDC fields
+      LoggingStore.addEvents(toAdd);
+    } catch {}
+    const merged = [...entries, ...toAdd].sort(compareByTimestampId);
+    setEntries(merged);
+    setNextId(nextId + toAdd.length);
+  }
+
+  // Follow mode: auto-select and scroll to last entry when new entries arrive
+  useEffect(() => {
+    if (!follow) return;
+    if (!filteredIdx.length) return;
+    const lastGlobalIdx = filteredIdx[filteredIdx.length - 1];
+    setSelected(new Set([lastGlobalIdx]));
+    // Defer to ensure virtualizer has updated measurements
+    setTimeout(() => gotoListEnd(), 0);
+  }, [entries, follow, stdFiltersEnabled, filter, dcVersion, timeVersion]);
+
+  // MDC helpers
+  function addMdcToFilter(k: string, v: string) {
+    try {
+      DiagnosticContextFilter.addMdcEntry(k, v ?? '');
       DiagnosticContextFilter.setEnabled(true);
     } catch {}
+  }
+
+  const [showMdcModal, setShowMdcModal] = useState(false);
+  const [mdcAgg, setMdcAgg] = useState(
+    [] as { key: string; values: { val: string; count: number }[] }[]
+  );
+  const [mdcSelKey, setMdcSelKey] = useState('');
+  const [mdcSelVals, setMdcSelVals] = useState(new Set<string>());
+
+  function openMdcFromSelection() {
+    const byKey: Map<string, Map<string, number>> = new Map();
+    for (const idx of selected) {
+      const e = entries[idx] as any;
+      const m = e && e.mdc;
+      if (!m || typeof m !== 'object') continue;
+      for (const [k, v] of Object.entries(m)) {
+        const key = String(k);
+        const val = String(v ?? '');
+        if (!byKey.has(key)) byKey.set(key, new Map());
+        const mm = byKey.get(key)!;
+        mm.set(val, (mm.get(val) || 0) + 1);
+      }
+    }
+    const agg = Array.from(byKey.entries()).map(([key, mm]) => ({
+      key,
+      values: Array.from(mm.entries())
+        .map(([val, count]) => ({ val, count }))
+        .sort((a, b) => b.count - a.count || a.val.localeCompare(b.val)),
+    }));
+    agg.sort((a, b) => a.key.localeCompare(b.key));
+    setMdcAgg(agg);
+    setMdcSelKey(agg[0]?.key || '');
+    setMdcSelVals(new Set());
+    setShowMdcModal(true);
+  }
+
+  function addSelectedMdcToFilter(opts?: { presentOnly?: boolean; allValues?: boolean }) {
+    const key = mdcSelKey;
+    if (!key) return;
+    const entry = mdcAgg.find((x) => x.key === key);
+    if (!entry) return;
+    if (opts?.presentOnly) {
+      DiagnosticContextFilter.addMdcEntry(key, '');
+    } else if (opts?.allValues) {
+      for (const { val } of entry.values) DiagnosticContextFilter.addMdcEntry(key, val);
+    } else {
+      for (const val of Array.from(mdcSelVals)) DiagnosticContextFilter.addMdcEntry(key, val);
+    }
+    DiagnosticContextFilter.setEnabled(true);
+  }
+
+  function removeSelectedMdcFromFilter() {
+    const key = mdcSelKey;
+    if (!key) return;
+    for (const val of Array.from(mdcSelVals)) DiagnosticContextFilter.removeMdcEntry(key, val);
+  }
+
+  // Popup: Fenster-Titel setzen
+  const [showTitleDlg, setShowTitleDlg] = useState(false);
+  const [titleInput, setTitleInput] = useState('Lumberjack');
+  async function openSetWindowTitleDialog() {
+    try {
+      const res = await window.api?.windowTitleGet?.();
+      const t =
+        res?.ok && typeof res.title === 'string' && res.title.trim()
+          ? String(res.title)
+          : 'Lumberjack';
+      setTitleInput(t);
+    } catch {
+      setTitleInput('Lumberjack');
+    }
+    setShowTitleDlg(true);
+  }
+  async function applySetWindowTitle() {
+    const t = String(titleInput || '').trim();
+    if (!t) {
+      alert('Bitte einen Fenstertitel eingeben');
+      return;
+    }
+    try {
+      await window.api?.windowTitleSet?.(t);
+      setShowTitleDlg(false);
+    } catch (e) {
+      alert('Speichern fehlgeschlagen: ' + (e?.message || String(e)));
+    }
   }
 
   // Initial Settings laden (inkl. CSS-Variablen und Historien)
@@ -798,7 +532,9 @@ export default function App() {
       try {
         // Guard against missing window.api
         if (!window.api?.settingsGet) {
-          logger.error('window.api.settingsGet is not available. Preload script may have failed to load.');
+          logger.error(
+            'window.api.settingsGet is not available. Preload script may have failed to load.'
+          );
           return;
         }
         const result = await window.api.settingsGet();
@@ -821,6 +557,7 @@ export default function App() {
         }
         if (typeof r.follow === 'boolean') setFollow(!!r.follow);
         if (typeof r.followSmooth === 'boolean') setFollowSmooth(!!r.followSmooth);
+        // Fenster-Titel ist nur zur Laufzeit; keine Persistenz mehr
 
         // CSS Vars
         const root = document.documentElement;
@@ -1145,6 +882,70 @@ export default function App() {
     return () => mgr.detach();
   }, []);
 
+  // Kontextmenü (Zeilenmenü) – State und Helfer
+  const [ctxMenu, setCtxMenu] = useState({ open: false, x: 0, y: 0, idx: null as any });
+  const ctxRef = useRef(null);
+  const colorChoices = [
+    '#ffb3ba',
+    '#ffdfba',
+    '#ffffba',
+    '#baffc9',
+    '#bae1ff',
+    '#ffd1dc',
+    '#caffbf',
+    '#a0c4ff',
+    '#bdb2ff',
+    '#ffc6ff',
+  ];
+  function openContextMenu(ev, idx: number) {
+    ev.preventDefault();
+    // Wenn Eintrag noch nicht selektiert ist, selektiere ihn
+    setSelected((prev) => (prev.has(idx) ? prev : new Set([idx])));
+    setCtxMenu({ open: true, x: Math.round(ev.clientX), y: Math.round(ev.clientY), idx });
+  }
+  function applyMarkColor(color?: string) {
+    setEntries((prev) => {
+      if (!prev || selected.size === 0) return prev;
+      const out = prev.slice();
+      for (const i of selected) {
+        const e = out[i];
+        if (!e) continue;
+        if (color) out[i] = { ...e, _mark: color };
+        else {
+          const { _mark, ...rest } = (e as any) || {};
+          out[i] = { ...rest } as any;
+        }
+      }
+      return out;
+    });
+    setCtxMenu({ open: false, x: 0, y: 0, idx: null });
+  }
+  function adoptTraceIds() {
+    try {
+      const vals = new Set<string>();
+      for (const i of selected) {
+        const e: any = entries[i] || {};
+        const v = e?.traceId || e?.TraceID || e?.mdc?.traceId || e?.mdc?.TraceID;
+        if (v) vals.add(String(v));
+      }
+      if (vals.size > 0) {
+        for (const v of Array.from(vals)) DiagnosticContextFilter.addMdcEntry('traceId', v);
+        DiagnosticContextFilter.setEnabled(true);
+      }
+    } catch {}
+    setCtxMenu({ open: false, x: 0, y: 0, idx: null });
+  }
+  function copyTsMsg() {
+    try {
+      const idx =
+        selectedOneIdx != null ? selectedOneIdx : selected.size ? Array.from(selected)[0] : null;
+      const e: any = idx != null ? entries[idx] : null;
+      const text = e ? `${fmtTimestamp(e.timestamp)} ${e.message ?? ''}` : '';
+      navigator?.clipboard?.writeText?.(text);
+    } catch {}
+    setCtxMenu({ open: false, x: 0, y: 0, idx: null });
+  }
+
   // Kontextmenü außerhalb schließen (Zeilenmenü)
   useEffect(() => {
     function onDocClick(e) {
@@ -1152,7 +953,7 @@ export default function App() {
       const el = ctxRef.current;
       const path = typeof e.composedPath === 'function' ? e.composedPath() : [];
       if (el && (el === e.target || el.contains(e.target) || (path && path.includes(el)))) return;
-      setCtxMenu({ open: false, x: 0, y: 0 });
+      setCtxMenu({ open: false, x: 0, y: 0, idx: null });
     }
     window.addEventListener('mousedown', onDocClick, { capture: true, passive: true });
     return () => window.removeEventListener('mousedown', onDocClick, { capture: true });
@@ -1217,6 +1018,10 @@ export default function App() {
         }
         case 'tcp-stop': {
           window.api.tcpStop();
+          break;
+        }
+        case 'window-title': {
+          openSetWindowTitleDialog();
           break;
         }
       }
@@ -1754,6 +1559,7 @@ export default function App() {
                         <option value="dark">Dunkel</option>
                       </select>
                     </div>
+                    {/* Fenster-Titel wird nicht mehr über Einstellungen geändert, nur via Kontextmenü */}
                     <div className="kv">
                       <span>Akzent</span>
                       <div>
@@ -2460,151 +2266,26 @@ export default function App() {
             })()}
             onApply={(f) => {
               setTimeForm(f);
+              // Lokalen TimeFilter-Status aktualisieren
               try {
-                const ff = f;
-
-                // Helpers
-                const getFirstTs = () => {
-                  let best = Number.POSITIVE_INFINITY;
-                  for (const idx of filteredIdx) {
-                    const e = entries[idx];
-                    const ms = e?.timestamp != null ? Number(new Date(e.timestamp)) : NaN;
-                    if (!isNaN(ms) && ms < best) best = ms;
-                  }
-                  return best !== Number.POSITIVE_INFINITY ? new Date(best) : null;
-                };
-                const getLastTs = () => {
-                  let best = Number.NEGATIVE_INFINITY;
-                  for (const idx of filteredIdx) {
-                    const e = entries[idx];
-                    const ms = e?.timestamp != null ? Number(new Date(e.timestamp)) : NaN;
-                    if (!isNaN(ms) && ms > best) best = ms;
-                  }
-                  return best !== Number.NEGATIVE_INFINITY ? new Date(best) : null;
-                };
-                const isTokenFirst = (s) => /^(first|ersten|erster)$/i.test(String(s || '').trim());
-                const isTokenLast = (s) =>
-                  /^(last|letzen|letzten|letzter)$/i.test(String(s || '').trim());
-
-                const formatIso = (d) => {
-                  if (!d) return null;
-                  if ((ff.tzMode || 'utc') === 'local') {
-                    // local with offset ±HH:MM
-                    const pad = (n, w = 2) => String(Math.floor(Math.abs(n))).padStart(w, '0');
-                    const offMin = -d.getTimezoneOffset(); // minutes east of UTC
-                    const sign = offMin >= 0 ? '+' : '-';
-                    const hh = pad(offMin / 60);
-                    const mm = pad(offMin % 60);
-                    const yyyy = d.getFullYear();
-                    const MM = pad(d.getMonth() + 1);
-                    const DD = pad(d.getDate());
-                    const HH = pad(d.getHours());
-                    const mi = pad(d.getMinutes());
-                    const ss = pad(d.getSeconds());
-                    const ms = String(d.getMilliseconds()).padStart(3, '0');
-                    return `${yyyy}-${MM}-${DD}T${HH}:${mi}:${ss}.${ms}${sign}${hh}:${mm}`;
-                  }
-                  // UTC Z
-                  return new Date(d.getTime()).toISOString();
-                };
-
-                // Apply local TimeFilter (store expects Date/ISO; we pass Date so it computes ISO internally)
-                if (ff.mode === 'relative') {
-                  TimeFilter.setRelative(String(ff.duration || '').trim());
+                const mode = f?.mode || 'relative';
+                if (mode === 'relative') {
+                  TimeFilter.setRelative(String(f?.duration || '').trim());
                 } else {
-                  const resolveDateExclusive = (s, kind) => {
+                  const toDate = (s) => {
                     const t = String(s || '').trim();
                     if (!t) return null;
-                    if (kind === 'from' && isTokenLast(t)) {
-                      const d = getLastTs();
-                      return d ? new Date(d.getTime() + 1) : null;
-                    }
-                    if (kind === 'to' && isTokenFirst(t)) {
-                      const d = getFirstTs();
-                      return d ? new Date(Math.max(0, d.getTime() - 1)) : null;
-                    }
                     const d = new Date(t);
                     return isNaN(d.getTime()) ? null : d;
                   };
-                  const fromD = resolveDateExclusive(ff.from, 'from');
-                  const toD = resolveDateExclusive(ff.to, 'to');
-                  TimeFilter.setAbsolute(fromD, toD);
+                  TimeFilter.setAbsolute(toDate(f?.from), toDate(f?.to));
                 }
-                TimeFilter.setEnabled(true);
-
-                withBusy(async () => {
-                  try {
-                    const opts = {};
-                    if (ff.mode === 'relative') {
-                      const dur = String(ff.duration || '').trim();
-                      if (dur) opts['duration'] = dur;
-                    } else {
-                      const resolveIsoExclusive = (s, kind) => {
-                        const t = String(s || '').trim();
-                        if (!t) return null;
-                        if (kind === 'from' && isTokenLast(t)) {
-                          const d = getLastTs();
-                          return d ? formatIso(new Date(d.getTime() + 1)) : null;
-                        }
-                        if (kind === 'to' && isTokenFirst(t)) {
-                          const d = getFirstTs();
-                          return d ? formatIso(new Date(Math.max(0, d.getTime() - 1))) : null;
-                        }
-                        const d = new Date(t);
-                        return isNaN(d.getTime()) ? null : formatIso(d);
-                      };
-                      const fromIso = resolveIsoExclusive(ff.from, 'from');
-                      const toIsoV = resolveIsoExclusive(ff.to, 'to');
-                      if (fromIso) opts['from'] = fromIso;
-                      if (toIsoV) opts['to'] = toIsoV;
-                    }
-                    const app = String(ff.application_name || '').trim();
-                    const lg = String(ff.logger || '').trim();
-                    const lvl = String(ff.level || '').trim();
-                    const env = String(ff.environment || ff.enviornment || '').trim();
-                    if (app) opts['application_name'] = app;
-                    if (lg) opts['logger'] = lg;
-                    if (lvl) opts['level'] = lvl;
-                    if (env) opts['environment'] = env;
-
-                    const res = await window.api.elasticSearch?.(opts);
-                    if (!res || !res.ok) throw new Error(res?.error || 'Elasticsearch-Fehler');
-                    const newEntries = Array.isArray(res.entries) ? res.entries : [];
-
-                    if ((ff.loadMode || 'append') === 'replace') {
-                      setEntries([]);
-                      setSelected(new Set());
-                      setNextId(1);
-                      try {
-                        LoggingStore.reset();
-                      } catch {}
-                      if (newEntries.length) setTimeout(() => appendEntries(newEntries), 0);
-                    } else {
-                      if (newEntries.length) appendEntries(newEntries);
-                    }
-                  } catch (e) {
-                    alert('Elastic-Suche fehlgeschlagen: ' + (e?.message || String(e)));
-                  }
-                });
-              } finally {
-                setShowTimeDialog(false);
-              }
+                TimeFilter.setEnabled(!!f?.enabled);
+              } catch {}
+              setShowTimeDialog(false);
             }}
             onClear={() => {
-              TimeFilter.reset();
-              setTimeForm({
-                enabled: true,
-                mode: 'relative',
-                duration: '15m',
-                from: '',
-                to: '',
-                application_name: '',
-                logger: '',
-                level: '',
-                environment: '',
-                loadMode: 'append',
-              });
-              setShowTimeDialog(false);
+              clearTimeFilter();
             }}
             onClose={() => setShowTimeDialog(false)}
           />
@@ -2651,6 +2332,30 @@ export default function App() {
           </div>
           <div className="item" onClick={openMdcFromSelection}>
             MDC aus Auswahl…
+          </div>
+          {/* Entfernt: Fenster-Titel setzen aus Kontextmenü */}
+        </div>
+      )}
+
+      {/* Titel-Dialog */}
+      {showTitleDlg && (
+        <div className="modal-backdrop" onClick={() => setShowTitleDlg(false)}>
+          <div className="modal" onClick={(e) => e.stopPropagation()}>
+            <h3>Fenster-Titel setzen</h3>
+            <div className="kv full">
+              <span>Titel</span>
+              <input
+                type="text"
+                value={titleInput}
+                onChange={(e) => setTitleInput(e.currentTarget.value)}
+                placeholder="Lumberjack"
+                autoFocus
+              />
+            </div>
+            <div className="modal-actions">
+              <button onClick={() => setShowTitleDlg(false)}>Abbrechen</button>
+              <button onClick={applySetWindowTitle}>Übernehmen</button>
+            </div>
           </div>
         </div>
       )}

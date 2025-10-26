@@ -16,7 +16,8 @@ import type {
   HttpPollResult,
   Result,
   Settings,
-} from './types/ipc';
+  WindowTitleResult,
+} from './src/types/ipc';
 
 /**
  * Secure API exposed to renderer via contextBridge
@@ -27,6 +28,11 @@ const api: ElectronAPI = {
 
   settingsSet: (patch: Partial<Settings>): Promise<SettingsResult> =>
     ipcRenderer.invoke('settings:set', patch),
+
+  // Window title (session) operations
+  windowTitleGet: (): Promise<WindowTitleResult> => ipcRenderer.invoke('windowTitle:get'),
+  windowTitleSet: (title: string): Promise<Result<void>> =>
+    ipcRenderer.invoke('windowTitle:set', title),
 
   // Dialog operations
   openFiles: (): Promise<string[]> => ipcRenderer.invoke('dialog:openFiles'),
@@ -50,8 +56,7 @@ const api: ElectronAPI = {
   },
 
   // HTTP operations
-  httpLoadOnce: (url: string): Promise<ParseResult> =>
-    ipcRenderer.invoke('http:loadOnce', url),
+  httpLoadOnce: (url: string): Promise<ParseResult> => ipcRenderer.invoke('http:loadOnce', url),
 
   httpStartPoll: (options: { url: string; intervalMs: number }): Promise<HttpPollResult> =>
     ipcRenderer.invoke('http:startPoll', options),

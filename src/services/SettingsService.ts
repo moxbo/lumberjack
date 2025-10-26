@@ -77,10 +77,12 @@ export class SettingsService {
       }
 
       const raw = await fs.promises.readFile(this.settingsPath, 'utf8');
-      const parsed = JSON.parse(raw) as Partial<Settings>;
-      
+      const parsed = JSON.parse(raw) as Partial<Settings> & Record<string, unknown>;
+      // Entferne veraltete Schlüssel, die nicht mehr unterstützt werden
+      delete (parsed as any).windowTitle;
+
       // Merge with defaults to ensure all required fields exist
-      this.settings = { ...DEFAULT_SETTINGS, ...parsed };
+      this.settings = { ...DEFAULT_SETTINGS, ...parsed } as Settings;
       this.loaded = true;
       log.info('Settings loaded successfully from', this.settingsPath);
     } catch (err) {
@@ -101,8 +103,10 @@ export class SettingsService {
       }
 
       const raw = fs.readFileSync(this.settingsPath, 'utf8');
-      const parsed = JSON.parse(raw) as Partial<Settings>;
-      this.settings = { ...DEFAULT_SETTINGS, ...parsed };
+      const parsed = JSON.parse(raw) as Partial<Settings> & Record<string, unknown>;
+      // Entferne veraltete Schlüssel
+      delete (parsed as any).windowTitle;
+      this.settings = { ...DEFAULT_SETTINGS, ...parsed } as Settings;
       this.loaded = true;
     } catch (err) {
       log.error('Error loading settings sync:', err instanceof Error ? err.message : String(err));
@@ -117,10 +121,10 @@ export class SettingsService {
     try {
       const json = JSON.stringify(this.settings, null, 2);
       const dir = path.dirname(this.settingsPath);
-      
+
       await fs.promises.mkdir(dir, { recursive: true });
       await fs.promises.writeFile(this.settingsPath, json, 'utf8');
-      
+
       log.info('Settings saved successfully');
       return true;
     } catch (err) {
@@ -136,10 +140,10 @@ export class SettingsService {
     try {
       const json = JSON.stringify(this.settings, null, 2);
       const dir = path.dirname(this.settingsPath);
-      
+
       fs.mkdirSync(dir, { recursive: true });
       fs.writeFileSync(this.settingsPath, json, 'utf8');
-      
+
       log.info('Settings saved successfully (sync)');
       return true;
     } catch (err) {
@@ -166,9 +170,14 @@ export class SettingsService {
       this.loadSync();
     }
 
+    // Entferne veraltete Schlüssel aus Patches
+    try {
+      delete (patch as any).windowTitle;
+    } catch {}
+
     // Merge patch into current settings
-    this.settings = { ...this.settings, ...patch };
-    
+    this.settings = { ...this.settings, ...patch } as Settings;
+
     return this.get();
   }
 
@@ -180,11 +189,11 @@ export class SettingsService {
     if (settings.logMaxBytes !== undefined && settings.logMaxBytes < 0) {
       return { success: false, error: 'logMaxBytes must be >= 0' };
     }
-    
+
     if (settings.logMaxBackups !== undefined && settings.logMaxBackups < 0) {
       return { success: false, error: 'logMaxBackups must be >= 0' };
     }
-    
+
     if (settings.tcpPort !== undefined && (settings.tcpPort < 1 || settings.tcpPort > 65535)) {
       return { success: false, error: 'tcpPort must be between 1 and 65535' };
     }

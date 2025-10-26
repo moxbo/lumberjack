@@ -64,6 +64,13 @@ export interface SettingsResult {
   error?: string;
 }
 
+// Window title result (session-scoped)
+export interface WindowTitleResult {
+  ok: boolean;
+  title?: string;
+  error?: string;
+}
+
 /**
  * Log parsing result
  */
@@ -79,6 +86,8 @@ export interface ParseResult {
 export interface TcpStatus {
   ok: boolean;
   message: string;
+  running?: boolean;
+  port?: number;
 }
 
 /**
@@ -115,7 +124,8 @@ export type MenuCommand =
   | { type: 'http-stop-poll' }
   | { type: 'tcp-configure' }
   | { type: 'tcp-start' }
-  | { type: 'tcp-stop' };
+  | { type: 'tcp-stop' }
+  | { type: 'window-title' };
 
 /**
  * Dropped file structure from renderer
@@ -133,6 +143,10 @@ export interface ElectronAPI {
   // Settings
   settingsGet: () => Promise<SettingsResult>;
   settingsSet: (patch: Partial<Settings>) => Promise<SettingsResult>;
+
+  // Window title (session)
+  windowTitleGet: () => Promise<WindowTitleResult>;
+  windowTitleSet: (title: string) => Promise<Result<void>>;
 
   // Dialogs
   openFiles: () => Promise<string[]>;

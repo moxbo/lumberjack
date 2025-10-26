@@ -6,6 +6,9 @@ var api = {
   // Settings operations
   settingsGet: () => import_electron.ipcRenderer.invoke("settings:get"),
   settingsSet: (patch) => import_electron.ipcRenderer.invoke("settings:set", patch),
+  // Window title (session) operations
+  windowTitleGet: () => import_electron.ipcRenderer.invoke("windowTitle:get"),
+  windowTitleSet: (title) => import_electron.ipcRenderer.invoke("windowTitle:set", title),
   // Dialog operations
   openFiles: () => import_electron.ipcRenderer.invoke("dialog:openFiles"),
   chooseLogFile: () => import_electron.ipcRenderer.invoke("dialog:chooseLogFile"),

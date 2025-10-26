@@ -56,6 +56,48 @@ function getParsers(): typeof import('./parsers.cjs') {
 let mainWindow: BrowserWindow | null = null;
 let iconPlay: NativeImage | null = null;
 let iconStop: NativeImage | null = null;
+// Track all windows for optional management
+const windows: Set<BrowserWindow> = new Set();
+
+// Titel-Handling: Basis und dynamischer TCP-Suffix
+// Laufzeit-Override des Fenstertitels (nur für aktuelle Ausführung)
+let runtimeTitleOverride: string | null = null;
+function setRuntimeTitleOverride(title: string | null): void {
+  const t = (title ?? '').trim();
+  runtimeTitleOverride = t ? t : null;
+  applyWindowTitles();
+}
+function getRuntimeTitleOverride(): string | null {
+  return runtimeTitleOverride;
+}
+function getDefaultBaseTitle(): string {
+  return 'Lumberjack';
+}
+
+function getPrimaryBaseTitle(): string {
+  const t = getRuntimeTitleOverride();
+  return (t && t.trim()) || getDefaultBaseTitle();
+}
+
+function applyWindowTitles(): void {
+  const tcp = networkService.getTcpStatus();
+  for (const w of windows) {
+    try {
+      if (w.isDestroyed()) continue;
+      const isPrimary = w === mainWindow;
+      const base = isPrimary ? getPrimaryBaseTitle() : getDefaultBaseTitle();
+      const title = tcp.running && tcp.port ? `${base} — TCP:${tcp.port}` : base;
+      w.setTitle(title);
+    } catch {}
+  }
+}
+// Exponiere für andere Module (ipcHandlers)
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+(global as any).__applyWindowTitles = applyWindowTitles;
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+(global as any).__setRuntimeTitleOverride = setRuntimeTitleOverride;
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+(global as any).__getRuntimeTitleOverride = getRuntimeTitleOverride;
 
 /**
  * Buffer for logs when renderer is loading or window is not ready
@@ -251,6 +293,16 @@ setImmediate(() => {
 // Register IPC handlers
 registerIpcHandlers(settingsService, networkService, getParsers, getAdmZip);
 
+// Nach Registrierung: TCP Start/Stop abfangen, um Titel zu aktualisieren
+try {
+  const { ipcMain } = require('electron');
+  ipcMain.on('tcp:status', () => {
+    // Vorsicht: Dieser Kanal wird per event.reply gesendet; hier nur als Fallback
+    applyWindowTitles();
+    updateMenu();
+  });
+} catch {}
+
 // Helper: send appended logs to renderer
 function sendAppend(entries: LogEntry[]): void {
   try {
@@ -366,6 +418,12 @@ function buildMenu(): void {
       label: 'Datei',
       submenu: [
         {
+          label: 'Neues Fenster',
+          accelerator: 'CmdOrCtrl+N',
+          click: () => createWindow({ makePrimary: false }),
+        },
+        { type: 'separator' as const },
+        {
           label: 'Öffnen…',
           accelerator: 'CmdOrCtrl+O',
           click: () => sendMenuCmd({ type: 'open-files' }),
@@ -375,8 +433,13 @@ function buildMenu(): void {
           accelerator: 'CmdOrCtrl+,',
           click: () => sendMenuCmd({ type: 'open-settings' }),
         },
+        // Neuer Menüpunkt: Fenstertitel setzen wie bei "Neues Fenster"
+        {
+          label: 'Fenster-Titel setzen…',
+          click: () => sendMenuCmd({ type: 'window-title' }),
+        },
         { type: 'separator' as const },
-        isMac ? { role: 'close' as const } : { role: 'quit' as const },
+        (isMac ? { role: 'close' as const } : { role: 'quit' as const }) as any,
       ],
     },
     {
@@ -425,20 +488,29 @@ function buildMenu(): void {
 
 function updateMenu(): void {
   buildMenu();
+  // Nach Menu-Update ebenfalls Titel anpassen (falls TCP-Icon/Label wechselte)
+  applyWindowTitles();
 }
+
+// Expose updateMenu globally so ipcHandlers can trigger it
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+(global as any).__updateAppMenu = updateMenu;
 
 perfService.mark('pre-window-creation');
 
-function createWindow(): void {
+function createWindow(opts: { makePrimary?: boolean } = {}): BrowserWindow {
+  const { makePrimary } = opts;
   perfService.mark('window-creation-start');
 
   const settings = settingsService.get();
   const { width, height, x, y } = settings.windowBounds || {};
 
-  mainWindow = new BrowserWindow({
+  const win = new BrowserWindow({
     width: width || 1200,
     height: height || 800,
     ...(x != null && y != null ? { x, y } : {}),
+    // Neue Fenster zunächst mit Default-Basis betiteln; danach wird per applyWindowTitles korrekt gesetzt
+    title: getDefaultBaseTitle(),
     webPreferences: {
       // Use application root to resolve preload reliably (works with asar and dev)
       preload: path.join(app.getAppPath(), 'preload.cjs'),
@@ -449,32 +521,45 @@ function createWindow(): void {
     show: false,
   });
 
+  windows.add(win);
+  // Assign as primary when explicitly requested or when none exists
+  if (!mainWindow || makePrimary) mainWindow = win;
+
+  // Direkt nach Erstellung auch den aktuellen TCP-Status im Titel widerspiegeln
+  setImmediate(() => applyWindowTitles());
+
   perfService.mark('window-created');
 
-  mainWindow.webContents.on('will-navigate', (event) => {
+  win.webContents.on('will-navigate', (event) => {
     event.preventDefault();
   });
 
-  mainWindow.webContents.on('did-finish-load', () => {
+  win.webContents.on('did-finish-load', () => {
     perfService.mark('renderer-loaded');
 
-    if (pendingMenuCmds.length) {
-      for (const cmd of pendingMenuCmds) {
-        try {
-          mainWindow?.webContents.send('menu:cmd', cmd);
-        } catch {
-          // Ignore errors
+    // ensure Titel ist nach Laden korrekt
+    applyWindowTitles();
+
+    // Only flush pending commands/logs into the primary window to keep new windows "clean"
+    if (win === mainWindow) {
+      if (pendingMenuCmds.length) {
+        for (const cmd of pendingMenuCmds) {
+          try {
+            win.webContents.send('menu:cmd', cmd);
+          } catch {
+            // Ignore errors
+          }
         }
+        pendingMenuCmds = [];
       }
-      pendingMenuCmds = [];
+      flushPendingAppends();
     }
-    flushPendingAppends();
   });
 
-  mainWindow.once('ready-to-show', () => {
+  win.once('ready-to-show', () => {
     perfService.mark('window-ready-to-show');
     perfService.checkStartupPerformance(5000);
-    mainWindow?.show();
+    win.show();
 
     // Defer icon loading completely after window is visible (Windows performance optimization)
     if (process.platform === 'win32') {
@@ -484,9 +569,9 @@ function createWindow(): void {
           const iconPath = await resolveIconPathAsync();
           perfService.mark('icon-load-end');
 
-          if (iconPath && mainWindow && !mainWindow.isDestroyed()) {
+          if (iconPath && !win.isDestroyed()) {
             try {
-              mainWindow.setIcon(iconPath);
+              win.setIcon(iconPath);
               log.info('App-Icon verwendet:', iconPath);
             } catch (err) {
               log.warn('Could not set icon:', err instanceof Error ? err.message : String(err));
@@ -501,22 +586,28 @@ function createWindow(): void {
     }
   });
 
-  mainWindow.on('close', () => {
+  win.on('close', () => {
     try {
-      const bounds = mainWindow?.getBounds();
-      if (bounds) {
-        const settings = settingsService.get();
-        settings.windowBounds = bounds;
-        settingsService.update(settings);
-        void settingsService.save();
+      // Persist bounds from the primary window only
+      if (win === mainWindow) {
+        const bounds = win.getBounds();
+        if (bounds) {
+          const settings = settingsService.get();
+          settings.windowBounds = bounds;
+          settingsService.update(settings);
+          void settingsService.save();
+        }
       }
     } catch {
       // Ignore errors
     }
   });
 
-  mainWindow.on('closed', () => {
-    mainWindow = null;
+  win.on('closed', () => {
+    windows.delete(win);
+    if (win === mainWindow) {
+      mainWindow = null;
+    }
   });
 
   const devUrl = process.env.VITE_DEV_SERVER_URL;
@@ -531,7 +622,7 @@ function createWindow(): void {
 
   if (devUrl) {
     log.info('Loading dev server URL:', devUrl);
-    void mainWindow.loadURL(devUrl);
+    void win.loadURL(devUrl);
   } else {
     const resPath = process.resourcesPath || '';
     const distCandidates = [
@@ -551,7 +642,7 @@ function createWindow(): void {
         if (exists) {
           log.info('Loading dist index from', candidate);
           try {
-            void mainWindow.loadFile(candidate);
+            void win.loadFile(candidate);
             loaded = true;
             break;
           } catch (e) {
@@ -570,7 +661,7 @@ function createWindow(): void {
     if (!loaded) {
       log.info('No production dist index.html found; falling back to root index.html (likely dev)');
       try {
-        void mainWindow.loadFile('index.html');
+        void win.loadFile('index.html');
       } catch (e) {
         log.error(
           'Failed to load fallback index.html:',
@@ -581,7 +672,7 @@ function createWindow(): void {
   }
 
   try {
-    const wc = mainWindow.webContents;
+    const wc = win.webContents;
 
     wc.on('did-fail-load', (_event, errorCode, errorDescription, validatedURL, isMainFrame) => {
       log.error('Renderer did-fail-load:', {
@@ -617,6 +708,8 @@ function createWindow(): void {
     updateMenu();
     perfService.mark('settings-loaded');
   });
+
+  return win;
 }
 
 // Unter Windows AppUserModelID setzen
@@ -629,6 +722,27 @@ if (process.platform === 'win32') {
 }
 
 perfService.mark('app-ready-handler-registered');
+
+// Ensure single instance to route Windows UserTasks (e.g., --new-window) into the primary process
+const gotLock = app.requestSingleInstanceLock();
+if (!gotLock) {
+  app.quit();
+} else {
+  app.on('second-instance', (_event, argv) => {
+    // On Windows, argv contains the arguments for the new instance
+    if (argv.some((a) => a === '--new-window')) {
+      createWindow({ makePrimary: false });
+      return;
+    }
+    // Focus existing primary window otherwise
+    const win = mainWindow || BrowserWindow.getAllWindows()[0];
+    if (win) {
+      if (win.isMinimized()) win.restore();
+      win.show();
+      win.focus();
+    }
+  });
+}
 
 void app.whenReady().then(async () => {
   perfService.mark('app-ready');
@@ -651,13 +765,52 @@ void app.whenReady().then(async () => {
         );
       }
     }
+    // Dock menu: add quick action to open a clean new window
+    try {
+      const dockMenu = Menu.buildFromTemplate([
+        { label: 'Neues Fenster', click: () => createWindow({ makePrimary: false }) },
+      ]);
+      app.dock.setMenu(dockMenu);
+    } catch {}
   }
 
-  createWindow();
+  // Windows Task List (UserTasks): add "New Window" task
+  if (process.platform === 'win32') {
+    try {
+      app.setUserTasks([
+        {
+          program: process.execPath,
+          arguments: '--new-window',
+          iconPath: process.execPath,
+          iconIndex: 0,
+          title: 'Neues Fenster',
+          description: 'Öffnet ein neues Fenster',
+        },
+      ]);
+    } catch (e) {
+      log.warn('Konnte UserTasks nicht setzen:', e instanceof Error ? e.message : String(e));
+    }
+  }
+
+  // Create the primary window by default
+  createWindow({ makePrimary: true });
 
   app.on('activate', () => {
-    if (BrowserWindow.getAllWindows().length === 0) createWindow();
+    if (BrowserWindow.getAllWindows().length === 0) createWindow({ makePrimary: true });
+    else {
+      // On macOS, Cmd+Tab back to app should show at least one window
+      const any = BrowserWindow.getAllWindows()[0];
+      if (any) {
+        any.show();
+        any.focus();
+      }
+    }
   });
+
+  // If app was started with --new-window (e.g., from dev shell), open an extra clean window
+  if (process.argv.some((a) => a === '--new-window')) {
+    createWindow({ makePrimary: false });
+  }
 });
 
 app.on('window-all-closed', () => {

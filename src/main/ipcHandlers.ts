@@ -6,7 +6,13 @@
 import { ipcMain, dialog, BrowserWindow } from 'electron';
 import log from 'electron-log/main';
 import * as path from 'path';
-import type { Settings, ElasticSearchOptions, ParseResult, SettingsResult, DroppedFile } from '../types/ipc';
+import type {
+  Settings,
+  ElasticSearchOptions,
+  ParseResult,
+  SettingsResult,
+  DroppedFile,
+} from '../types/ipc';
 import type { SettingsService } from '../services/SettingsService';
 import type { NetworkService } from '../services/NetworkService';
 
@@ -19,6 +25,41 @@ export function registerIpcHandlers(
   getParsers: () => typeof import('./parsers.cjs'),
   getAdmZip: () => typeof import('adm-zip')
 ): void {
+  // Helper: Fenstertitel gemäß Main-Logik aktualisieren (Primär vs. Default)
+  function updateWindowTitles(): void {
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const fn = (global as any)?.__applyWindowTitles;
+      if (typeof fn === 'function') fn();
+    } catch {}
+  }
+
+  // Window title (session-scoped) handlers
+  ipcMain.handle('windowTitle:get', () => {
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const getter = (global as any)?.__getRuntimeTitleOverride;
+      const title = typeof getter === 'function' ? getter() : null;
+      return { ok: true, title: title || '' };
+    } catch (err) {
+      log.error('Error getting window title:', err instanceof Error ? err.message : String(err));
+      return { ok: false, error: err instanceof Error ? err.message : String(err) };
+    }
+  });
+
+  ipcMain.handle('windowTitle:set', (_event, title: string) => {
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const setter = (global as any)?.__setRuntimeTitleOverride;
+      if (typeof setter === 'function') setter(String(title ?? ''));
+      updateWindowTitles();
+      return { ok: true };
+    } catch (err) {
+      log.error('Error setting window title:', err instanceof Error ? err.message : String(err));
+      return { ok: false, error: err instanceof Error ? err.message : String(err) };
+    }
+  });
+
   // Settings handlers
   ipcMain.handle('settings:get', (): SettingsResult => {
     try {
@@ -37,8 +78,8 @@ export function registerIpcHandlers(
       }
 
       // Handle sensitive fields not in schema: elasticPassPlain and elasticPassClear
-      type SettingsPatch = Partial<Settings> & { 
-        elasticPassPlain?: string; 
+      type SettingsPatch = Partial<Settings> & {
+        elasticPassPlain?: string;
         elasticPassClear?: boolean;
       };
       const typedPatch = patch as SettingsPatch;
@@ -76,6 +117,9 @@ export function registerIpcHandlers(
         return { ok: false, error: 'Failed to save settings to disk' };
       }
 
+      // Nach erfolgreichem Speichern Fenstertitel aktualisieren (via Main)
+      updateWindowTitles();
+
       return { ok: true, settings: settingsService.get() };
     } catch (err) {
       log.error('Error setting settings:', err instanceof Error ? err.message : String(err));
@@ -95,7 +139,7 @@ export function registerIpcHandlers(
         { name: 'All Files', extensions: ['*'] },
       ],
     });
-    
+
     if (res.canceled) return [];
     return res.filePaths || [];
   });
@@ -115,7 +159,7 @@ export function registerIpcHandlers(
         { name: 'Alle Dateien', extensions: ['*'] },
       ],
     });
-    
+
     if (res.canceled) return '';
     return res.filePath || '';
   });
@@ -135,27 +179,22 @@ export function registerIpcHandlers(
   ipcMain.handle('logs:parseRaw', async (_event, files: DroppedFile[]): Promise<ParseResult> => {
     try {
       if (!Array.isArray(files) || !files.length) return { ok: true, entries: [] };
-      
+
       const { parseJsonFile, parseTextLines } = getParsers();
       const ZipClass = getAdmZip();
-      const all = [];
-      
+      const all = [] as any[];
       for (const f of files) {
         const name = String(f?.name || '');
         const enc = String(f?.encoding || 'utf8');
         const data = String(f?.data || '');
         const ext = path.extname(name).toLowerCase();
-        
         if (!name || !data) continue;
-        
         if (ext === '.zip') {
           const buf = Buffer.from(data, enc === 'base64' ? 'base64' : 'utf8');
           const zip = new ZipClass(buf);
-          
-          zip.getEntries().forEach((zEntry) => {
+          zip.getEntries().forEach((zEntry: any) => {
             const ename = zEntry.entryName;
             const eext = path.extname(ename).toLowerCase();
-            
             if (
               !zEntry.isDirectory &&
               (eext === '.log' || eext === '.json' || eext === '.jsonl' || eext === '.txt')
@@ -163,7 +202,7 @@ export function registerIpcHandlers(
               const text = zEntry.getData().toString('utf8');
               const parsed =
                 eext === '.json' ? parseJsonFile(ename, text) : parseTextLines(ename, text);
-              parsed.forEach((e) => {
+              parsed.forEach((e: any) => {
                 e.source = `${name}::${ename}`;
               });
               all.push(...parsed);
@@ -177,7 +216,6 @@ export function registerIpcHandlers(
           all.push(...entries);
         }
       }
-      
       return { ok: true, entries: all };
     } catch (err) {
       log.error('Error parsing raw drops:', err instanceof Error ? err.message : String(err));
@@ -187,37 +225,59 @@ export function registerIpcHandlers(
 
   // TCP handlers
   ipcMain.on('tcp:start', (event, { port }: { port: number }) => {
-    try {
-      const status = networkService.startTcpServer(port);
-      event.reply('tcp:status', status);
-      
-      // Save port to settings if successful
-      if (status.ok) {
-        const settings = settingsService.get();
-        settings.tcpPort = port;
-        settingsService.update(settings);
-        void settingsService.save();
+    (async () => {
+      try {
+        const status = await networkService.startTcpServer(port);
+        event.reply('tcp:status', status);
+
+        if (status.ok) {
+          const settings = settingsService.get();
+          settings.tcpPort = port;
+          settingsService.update(settings);
+          void settingsService.save();
+        }
+
+        // Titel und Menü aktualisieren
+        updateWindowTitles();
+        try {
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          const upd = (global as any)?.__updateAppMenu;
+          if (typeof upd === 'function') upd();
+        } catch {}
+        setTimeout(updateWindowTitles, 50);
+        setTimeout(updateWindowTitles, 200);
+      } catch (err) {
+        log.error('Error starting TCP server:', err instanceof Error ? err.message : String(err));
+        event.reply('tcp:status', {
+          ok: false,
+          message: err instanceof Error ? err.message : String(err),
+        });
       }
-    } catch (err) {
-      log.error('Error starting TCP server:', err instanceof Error ? err.message : String(err));
-      event.reply('tcp:status', {
-        ok: false,
-        message: err instanceof Error ? err.message : String(err),
-      });
-    }
+    })().catch(() => {});
   });
 
   ipcMain.on('tcp:stop', (event) => {
-    try {
-      const status = networkService.stopTcpServer();
-      event.reply('tcp:status', status);
-    } catch (err) {
-      log.error('Error stopping TCP server:', err instanceof Error ? err.message : String(err));
-      event.reply('tcp:status', {
-        ok: false,
-        message: err instanceof Error ? err.message : String(err),
-      });
-    }
+    (async () => {
+      try {
+        const status = await networkService.stopTcpServer();
+        event.reply('tcp:status', status);
+        // Titel und Menü aktualisieren
+        updateWindowTitles();
+        try {
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          const upd = (global as any)?.__updateAppMenu;
+          if (typeof upd === 'function') upd();
+        } catch {}
+        setTimeout(updateWindowTitles, 50);
+        setTimeout(updateWindowTitles, 200);
+      } catch (err) {
+        log.error('Error stopping TCP server:', err instanceof Error ? err.message : String(err));
+        event.reply('tcp:status', {
+          ok: false,
+          message: err instanceof Error ? err.message : String(err),
+        });
+      }
+    })().catch(() => {});
   });
 
   // HTTP handlers
@@ -237,39 +297,42 @@ export function registerIpcHandlers(
   });
 
   // Elasticsearch handler
-  ipcMain.handle('elastic:search', async (_event, opts: ElasticSearchOptions): Promise<ParseResult> => {
-    try {
-      const settings = settingsService.get();
-      const { fetchElasticLogs } = getParsers();
-      
-      const url = opts.url || settings.elasticUrl || '';
-      const size = opts.size || settings.elasticSize || 1000;
-      
-      const auth = (() => {
-        const user = settings.elasticUser || '';
-        const pass = settingsService.decryptSecret(settings.elasticPassEnc || '');
-        if (user && pass) {
-          return { type: 'basic' as const, username: user, password: pass };
-        }
-        return undefined;
-      })();
-      
-      const mergedOpts = {
-        ...opts,
-        url,
-        size,
-        auth: opts.auth || auth,
-      };
-      
-      if (!mergedOpts.url) {
-        throw new Error('Elasticsearch URL ist nicht konfiguriert');
-      }
+  ipcMain.handle(
+    'elastic:search',
+    async (_event, opts: ElasticSearchOptions): Promise<ParseResult> => {
+      try {
+        const settings = settingsService.get();
+        const { fetchElasticLogs } = getParsers();
 
-      const entries = await fetchElasticLogs(mergedOpts);
-      return { ok: true, entries };
-    } catch (err) {
-      log.error('Elasticsearch search failed:', err instanceof Error ? err.message : String(err));
-      return { ok: false, error: err instanceof Error ? err.message : String(err) };
+        const url = opts.url || settings.elasticUrl || '';
+        const size = opts.size || settings.elasticSize || 1000;
+
+        const auth = (() => {
+          const user = settings.elasticUser || '';
+          const pass = settingsService.decryptSecret(settings.elasticPassEnc || '');
+          if (user && pass) {
+            return { type: 'basic' as const, username: user, password: pass };
+          }
+          return undefined;
+        })();
+
+        const mergedOpts = {
+          ...opts,
+          url,
+          size,
+          auth: opts.auth || auth,
+        };
+
+        if (!mergedOpts.url) {
+          throw new Error('Elasticsearch URL ist nicht konfiguriert');
+        }
+
+        const entries = await fetchElasticLogs(mergedOpts);
+        return { ok: true, entries };
+      } catch (err) {
+        log.error('Elasticsearch search failed:', err instanceof Error ? err.message : String(err));
+        return { ok: false, error: err instanceof Error ? err.message : String(err) };
+      }
     }
-  });
+  );
 }

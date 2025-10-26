@@ -46,7 +46,11 @@ export type TextParserFn = (url: string, text: string) => LogEntry[];
 /**
  * Entry converter function type
  */
-export type EntryConverterFn = (obj: Record<string, unknown>, fallback: string, source: string) => LogEntry;
+export type EntryConverterFn = (
+  obj: Record<string, unknown>,
+  fallback: string,
+  source: string
+) => LogEntry;
 
 /**
  * NetworkService manages TCP and HTTP network operations
@@ -94,27 +98,27 @@ export class NetworkService {
   /**
    * Start TCP server
    */
-  startTcpServer(port: number): TcpStatus {
+  startTcpServer(port: number): Promise<TcpStatus> {
     if (this.tcpServer) {
-      return {
+      return Promise.resolve({
         ok: false,
         message: 'TCP server already running',
         running: true,
         port: this.tcpPort,
-      };
+      });
     }
 
     if (!this.toEntry) {
-      return {
+      return Promise.resolve({
         ok: false,
         message: 'Parser functions not set',
         running: false,
-      };
+      });
     }
 
     const toEntry = this.toEntry;
 
-    this.tcpServer = net.createServer((socket) => {
+    const server = net.createServer((socket) => {
       let buffer = '';
 
       socket.on('data', (chunk) => {
@@ -135,7 +139,11 @@ export class NetworkService {
             obj = { message: line };
           }
 
-          const entry = toEntry(obj, '', `tcp:${socket.remoteAddress ?? 'unknown'}:${socket.remotePort ?? 0}`);
+          const entry = toEntry(
+            obj,
+            '',
+            `tcp:${socket.remoteAddress ?? 'unknown'}:${socket.remotePort ?? 0}`
+          );
           this.sendLogs([entry]);
         }
       });
@@ -150,49 +158,64 @@ export class NetworkService {
       });
     });
 
-    return new Promise<TcpStatus>((resolve) => {
-      if (!this.tcpServer) {
-        resolve({
-          ok: false,
-          message: 'Failed to create TCP server',
-          running: false,
-        });
-        return;
-      }
+    this.tcpServer = server;
 
-      this.tcpServer.on('error', (err) => {
-        log.error('TCP server error:', err);
+    return new Promise<TcpStatus>((resolve) => {
+      const onError = (err: Error): void => {
+        log.error('TCP server error during startup:', err);
+        // Cleanup server so we don't appear as running on next start
+        try {
+          server.removeListener('listening', onListening);
+        } catch {}
+        try {
+          server.close();
+        } catch {}
+        this.tcpServer = null;
+        this.tcpRunning = false;
+        this.tcpPort = 0;
         resolve({
           ok: false,
           message: err.message,
           running: false,
         });
-      });
+      };
 
-      this.tcpServer.listen(port, () => {
+      const onListening = (): void => {
+        try {
+          server.removeListener('error', onError);
+        } catch {}
         this.tcpRunning = true;
         this.tcpPort = port;
         log.info(`TCP server listening on port ${port}`);
+        // Attach a general error logger for runtime errors (does not change running state)
+        server.on('error', (err) => {
+          log.error('TCP server runtime error:', err);
+        });
         resolve({
           ok: true,
           message: `Listening on ${port}`,
           running: true,
           port,
         });
-      });
-    }) as unknown as TcpStatus;
+      };
+
+      server.once('error', onError);
+      server.once('listening', onListening);
+
+      server.listen(port);
+    });
   }
 
   /**
    * Stop TCP server
    */
-  stopTcpServer(): TcpStatus {
+  stopTcpServer(): Promise<TcpStatus> {
     if (!this.tcpServer) {
-      return {
+      return Promise.resolve({
         ok: false,
         message: 'TCP server not running',
         running: false,
-      };
+      });
     }
 
     return new Promise<TcpStatus>((resolve) => {
@@ -207,7 +230,7 @@ export class NetworkService {
           running: false,
         });
       });
-    }) as unknown as TcpStatus;
+    });
   }
 
   /**
@@ -270,9 +293,7 @@ export class NetworkService {
 
       const text = await this.httpFetchText(url);
       const isJson = text.trim().startsWith('[') || text.trim().startsWith('{');
-      const entries = isJson
-        ? this.parseJsonFile(url, text)
-        : this.parseTextLines(url, text);
+      const entries = isJson ? this.parseJsonFile(url, text) : this.parseTextLines(url, text);
 
       return { ok: true, entries };
     } catch (err) {
@@ -321,9 +342,12 @@ export class NetworkService {
         }
       };
 
-      const timer = setInterval(() => {
-        void tick();
-      }, Math.max(500, intervalMs));
+      const timer = setInterval(
+        () => {
+          void tick();
+        },
+        Math.max(500, intervalMs)
+      );
 
       this.httpPollers.set(id, { id, url, intervalMs, timer, seen });
 
