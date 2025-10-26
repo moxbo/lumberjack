@@ -7,7 +7,7 @@
   "scripts": {
     "prebuild": "esbuild src/main/parsers.ts src/utils/settings.ts --outdir=src --out-extension:.js=.cjs --format=cjs --platform=node && npm run build:main && npm run build:preload",
     "build:main": "esbuild src/main/main.ts --bundle --outfile=dist-main/main.cjs --platform=node --format=cjs --external:electron --external:electron-log/main && esbuild src/main/ipcHandlers.ts --bundle --outfile=dist-main/ipcHandlers.cjs --platform=node --format=cjs --external:electron --external:electron-log/main",
-    "build:preload": "esbuild preload.ts --outfile=preload.js --bundle --platform=node --external:electron",
+    "build:preload": "esbuild preload.ts --outfile=preload.cjs --bundle --platform=node --format=cjs --external:electron",
     "build:renderer": "vite build",
     "start": "npm run prebuild && npm run build:renderer && electron .",
     "dev": "npm run prebuild && concurrently -k -s first -n \"VITE,ELECTRON\" -c \"cyan,magenta\" \"cross-env NODE_ENV=development vite --open=false\" \"wait-on http://localhost:5173 && cross-env NODE_ENV=development VITE_DEV_SERVER_URL=http://localhost:5173 electron .\"",
@@ -72,7 +72,8 @@
     "files": [
       "dist/**/*",
       "dist-main/**/*",
-      "preload.js",
+      "!dist-main/**/*.js",
+      "preload.cjs",
       "src/**/*.ts",
       "src/**/*.tsx",
       "src/**/*.js",

@@ -3,7 +3,7 @@
  * Entry point for the Electron application with modern standards
  */
 
-import { app, BrowserWindow, ipcMain, dialog, Menu, nativeImage } from 'electron';
+import { app, BrowserWindow, Menu, nativeImage, type NativeImage } from 'electron';
 import * as path from 'path';
 import * as fs from 'fs';
 import log from 'electron-log/main';
@@ -28,11 +28,11 @@ const networkService = new NetworkService();
  * Lazy-load heavy AdmZip module only when needed for ZIP file handling
  * This improves startup performance by deferring module loading
  */
-let AdmZip: typeof import('adm-zip') | null = null;
-function getAdmZip(): typeof import('adm-zip') {
+let AdmZip: any | null = null;
+function getAdmZip(): any {
   if (!AdmZip) {
     // eslint-disable-next-line @typescript-eslint/no-var-requires
-    AdmZip = require('adm-zip') as typeof import('adm-zip');
+    AdmZip = require('adm-zip');
   }
   return AdmZip;
 }
@@ -41,18 +41,21 @@ function getAdmZip(): typeof import('adm-zip') {
  * Lazy-load parsers module only when files are opened
  * This improves startup performance by deferring module loading
  */
-let parsers: typeof import('./parsers.cjs') | null = null;
+let parsers: any | null = null;
 function getParsers(): typeof import('./parsers.cjs') {
   if (!parsers) {
+    // Resolve built CJS parser relative to the application root to work in dev and packaged
+    const appRoot = app.getAppPath();
+    const parserPath = path.join(appRoot, 'src', 'main', 'parsers.cjs');
     // eslint-disable-next-line @typescript-eslint/no-var-requires
-    parsers = require('./parsers.cjs') as typeof import('./parsers.cjs');
+    parsers = require(parserPath);
   }
-  return parsers;
+  return parsers as typeof import('./parsers.cjs');
 }
 
 let mainWindow: BrowserWindow | null = null;
-let iconPlay: nativeImage | null = null;
-let iconStop: nativeImage | null = null;
+let iconPlay: NativeImage | null = null;
+let iconStop: NativeImage | null = null;
 
 /**
  * Buffer for logs when renderer is loading or window is not ready
@@ -67,7 +70,6 @@ let pendingMenuCmds: Array<{ type: string; tab?: string }> = [];
  */
 let logStream: fs.WriteStream | null = null;
 let logBytes = 0;
-let logPath = '';
 
 /**
  * Get default log file path based on portable or standard installation
@@ -75,9 +77,7 @@ let logPath = '';
 function defaultLogFilePath(): string {
   const portableDir = process.env.PORTABLE_EXECUTABLE_DIR;
   const base =
-    portableDir && typeof portableDir === 'string' && portableDir.length
-      ? path.join(portableDir, 'data')
-      : app.getPath('userData');
+    portableDir && portableDir.length ? path.join(portableDir, 'data') : app.getPath('userData');
   return path.join(base, 'lumberjack.log');
 }
 
@@ -92,22 +92,23 @@ function closeLogStream(): void {
   }
   logStream = null;
   logBytes = 0;
-  logPath = '';
 }
 
 function openLogStream(): void {
   const settings = settingsService.get();
   if (!settings.logToFile) return;
-  
+
   const p = (settings.logFilePath && String(settings.logFilePath).trim()) || defaultLogFilePath();
   try {
     fs.mkdirSync(path.dirname(p), { recursive: true });
     const st = fs.existsSync(p) ? fs.statSync(p) : null;
     logBytes = st ? st.size : 0;
     logStream = fs.createWriteStream(p, { flags: 'a' });
-    logPath = p;
   } catch (err) {
-    log.error('Log-Datei kann nicht geöffnet werden:', err instanceof Error ? err.message : String(err));
+    log.error(
+      'Log-Datei kann nicht geöffnet werden:',
+      err instanceof Error ? err.message : String(err)
+    );
     closeLogStream();
   }
 }
@@ -117,12 +118,12 @@ function rotateIfNeeded(extraBytes: number): void {
   const max = Math.max(1024 * 1024, Number(settings.logMaxBytes || 0) || 0);
   if (!max) return; // 0 deaktiviert
   if (logBytes + extraBytes <= max) return;
-  
+
   try {
     closeLogStream();
     const p = (settings.logFilePath && String(settings.logFilePath).trim()) || defaultLogFilePath();
     const backups = Math.max(0, Number(settings.logMaxBackups || 0) || 0);
-    
+
     for (let i = backups - 1; i >= 1; i--) {
       const src = `${p}.${i}`;
       const dst = `${p}.${i + 1}`;
@@ -134,7 +135,7 @@ function rotateIfNeeded(extraBytes: number): void {
         }
       }
     }
-    
+
     if (backups >= 1 && fs.existsSync(p)) {
       try {
         fs.renameSync(p, `${p}.1`);
@@ -155,7 +156,7 @@ function writeEntriesToFile(entries: LogEntry[]): void {
     if (!entries || !entries.length) return;
     if (!logStream) openLogStream();
     if (!logStream) return;
-    
+
     for (const e of entries) {
       const line = JSON.stringify(e) + '\n';
       rotateIfNeeded(line.length);
@@ -165,7 +166,10 @@ function writeEntriesToFile(entries: LogEntry[]): void {
       logBytes += line.length;
     }
   } catch (err) {
-    log.error('Fehler beim Schreiben in Logdatei:', err instanceof Error ? err.message : String(err));
+    log.error(
+      'Fehler beim Schreiben in Logdatei:',
+      err instanceof Error ? err.message : String(err)
+    );
   }
 }
 
@@ -198,7 +202,7 @@ function isRendererReady(): boolean {
 function enqueueAppends(entries: LogEntry[]): void {
   if (!Array.isArray(entries) || entries.length === 0) return;
   const room = Math.max(0, MAX_PENDING_APPENDS - pendingAppends.length);
-  
+
   if (entries.length <= room) {
     pendingAppends.push(...entries);
   } else {
@@ -214,7 +218,7 @@ function flushPendingAppends(): void {
   if (!pendingAppends.length) return;
   const wc = mainWindow?.webContents;
   if (!wc) return;
-  
+
   const CHUNK = 1000;
   try {
     for (let i = 0; i < pendingAppends.length; i += CHUNK) {
@@ -284,7 +288,10 @@ async function resolveIconPathAsync(): Promise<string | null> {
 
   for (const p of candidates) {
     try {
-      const exists = await fs.promises.access(p).then(() => true).catch(() => false);
+      const exists = await fs.promises
+        .access(p)
+        .then(() => true)
+        .catch(() => false);
       if (exists) {
         if (p.includes('.asar' + path.sep) || p.endsWith('.asar') || p.includes('.asar/')) {
           try {
@@ -293,48 +300,6 @@ async function resolveIconPathAsync(): Promise<string | null> {
             await fs.promises.mkdir(outDir, { recursive: true });
             const outPath = path.join(outDir, 'app-icon.ico');
             await fs.promises.writeFile(outPath, buf);
-            cachedIconPath = outPath;
-            return outPath;
-          } catch {
-            cachedIconPath = p;
-            return p;
-          }
-        }
-        cachedIconPath = p;
-        return p;
-      }
-    } catch {
-      // Continue to next candidate
-    }
-  }
-
-  cachedIconPath = '';
-  return null;
-}
-
-function resolveIconPath(): string | null {
-  if (cachedIconPath !== null) {
-    return cachedIconPath;
-  }
-
-  const resPath = process.resourcesPath || '';
-  const candidates = [
-    path.join(resPath, 'app.asar.unpacked', 'images', 'icon.ico'),
-    path.join(resPath, 'images', 'icon.ico'),
-    path.join(__dirname, 'images', 'icon.ico'),
-    path.join(process.cwd(), 'images', 'icon.ico'),
-  ];
-
-  for (const p of candidates) {
-    try {
-      if (fs.existsSync(p)) {
-        if (p.includes('.asar' + path.sep) || p.endsWith('.asar') || p.includes('.asar/')) {
-          try {
-            const buf = fs.readFileSync(p);
-            const outDir = path.join(app.getPath('userData'), 'assets');
-            fs.mkdirSync(outDir, { recursive: true });
-            const outPath = path.join(outDir, 'app-icon.ico');
-            fs.writeFileSync(outPath, buf);
             cachedIconPath = outPath;
             return outPath;
           } catch {
@@ -365,7 +330,7 @@ function resolveMacIconPath(): string | null {
     path.join(__dirname, 'images', 'lumberjack_v4_dark_1024.png'),
     path.join(process.cwd(), 'images', 'lumberjack_v4_dark_1024.png'),
   ];
-  
+
   for (const p of candidates) {
     try {
       if (fs.existsSync(p)) return p;
@@ -379,7 +344,7 @@ function resolveMacIconPath(): string | null {
 function buildMenu(): void {
   const isMac = process.platform === 'darwin';
   const tcpStatus = networkService.getTcpStatus();
-  
+
   const template: Electron.MenuItemConstructorOptions[] = [
     ...(isMac
       ? [
@@ -442,18 +407,18 @@ function buildMenu(): void {
       label: 'Ansicht',
       submenu: [
         { role: 'reload' as const },
-        { role: 'forcereload' as const },
-        { role: 'toggledevtools' as const },
+        { role: 'forceReload' as const },
+        { role: 'toggleDevTools' as const },
         { type: 'separator' as const },
-        { role: 'resetzoom' as const },
-        { role: 'zoomin' as const },
-        { role: 'zoomout' as const },
+        { role: 'resetZoom' as const },
+        { role: 'zoomIn' as const },
+        { role: 'zoomOut' as const },
         { type: 'separator' as const },
         { role: 'togglefullscreen' as const },
       ],
     },
   ];
-  
+
   const menu = Menu.buildFromTemplate(template);
   Menu.setApplicationMenu(menu);
 }
@@ -466,7 +431,7 @@ perfService.mark('pre-window-creation');
 
 function createWindow(): void {
   perfService.mark('window-creation-start');
-  
+
   const settings = settingsService.get();
   const { width, height, x, y } = settings.windowBounds || {};
 
@@ -475,7 +440,8 @@ function createWindow(): void {
     height: height || 800,
     ...(x != null && y != null ? { x, y } : {}),
     webPreferences: {
-      preload: path.join(__dirname, '..', 'preload.js'),
+      // Use application root to resolve preload reliably (works with asar and dev)
+      preload: path.join(app.getAppPath(), 'preload.cjs'),
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: false,
@@ -491,7 +457,7 @@ function createWindow(): void {
 
   mainWindow.webContents.on('did-finish-load', () => {
     perfService.mark('renderer-loaded');
-    
+
     if (pendingMenuCmds.length) {
       for (const cmd of pendingMenuCmds) {
         try {
@@ -517,7 +483,7 @@ function createWindow(): void {
           perfService.mark('icon-load-start');
           const iconPath = await resolveIconPathAsync();
           perfService.mark('icon-load-end');
-          
+
           if (iconPath && mainWindow && !mainWindow.isDestroyed()) {
             try {
               mainWindow.setIcon(iconPath);
@@ -562,7 +528,7 @@ function createWindow(): void {
     'process.cwd=',
     process.cwd()
   );
-  
+
   if (devUrl) {
     log.info('Loading dev server URL:', devUrl);
     void mainWindow.loadURL(devUrl);
@@ -570,6 +536,8 @@ function createWindow(): void {
     const resPath = process.resourcesPath || '';
     const distCandidates = [
       path.join(__dirname, 'dist', 'index.html'),
+      path.join(app.getAppPath(), 'dist', 'index.html'),
+      path.join(process.cwd(), 'dist', 'index.html'),
       path.join(resPath, 'app.asar.unpacked', 'dist', 'index.html'),
       path.join(resPath, 'app.asar', 'dist', 'index.html'),
       path.join(resPath, 'dist', 'index.html'),
@@ -591,7 +559,11 @@ function createWindow(): void {
           }
         }
       } catch (e) {
-        log.warn('Error while checking candidate', candidate, e instanceof Error ? e.message : String(e));
+        log.warn(
+          'Error while checking candidate',
+          candidate,
+          e instanceof Error ? e.message : String(e)
+        );
       }
     }
 
@@ -600,7 +572,10 @@ function createWindow(): void {
       try {
         void mainWindow.loadFile('index.html');
       } catch (e) {
-        log.error('Failed to load fallback index.html:', e instanceof Error ? e.message : String(e));
+        log.error(
+          'Failed to load fallback index.html:',
+          e instanceof Error ? e.message : String(e)
+        );
       }
     }
   }
@@ -657,12 +632,12 @@ perfService.mark('app-ready-handler-registered');
 
 void app.whenReady().then(async () => {
   perfService.mark('app-ready');
-  
+
   // Load settings asynchronously before window creation (critical for Windows performance)
   perfService.mark('settings-load-start');
   await settingsService.load();
   perfService.mark('settings-loaded');
-  
+
   if (process.platform === 'darwin' && app.dock) {
     const macIconPath = resolveMacIconPath();
     if (macIconPath) {
@@ -670,13 +645,16 @@ void app.whenReady().then(async () => {
         const img = nativeImage.createFromPath(macIconPath);
         if (!img.isEmpty()) app.dock.setIcon(img);
       } catch (e) {
-        log.warn('Dock-Icon konnte nicht gesetzt werden:', e instanceof Error ? e.message : String(e));
+        log.warn(
+          'Dock-Icon konnte nicht gesetzt werden:',
+          e instanceof Error ? e.message : String(e)
+        );
       }
     }
   }
 
   createWindow();
-  
+
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();
   });

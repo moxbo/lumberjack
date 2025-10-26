@@ -14,6 +14,7 @@
   --accent: #0a84ff; /* macOS blue */
   --accent-2: #7d7aff; /* purple tint */
   --accent-gradient: linear-gradient(135deg, var(--accent) 0%, var(--accent-2) 100%);
+  --accent-checkbox: var(--accent-2);
 
   /* Light palette (Apple-like) */
   --color-bg-default: #f5f5f7; /* Apple background */
@@ -247,7 +248,6 @@ body {
   line-height: 1.5;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
-  color-scheme: light dark;
 }
 
 body {
@@ -861,7 +861,7 @@ input[type='checkbox'] {
   height: 16px;
   margin: 0;
   vertical-align: middle;
-  accent-color: var(--color-primary);
+  accent-color: var(--accent-checkbox);
 }
 
 /* MDC-Grid: kompakte 2+1 Spalten; Werte ohne Box-Dekor anzeigen */
@@ -913,7 +913,7 @@ input[type='checkbox'] {
   height: 16px;
   margin: 0;
   vertical-align: middle;
-  accent-color: var(--color-primary);
+  accent-color: var(--accent-checkbox);
 }
 
 /* --- Meta grid in Details: 2 Spalten (Zeit+Logger, Level+Thread) --- */

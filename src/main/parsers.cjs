@@ -41,12 +41,15 @@ var import_path = __toESM(require("path"), 1);
 var import_module = require("module");
 var import_https = __toESM(require("https"), 1);
 var import_http = __toESM(require("http"), 1);
-const import_meta = {};
 let AdmZip = null;
 function getAdmZip() {
   if (!AdmZip) {
-    const req = (0, import_module.createRequire)(import_meta.url);
-    AdmZip = req("adm-zip");
+    try {
+      AdmZip = require("adm-zip");
+    } catch {
+      const req = (0, import_module.createRequire)(import_path.default.join(process.cwd(), "package.json"));
+      AdmZip = req("adm-zip");
+    }
   }
   return AdmZip;
 }

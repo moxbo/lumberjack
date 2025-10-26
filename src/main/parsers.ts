@@ -29,9 +29,15 @@ interface Entry {
 let AdmZip: any = null;
 function getAdmZip() {
   if (!AdmZip) {
-    // Use createRequire to be compatible with ESM context
-    const req = createRequire(import.meta.url);
-    AdmZip = req('adm-zip');
+    try {
+      // Prefer direct require in CJS build
+      // eslint-disable-next-line @typescript-eslint/no-var-requires
+      AdmZip = require('adm-zip');
+    } catch {
+      // Fallback: use createRequire from module, anchored at cwd
+      const req = createRequire(path.join(process.cwd(), 'package.json'));
+      AdmZip = req('adm-zip');
+    }
   }
   return AdmZip;
 }
