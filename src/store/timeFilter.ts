@@ -57,6 +57,8 @@ export interface TimeFilterState {
   duration: string; // z. B. "15m" (nur wenn mode=relative)
   from: string | null; // ISO (nur wenn mode=absolute)
   to: string | null; // ISO (nur wenn mode=absolute)
+  // Ankerzeitpunkt für relative Fenster; verhindert Driften bei Re-Renders
+  anchorMs?: number | null;
 }
 
 class TimeFilterImpl {
@@ -67,6 +69,7 @@ class TimeFilterImpl {
     duration: '',
     from: null,
     to: null,
+    anchorMs: null,
   };
 
   onChange(fn: () => void): () => void {
@@ -76,17 +79,24 @@ class TimeFilterImpl {
     return { ...this._state };
   }
   isEnabled(): boolean {
-    return !!this._state.enabled;
+    return this._state.enabled;
   }
   setEnabled(v: boolean): void {
-    const nv = !!v;
+    const nv = v;
     if (nv !== this._state.enabled) {
       this._state.enabled = nv;
       this._em.emit();
     }
   }
   reset(): void {
-    this._state = { enabled: false, mode: 'relative', duration: '', from: null, to: null };
+    this._state = {
+      enabled: false,
+      mode: 'relative',
+      duration: '',
+      from: null,
+      to: null,
+      anchorMs: null,
+    };
     this._em.emit();
   }
   setRelative(duration: string): void {
@@ -95,6 +105,8 @@ class TimeFilterImpl {
     this._state.duration = d;
     this._state.from = null;
     this._state.to = null;
+    // Anker jetzt setzen, damit das Fenster stabil bleibt
+    this._state.anchorMs = Date.now();
     this._em.emit();
   }
   setAbsolute(from?: string | Date | null, to?: string | Date | null): void {
@@ -102,7 +114,16 @@ class TimeFilterImpl {
     this._state.duration = '';
     this._state.from = toIso(from);
     this._state.to = toIso(to);
+    this._state.anchorMs = null;
     this._em.emit();
+  }
+
+  /** Optional: Anker aktualisieren (z. B. auf Nutzerwunsch) */
+  refreshAnchor(): void {
+    if (this._state.mode === 'relative') {
+      this._state.anchorMs = Date.now();
+      this._em.emit();
+    }
   }
 
   private _rangeNow(): { from: number | null; to: number | null } {
@@ -110,8 +131,9 @@ class TimeFilterImpl {
     if (this._state.mode === 'relative') {
       const ms = parseDurationMs(this._state.duration);
       if (!ms) return { from: null, to: null };
-      const now = Date.now();
-      return { from: now - ms, to: now };
+      // Stabilisiere: benutze Anker, nicht stets Date.now()
+      const base = this._state.anchorMs ?? Date.now();
+      return { from: base - ms, to: base };
     }
     // absolute
     const fromMs = this._state.from ? Date.parse(this._state.from) : NaN;
@@ -122,7 +144,7 @@ class TimeFilterImpl {
     return { from: f, to: t };
   }
 
-  matchesTs(ts: unknown): boolean {
+  matchesTs(ts: string | number): boolean {
     if (!this._state.enabled) return true;
     const { from, to } = this._rangeNow();
     if (from == null && to == null) return true; // kein wirksamer Bereich gesetzt
@@ -130,8 +152,7 @@ class TimeFilterImpl {
     const ms = typeof ts === 'number' ? ts : Date.parse(String(ts));
     if (isNaN(ms)) return false;
     if (from != null && ms < from) return false;
-    if (to != null && ms > to) return false;
-    return true;
+    return !(to != null && ms > to);
   }
 }
 

@@ -1,31 +1,37 @@
 // DiagnosticContextFilter: verwaltet (key,val,active)-Einträge und kann MDC-Prädikate bilden
 
+interface Listener {
+  (): void;
+}
 class SimpleEmitter {
-  constructor() {
-    this._ls = new Set();
-  }
-  on(fn) {
+  private _ls = new Set<Listener>();
+  on(fn: Listener): () => void {
     if (typeof fn === 'function') {
       this._ls.add(fn);
       return () => this._ls.delete(fn);
     }
     return () => {};
   }
-  emit() {
+  emit(): void {
     for (const fn of this._ls) {
       try {
         fn();
-      } catch {}
+      } catch (e) {
+        // best-effort: do not throw from listeners
+        console.warn('Listener error in DiagnosticContextFilter emitter:', e);
+      }
     }
   }
 }
 
-function entryKey(key, val) {
+type DcEntry = { key: string; val: string; active: boolean };
+
+function entryKey(key: string, val: string): string {
   return `${key}\u241F${val}`;
 } // UNIT SEPARATOR-like delimiter
 
 // Mappe diverse Trace-Key-Varianten auf den kanonischen Anzeigenamen
-function normalizeTraceKeyName(k) {
+function normalizeTraceKeyName(k: string): string | null {
   const lk = String(k || '')
     .trim()
     .toLowerCase();
@@ -43,7 +49,7 @@ function normalizeTraceKeyName(k) {
 }
 
 // Liefert alle Event-Key-Varianten zu einem kanonischen Key
-function eventKeyVariantsForCanonical(k) {
+function eventKeyVariantsForCanonical(k: string): string[] {
   const canon = normalizeTraceKeyName(k) || String(k || '').trim();
   if (canon === 'TraceID') {
     return [
@@ -62,76 +68,49 @@ function eventKeyVariantsForCanonical(k) {
 }
 
 class DiagnosticContextFilterImpl {
-  constructor() {
-    this._map = new Map();
-    this._em = new SimpleEmitter();
-    this._enabled = true;
-  }
-  onChange(fn) {
+  private _map = new Map<string, DcEntry>();
+  private _em = new SimpleEmitter();
+  private _enabled = true;
+  onChange(fn: () => void): () => void {
     return this._em.on(fn);
   }
-  isEnabled() {
-    return !!this._enabled;
+  isEnabled(): boolean {
+    return this._enabled;
   }
-  setEnabled(v) {
-    const nv = !!v;
+  setEnabled(v: boolean): void {
+    const nv = v;
     if (nv !== this._enabled) {
       this._enabled = nv;
       this._em.emit();
     }
   }
-  _normalizeKey(k) {
+  private _normalizeKey(k: string): string {
     const raw = String(k || '').trim();
     if (!raw) return '';
     const canonical = normalizeTraceKeyName(raw);
     return canonical || raw;
   }
-  _normalizeVal(v) {
+  private _normalizeVal(v: string): string {
     return v == null ? '' : String(v);
   }
   // Re-mappe vorhandene Einträge auf kanonische Keys (z. B. traceId -> TraceID) und merge Duplicates
-  _recanonicalize() {
-    const next = new Map();
-    for (const e of this._map.values()) {
-      const k = this._normalizeKey(e.key);
-      const v = this._normalizeVal(e.val);
-      const id = entryKey(k, v);
-      const prev = next.get(id);
-      if (prev) {
-        // merge: aktiv wenn einer aktiv ist
-        prev.active = !!(prev.active || e.active);
-      } else {
-        next.set(id, { key: k, val: v, active: !!e.active });
-      }
-    }
-    if (next.size !== this._map.size) {
-      this._map = next;
-      this._em.emit();
-    } else {
-      // auch wenn gleich groß, können Keys/IDs geändert worden sein
-      this._map = next;
-    }
-  }
-  addMdcEntry(key, val) {
+  addMdcEntry(key: string, val: string): void {
     const k = this._normalizeKey(key);
     if (!k) return;
     const v = this._normalizeVal(val);
     const id = entryKey(k, v);
-    const prev = this._map.get(id);
-    if (prev) {
-      return;
-    }
+    if (this._map.has(id)) return;
     this._map.set(id, { key: k, val: v, active: true });
     this._em.emit();
   }
-  removeMdcEntry(key, val) {
+  removeMdcEntry(key: string, val: string): void {
     const k = this._normalizeKey(key);
     if (!k) return;
     const v = this._normalizeVal(val);
     const id = entryKey(k, v);
     if (this._map.delete(id)) this._em.emit();
   }
-  activateMdcEntry(key, val) {
+  activateMdcEntry(key: string, val: string): void {
     const k = this._normalizeKey(key);
     if (!k) return;
     const v = this._normalizeVal(val);
@@ -142,7 +121,7 @@ class DiagnosticContextFilterImpl {
       this._em.emit();
     }
   }
-  deactivateMdcEntry(key, val) {
+  deactivateMdcEntry(key: string, val: string): void {
     const k = this._normalizeKey(key);
     if (!k) return;
     const v = this._normalizeVal(val);
@@ -153,46 +132,58 @@ class DiagnosticContextFilterImpl {
       this._em.emit();
     }
   }
-  reset() {
+  reset(): void {
     if (this._map.size) {
       this._map.clear();
     }
     this._em.emit();
   }
-  getDcEntries() {
-    // Vor Rückgabe sicherstellen, dass alles kanonisch ist
-    this._recanonicalize();
-    return Array.from(this._map.values()).sort(
+  getDcEntries(): DcEntry[] {
+    // Rein funktionale Sicht: canonicalisieren und Duplikate mergen, ohne internen Zustand zu ändern
+    const tmp = new Map<string, DcEntry>();
+    for (const e of this._map.values()) {
+      const k = this._normalizeKey(e.key);
+      const v = this._normalizeVal(e.val);
+      const id = entryKey(k, v);
+      const prev = tmp.get(id);
+      if (prev) {
+        prev.active = prev.active || e.active;
+      } else {
+        tmp.set(id, { key: k, val: v, active: e.active });
+      }
+    }
+    return Array.from(tmp.values()).sort(
       (a, b) => a.key.localeCompare(b.key) || a.val.localeCompare(b.val)
     );
   }
-  hasActive() {
+  private _hasActive(): boolean {
     for (const e of this._map.values()) if (e.active) return true;
     return false;
   }
   // matches: AND über Keys, OR innerhalb eines Keys. val=='' => Wildcard
-  matches(mdc) {
+  matches(mdc: unknown): boolean {
     if (!this.isEnabled()) return true;
-    if (!this.hasActive()) return true;
+    if (!this._hasActive()) return true;
 
     // gruppiere aktive Einträge je Key
-    const groups = new Map();
+    const groups = new Map<string, DcEntry[]>();
     for (const e of this._map.values()) {
       if (!e.active) continue;
       const k = this._normalizeKey(e.key);
       if (!groups.has(k)) groups.set(k, []);
-      groups.get(k).push(e);
+      groups.get(k)!.push(e);
     }
 
-    const hasOwn = (obj, k) => Object.prototype.hasOwnProperty.call(obj, k);
+    const hasOwn = (obj: Record<string, unknown>, k: string) =>
+      Object.prototype.hasOwnProperty.call(obj, k);
+
+    const obj = mdc && typeof mdc === 'object' ? (mdc as Record<string, unknown>) : {};
 
     for (const [canonKey, arr] of groups) {
       const candidates = eventKeyVariantsForCanonical(canonKey);
       // Sammle vorhandene Event-Werte für alle Kandidaten
-      const present = [];
-      if (mdc && typeof mdc === 'object') {
-        for (const k of candidates) if (hasOwn(mdc, k)) present.push(String(mdc[k] ?? ''));
-      }
+      const present: string[] = [];
+      for (const k of candidates) if (hasOwn(obj, k)) present.push(String(obj[k] ?? ''));
 
       let ok = false;
       for (const it of arr) {
@@ -221,6 +212,6 @@ import { lazyInstance } from './_lazy.js';
 // Export the singleton lazily to avoid temporal-dead-zone issues when modules
 // import each other during initialization (bundlers can reorder/rename symbols).
 export const DiagnosticContextFilter = lazyInstance(() => new DiagnosticContextFilterImpl());
-export function dcEntryId(e) {
+export function dcEntryId(e: DcEntry): string {
   return entryKey(e.key, e.val);
 }

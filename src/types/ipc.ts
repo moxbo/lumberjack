@@ -33,6 +33,7 @@ export interface Settings {
     x?: number;
     y?: number;
   };
+  isMaximized: boolean;
   tcpPort?: number;
   logToFile?: boolean;
   logFilePath?: string;

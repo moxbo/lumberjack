@@ -3,11 +3,10 @@
 
 import { lazyInstance } from './_lazy';
 
+type Listener = () => void;
 class SimpleEmitter {
-  constructor() {
-    this._ls = new Set();
-  }
-  on(fn: any) {
+  private _ls = new Set<Listener>();
+  on(fn: Listener) {
     if (typeof fn === 'function') {
       this._ls.add(fn);
       return () => this._ls.delete(fn);
@@ -18,18 +17,19 @@ class SimpleEmitter {
     for (const fn of this._ls) {
       try {
         fn();
-      } catch {}
+      } catch (e) {
+        console.warn('MDCListener emitter listener error:', e);
+      }
     }
   }
 }
 
 class MDCListenerImpl {
-  constructor() {
-    this.keys = new Map(); // key -> Set(values)
-    this._em = new SimpleEmitter();
-    // No automatic subscription here. Call startListening() from app startup
-    // (e.g. in App.jsx) to wire this listener after modules are initialized.
-  }
+  private _started = false;
+  private _em = new SimpleEmitter();
+  public keys = new Map<string, Set<string>>(); // key -> Set(values)
+  // No automatic subscription here. Call startListening() from app startup
+  // (e.g. in App.jsx) to wire this listener after modules are initialized.
 
   startListening() {
     try {
@@ -39,25 +39,29 @@ class MDCListenerImpl {
       // Load LoggingStore dynamically to avoid a static circular import
       import('./loggingStore')
         .then((mod) => {
-          const LS = mod?.LoggingStore || mod?.default;
+          const LS = (mod as any)?.LoggingStore || (mod as any)?.default;
           try {
             LS?.addLoggingStoreListener({
-              loggingEventsAdded: (events: any) => this._onAdded(events),
+              loggingEventsAdded: (events: any[]) => this._onAdded(events),
               loggingStoreReset: () => this._onReset(),
             });
-          } catch (e) {}
+          } catch (e) {
+            console.warn('Failed to attach LoggingStore listener:', e);
+          }
         })
-        .catch(() => {});
+        .catch((e) => {
+          console.warn('Dynamic import of LoggingStore failed:', e);
+        });
     } catch (e) {
-      // ignore failures (defensive)
+      console.warn('startListening failed:', e);
     }
   }
 
-  _onReset() {
+  private _onReset() {
     this.keys.clear();
     this._em.emit();
   }
-  _onAdded(events) {
+  private _onAdded(events: any[]) {
     let changed = false;
     for (const e of events || []) {
       const mdc = (e && e.mdc) || {};
@@ -67,7 +71,7 @@ class MDCListenerImpl {
           this.keys.set(k, new Set());
           changed = true;
         }
-        const set = this.keys.get(k);
+        const set = this.keys.get(k)!;
         if (!set.has(v)) {
           set.add(v);
           changed = true;
@@ -76,15 +80,15 @@ class MDCListenerImpl {
     }
     if (changed) this._em.emit();
   }
-  onChange(fn) {
+  onChange(fn: Listener) {
     return this._em.on(fn);
   }
   getSortedKeys() {
     return Array.from(this.keys.keys()).sort((a, b) => a.localeCompare(b));
   }
-  getSortedValues(key) {
+  getSortedValues(key: string) {
     const set = this.keys.get(key);
-    if (!set) return [];
+    if (!set) return [] as string[];
     return Array.from(set).sort((a, b) => a.localeCompare(b));
   }
 }

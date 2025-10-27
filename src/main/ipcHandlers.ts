@@ -31,7 +31,9 @@ export function registerIpcHandlers(
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const fn = (global as any)?.__applyWindowTitles;
       if (typeof fn === 'function') fn();
-    } catch {}
+    } catch (e) {
+      log.warn('updateWindowTitles helper failed:', e instanceof Error ? e.message : String(e));
+    }
   }
 
   // Window title (session-scoped) handlers
@@ -243,7 +245,12 @@ export function registerIpcHandlers(
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
           const upd = (global as any)?.__updateAppMenu;
           if (typeof upd === 'function') upd();
-        } catch {}
+        } catch (e) {
+          log.warn(
+            'Failed to trigger app menu update after TCP start:',
+            e instanceof Error ? e.message : String(e)
+          );
+        }
         setTimeout(updateWindowTitles, 50);
         setTimeout(updateWindowTitles, 200);
       } catch (err) {
@@ -267,7 +274,12 @@ export function registerIpcHandlers(
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
           const upd = (global as any)?.__updateAppMenu;
           if (typeof upd === 'function') upd();
-        } catch {}
+        } catch (e) {
+          log.warn(
+            'Failed to trigger app menu update after TCP stop:',
+            e instanceof Error ? e.message : String(e)
+          );
+        }
         setTimeout(updateWindowTitles, 50);
         setTimeout(updateWindowTitles, 200);
       } catch (err) {

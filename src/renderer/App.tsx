@@ -1,4 +1,4 @@
-/* eslint-disable @typescript-eslint/ban-ts-comment, @typescript-eslint/no-unused-vars, @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-explicit-any, @typescript-eslint/no-base-to-string, @typescript-eslint/explicit-function-return-type, @typescript-eslint/no-misused-promises, @typescript-eslint/require-await, @typescript-eslint/no-floating-promises */
+/* eslint-disable @typescript-eslint/no-unused-vars, @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-explicit-any, @typescript-eslint/no-base-to-string, @typescript-eslint/explicit-function-return-type, @typescript-eslint/no-misused-promises, @typescript-eslint/require-await, @typescript-eslint/no-floating-promises */
 import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import { Fragment } from 'preact';
 import { useVirtualizer } from '@tanstack/react-virtual';
@@ -81,17 +81,17 @@ function computeTint(color: string | null | undefined, alpha = 0.4): string {
 // Message-Filter-Logik ausgelagert nach utils/msgFilter.js
 
 export default function App() {
-  const [entries, setEntries] = useState([]);
-  const [nextId, setNextId] = useState(1);
-  const [selected, setSelected] = useState(new Set());
-  const lastClicked = useRef(null);
+  const [entries, setEntries] = useState<any[]>([]);
+  const [nextId, setNextId] = useState<number>(1);
+  const [selected, setSelected] = useState<Set<number>>(new Set());
+  const lastClicked = useRef<number | null>(null);
 
   // Follow-Modus: wenn aktiv, wird immer der letzte Eintrag ausgewählt & angezeigt
-  const [follow, setFollow] = useState(false);
-  const [followSmooth, setFollowSmooth] = useState(false);
+  const [follow, setFollow] = useState<boolean>(false);
+  const [followSmooth, setFollowSmooth] = useState<boolean>(false);
 
   // Theme Mode: 'system' | 'light' | 'dark'
-  const [themeMode, setThemeMode] = useState('system');
+  const [themeMode, setThemeMode] = useState<'system' | 'light' | 'dark'>('system');
   function applyThemeMode(mode: string | null | undefined): void {
     const root = document.documentElement;
     if (!mode || mode === 'system') {
@@ -102,33 +102,39 @@ export default function App() {
     root.setAttribute('data-theme', mode);
   }
 
-  const [search, setSearch] = useState('');
-  const [filter, setFilter] = useState({
+  const [search, setSearch] = useState<string>('');
+  const [filter, setFilter] = useState<{
+    level: string;
+    logger: string;
+    thread: string;
+    service: string;
+    message: string;
+  }>({
     level: '',
     logger: '',
     thread: '',
     service: '',
     message: '',
   });
-  const [stdFiltersEnabled, setStdFiltersEnabled] = useState(true);
+  const [stdFiltersEnabled, setStdFiltersEnabled] = useState<boolean>(true);
 
   // re-render trigger for MDC filter changes
-  const [dcVersion, setDcVersion] = useState(0);
+  const [dcVersion, setDcVersion] = useState<number>(0);
   useEffect(() => {
-    const off = DiagnosticContextFilter.onChange(() => setDcVersion((v) => v + 1));
+    const off = (DiagnosticContextFilter as any).onChange?.(() => setDcVersion((v) => v + 1));
     return () => off?.();
   }, []);
   // re-render trigger for Time filter changes
-  const [timeVersion, setTimeVersion] = useState(0);
+  const [timeVersion, setTimeVersion] = useState<number>(0);
   useEffect(() => {
-    const off = TimeFilter.onChange(() => setTimeVersion((v) => v + 1));
+    const off = (TimeFilter as any).onChange?.(() => setTimeVersion((v) => v + 1));
     return () => off?.();
   }, []);
 
   // Neuer Dialog-State für DC-Filter
-  const [showDcDialog, setShowDcDialog] = useState(false);
+  const [showDcDialog, setShowDcDialog] = useState<boolean>(false);
   // Zeit-Filter Dialog-State
-  const [showTimeDialog, setShowTimeDialog] = useState(false);
+  const [showTimeDialog, setShowTimeDialog] = useState<boolean>(false);
   const [timeForm, setTimeForm] = useState({
     enabled: true,
     mode: 'relative', // 'relative' | 'absolute'
@@ -143,9 +149,29 @@ export default function App() {
   });
 
   // Öffnet den Elastic-Search-Dialog und befüllt Formular aus TimeFilter-State
-  function openTimeFilterDialog() {
+  async function openTimeFilterDialog() {
+    // Helper: get last used values from in-memory history or settings as fallback
+    const getLasts = async () => {
+      let lastApp = (histAppName && histAppName.length > 0 ? String(histAppName[0]) : '') || '';
+      let lastEnv =
+        (histEnvironment && histEnvironment.length > 0 ? String(histEnvironment[0]) : '') || '';
+      if ((!lastApp || !lastEnv) && window.api?.settingsGet) {
+        try {
+          const res = await window.api.settingsGet();
+          const r = res?.ok ? (res.settings as any) : null;
+          if (!lastApp && Array.isArray(r?.histAppName) && r.histAppName.length)
+            lastApp = String(r.histAppName[0] || '');
+          if (!lastEnv && Array.isArray(r?.histEnvironment) && r.histEnvironment.length)
+            lastEnv = String(r.histEnvironment[0] || '');
+        } catch {
+          // ignore
+        }
+      }
+      return { lastApp, lastEnv };
+    };
+
     try {
-      const s = TimeFilter.getState?.();
+      const s = (TimeFilter as any).getState?.();
       const toLocal = (iso: unknown) => {
         const t = String(iso || '').trim();
         if (!t) return '';
@@ -159,28 +185,31 @@ export default function App() {
         const mm = pad(d.getMinutes());
         return `${y}-${m}-${da}T${hh}:${mm}`;
       };
+      const { lastApp, lastEnv } = await getLasts();
       setTimeForm({
         enabled: true,
         mode: (s && s.mode) || 'relative',
         duration: (s && s.duration) || '15m',
         from: toLocal(s?.from),
         to: toLocal(s?.to),
-        application_name: '',
+        application_name: lastApp,
         logger: '',
         level: '',
-        environment: '',
+        environment: lastEnv,
       });
-    } catch {
+    } catch (e) {
+      console.warn('openTimeFilterDialog failed:', e);
+      const { lastApp, lastEnv } = await getLasts();
       setTimeForm({
         enabled: true,
         mode: 'relative',
         duration: '15m',
         from: '',
         to: '',
-        application_name: '',
+        application_name: lastApp,
         logger: '',
         level: '',
-        environment: '',
+        environment: lastEnv,
       });
     }
     setShowTimeDialog(true);
@@ -203,9 +232,9 @@ export default function App() {
   }
 
   // Filter-Historien
-  const [histLogger, setHistLogger] = useState([]);
-  const [histAppName, setHistAppName] = useState([]);
-  const [histEnvironment, setHistEnvironment] = useState([]);
+  const [histLogger, setHistLogger] = useState<string[]>([]);
+  const [histAppName, setHistAppName] = useState<string[]>([]);
+  const [histEnvironment, setHistEnvironment] = useState<string[]>([]);
 
   // History-Pflege für Elastic-Dialog
   function addToHistory(kind: 'app' | 'env', val: string) {
@@ -215,6 +244,7 @@ export default function App() {
       setHistAppName((prev) => {
         const list = [v, ...prev.filter((x) => x !== v)].slice(0, 10);
         try {
+          // eslint-disable-next-line @typescript-eslint/no-unsafe-argument
           void window.api.settingsSet({ histAppName: list } as any);
         } catch (e) {
           logger.error('Failed to save histAppName settings:', e);
@@ -226,6 +256,7 @@ export default function App() {
       setHistEnvironment((prev) => {
         const list = [v, ...prev.filter((x) => x !== v)].slice(0, 10);
         try {
+          // eslint-disable-next-line @typescript-eslint/no-unsafe-argument
           void window.api.settingsSet({ histEnvironment: list } as any);
         } catch (e) {
           logger.error('Failed to save histEnvironment settings:', e);
@@ -236,16 +267,18 @@ export default function App() {
     }
   }
 
-  const [tcpStatus, setTcpStatus] = useState('');
-  const [httpStatus, setHttpStatus] = useState('');
-  const [httpPollId, setHttpPollId] = useState(null);
-  const [tcpPort, setTcpPort] = useState(5000);
+  const [tcpStatus, setTcpStatus] = useState<string>('');
+  const [httpStatus, setHttpStatus] = useState<string>('');
+  const [httpPollId, setHttpPollId] = useState<number | null>(null);
+  const [tcpPort, setTcpPort] = useState<number>(5000);
 
-  const [httpUrl, setHttpUrl] = useState('');
-  const [httpInterval, setHttpInterval] = useState(5000);
-  const [showSettings, setShowSettings] = useState(false);
+  const [httpUrl, setHttpUrl] = useState<string>('');
+  const [httpInterval, setHttpInterval] = useState<number>(5000);
+  const [showSettings, setShowSettings] = useState<boolean>(false);
   // neuer Tab-State für das Einstellungsfenster: 'tcp' | 'http' | 'logging' | 'appearance'
-  const [settingsTab, setSettingsTab] = useState('tcp');
+  const [settingsTab, setSettingsTab] = useState<
+    'tcp' | 'http' | 'elastic' | 'logging' | 'appearance'
+  >('tcp');
   const [form, setForm] = useState({
     tcpPort: 5000,
     httpUrl: '',
@@ -263,14 +296,18 @@ export default function App() {
     elasticPassClear: false,
   });
   // Neue Dialog-States: HTTP einmal laden & Poll starten
-  const [showHttpLoadDlg, setShowHttpLoadDlg] = useState(false);
-  const [httpLoadUrl, setHttpLoadUrl] = useState('');
-  const [showHttpPollDlg, setShowHttpPollDlg] = useState(false);
-  const [httpPollForm, setHttpPollForm] = useState({ url: '', interval: 5000 });
+  const [showHttpLoadDlg, setShowHttpLoadDlg] = useState<boolean>(false);
+  const [httpLoadUrl, setHttpLoadUrl] = useState<string>('');
+  const [showHttpPollDlg, setShowHttpPollDlg] = useState<boolean>(false);
+  const [httpPollForm, setHttpPollForm] = useState<{ url: string; interval: number }>({
+    url: '',
+    interval: 5000,
+  });
   function openHttpLoadDialog() {
     try {
       setHttpLoadUrl(String(httpUrl || ''));
-    } catch {
+    } catch (e) {
+      console.warn('openHttpLoadDialog failed:', e);
       setHttpLoadUrl('');
     }
     setShowHttpLoadDlg(true);
@@ -278,32 +315,32 @@ export default function App() {
   function openHttpPollDialog() {
     try {
       setHttpPollForm({ url: String(httpUrl || ''), interval: Number(httpInterval || 5000) });
-    } catch {
+    } catch (e) {
+      console.warn('openHttpPollDialog failed:', e);
       setHttpPollForm({ url: '', interval: 5000 });
     }
     setShowHttpPollDlg(true);
   }
 
   // Logging-Settings (persisted state for convenience)
-  const [logToFile, setLogToFile] = useState(false);
-  const [logFilePath, setLogFilePath] = useState('');
-  const [logMaxBytes, setLogMaxBytes] = useState(5 * 1024 * 1024);
-  const [logMaxBackups, setLogMaxBackups] = useState(3);
+  const [logToFile, setLogToFile] = useState<boolean>(false);
+  const [logFilePath, setLogFilePath] = useState<string>('');
+  const [logMaxBytes, setLogMaxBytes] = useState<number>(5 * 1024 * 1024);
+  const [logMaxBackups, setLogMaxBackups] = useState<number>(3);
 
   // Elasticsearch-Settings (persisted state)
-  const [elasticUrl, setElasticUrl] = useState('');
-  const [elasticSize, setElasticSize] = useState(1000);
-  const [elasticUser, setElasticUser] = useState('');
-  const [elasticHasPass, setElasticHasPass] = useState(false); // nur Anzeige
-
-  // HTTP Dropdown-Menü (toolbar)
-  const [httpMenu, setHttpMenu] = useState({ open: false, x: 0, y: 0 });
-  const httpBtnRef = useRef(null);
-  const httpMenuRef = useRef(null);
+  const [elasticUrl, setElasticUrl] = useState<string>('');
+  const [elasticSize, setElasticSize] = useState<number>(1000);
+  const [elasticUser, setElasticUser] = useState<string>('');
+  const [elasticHasPass, setElasticHasPass] = useState<boolean>(false); // nur Anzeige
 
   // Kontextmenü für Log-Einträge
-  const [ctxMenu, setCtxMenu] = useState({ open: false, x: 0, y: 0 });
-  const ctxRef = useRef(null);
+  const [ctxMenu, setCtxMenu] = useState<{ open: boolean; x: number; y: number }>({
+    open: false,
+    x: 0,
+    y: 0,
+  });
+  const ctxRef = useRef<HTMLDivElement | null>(null);
   const colorChoices = [
     '#F59E0B', // amber
     '#EF4444', // red
@@ -319,15 +356,16 @@ export default function App() {
   }
   useEffect(() => {
     if (!ctxMenu.open) return;
-    const onMouseDown = (e) => {
+    const onMouseDown = (e: MouseEvent) => {
       try {
         if (!ctxRef.current) return closeContextMenu();
-        if (!ctxRef.current.contains(e.target)) closeContextMenu();
-      } catch {
+        if (!ctxRef.current.contains(e.target as Node)) closeContextMenu();
+      } catch (err) {
+        console.warn('ctx onMouseDown handler failed:', err);
         closeContextMenu();
       }
     };
-    const onKey = (e) => {
+    const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') closeContextMenu();
     };
     window.addEventListener('mousedown', onMouseDown, true);
@@ -337,7 +375,7 @@ export default function App() {
       window.removeEventListener('keydown', onKey);
     };
   }, [ctxMenu.open]);
-  function openContextMenu(ev, idx) {
+  function openContextMenu(ev: MouseEvent, idx: number) {
     ev.preventDefault();
     // Falls der angeklickte Eintrag nicht selektiert ist: Einzel-Selektion setzen
     setSelected((prev) => {
@@ -346,17 +384,17 @@ export default function App() {
     });
     setCtxMenu({ open: true, x: ev.clientX, y: ev.clientY });
   }
-  function applyMarkColor(color) {
+  function applyMarkColor(color?: string) {
     setEntries((prev) => {
       if (!prev || !prev.length) return prev;
       const next = prev.slice();
       for (const i of selected) {
-        if (i >= 0 && i < next.length) {
+        if (typeof i === 'number' && i >= 0 && i < next.length) {
           const e = next[i] || {};
           const n = { ...e };
           if (color) n._mark = color;
           else delete n._mark;
-          next[i] = n;
+          (next as any)[i] = n;
         }
       }
       return next;
@@ -376,7 +414,7 @@ export default function App() {
         'x.trace.id',
         'trace',
       ];
-      const added = new Set();
+      const added = new Set<string>();
       for (const i of selected) {
         const e = entries[i];
         const m = e && e.mdc;
@@ -385,14 +423,16 @@ export default function App() {
           if (Object.prototype.hasOwnProperty.call(m, k)) {
             const v = String(m[k] ?? '');
             if (v && !added.has(v)) {
-              DiagnosticContextFilter.addMdcEntry('TraceID', v);
+              (DiagnosticContextFilter as any).addMdcEntry('TraceID', v);
               added.add(v);
             }
           }
         }
       }
-      if (added.size) DiagnosticContextFilter.setEnabled(true);
-    } catch {}
+      if (added.size) (DiagnosticContextFilter as any).setEnabled(true);
+    } catch (e) {
+      logger.warn('adoptTraceIds failed:', e as any);
+    }
     closeContextMenu();
   }
   async function copyTsMsg() {
@@ -403,8 +443,8 @@ export default function App() {
     });
     const text = lines.join('\n');
     try {
-      if (navigator?.clipboard?.writeText) {
-        await navigator.clipboard.writeText(text);
+      if ((navigator as any)?.clipboard?.writeText) {
+        await (navigator as any).clipboard.writeText(text);
       } else {
         const ta = document.createElement('textarea');
         ta.value = text;
@@ -423,8 +463,10 @@ export default function App() {
   }
 
   // Busy indicator and helper
-  const [busy, setBusy] = useState(false);
-  const withBusy = async (fn) => {
+  const [busy, setBusy] = useState<boolean>(false);
+  // Speziell für Elasticsearch-Requests (kontextbezogener Spinner)
+  const [esBusy, setEsBusy] = useState<boolean>(false);
+  const withBusy = async (fn: () => Promise<void>) => {
     setBusy(true);
     try {
       await fn();
@@ -434,31 +476,40 @@ export default function App() {
   };
 
   // HTTP polling helper state (for status/next tick display)
-  const [pollMs, setPollMs] = useState(0);
-  const [nextPollDueAt, setNextPollDueAt] = useState(null);
-  const [nextPollIn, setNextPollIn] = useState('');
+  const [pollMs, setPollMs] = useState<number>(0);
+  const [nextPollDueAt, setNextPollDueAt] = useState<number | null>(null);
+  const [nextPollIn, setNextPollIn] = useState<string>('');
   useEffect(() => {
     if (!nextPollDueAt) {
       setNextPollIn('');
       return;
     }
-    let t = 0;
+    let t = 0 as unknown as number;
     const tick = () => {
       const ms = Math.max(0, Number(nextPollDueAt) - Date.now());
       setNextPollIn(ms > 0 ? `${Math.ceil(ms / 1000)}s` : '');
     };
     tick();
-    t = window.setInterval(tick, 250);
-    return () => clearInterval(t);
+
+    t = window.setInterval(tick, 250) as unknown as number;
+    return () => clearInterval(t as unknown as number);
   }, [nextPollDueAt]);
 
   // Refs for layout and virtualization
-  const parentRef = useRef(null); // scroll container for list
-  const layoutRef = useRef(null);
+  const parentRef = useRef<HTMLDivElement | null>(null); // scroll container for list
+  const layoutRef = useRef<HTMLDivElement | null>(null);
   // Separate divider element ref and divider state ref
   const dividerElRef = useRef<HTMLElement | null>(null);
-  const dividerStateRef = useRef({ _resizing: false, _startY: 0, _startH: 0 });
-  const colResize = useRef({ active: null as null | string, startX: 0, startW: 0 });
+  const dividerStateRef = useRef<{ _resizing: boolean; _startY: number; _startH: number }>({
+    _resizing: false,
+    _startY: 0,
+    _startH: 0,
+  });
+  const colResize = useRef<{ active: null | string; startX: number; startW: number }>({
+    active: null,
+    startX: 0,
+    startW: 0,
+  });
 
   // Compute filtered indices based on filters, time and MDC
   const filteredIdx = useMemo(() => {
@@ -495,13 +546,13 @@ export default function App() {
       }
       // Time filter and MDC filter
       try {
-        if (!TimeFilter.matchesTs(e.timestamp)) continue;
+        if (!(TimeFilter as any).matchesTs(e.timestamp)) continue;
       } catch (e) {
         logger.error('TimeFilter.matchesTs error:', e);
         continue;
       }
       try {
-        if (!DiagnosticContextFilter.matches(e.mdc || {})) continue;
+        if (!(DiagnosticContextFilter as any).matches(e.mdc || {})) continue;
       } catch (e) {
         logger.error('DiagnosticContextFilter.matches error:', e);
       }
@@ -563,8 +614,9 @@ export default function App() {
   }
 
   const selectedOneIdx = useMemo(() => {
-    if (selected.size === 1) return Array.from(selected)[0];
-    if (selected.size > 1) return lastClicked.current ?? Array.from(selected).slice(-1)[0];
+    if (selected.size === 1) return Array.from(selected)[0] as number;
+    if (selected.size > 1)
+      return lastClicked.current ?? (Array.from(selected).slice(-1)[0] as number);
     return null;
   }, [selected]);
   const selectedEntry = useMemo(() => {
@@ -572,7 +624,7 @@ export default function App() {
   }, [selectedOneIdx, entries]);
 
   const mdcPairs = useMemo(() => {
-    const e = selectedEntry as any;
+    const e = selectedEntry;
     if (!e || !e.mdc || typeof e.mdc !== 'object') return [] as [string, string][];
     return Object.entries(e.mdc)
       .map(([k, v]) => [String(k), String(v ?? '')] as [string, string])
@@ -584,7 +636,8 @@ export default function App() {
     const out: number[] = [];
     for (let vi = 0; vi < filteredIdx.length; vi++) {
       const idx = filteredIdx[vi];
-      if (entries[idx]?._mark) out.push(vi);
+      const e = entries[idx] as any;
+      if (e?._mark) out.push(vi);
     }
     return out;
   }, [filteredIdx, entries]);
@@ -595,7 +648,7 @@ export default function App() {
     const out: number[] = [];
     for (let vi = 0; vi < filteredIdx.length; vi++) {
       const idx = filteredIdx[vi];
-      const e = entries[idx];
+      const e = entries[idx] as any;
       if (msgMatches(e?.message, s)) out.push(vi);
     }
     return out;
@@ -606,15 +659,15 @@ export default function App() {
     const curVi = selectedOneIdx != null ? filteredIdx.indexOf(selectedOneIdx) : -1;
     let targetVi: number;
     if (dir > 0) {
-      targetVi = markedIdx.find((vi) => vi > curVi) ?? markedIdx[0];
+      targetVi = (markedIdx.find((vi) => vi > curVi) ?? markedIdx[0]) as number;
     } else {
       let prev = -1;
       for (const vi of markedIdx) if (vi < curVi) prev = vi;
       targetVi = prev >= 0 ? prev : markedIdx[markedIdx.length - 1];
     }
-    const globalIdx = filteredIdx[targetVi];
+    const globalIdx = filteredIdx[targetVi] as number;
     setSelected(new Set([globalIdx]));
-    lastClicked.current = globalIdx as any;
+    lastClicked.current = globalIdx;
     virtualizer.scrollToIndex(targetVi, {
       align: 'center',
       behavior: followSmooth ? 'smooth' : 'auto',
@@ -626,15 +679,15 @@ export default function App() {
     const curVi = selectedOneIdx != null ? filteredIdx.indexOf(selectedOneIdx) : -1;
     let targetVi: number;
     if (dir > 0) {
-      targetVi = searchMatchIdx.find((vi) => vi > curVi) ?? searchMatchIdx[0];
+      targetVi = (searchMatchIdx.find((vi) => vi > curVi) ?? searchMatchIdx[0]) as number;
     } else {
       let prev = -1;
       for (const vi of searchMatchIdx) if (vi < curVi) prev = vi;
       targetVi = prev >= 0 ? prev : searchMatchIdx[searchMatchIdx.length - 1];
     }
-    const globalIdx = filteredIdx[targetVi];
+    const globalIdx = filteredIdx[targetVi] as number;
     setSelected(new Set([globalIdx]));
-    lastClicked.current = globalIdx as any;
+    lastClicked.current = globalIdx;
     virtualizer.scrollToIndex(targetVi, {
       align: 'center',
       behavior: followSmooth ? 'smooth' : 'auto',
@@ -647,14 +700,15 @@ export default function App() {
     const toAdd = newEntries.map((e, i) => ({ ...e, _id: nextId + i }));
     try {
       // Attach MDC fields
-      LoggingStore.addEvents(toAdd);
+      (LoggingStore as any).addEvents(toAdd);
     } catch (e) {
       logger.error('LoggingStore.addEvents error:', e);
       alert(
-        'Failed to process new log entries. See logs for details. ' + (e?.message || String(e))
+        'Failed to process new log entries. See logs for details. ' +
+          ((e as any)?.message || String(e))
       );
     }
-    const merged = [...entries, ...toAdd].sort(compareByTimestampId);
+    const merged = [...entries, ...toAdd].sort(compareByTimestampId as any);
     setEntries(merged);
     setNextId(nextId + toAdd.length);
   }
@@ -663,7 +717,7 @@ export default function App() {
   useEffect(() => {
     if (!follow) return;
     if (!filteredIdx.length) return;
-    const lastGlobalIdx = filteredIdx[filteredIdx.length - 1];
+    const lastGlobalIdx = filteredIdx[filteredIdx.length - 1] as number;
     setSelected(new Set([lastGlobalIdx]));
     // Defer to ensure virtualizer has updated measurements
     setTimeout(() => gotoListEnd(), 0);
@@ -672,25 +726,25 @@ export default function App() {
   // MDC helpers
   function addMdcToFilter(k: string, v: string) {
     try {
-      DiagnosticContextFilter.addMdcEntry(k, v ?? '');
-      DiagnosticContextFilter.setEnabled(true);
+      (DiagnosticContextFilter as any).addMdcEntry(k, v ?? '');
+      (DiagnosticContextFilter as any).setEnabled(true);
     } catch (e) {
       logger.error('Failed to add MDC entry to filter:', e);
       alert('Failed to add MDC entry to filter. See logs for details.');
     }
   }
 
-  const [showMdcModal, setShowMdcModal] = useState(false);
+  const [showMdcModal, setShowMdcModal] = useState<boolean>(false);
   const [mdcAgg, setMdcAgg] = useState(
     [] as { key: string; values: { val: string; count: number }[] }[]
   );
-  const [mdcSelKey, setMdcSelKey] = useState('');
-  const [mdcSelVals, setMdcSelVals] = useState(new Set<string>());
+  const [mdcSelKey, setMdcSelKey] = useState<string>('');
+  const [mdcSelVals, setMdcSelVals] = useState<Set<string>>(new Set());
 
   function openMdcFromSelection() {
     const byKey: Map<string, Map<string, number>> = new Map();
     for (const idx of selected) {
-      const e = entries[idx] as any;
+      const e = entries[idx];
       const m = e && e.mdc;
       if (!m || typeof m !== 'object') continue;
       for (const [k, v] of Object.entries(m)) {
@@ -720,24 +774,26 @@ export default function App() {
     const entry = mdcAgg.find((x) => x.key === key);
     if (!entry) return;
     if (opts?.presentOnly) {
-      DiagnosticContextFilter.addMdcEntry(key, '');
+      (DiagnosticContextFilter as any).addMdcEntry(key, '');
     } else if (opts?.allValues) {
-      for (const { val } of entry.values) DiagnosticContextFilter.addMdcEntry(key, val);
+      for (const { val } of entry.values) (DiagnosticContextFilter as any).addMdcEntry(key, val);
     } else {
-      for (const val of Array.from(mdcSelVals)) DiagnosticContextFilter.addMdcEntry(key, val);
+      for (const val of Array.from(mdcSelVals))
+        (DiagnosticContextFilter as any).addMdcEntry(key, val);
     }
-    DiagnosticContextFilter.setEnabled(true);
+    (DiagnosticContextFilter as any).setEnabled(true);
   }
 
   function removeSelectedMdcFromFilter() {
     const key = mdcSelKey;
     if (!key) return;
-    for (const val of Array.from(mdcSelVals)) DiagnosticContextFilter.removeMdcEntry(key, val);
+    for (const val of Array.from(mdcSelVals))
+      (DiagnosticContextFilter as any).removeMdcEntry(key, val);
   }
 
   // Popup: Fenster-Titel setzen
-  const [showTitleDlg, setShowTitleDlg] = useState(false);
-  const [titleInput, setTitleInput] = useState('Lumberjack');
+  const [showTitleDlg, setShowTitleDlg] = useState<boolean>(false);
+  const [titleInput, setTitleInput] = useState<string>('Lumberjack');
   async function openSetWindowTitleDialog() {
     try {
       const res = await window.api?.windowTitleGet?.();
@@ -746,7 +802,8 @@ export default function App() {
           ? String(res.title)
           : 'Lumberjack';
       setTitleInput(t);
-    } catch {
+    } catch (e) {
+      console.warn('windowTitleGet failed:', e);
       setTitleInput('Lumberjack');
     }
     setShowTitleDlg(true);
@@ -761,7 +818,7 @@ export default function App() {
       await window.api?.windowTitleSet?.(t);
       setShowTitleDlg(false);
     } catch (e) {
-      alert('Speichern fehlgeschlagen: ' + (e?.message || String(e)));
+      alert('Speichern fehlgeschlagen: ' + ((e as any)?.message || String(e)));
     }
   }
 
@@ -780,10 +837,10 @@ export default function App() {
         }
         const result = await window.api.settingsGet();
         if (!result || !result.ok) {
-          logger.warn('Failed to load settings:', result?.error);
+          logger.warn('Failed to load settings:', (result as any)?.error);
           return;
         }
-        const r = result.settings;
+        const r = result.settings as any;
         if (!r) return;
 
         // Apply settings
@@ -806,7 +863,7 @@ export default function App() {
         const root = document.documentElement;
         const detail = Number(r.detailHeight || 0);
         if (detail) root.style.setProperty('--detail-height', `${Math.round(detail)}px`);
-        const map = [
+        const map: Array<[string, unknown]> = [
           ['--col-ts', r.colTs],
           ['--col-lvl', r.colLvl],
           ['--col-logger', r.colLogger],
@@ -832,7 +889,9 @@ export default function App() {
     return () => clearTimeout(timeoutId);
   }, []);
 
-  async function openSettingsModal(initialTab) {
+  async function openSettingsModal(
+    initialTab?: 'tcp' | 'http' | 'elastic' | 'logging' | 'appearance'
+  ) {
     // Hole den aktuell persistierten Zustand (Race-Condition direkt nach App-Start vermeiden)
     let curMode = themeMode;
     try {
@@ -840,7 +899,7 @@ export default function App() {
         logger.warn('window.api.settingsGet is not available');
       } else {
         const result = await window.api.settingsGet();
-        const r = result?.ok ? result.settings : null;
+        const r = result?.ok ? (result.settings as any) : null;
         if (r && typeof r.themeMode === 'string') {
           const mode = ['light', 'dark', 'system'].includes(r.themeMode) ? r.themeMode : 'system';
           curMode = mode;
@@ -850,7 +909,9 @@ export default function App() {
         if (r && typeof r.follow === 'boolean') setFollow(!!r.follow);
         if (r && typeof r.followSmooth === 'boolean') setFollowSmooth(!!r.followSmooth);
       }
-    } catch {}
+    } catch {
+      // ignore
+    }
 
     setForm({
       tcpPort,
@@ -883,9 +944,11 @@ export default function App() {
     const maxMB = Math.max(1, Number(form.logMaxMB || 5));
     const maxBytes = Math.round(maxMB * 1024 * 1024);
     const backups = Math.max(0, Number(form.logMaxBackups || 0));
-    const mode = ['light', 'dark', 'system'].includes(form.themeMode) ? form.themeMode : 'system';
+    const mode = ['light', 'dark', 'system'].includes(form.themeMode)
+      ? (form.themeMode as any)
+      : 'system';
 
-    const patch = {
+    const patch: any = {
       tcpPort: port,
       httpUrl: String(form.httpUrl || '').trim(),
       httpInterval: interval,
@@ -898,7 +961,7 @@ export default function App() {
       elasticUrl: String(form.elasticUrl || '').trim(),
       elasticSize: Math.max(1, Number(form.elasticSize || 1000)),
       elasticUser: String(form.elasticUser || '').trim(),
-    } as any;
+    };
     const newPass = String(form.elasticPassNew || '').trim();
     if (form.elasticPassClear) {
       patch['elasticPassClear'] = true;
@@ -908,7 +971,8 @@ export default function App() {
 
     try {
       const res = await window.api.settingsSet(patch);
-      if (!res || !res.ok) throw new Error(res?.error || 'Unbekannter Fehler');
+      // eslint-disable-next-line @typescript-eslint/no-unsafe-argument
+      if (!res || !res.ok) throw new Error((res as any)?.error || 'Unbekannter Fehler');
 
       // Apply to local states
       setTcpPort(port);
@@ -931,31 +995,9 @@ export default function App() {
       setShowSettings(false);
     } catch (e) {
       logger.error('Failed to save settings:', e);
-      alert('Speichern fehlgeschlagen: ' + (e?.message || String(e)));
+      alert('Speichern fehlgeschlagen: ' + ((e as any)?.message || String(e)));
     }
   }
-
-  // HTTP Dropdown-Menü Outside-Click schließen
-  useEffect(() => {
-    if (!httpMenu.open) return;
-    const onDocDown = (e: any) => {
-      try {
-        const menuEl = httpMenuRef.current as any;
-        const btnEl = httpBtnRef.current as any;
-        if (!menuEl) {
-          setHttpMenu({ open: false, x: 0, y: 0 });
-          return;
-        }
-        const t = e.target as Node;
-        if (menuEl.contains(t) || (btnEl && btnEl.contains && btnEl.contains(t))) return;
-        setHttpMenu({ open: false, x: 0, y: 0 });
-      } catch {
-        setHttpMenu({ open: false, x: 0, y: 0 });
-      }
-    };
-    window.addEventListener('mousedown', onDocDown, true);
-    return () => window.removeEventListener('mousedown', onDocDown, true);
-  }, [httpMenu.open]);
 
   // IPC: Logs, Menü, TCP-Status
   useEffect(() => {
@@ -967,23 +1009,25 @@ export default function App() {
         });
         offs.push(off);
       }
-    } catch {}
+    } catch {
+      // ignore
+    }
     try {
       if (window.api?.onMenu) {
         const off = window.api.onMenu(async (cmd) => {
           try {
-            const { type, tab } = cmd || ({} as any);
+            const { type, tab } = (cmd as any) || ({} as any);
             switch (type) {
               case 'open-files': {
                 const paths = await window.api.openFiles();
                 if (paths && paths.length) {
                   const res = await window.api.parsePaths(paths);
-                  if (res?.ok) appendEntries(res.entries);
+                  if (res?.ok) appendEntries(res.entries as any);
                 }
                 break;
               }
               case 'open-settings': {
-                await openSettingsModal((tab as any) || 'tcp');
+                await openSettingsModal(tab || 'tcp');
                 break;
               }
               case 'tcp-start': {
@@ -1038,11 +1082,11 @@ export default function App() {
       if (window.api?.onTcpStatus) {
         const off = window.api.onTcpStatus((st) => {
           setTcpStatus(
-            st?.ok
-              ? st.running
-                ? `TCP: Port ${st.port} aktiv`
+            (st as any)?.ok
+              ? (st as any).running
+                ? `TCP: Port ${(st as any).port} aktiv`
                 : 'TCP gestoppt'
-              : st.message || 'TCP-Fehler'
+              : (st as any).message || 'TCP-Fehler'
           );
         });
         offs.push(off);
@@ -1060,11 +1104,8 @@ export default function App() {
     };
   }, [httpPollId, tcpPort]);
 
-  // Refs für Drag & Drop
-  // const dropRef = useRef(null);
-
   // Drag & Drop Overlay state
-  const [dragActive, setDragActive] = useState(false);
+  const [dragActive, setDragActive] = useState<boolean>(false);
 
   // Drag & Drop Handler
   useEffect(() => {
@@ -1076,11 +1117,11 @@ export default function App() {
             return;
           }
           const res = await window.api.parsePaths(paths);
-          if (res?.ok) appendEntries(res.entries);
-          else alert('Fehler beim Laden (Drop): ' + (res?.error || 'unbekannt'));
+          if (res?.ok) appendEntries(res.entries as any);
+          else alert('Fehler beim Laden (Drop): ' + (res as any)?.error || 'unbekannt');
         });
       },
-      onActiveChange: (active) => setDragActive(active),
+      onActiveChange: (active) => setDragActive(!!active),
       onRawFiles: async (files) => {
         await withBusy(async () => {
           try {
@@ -1089,11 +1130,11 @@ export default function App() {
               return;
             }
             const res = await window.api.parseRawDrops(files);
-            if (res?.ok) appendEntries(res.entries);
-            else alert('Fehler beim Laden (Drop-Rohdaten): ' + (res?.error || 'unbekannt'));
+            if (res?.ok) appendEntries(res.entries as any);
+            else alert('Fehler beim Laden (Drop-Rohdaten): ' + (res as any)?.error || 'unbekannt');
           } catch (e) {
             logger.error('Fehler beim Einlesen der Dateien (Drop-Rohdaten):', e);
-            alert('Fehler beim Einlesen der Dateien: ' + (e?.message || String(e)));
+            alert('Fehler beim Einlesen der Dateien: ' + ((e as any)?.message || String(e)));
           }
         });
       },
@@ -1109,7 +1150,7 @@ export default function App() {
     setSelected(new Set());
     setNextId(1);
     try {
-      LoggingStore.reset();
+      (LoggingStore as any).reset();
     } catch (e) {
       logger.error('LoggingStore.reset error:', e);
       alert('Failed to reset logging store. See logs for details.');
@@ -1141,14 +1182,16 @@ export default function App() {
 
   // Divider Drag (Höhe der Detailansicht anpassen)
   useEffect(() => {
-    function onMouseMove(e) {
+    function onMouseMove(e: MouseEvent) {
       if (!dividerStateRef.current._resizing) return;
       const startY = dividerStateRef.current._startY;
       const startH = dividerStateRef.current._startH;
       const dy = e.clientY - startY;
       let newH = startH - dy;
       const layout = layoutRef.current;
-      const total = layout ? layout.clientHeight : document.body.clientHeight || window.innerHeight;
+      const total = layout
+        ? (layout as any).clientHeight
+        : document.body.clientHeight || window.innerHeight;
       const minDetail = 150;
       const minList = 140;
       // Divider-Höhe dynamisch aus CSS-Variable lesen
@@ -1171,9 +1214,11 @@ export default function App() {
         const h = cs.getPropertyValue('--detail-height').trim();
         const num = Number(h.replace('px', '')) || 300;
         await window.api.settingsSet({ detailHeight: Math.round(num) });
-      } catch {}
+      } catch (e) {
+        logger.warn('Setting detailHeight via API failed:', e);
+      }
     }
-    function onMouseDown(e) {
+    function onMouseDown(e: MouseEvent) {
       dividerStateRef.current._resizing = true;
       dividerStateRef.current._startY = e.clientY;
       const cs = getComputedStyle(document.documentElement);
@@ -1185,23 +1230,27 @@ export default function App() {
       window.addEventListener('mouseup', onMouseUp);
     }
     const el = dividerElRef.current;
-    if (el) el.addEventListener('mousedown', onMouseDown);
+    if (el) el.addEventListener('mousedown', onMouseDown as any);
     return () => {
-      if (el) el.removeEventListener('mousedown', onMouseDown);
+      if (el) el.removeEventListener('mousedown', onMouseDown as any);
       window.removeEventListener('mousemove', onMouseMove);
       window.removeEventListener('mouseup', onMouseUp);
     };
   }, []);
 
   // Spalten-Resize (Zeit/Level/Logger)
-  function onColMouseDown(key, e) {
-    const varMap = { ts: '--col-ts', lvl: '--col-lvl', logger: '--col-logger' };
+  function onColMouseDown(key: 'ts' | 'lvl' | 'logger', e: MouseEvent) {
+    const varMap: Record<string, string> = {
+      ts: '--col-ts',
+      lvl: '--col-lvl',
+      logger: '--col-logger',
+    };
     const active = varMap[key];
     if (!active) return;
     const cs = getComputedStyle(document.documentElement);
     const cur = cs.getPropertyValue(active).trim();
     const curW = Number(cur.replace('px', '')) || 0;
-    const onMove = (ev) => onColMouseMove(ev);
+    const onMove = (ev: MouseEvent) => onColMouseMove(ev);
     const onUp = async () => {
       await onColMouseUp();
     };
@@ -1211,11 +1260,11 @@ export default function App() {
     window.addEventListener('mousemove', onMove);
     window.addEventListener('mouseup', onUp);
   }
-  function onColMouseMove(e) {
+  function onColMouseMove(e: MouseEvent) {
     const st = colResize.current;
     if (!st.active) return;
     let newW = st.startW + (e.clientX - st.startX);
-    const clamp = (v, min, max) => Math.max(min, Math.min(max, v));
+    const clamp = (v: number, min: number, max: number) => Math.max(min, Math.min(max, v));
     if (st.active === '--col-ts') newW = clamp(newW, 140, 600);
     if (st.active === '--col-lvl') newW = clamp(newW, 70, 200);
     if (st.active === '--col-logger') newW = clamp(newW, 160, 800);
@@ -1226,17 +1275,23 @@ export default function App() {
     colResize.current = { active: null, startX: 0, startW: 0 };
     document.body.style.userSelect = '';
     document.body.style.cursor = '';
-    window.removeEventListener('mousemove', onColMouseMove);
-    window.removeEventListener('mouseup', onColMouseUp);
+    window.removeEventListener('mousemove', onColMouseMove as any);
+    window.removeEventListener('mouseup', onColMouseUp as any);
     try {
       if (!st.active) return;
       const cs = getComputedStyle(document.documentElement);
       const val = cs.getPropertyValue(st.active).trim();
       const num = Number(val.replace('px', '')) || 0;
-      const keyMap = { '--col-ts': 'colTs', '--col-lvl': 'colLvl', '--col-logger': 'colLogger' };
+      const keyMap: Record<string, string> = {
+        '--col-ts': 'colTs',
+        '--col-lvl': 'colLvl',
+        '--col-logger': 'colLogger',
+      };
       const k = keyMap[st.active];
-      if (k) await window.api.settingsSet({ [k]: Math.round(num) });
-    } catch {}
+      if (k) await window.api.settingsSet({ [k]: Math.round(num) } as any);
+    } catch (e) {
+      logger.warn('Column resize setting failed:', e);
+    }
   }
 
   return (
@@ -1298,33 +1353,55 @@ export default function App() {
                 }
                 TimeFilter.setEnabled(true);
 
-                // Fire search
-                const opts: ElasticSearchOptions = {
-                  url: elasticUrl || undefined,
-                  size: elasticSize || undefined,
-                  index: formVals.index,
-                  sort: formVals.sort,
-                  duration: formVals.mode === 'relative' ? (formVals.duration as any) : undefined,
-                  from: formVals.mode === 'absolute' ? (formVals.from as any) : undefined,
-                  to: formVals.mode === 'absolute' ? (formVals.to as any) : undefined,
-                  application_name: formVals.application_name,
-                  logger: formVals.logger,
-                  level: formVals.level,
-                  environment: formVals.environment,
-                } as any;
+                await withBusy(async () => {
+                  setEsBusy(true);
+                  try {
+                    // Build options for ES
+                    const opts: ElasticSearchOptions = {
+                      url: elasticUrl || undefined,
+                      size: elasticSize || undefined,
+                      index: formVals.index,
+                      sort: formVals.sort,
+                      duration:
+                        formVals.mode === 'relative' ? (formVals.duration as any) : undefined,
+                      from: formVals.mode === 'absolute' ? (formVals.from as any) : undefined,
+                      to: formVals.mode === 'absolute' ? (formVals.to as any) : undefined,
+                      application_name: formVals.application_name,
+                      logger: formVals.logger,
+                      level: formVals.level,
+                      environment: formVals.environment,
+                      allowInsecureTLS: !!(formVals as any).allowInsecureTLS,
+                    } as any;
 
-                const res = await window.api.elasticSearch(opts);
-                if (res?.ok) {
-                  if ((formVals.loadMode || 'replace') === 'replace') {
-                    setEntries([]);
-                    setSelected(new Set());
-                    setNextId(1);
+                    // Log start (keine Response bisher)
+                    logger.info('[Elastic] Search started', { hasResponse: false });
+
+                    const res = await window.api.elasticSearch(opts);
+
+                    // Log result status und Gesamtanzahl
+                    const total = Array.isArray(res?.entries) ? res.entries.length : 0;
+                    logger.info('[Elastic] Search finished', {
+                      ok: !!res?.ok,
+                      total,
+                      hasResponse: true,
+                    });
+
+                    if (res?.ok) {
+                      if ((formVals.loadMode || 'replace') === 'replace') {
+                        setEntries([]);
+                        setSelected(new Set());
+                        setNextId(1);
+                      }
+                      appendEntries(res.entries);
+                    } else {
+                      alert('Elastic-Fehler: ' + (res?.error || 'Unbekannt'));
+                    }
+                  } finally {
+                    setEsBusy(false);
                   }
-                  appendEntries(res.entries);
-                } else {
-                  alert('Elastic-Fehler: ' + (res?.error || 'Unbekannt'));
-                }
+                });
               } catch (e) {
+                logger.error('[Elastic] Search failed', e);
                 alert('Elastic-Fehler: ' + (e?.message || String(e)));
               }
             }}
@@ -1456,7 +1533,9 @@ export default function App() {
           onClick={() => {
             try {
               applyThemeMode(themeMode);
-            } catch {}
+            } catch (e) {
+              logger.warn('applyThemeMode on backdrop close failed:', e as any);
+            }
             setShowSettings(false);
           }}
         >
@@ -1653,7 +1732,9 @@ export default function App() {
                             try {
                               const p = await window.api.chooseLogFile();
                               if (p) setForm({ ...form, logFilePath: p });
-                            } catch {}
+                            } catch (e) {
+                              logger.warn('chooseLogFile failed:', e as any);
+                            }
                           }}
                           disabled={!form.logToFile}
                         >
@@ -1762,7 +1843,9 @@ export default function App() {
                 setFollow(v);
                 try {
                   await window.api.settingsSet({ follow: v } as any);
-                } catch {}
+                } catch (err) {
+                  logger.warn('Persisting follow flag failed:', err as any);
+                }
               }}
             />
             <span>Follow</span>
@@ -1780,26 +1863,14 @@ export default function App() {
                 setFollowSmooth(v);
                 try {
                   await window.api.settingsSet({ followSmooth: v } as any);
-                } catch {}
+                } catch (err) {
+                  logger.warn('Persisting followSmooth flag failed:', err as any);
+                }
               }}
               disabled={!follow}
             />
             <span>Smooth</span>
           </label>
-        </div>
-        <div className="section">
-          {/* NEU: HTTP Menü */}
-          <button
-            ref={httpBtnRef}
-            onClick={(e) => {
-              const el = e.currentTarget as any;
-              const r = el.getBoundingClientRect();
-              setHttpMenu({ open: true, x: Math.round(r.left), y: Math.round(r.bottom + 4) });
-            }}
-            title="HTTP-Aktionen"
-          >
-            HTTP ▾
-          </button>
         </div>
         <div className="section">
           {/* NEU: Anfang/Ende */}
@@ -1918,6 +1989,17 @@ export default function App() {
             onClick={() => {
               setSearch('');
               setFilter({ level: '', logger: '', thread: '', service: '', message: '' });
+              // Lokale Filter komplett deaktivieren
+              try {
+                (DiagnosticContextFilter as any).reset?.();
+              } catch (e) {
+                logger.error('Resetting DiagnosticContextFilter failed:', e);
+              }
+              try {
+                (TimeFilter as any).reset?.();
+              } catch (e) {
+                logger.error('Resetting TimeFilter failed:', e);
+              }
             }}
           >
             Filter leeren
@@ -1966,6 +2048,15 @@ export default function App() {
               return null;
             }
           })()}
+          {esBusy && (
+            <span
+              className="status"
+              style={{ marginLeft: '6px' }}
+              title="Elasticsearch-Abfrage läuft"
+            >
+              <span className="spinner"></span>Elastic lädt…
+            </span>
+          )}
         </div>
         <div className="section">
           {busy && (
@@ -1984,9 +2075,6 @@ export default function App() {
               {nextPollIn}
             </span>
           )}
-        </div>
-        <div className="section">
-          <button onClick={() => openSettingsModal('tcp')}>Einstellungen…</button>
         </div>
       </header>
 
@@ -2045,36 +2133,6 @@ export default function App() {
         ) : null;
       })()}
 
-      {/* HTTP Dropdown Menü */}
-      {httpMenu.open && (
-        <div
-          id="httpMenu"
-          ref={httpMenuRef}
-          className="context-menu"
-          style={{ left: httpMenu.x + 'px', top: httpMenu.y + 'px' }}
-        >
-          <div className="item" onClick={httpMenuLoadOnce}>
-            Einmal laden
-          </div>
-          <div className="item" onClick={httpMenuStartPoll}>
-            Polling starten
-          </div>
-          <div
-            className="item"
-            onClick={() => {
-              setHttpMenu({ open: false, x: 0, y: 0 });
-              if (httpPollId != null) httpMenuStopPoll();
-            }}
-          >
-            Polling stoppen
-          </div>
-          <div className="sep" />
-          <div className="item" onClick={() => openSettingsModal('http')}>
-            Einstellungen…
-          </div>
-        </div>
-      )}
-
       {/* Hauptlayout: Liste + Overlay-Details */}
       <div className="layout" ref={layoutRef}>
         {/* Listen-Header */}
@@ -2102,7 +2160,6 @@ export default function App() {
               const e = entries[globalIdx] || {};
               const isSel = selected.has(globalIdx);
               const rowCls = 'row' + (isSel ? ' sel' : '');
-              const mark = (e as any)._mark as string | undefined;
               const style = {
                 position: 'absolute',
                 top: 0,
@@ -2153,7 +2210,7 @@ export default function App() {
             style={{
               // sanfte Tönung aus _mark oder color ableiten
               ['--details-tint' as any]: computeTint(
-                (selectedEntry && (selectedEntry as any)._mark) || (selectedEntry as any)?.color,
+                (selectedEntry && selectedEntry._mark) || selectedEntry?.color,
                 0.22
               ),
             }}
@@ -2168,25 +2225,25 @@ export default function App() {
                   <div>
                     <div className="kv">
                       <span>Zeit</span>
-                      <div>{fmtTimestamp((selectedEntry as any).timestamp)}</div>
+                      <div>{fmtTimestamp(selectedEntry.timestamp)}</div>
                     </div>
                     <div className="kv">
                       <span>Logger</span>
-                      <div>{fmt((selectedEntry as any).logger)}</div>
+                      <div>{fmt(selectedEntry.logger)}</div>
                     </div>
                   </div>
                   <div>
                     <div className="kv">
                       <span>Level</span>
                       <div>
-                        <span className={levelClass((selectedEntry as any).level)}>
-                          {fmt((selectedEntry as any).level)}
+                        <span className={levelClass(selectedEntry.level)}>
+                          {fmt(selectedEntry.level)}
                         </span>
                       </div>
                     </div>
                     <div className="kv">
                       <span>Thread</span>
-                      <div>{fmt((selectedEntry as any).thread)}</div>
+                      <div>{fmt(selectedEntry.thread)}</div>
                     </div>
                   </div>
                 </div>
@@ -2199,21 +2256,17 @@ export default function App() {
                   <pre
                     id="dMessage"
                     dangerouslySetInnerHTML={{
-                      __html: highlightAll((selectedEntry as any).message || '', search),
+                      __html: highlightAll(selectedEntry.message || '', search),
                     }}
                   />
                 </div>
 
                 {/* Stacktrace falls vorhanden */}
-                {((selectedEntry as any).stack_trace || (selectedEntry as any).stackTrace) && (
+                {(selectedEntry.stack_trace || selectedEntry.stackTrace) && (
                   <div className="kv full">
                     <span>Stacktrace</span>
                     <pre className="stack-trace">
-                      {String(
-                        (selectedEntry as any).stack_trace ||
-                          (selectedEntry as any).stackTrace ||
-                          ''
-                      )}
+                      {String(selectedEntry.stack_trace || selectedEntry.stackTrace || '')}
                     </pre>
                   </div>
                 )}

@@ -135,7 +135,11 @@ export class NetworkService {
           let obj: Record<string, unknown>;
           try {
             obj = JSON.parse(line) as Record<string, unknown>;
-          } catch {
+          } catch (e) {
+            log.warn(
+              'TCP JSON parse failed, treating as plain text:',
+              e instanceof Error ? e.message : String(e)
+            );
             obj = { message: line };
           }
 
@@ -166,10 +170,20 @@ export class NetworkService {
         // Cleanup server so we don't appear as running on next start
         try {
           server.removeListener('listening', onListening);
-        } catch {}
+        } catch (e) {
+          log.warn(
+            'Removing listening listener failed:',
+            e instanceof Error ? e.message : String(e)
+          );
+        }
         try {
           server.close();
-        } catch {}
+        } catch (e) {
+          log.warn(
+            'Closing TCP server after error failed:',
+            e instanceof Error ? e.message : String(e)
+          );
+        }
         this.tcpServer = null;
         this.tcpRunning = false;
         this.tcpPort = 0;
@@ -183,7 +197,9 @@ export class NetworkService {
       const onListening = (): void => {
         try {
           server.removeListener('error', onError);
-        } catch {}
+        } catch (e) {
+          log.warn('Removing error listener failed:', e instanceof Error ? e.message : String(e));
+        }
         this.tcpRunning = true;
         this.tcpPort = port;
         log.info(`TCP server listening on port ${port}`);

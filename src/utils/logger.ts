@@ -1,73 +1,53 @@
-// Unified logger using electron-log everywhere
-import electronLog from 'electron-log/renderer.js';
+// Unified logger using electron-log everywhere (renderer-safe)
+// We start with a console backend and try to upgrade to electron-log dynamically.
+let _backend: any = {
+  // eslint-disable-next-line no-console
+  info: (...args: any[]) => console.info('[lj]', ...args),
+  warn: (...args: any[]) => console.warn('[lj]', ...args),
+  error: (...args: any[]) => console.error('[lj]', ...args),
+  // eslint-disable-next-line no-console
+  debug: (...args: any[]) => console.debug('[lj]', ...args),
+};
 
-// Detect development mode
-function isDevelopment() {
-  try {
-    if (typeof process !== 'undefined' && process.env && process.env.NODE_ENV === 'development')
-      return true;
-  } catch {}
-  try {
-    if (
-      typeof import.meta !== 'undefined' &&
-      (import.meta as any).env &&
-      (import.meta as any).env.DEV
-    )
-      return true;
-  } catch {}
-  return false;
+// Try to dynamically import electron-log/renderer; ignore failures
+try {
+  import('electron-log/renderer.js')
+    .then((mod) => {
+      try {
+        const el = (mod as any)?.default || (mod as any);
+        if (el) {
+          // Configure transports defensively
+          try {
+            const env: any = (import.meta as any)?.env || {};
+            const lvl = String(env.VITE_LOG_CONSOLE_LEVEL || env.LOG_CONSOLE_LEVEL || 'error');
+            if (el.transports?.console) el.transports.console.level = lvl;
+            if (el.transports?.remote) el.transports.remote.level = false as any;
+            const isDev =
+              !!env?.DEV ||
+              (typeof process !== 'undefined' && (process as any)?.env?.NODE_ENV === 'development');
+            if (el.transports?.file) el.transports.file.level = isDev ? (false as any) : 'info';
+          } catch (e) {
+            console.warn('logger: dynamic configure failed:', e);
+          }
+          _backend = el;
+        }
+      } catch (e) {
+        console.warn('logger: adopting electron-log backend failed:', e);
+      }
+    })
+    .catch((e) => {
+      console.warn('logger: dynamic import of electron-log/renderer failed:', e);
+    });
+} catch (e) {
+  console.warn('logger: import setup threw:', e);
 }
-
-const isDev = isDevelopment();
-
-// Helper: resolve desired console level (allow override via env)
-function resolveConsoleLevel(): any {
-  try {
-    const env = (import.meta as any)?.env || {};
-    const lvl = (env.VITE_LOG_CONSOLE_LEVEL || env.LOG_CONSOLE_LEVEL || '').toString().trim();
-    if (lvl) return lvl; // e.g. 'debug' | 'info' | 'warn' | 'error' | false
-  } catch {}
-  try {
-    const lvl = (process as any)?.env?.LOG_CONSOLE_LEVEL;
-    if (lvl) return String(lvl);
-  } catch {}
-  // Default: keep console quiet to avoid spam in Electron main logs
-  // 'error' will suppress warn/info/debug in console while still keeping file transport (prod)
-  return 'error';
-}
-
-const desiredConsoleLevel = resolveConsoleLevel();
-
-// Configure electron-log based on environment (defensive: transports may be missing in some contexts)
-try {
-  const tConsole = (electronLog as any)?.transports?.console;
-  if (tConsole && typeof tConsole === 'object') {
-    tConsole.level = desiredConsoleLevel;
-  }
-} catch {}
-
-// Disable remote transport to avoid warnings if main isn't ready or remote is not desired
-try {
-  const tRemote = (electronLog as any)?.transports?.remote;
-  if (tRemote && typeof tRemote === 'object') {
-    tRemote.level = false as any;
-  }
-} catch {}
-
-try {
-  const tFile = (electronLog as any)?.transports?.file;
-  if (tFile && typeof tFile === 'object') {
-    // In development, disable file logging; in production, enable it
-    tFile.level = isDev ? (false as any) : 'info';
-  }
-} catch {}
 
 const logger = {
-  info: (...args: any[]) => (electronLog as any).info(...args),
-  warn: (...args: any[]) => (electronLog as any).warn(...args),
-  error: (...args: any[]) => (electronLog as any).error(...args),
-  debug: (...args: any[]) => (electronLog as any).debug(...args),
-  log: (...args: any[]) => (electronLog as any).info(...args),
+  info: (...args: any[]) => _backend.info(...args),
+  warn: (...args: any[]) => _backend.warn(...args),
+  error: (...args: any[]) => _backend.error(...args),
+  debug: (...args: any[]) => _backend.debug(...args),
+  log: (...args: any[]) => _backend.info(...args),
 };
 
 export default logger;

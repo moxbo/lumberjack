@@ -84,7 +84,7 @@ class WorkerPool {
   private handleWorkerError(err: any) {
     logger.error('[WorkerPool] Worker error:', err);
     // Find the worker that errored
-    const worker = (err as any).target as PWorker;
+    const worker = err.target as PWorker;
     if (worker) worker.busy = false;
 
     // Process next task

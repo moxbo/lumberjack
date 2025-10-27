@@ -3,7 +3,7 @@
  * Entry point for the Electron application with modern standards
  */
 
-import { app, BrowserWindow, Menu, nativeImage, type NativeImage, dialog } from 'electron';
+import { app, BrowserWindow, dialog, Menu, type NativeImage, nativeImage } from 'electron';
 import * as path from 'path';
 import * as fs from 'fs';
 import log from 'electron-log/main';
@@ -32,7 +32,7 @@ const networkService = new NetworkService();
 let AdmZip: any | null = null;
 function getAdmZip(): any {
   if (!AdmZip) {
-    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment,@typescript-eslint/no-require-imports
     AdmZip = require('adm-zip');
   }
   return AdmZip;
@@ -48,15 +48,15 @@ function getParsers(): typeof import('./parsers.cjs') {
     // Resolve built CJS parser relative to the application root to work in dev and packaged
     const appRoot = app.getAppPath();
     const parserPath = path.join(appRoot, 'src', 'main', 'parsers.cjs');
-    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
     parsers = require(parserPath);
   }
-  return parsers as typeof import('./parsers.cjs');
+  return parsers;
 }
 
 let mainWindow: BrowserWindow | null = null;
-let iconPlay: NativeImage | null = null;
-let iconStop: NativeImage | null = null;
+const iconPlay: NativeImage | null = null;
+const iconStop: NativeImage | null = null;
 // Track all windows for optional management
 const windows: Set<BrowserWindow> = new Set();
 
@@ -89,7 +89,12 @@ function applyWindowTitles(): void {
       const base = isPrimary ? getPrimaryBaseTitle() : getDefaultBaseTitle();
       const title = tcp.running && tcp.port ? `${base} — TCP:${tcp.port}` : base;
       w.setTitle(title);
-    } catch {}
+    } catch (e) {
+      log.warn(
+        'applyWindowTitles failed for a window:',
+        e instanceof Error ? e.message : String(e)
+      );
+    }
   }
 }
 // Exponiere für andere Module (ipcHandlers)
@@ -130,8 +135,8 @@ function defaultLogFilePath(): string {
 function closeLogStream(): void {
   try {
     logStream?.end?.();
-  } catch {
-    // Ignore errors
+  } catch (e) {
+    log.debug('closeLogStream ignored error:', e instanceof Error ? e.message : String(e));
   }
   logStream = null;
   logBytes = 0;
@@ -173,8 +178,14 @@ function rotateIfNeeded(extraBytes: number): void {
       if (fs.existsSync(src)) {
         try {
           fs.renameSync(src, dst);
-        } catch {
-          // Ignore errors
+        } catch (e) {
+          log.warn(
+            'Log rotation: failed to rename backup',
+            src,
+            '->',
+            dst,
+            e instanceof Error ? e.message : String(e)
+          );
         }
       }
     }
@@ -182,12 +193,15 @@ function rotateIfNeeded(extraBytes: number): void {
     if (backups >= 1 && fs.existsSync(p)) {
       try {
         fs.renameSync(p, `${p}.1`);
-      } catch {
-        // Ignore errors
+      } catch (e) {
+        log.warn(
+          'Log rotation: failed to rotate current file:',
+          e instanceof Error ? e.message : String(e)
+        );
       }
     }
-  } catch {
-    // Ignore errors
+  } catch (e) {
+    log.warn('Log rotation failed:', e instanceof Error ? e.message : String(e));
   }
   openLogStream();
 }
@@ -223,7 +237,8 @@ function sendMenuCmd(cmd: { type: string; tab?: string }): void {
   }
   try {
     mainWindow?.webContents.send('menu:cmd', cmd);
-  } catch {
+  } catch (e) {
+    log.debug('sendMenuCmd failed, buffering:', e instanceof Error ? e.message : String(e));
     // Im Zweifel puffern (z. B. Reload mitten im Senden)
     pendingMenuCmds.push(cmd);
   }
@@ -237,7 +252,8 @@ function isRendererReady(): boolean {
     if (!wc) return false;
     if (wc.isDestroyed()) return false;
     return !wc.isLoading();
-  } catch {
+  } catch (e) {
+    log.debug('isRendererReady probe failed:', e instanceof Error ? e.message : String(e));
     return false;
   }
 }
@@ -268,7 +284,11 @@ function flushPendingAppends(): void {
       const slice = pendingAppends.slice(i, i + CHUNK);
       wc.send('logs:append', slice);
     }
-  } catch {
+  } catch (e) {
+    log.debug(
+      'flushPendingAppends failed, keeping buffer:',
+      e instanceof Error ? e.message : String(e)
+    );
     return;
   }
   pendingAppends = [];
@@ -283,10 +303,14 @@ networkService.setLogCallback((entries: LogEntry[]) => {
 
 // Set up parsers for network service (lazy loaded)
 setImmediate(() => {
+  // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
   const parsers = getParsers();
   networkService.setParsers({
+    // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment,@typescript-eslint/no-unsafe-member-access
     parseJsonFile: parsers.parseJsonFile,
+    // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment,@typescript-eslint/no-unsafe-member-access
     parseTextLines: parsers.parseTextLines,
+    // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment,@typescript-eslint/no-unsafe-member-access
     toEntry: parsers.toEntry,
   });
 });
@@ -296,19 +320,27 @@ registerIpcHandlers(settingsService, networkService, getParsers, getAdmZip);
 
 // Nach Registrierung: TCP Start/Stop abfangen, um Titel zu aktualisieren
 try {
+  // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment,@typescript-eslint/no-require-imports
   const { ipcMain } = require('electron');
+  // eslint-disable-next-line @typescript-eslint/no-unsafe-call,@typescript-eslint/no-unsafe-member-access
   ipcMain.on('tcp:status', () => {
     // Vorsicht: Dieser Kanal wird per event.reply gesendet; hier nur als Fallback
     applyWindowTitles();
     updateMenu();
   });
-} catch {}
+} catch (e) {
+  log.warn(
+    'Failed to set up tcp:status fallback listener:',
+    e instanceof Error ? e.message : String(e)
+  );
+}
 
 // Helper: send appended logs to renderer
 function sendAppend(entries: LogEntry[]): void {
   try {
     writeEntriesToFile(entries);
-  } catch {
+  } catch (e) {
+    log.warn('writeEntriesToFile failed:', e instanceof Error ? e.message : String(e));
     // Ignore errors
   }
 
@@ -355,7 +387,11 @@ async function resolveIconPathAsync(): Promise<string | null> {
             await fs.promises.writeFile(outPath, buf);
             cachedIconPath = outPath;
             return outPath;
-          } catch {
+          } catch (e) {
+            log.warn(
+              'Falling back to asar path for icon due to error:',
+              e instanceof Error ? e.message : String(e)
+            );
             cachedIconPath = p;
             return p;
           }
@@ -363,7 +399,12 @@ async function resolveIconPathAsync(): Promise<string | null> {
         cachedIconPath = p;
         return p;
       }
-    } catch {
+    } catch (e) {
+      log.warn(
+        'Error while checking icon candidate:',
+        p,
+        e instanceof Error ? e.message : String(e)
+      );
       // Continue to next candidate
     }
   }
@@ -387,7 +428,8 @@ function resolveMacIconPath(): string | null {
   for (const p of candidates) {
     try {
       if (fs.existsSync(p)) return p;
-    } catch {
+    } catch (e) {
+      log.warn('Error checking mac icon candidate:', p, e instanceof Error ? e.message : String(e));
       // Continue to next candidate
     }
   }
@@ -416,7 +458,7 @@ function showAboutDialog(): void {
       `OS: ${osInfo}`,
     ].join('\n');
 
-    const options = {
+    const options: Electron.MessageBoxOptions = {
       type: 'info',
       title: `Über ${name}`,
       message: name,
@@ -424,7 +466,7 @@ function showAboutDialog(): void {
       buttons: ['OK'],
       noLink: true,
       normalizeAccessKeys: true,
-    } as const;
+    };
     if (win) void dialog.showMessageBox(win, options);
     else void dialog.showMessageBox(options);
   } catch (e) {
@@ -467,7 +509,7 @@ function showHelpDialog(): void {
       ' • Einstellungen enthalten Pfade, Limits und Anmeldedaten (verschlüsselt gespeichert)'
     );
 
-    const options = {
+    const options: Electron.MessageBoxOptions = {
       type: 'info',
       title: 'Hilfe / Anleitung',
       message: 'Hilfe & Funktionen',
@@ -475,7 +517,7 @@ function showHelpDialog(): void {
       buttons: ['OK'],
       noLink: true,
       normalizeAccessKeys: true,
-    } as const;
+    };
     if (win) void dialog.showMessageBox(win, options);
     else void dialog.showMessageBox(options);
   } catch (e) {
@@ -529,7 +571,7 @@ function buildMenu(): void {
           click: () => sendMenuCmd({ type: 'window-title' }),
         },
         { type: 'separator' as const },
-        (isMac ? { role: 'close' as const } : { role: 'quit' as const }) as any,
+        (isMac ? { role: 'close' as const } : { role: 'quit' as const }) as never,
       ],
     },
     {
@@ -590,7 +632,7 @@ function updateMenu(): void {
 }
 
 // Expose updateMenu globally so ipcHandlers can trigger it
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
+// eslint-disable-next-line @typescript-eslint/no-explicit-any,@typescript-eslint/no-unsafe-member-access
 (global as any).__updateAppMenu = updateMenu;
 
 perfService.mark('pre-window-creation');
@@ -618,6 +660,10 @@ function createWindow(opts: { makePrimary?: boolean } = {}): BrowserWindow {
     show: false,
   });
 
+  if (settings.isMaximized) {
+    win.maximize();
+  }
+
   windows.add(win);
   // Assign as primary when explicitly requested or when none exists
   if (!mainWindow || makePrimary) mainWindow = win;
@@ -643,7 +689,11 @@ function createWindow(opts: { makePrimary?: boolean } = {}): BrowserWindow {
         for (const cmd of pendingMenuCmds) {
           try {
             win.webContents.send('menu:cmd', cmd);
-          } catch {
+          } catch (e) {
+            log.debug(
+              'menu:cmd send during did-finish-load failed:',
+              e instanceof Error ? e.message : String(e)
+            );
             // Ignore errors
           }
         }
@@ -660,6 +710,7 @@ function createWindow(opts: { makePrimary?: boolean } = {}): BrowserWindow {
 
     // Defer icon loading completely after window is visible (Windows performance optimization)
     if (process.platform === 'win32') {
+      // eslint-disable-next-line @typescript-eslint/no-misused-promises
       setImmediate(async () => {
         try {
           perfService.mark('icon-load-start');
@@ -683,6 +734,31 @@ function createWindow(opts: { makePrimary?: boolean } = {}): BrowserWindow {
     }
   });
 
+  win.on('maximize', () => {
+    try {
+      const settings = settingsService.get();
+      settings.isMaximized = true;
+      settingsService.update(settings);
+      void settingsService.save();
+    } catch (e) {
+      log.warn('Failed to persist maximized state:', e instanceof Error ? e.message : String(e));
+    }
+  });
+
+  win.on('unmaximize', () => {
+    try {
+      const settings = settingsService.get();
+      settings.isMaximized = false;
+      settingsService.update(settings);
+      void settingsService.save();
+    } catch (e) {
+      log.warn(
+        'Persisting isMaximized on unmaximize failed:',
+        e instanceof Error ? e.message : String(e)
+      );
+    }
+  });
+
   win.on('close', () => {
     try {
       // Persist bounds from the primary window only
@@ -691,11 +767,13 @@ function createWindow(opts: { makePrimary?: boolean } = {}): BrowserWindow {
         if (bounds) {
           const settings = settingsService.get();
           settings.windowBounds = bounds;
+          settings.isMaximized = win.isMaximized();
           settingsService.update(settings);
           void settingsService.save();
         }
       }
-    } catch {
+    } catch (e) {
+      log.warn('Failed to persist window bounds:', e instanceof Error ? e.message : String(e));
       // Ignore errors
     }
   });
@@ -813,7 +891,8 @@ function createWindow(opts: { makePrimary?: boolean } = {}): BrowserWindow {
 if (process.platform === 'win32') {
   try {
     app.setAppUserModelId('de.hhla.lumberjack');
-  } catch {
+  } catch (e) {
+    log.warn('setAppUserModelId failed:', e instanceof Error ? e.message : String(e));
     // Ignore errors
   }
 }
@@ -868,7 +947,9 @@ void app.whenReady().then(async () => {
         { label: 'Neues Fenster', click: () => createWindow({ makePrimary: false }) },
       ]);
       app.dock.setMenu(dockMenu);
-    } catch {}
+    } catch (e) {
+      log.warn('Setting macOS dock menu failed:', e instanceof Error ? e.message : String(e));
+    }
   }
 
   // Windows Task List (UserTasks): add "New Window" task

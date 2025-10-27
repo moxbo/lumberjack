@@ -3,6 +3,11 @@
 // - reset(): clears internal state and notifies listeners
 // - addLoggingStoreListener(listener): { loggingEventsAdded(events), loggingStoreReset() }
 
+type Listener = {
+  loggingEventsAdded?: (events: any[]) => void;
+  loggingStoreReset?: () => void;
+};
+
 const RESERVED_STD_FIELDS = new Set([
   'remarks',
   'color',
@@ -55,7 +60,7 @@ function findTraceId(raw: { [x: string]: any }) {
 }
 
 export function computeMdcFromRaw(raw: { [s: string]: unknown } | ArrayLike<unknown>) {
-  const mdc = {};
+  const mdc: Record<string, string> = {};
   if (!raw || typeof raw !== 'object') return mdc;
   for (const [k, v] of Object.entries(raw)) {
     if (RESERVED_STD_FIELDS.has(k)) continue;
@@ -65,48 +70,52 @@ export function computeMdcFromRaw(raw: { [s: string]: unknown } | ArrayLike<unkn
     if (!key.trim()) continue;
     mdc[key] = val;
   }
-  const ext = findExternalId(raw);
+  const ext = findExternalId(raw as any);
   if (ext && !mdc.externalId) mdc.externalId = ext;
   // Normalisierte TraceId zusätzlich bereitstellen, um MDC-Filterung über einen Key zu ermöglichen
-  const tid = findTraceId(raw);
+  const tid = findTraceId(raw as any);
   if (tid && !mdc.traceId) mdc.traceId = tid;
   return mdc;
 }
 
 class LoggingStoreImpl {
-  constructor() {
-    this._listeners = new Set();
-    this._events = []; // optional, not strictly required for MDC
-  }
-  addLoggingStoreListener(listener: any) {
+  private _listeners = new Set<Listener>();
+  private _events: any[] = [];
+  addLoggingStoreListener(listener: Listener) {
     if (listener && typeof listener === 'object') {
       this._listeners.add(listener);
       return () => this._listeners.delete(listener);
     }
     return () => {};
   }
-  addEvents(events) {
+  addEvents(events: any[]): void {
     if (!Array.isArray(events) || events.length === 0) return;
     for (const e of events) {
       try {
         // Attach MDC derived from raw JSON object
         const raw = e && (e.raw || e);
         e.mdc = computeMdcFromRaw(raw);
-      } catch (_) {}
+      } catch (err) {
+        console.warn('computeMdcFromRaw failed:', err);
+      }
     }
     this._events.push(...events);
     for (const l of this._listeners) {
       try {
         l.loggingEventsAdded && l.loggingEventsAdded(events);
-      } catch {}
+      } catch (err) {
+        console.warn('loggingEventsAdded listener failed:', err);
+      }
     }
   }
-  reset() {
+  reset(): void {
     this._events = [];
     for (const l of this._listeners) {
       try {
         l.loggingStoreReset && l.loggingStoreReset();
-      } catch {}
+      } catch (err) {
+        console.warn('loggingStoreReset listener failed:', err);
+      }
     }
   }
 }

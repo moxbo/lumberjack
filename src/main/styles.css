@@ -1088,3 +1088,18 @@ input[type='checkbox'] {
   grid-column: 1 / -1;
   min-width: 0;
 }
+
+/* Drop overlay */
+.drop-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(10, 132, 255, 0.1);
+  border: 2px dashed var(--color-primary);
+  color: var(--color-primary);
+  display: grid;
+  place-items: center;
+  font-weight: 700;
+  letter-spacing: 0.2px;
+  z-index: var(--z-backdrop);
+  pointer-events: none; /* darf UI nicht blockieren */
+}

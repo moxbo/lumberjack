@@ -41,14 +41,16 @@ export class DragAndDropManager {
         try {
           const types = Array.from(dt.types || ([] as any));
           logger.log('[DnD] drag types:', types);
-        } catch {}
+        } catch (e) {
+          logger.warn('DnD: failed to log drag types:', e);
+        }
       }
       // DataTransfer.types ist array-ähnlich, iterierbar
       let hasFiles = false;
       const types: any = dt.types as any;
-      if (types && typeof (types as any).length === 'number') {
-        for (let i = 0; i < (types as any).length; i++) {
-          const t = (types as any)[i];
+      if (types && typeof types.length === 'number') {
+        for (let i = 0; i < types.length; i++) {
+          const t = types[i];
           if (
             t === 'Files' ||
             t === 'public.file-url' ||
@@ -87,7 +89,9 @@ export class DragAndDropManager {
               try {
                 const url = new URL(line);
                 out.push(decodeURIComponent(url.pathname));
-              } catch {}
+              } catch (e) {
+                logger.warn('DnD: failed to decode file URL:', e);
+              }
             } else if (line.startsWith('/')) {
               // macOS Finder liefert teils plain absolute Pfade in text/plain
               out.push(line);
@@ -108,18 +112,24 @@ export class DragAndDropManager {
         const uris = dt.getData('text/uri-list');
         const fromUris = fileUrlsToPaths(uris);
         if (fromUris.length) out.push(...fromUris);
-      } catch {}
+      } catch (e) {
+        logger.warn('DnD: reading text/uri-list failed:', e);
+      }
       try {
         const pub = dt.getData('public.file-url');
         const fromPub = fileUrlsToPaths(pub);
         if (fromPub.length) out.push(...fromPub);
-      } catch {}
+      } catch (e) {
+        logger.warn('DnD: reading public.file-url failed:', e);
+      }
       // Manche Umgebungen liefern file:// oder Plain-Pfade in text/plain
       try {
         const plain = dt.getData('text/plain');
         const fromPlain = fileUrlsToPaths(plain);
         if (fromPlain.length) out.push(...fromPlain);
-      } catch {}
+      } catch (e) {
+        logger.warn('DnD: reading text/plain failed:', e);
+      }
       // Fallback 1: FileList .path (benötigt sandbox=false)
       try {
         const files = dt.files as FileList | undefined;
@@ -130,7 +140,9 @@ export class DragAndDropManager {
             if (p) out.push(p);
           }
         }
-      } catch {}
+      } catch (e) {
+        logger.warn('DnD: reading FileList paths failed:', e);
+      }
       // Fallback 2: DataTransferItem.getAsFile().path
       try {
         const items = dt.items as DataTransferItemList | null;
@@ -144,7 +156,9 @@ export class DragAndDropManager {
             }
           }
         }
-      } catch {}
+      } catch (e) {
+        logger.warn('DnD: reading DataTransferItem paths failed:', e);
+      }
       if (debug) logger.log('[DnD] extracted paths before dedupe:', out.slice());
       // Deduplizieren ohne Set
       if (out.length > 1) {
@@ -218,11 +232,13 @@ export class DragAndDropManager {
                 it.getAsString((str) => {
                   try {
                     resolve(fileUrlsToPaths(String(str || '')));
-                  } catch {
+                  } catch (e) {
+                    logger.warn('DnD: parsing getAsString data failed:', e);
                     resolve([]);
                   }
                 });
-              } catch {
+              } catch (e) {
+                logger.warn('DnD: getAsString failed:', e);
                 resolve([]);
               }
             })
@@ -277,7 +293,9 @@ export class DragAndDropManager {
         try {
           const fromItems = await extractPathsFromItemsAsync(e);
           if (fromItems && fromItems.length) paths = fromItems;
-        } catch {}
+        } catch (err) {
+          logger.warn('DnD: extractPathsFromItemsAsync failed:', err);
+        }
       }
       if (debug) logger.log('[DnD] final paths:', (paths || []).slice());
       if (paths && paths.length) {

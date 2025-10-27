@@ -291,7 +291,7 @@ export function migrateSettings(
   settings: Record<string, any>,
   fromVersion: number
 ): Record<string, any> {
-  let migrated: Record<string, any> = { ...settings };
+  const migrated: Record<string, any> = { ...settings };
 
   // Migration from version 0 (no version) to version 1
   if (fromVersion < 1) {
@@ -332,9 +332,8 @@ export function parseSettingsJSON(jsonString: string): {
     }
 
     // Check version and migrate if needed
-    const version = typeof (parsed as any)._version === 'number' ? (parsed as any)._version : 0;
-    let settings =
-      version < SETTINGS_VERSION ? migrateSettings(parsed as any, version) : (parsed as any);
+    const version = typeof parsed._version === 'number' ? parsed._version : 0;
+    const settings = version < SETTINGS_VERSION ? migrateSettings(parsed, version) : parsed;
 
     // Validate and sanitize
     const { settings: validated, errors } = validateSettings(settings);

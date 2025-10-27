@@ -18,7 +18,8 @@ const DEFAULT_SETTINGS: Settings = {
     width: 1200,
     height: 800,
   },
-  tcpPort: 9999,
+  isMaximized: false,
+  tcpPort: 4445,
   logToFile: false,
   logFilePath: '',
   logMaxBytes: 10 * 1024 * 1024, // 10 MB
@@ -26,7 +27,7 @@ const DEFAULT_SETTINGS: Settings = {
   elasticUrl: '',
   elasticUser: '',
   elasticPassEnc: '',
-  elasticSize: 1000,
+  elasticSize: 10000,
   themeMode: 'system',
   histLogger: [],
   // NEW histories for ElasticSearch dialog
@@ -176,7 +177,12 @@ export class SettingsService {
     // Entferne veraltete Schlüssel aus Patches
     try {
       delete (patch as any).windowTitle;
-    } catch {}
+    } catch (e) {
+      log.warn(
+        'Failed to strip legacy windowTitle from settings patch:',
+        e instanceof Error ? e.message : String(e)
+      );
+    }
 
     // Merge patch into current settings
     this.settings = { ...this.settings, ...patch } as Settings;

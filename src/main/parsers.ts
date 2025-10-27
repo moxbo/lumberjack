@@ -32,12 +32,17 @@ function getAdmZip() {
   if (!AdmZip) {
     try {
       // Prefer direct require in CJS build
-      // eslint-disable-next-line @typescript-eslint/no-var-requires
+
       AdmZip = require('adm-zip');
-    } catch {
+    } catch (e) {
       // Fallback: use createRequire from module, anchored at cwd
-      const req = createRequire(path.join(process.cwd(), 'package.json'));
-      AdmZip = req('adm-zip');
+      try {
+        const req = createRequire(path.join(process.cwd(), 'package.json'));
+        AdmZip = req('adm-zip');
+      } catch (e2) {
+        log.error('Failed to load adm-zip module:', e instanceof Error ? e.message : String(e));
+        throw e2;
+      }
     }
   }
   return AdmZip;
@@ -53,7 +58,12 @@ function toEntry(obj: AnyMap = {}, fallbackMessage = '', source = ''): Entry {
       const direct =
         (o as AnyMap).stack_trace || (o as AnyMap).stackTrace || (o as AnyMap).stacktrace;
       if (direct != null) candVals.push(direct);
-    } catch {}
+    } catch (e) {
+      log.warn(
+        'normalizeStack: reading direct stack fields failed:',
+        e instanceof Error ? e.message : String(e)
+      );
+    }
     try {
       const err = (o as AnyMap).error || (o as AnyMap).err;
       if (err) {
@@ -61,7 +71,12 @@ function toEntry(obj: AnyMap = {}, fallbackMessage = '', source = ''): Entry {
         if ((err as AnyMap).trace != null) candVals.push((err as AnyMap).trace);
         if (typeof err === 'string') candVals.push(err);
       }
-    } catch {}
+    } catch (e) {
+      log.warn(
+        'normalizeStack: reading error fields failed:',
+        e instanceof Error ? e.message : String(e)
+      );
+    }
     try {
       const ex = (o as AnyMap).exception || (o as AnyMap).cause || (o as AnyMap).throwable;
       if (ex) {
@@ -69,13 +84,23 @@ function toEntry(obj: AnyMap = {}, fallbackMessage = '', source = ''): Entry {
         if ((ex as AnyMap).stackTrace != null) candVals.push((ex as AnyMap).stackTrace);
         if (typeof ex === 'string') candVals.push(ex);
       }
-    } catch {}
+    } catch (e) {
+      log.warn(
+        'normalizeStack: reading exception fields failed:',
+        e instanceof Error ? e.message : String(e)
+      );
+    }
     try {
       if ((o as AnyMap)['exception.stacktrace'] != null)
         candVals.push((o as AnyMap)['exception.stacktrace']);
       if ((o as AnyMap)['error.stacktrace'] != null)
         candVals.push((o as AnyMap)['error.stacktrace']);
-    } catch {}
+    } catch (e) {
+      log.warn(
+        'normalizeStack: reading flattened stacktrace fields failed:',
+        e instanceof Error ? e.message : String(e)
+      );
+    }
 
     for (const v of candVals) {
       if (v == null) continue;
@@ -93,25 +118,12 @@ function toEntry(obj: AnyMap = {}, fallbackMessage = '', source = ''): Entry {
   const stackTrace = normalizeStack(obj);
 
   return {
-    timestamp:
-      (obj as AnyMap).timestamp || (obj as AnyMap)['@timestamp'] || (obj as AnyMap).time || null,
-    level: (obj as AnyMap).level || (obj as AnyMap).severity || (obj as AnyMap).loglevel || null,
-    logger:
-      (obj as AnyMap).logger || (obj as AnyMap).logger_name || (obj as AnyMap).category || null,
-    thread: (obj as AnyMap).thread || (obj as AnyMap).thread_name || null,
-    message:
-      (obj as AnyMap).message ||
-      (obj as AnyMap).msg ||
-      (obj as AnyMap).log ||
-      fallbackMessage ||
-      '',
-    traceId:
-      (obj as AnyMap).traceId ||
-      (obj as AnyMap).trace_id ||
-      (obj as AnyMap).trace ||
-      (obj as AnyMap)['trace.id'] ||
-      (obj as AnyMap).TraceID ||
-      null,
+    timestamp: obj.timestamp || obj['@timestamp'] || obj.time || null,
+    level: obj.level || obj.severity || obj.loglevel || null,
+    logger: obj.logger || obj.logger_name || obj.category || null,
+    thread: obj.thread || obj.thread_name || null,
+    message: obj.message || obj.msg || obj.log || fallbackMessage || '',
+    traceId: obj.traceId || obj.trace_id || obj.trace || obj['trace.id'] || obj.TraceID || null,
     stackTrace: stackTrace || null,
     raw: obj,
     source,
@@ -162,7 +174,12 @@ function parseJsonFile(filename: string, text: string): Entry[] {
     try {
       const arr = JSON.parse(trimmed);
       if (Array.isArray(arr)) return arr.map((o: AnyMap) => toEntry(o, '', filename));
-    } catch (_) {}
+    } catch (e) {
+      log.warn(
+        'parseJsonFile: JSON array parse failed:',
+        e instanceof Error ? e.message : String(e)
+      );
+    }
   }
   // treat as NDJSON
   return parseTextLines(filename, text);
@@ -238,61 +255,125 @@ export interface ElasticsearchOptions {
   allowInsecureTLS?: boolean; // default false
 }
 
-function toIsoIfDate(v: any): string | undefined {
+function toIsoIfDate(v: string | number | Date | undefined): string | undefined {
   if (v == null) return undefined;
-  if (v instanceof Date) return v.toISOString();
-  if (typeof v === 'number') return new Date(v).toISOString();
-  if (typeof v === 'string') return v;
-  return undefined;
+  try {
+    if (v instanceof Date) return v.toISOString();
+    if (typeof v === 'number') return new Date(v).toISOString();
+    const s = v.trim();
+    if (!s) return undefined;
+    if (/^\d+$/.test(s)) return new Date(parseInt(s, 10)).toISOString();
+    const m = s.match(/^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})(?::(\d{2})(?:\.(\d{1,3}))?)?$/);
+    if (m) {
+      const [, Y, M, D, h, mi, sec = '0', ms = '0'] = m;
+      // Construct as local time, then convert to UTC ISO
+      const d = new Date(
+        Number(Y),
+        Number(M) - 1,
+        Number(D),
+        Number(h),
+        Number(mi),
+        Number(sec),
+        Number(ms.padEnd(3, '0'))
+      );
+      return d.toISOString();
+    }
+    const d = new Date(s);
+    if (isNaN(d.getTime())) return undefined;
+    return d.toISOString();
+  } catch {
+    return undefined;
+  }
 }
 
 function buildElasticSearchBody(opts: ElasticsearchOptions) {
   const must: AnyMap[] = [];
   const filter: AnyMap[] = [];
 
-  // message full-text
-  if (opts.message && opts.message.trim()) {
-    must.push({ match_phrase: { message: opts.message } });
-  }
-  // exact-ish matches (use match_phrase for flexibility across mappings)
-  if (opts.logger && opts.logger.trim()) {
-    must.push({ match_phrase: { logger: opts.logger } });
-  }
-  if (opts.level && opts.level.trim()) {
-    must.push({ match_phrase: { level: opts.level } });
-  }
-  if (opts.application_name && opts.application_name.trim()) {
-    must.push({ match_phrase: { application_name: opts.application_name } });
-  }
-  if (opts.environment && opts.environment.trim()) {
-    must.push({ match_phrase: { environment: opts.environment } });
-  }
+  const hasWildcard = (s: string) => /[\*\?]/.test(s);
+
+  // helper: add field condition, match_phrase by default; query_string if wildcards present
+  const addField = (field: string, value?: string) => {
+    const v = (value ?? '').trim();
+    if (!v) return;
+    if (hasWildcard(v)) {
+      must.push({
+        query_string: {
+          query: v,
+          default_field: field,
+          analyze_wildcard: true,
+          allow_leading_wildcard: true,
+        },
+      });
+    } else {
+      must.push({
+        match_phrase: { [field]: { query: v } },
+      });
+    }
+  };
+
+  // fields
+  addField('environment', opts.environment);
+  addField('application_name', opts.application_name);
+  addField('logger', opts.logger);
+  addField('level', opts.level);
+  addField('message', opts.message);
 
   // time range on @timestamp
   const range: AnyMap = {};
-  if (opts.duration && opts.duration.trim()) {
+  if (opts.duration && String(opts.duration).trim()) {
     range.gte = `now-${opts.duration}`;
     range.lte = 'now';
   } else {
-    const from = toIsoIfDate(opts.from);
-    const to = toIsoIfDate(opts.to);
-    if (from) range.gte = from;
-    if (to) range.lte = to;
+    // Detect epoch millis if numeric
+    const num = (x: unknown) => (typeof x === 'number' ? x : /^\d+$/.test(String(x || '')) ? Number(x) : null);
+    const fromNum = num(opts.from as any);
+    const toNum = num(opts.to as any);
+    if (fromNum != null || toNum != null) {
+      if (fromNum != null) range.gte = fromNum;
+      if (toNum != null) range.lte = toNum;
+      range.format = 'epoch_millis';
+    } else {
+      const from = toIsoIfDate(opts.from);
+      const to = toIsoIfDate(opts.to);
+      if (from) range.gte = from;
+      if (to) range.lte = to;
+    }
   }
   if (Object.keys(range).length > 0) {
-    filter.push({ range: { '@timestamp': range } });
+    must.push({ range: { '@timestamp': range } });
   }
 
-  return {
+  // Build body aligned to Kibana-style JSON (only essential parts)
+  const body: AnyMap = {
+    version: true,
     size: opts.size ?? 1000,
-    sort: [{ '@timestamp': { order: opts.sort ?? 'desc' } }],
+    sort: [
+      {
+        '@timestamp': { order: opts.sort ?? 'asc', unmapped_type: 'boolean' },
+      },
+    ],
+    _source: { excludes: [] },
+    stored_fields: ['*'],
+    script_fields: {},
+    docvalue_fields: [{ field: '@timestamp', format: 'date_time' }],
     query: {
       bool: {
         must,
-        filter,
+        filter: filter.length ? filter : [{ match_all: {} }],
+        should: [],
+        must_not: [],
       },
     },
+    highlight: {
+      pre_tags: ['@kibana-highlighted-field@'],
+      post_tags: ['@/kibana-highlighted-field@'],
+      fields: { '*': {} },
+      fragment_size: 2147483647,
+    },
   };
+
+  return body;
 }
 
 function buildElasticHeaders(auth?: ElasticsearchAuth): Record<string, string> {
@@ -341,21 +422,29 @@ function postJson(
         // Avoid logging Authorization header
         const { authorization: _auth, ...safeHeaders } = headers || {};
         log.info('[Elastic] POST', `${u.protocol}//${u.host}${opts.path}`, safeHeaders);
-      } catch {}
+      } catch (e) {
+        log.warn('Elastic POST logging failed:', e instanceof Error ? e.message : String(e));
+      }
       if (isHttps && allowInsecureTLS) {
         opts.agent = new https.Agent({ rejectUnauthorized: false });
       }
-      const req = mod.request(opts, (res: any) => {
+      const req = mod.request(opts, (res: http.IncomingMessage) => {
         const chunks: Buffer[] = [];
         res.on('data', (c: Buffer) => chunks.push(c));
         res.on('end', () => {
           const text = Buffer.concat(chunks).toString('utf8');
           const status = Number(res.statusCode || 0);
           if (status >= 200 && status < 300) {
+            log.info(`[Elastic] POST ${status} response received`);
             try {
+              // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
               const json = text ? JSON.parse(text) : {};
               resolve(json);
             } catch (e) {
+              log.warn(
+                'Elastic POST response parse failed, returning empty object:',
+                e instanceof Error ? e.message : String(e)
+              );
               resolve({});
             }
           } else {
@@ -381,7 +470,8 @@ export async function fetchElasticLogs(opts: ElasticsearchOptions): Promise<Entr
   const base = (opts.url || '').replace(/\/$/, '');
   if (!base) throw new Error('Elasticsearch URL (opts.url) ist erforderlich');
   const index = encodeURIComponent(opts.index ?? '_all');
-  const url = `${base}/${index}/_search`;
+  // Adjust URL to include requested query parameters
+  const url = `${base}/${index}/_search?ignore_throttled=false&ignore_unavailable=true`;
 
   const body = buildElasticSearchBody(opts);
   const headers = buildElasticHeaders(opts.auth);

@@ -32,6 +32,8 @@
   },
   "license": "ISC",
   "devDependencies": {
+    "@eslint/eslintrc": "^3.3.1",
+    "@eslint/js": "^9.38.0",
     "@preact/preset-vite": "^2.10.2",
     "@types/electron": "^1.6.12",
     "@types/node": "^24.9.1",
@@ -45,6 +47,7 @@
     "eslint": "^9.38.0",
     "eslint-config-prettier": "^10.1.8",
     "eslint-plugin-prettier": "^5.5.4",
+    "globals": "^16.4.0",
     "jimp": "^1.6.0",
     "png-to-ico": "^3.0.1",
     "prettier": "^3.6.2",
@@ -56,6 +59,7 @@
     "wait-on": "^9.0.1"
   },
   "dependencies": {
+    "-": "^0.0.1",
     "@tanstack/react-virtual": "^3.13.12",
     "adm-zip": "^0.5.16",
     "electron-log": "^5.4.3",
