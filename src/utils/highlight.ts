@@ -1,10 +1,10 @@
 // Utility: HTML escaping and full-text highlighting
-export function escapeHtml(s) {
+export function escapeHtml(s: unknown): string {
   return String(s).replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;');
 }
 
 // Highlight all occurrences of needle in text (case-insensitive), returns safe HTML
-export function highlightAll(text, needle) {
+export function highlightAll(text: unknown, needle: unknown): string {
   const s = String(text ?? '');
   const q = String(needle ?? '').trim();
   if (!q) return escapeHtml(s);

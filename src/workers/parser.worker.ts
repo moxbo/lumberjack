@@ -4,33 +4,77 @@
  * to keep the main thread responsive
  */
 
+// Types
+type AnyMap = Record<string, unknown>;
+
+interface WorkerMessage {
+  type: string;
+  data: unknown;
+  id: number;
+}
+
+interface ParseLinesData {
+  lines: string[];
+  filename: string;
+}
+
+interface ParseJSONData {
+  text: string;
+  filename: string;
+}
+
+interface ZipEntry {
+  name: string;
+  text: string;
+}
+
+interface ParseZipEntriesData {
+  entries: ZipEntry[];
+  zipName: string;
+}
+
+interface LogEntry {
+  timestamp: string;
+  level: string;
+  logger: string;
+  thread: string;
+  message: string;
+  traceId: string;
+  source: string;
+  mdc: Record<string, unknown>;
+  stackTrace?: string;
+  service: string;
+  raw: unknown;
+}
+
 // Worker-safe implementation of parsing logic
-self.onmessage = async function (e) {
+self.onmessage = function (e: MessageEvent<WorkerMessage>): void {
   const { type, data, id } = e.data;
 
   try {
     switch (type) {
       case 'parseLines': {
-        const { lines, filename } = data;
+        const { lines, filename } = data as ParseLinesData;
         const entries = parseTextLinesWorker(lines, filename);
         self.postMessage({ type: 'parseLines', id, result: entries });
         break;
       }
 
       case 'parseJSON': {
-        const { text, filename } = data;
+        const { text, filename } = data as ParseJSONData;
         const entries = parseJsonWorker(text, filename);
         self.postMessage({ type: 'parseJSON', id, result: entries });
         break;
       }
 
       case 'parseZipEntries': {
-        const { entries: zipEntries, zipName } = data;
-        const parsed = [];
+        const { entries: zipEntries, zipName } = data as ParseZipEntriesData;
+        const parsed: LogEntry[] = [];
         for (const entry of zipEntries) {
           const { name, text } = entry;
-          const ext = name.toLowerCase().split('.').pop();
-          let entryData = [];
+          const parts = name.toLowerCase().split('.');
+          const ext = parts[parts.length - 1] ?? '';
+          let entryData: LogEntry[] = [];
           if (ext === 'json') {
             entryData = parseJsonWorker(text, name);
           } else {
@@ -45,13 +89,13 @@ self.onmessage = async function (e) {
       }
 
       default:
-        throw new Error(`Unknown worker command: ${type}`);
+        throw new Error(`Unknown worker command: ${String(type)}`);
     }
   } catch (error) {
     self.postMessage({
       type: 'error',
       id,
-      error: error.message || String(error),
+      error: error instanceof Error ? error.message : String(error),
     });
   }
 };
@@ -59,22 +103,23 @@ self.onmessage = async function (e) {
 /**
  * Parse text lines (worker-safe version)
  */
-function parseTextLinesWorker(lines, source) {
-  const entries = [];
+function parseTextLinesWorker(lines: string[], source: string): LogEntry[] {
+  const entries: LogEntry[] = [];
   for (const line of lines) {
     const trimmed = line.trim();
     if (!trimmed) continue;
 
     // Try JSON parsing first
-    let obj = null;
+    let obj: AnyMap | null = null;
     try {
-      obj = JSON.parse(trimmed);
-    } catch (_) {
+      const parsed: unknown = JSON.parse(trimmed);
+      obj = parsed && typeof parsed === 'object' ? (parsed as AnyMap) : null;
+    } catch {
       // Plain text line
       obj = { message: trimmed };
     }
 
-    const entry = toEntry(obj, source);
+    const entry = toEntry(obj ?? {}, source);
     entries.push(entry);
   }
   return entries;
@@ -83,14 +128,18 @@ function parseTextLinesWorker(lines, source) {
 /**
  * Parse JSON file (worker-safe version)
  */
-function parseJsonWorker(text, source) {
+function parseJsonWorker(text: string, source: string): LogEntry[] {
   try {
-    const parsed = JSON.parse(text);
+    const parsed: unknown = JSON.parse(text);
     if (Array.isArray(parsed)) {
-      return parsed.map((obj) => toEntry(obj, source));
+      return parsed.map((item) => {
+        const obj = item && typeof item === 'object' ? (item as AnyMap) : {};
+        return toEntry(obj, source);
+      });
     }
-    return [toEntry(parsed, source)];
-  } catch (err) {
+    const obj = parsed && typeof parsed === 'object' ? (parsed as AnyMap) : {};
+    return [toEntry(obj, source)];
+  } catch {
     // Fallback: try NDJSON (newline-delimited JSON)
     const lines = text.split('\n').filter((l) => l.trim());
     return parseTextLinesWorker(lines, source);
@@ -100,7 +149,7 @@ function parseJsonWorker(text, source) {
 /**
  * Convert object to standardized log entry (worker-safe version)
  */
-function toEntry(obj, source) {
+function toEntry(obj: AnyMap, source: string): LogEntry {
   if (!obj || typeof obj !== 'object') {
     return {
       timestamp: new Date().toISOString(),
@@ -110,13 +159,19 @@ function toEntry(obj, source) {
       message: String(obj || ''),
       source: source || 'unknown',
       raw: obj,
+      traceId: '',
+      mdc: {},
+      service: '',
     };
   }
 
   // Extract timestamp (various formats)
   let timestamp = obj.timestamp || obj.time || obj['@timestamp'] || obj.ts || obj.date;
-  if (timestamp && typeof timestamp === 'object' && timestamp.$date) {
-    timestamp = timestamp.$date; // MongoDB format
+  if (timestamp && typeof timestamp === 'object') {
+    const timestampObj = timestamp as AnyMap;
+    if (timestampObj.$date) {
+      timestamp = timestampObj.$date; // MongoDB format
+    }
   }
   if (!timestamp) {
     timestamp = new Date().toISOString();
@@ -154,11 +209,11 @@ function toEntry(obj, source) {
     '';
 
   // Extract MDC/context
-  let mdc = null;
-  if (obj.mdc) mdc = obj.mdc;
-  else if (obj.context) mdc = obj.context;
-  else if (obj.properties) mdc = obj.properties;
-  else if (obj.labels) mdc = obj.labels;
+  let mdc: AnyMap | null = null;
+  if (obj.mdc) mdc = obj.mdc as AnyMap;
+  else if (obj.context) mdc = obj.context as AnyMap;
+  else if (obj.properties) mdc = obj.properties as AnyMap;
+  else if (obj.labels) mdc = obj.labels as AnyMap;
 
   // Stack trace
   const stackTrace =
@@ -168,14 +223,14 @@ function toEntry(obj, source) {
   const service = obj.service || obj.app || obj.application || obj.serviceName || '';
 
   return {
-    timestamp,
+    timestamp: String(timestamp),
     level: String(level).toUpperCase(),
     logger: String(logger),
     thread: String(thread),
     message: String(message),
     traceId: String(traceId || ''),
     source: source || 'unknown',
-    mdc: mdc || {},
+    mdc: (mdc as Record<string, unknown>) || {},
     stackTrace: stackTrace ? String(stackTrace) : undefined,
     service: String(service),
     raw: obj,

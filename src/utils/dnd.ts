@@ -13,7 +13,14 @@ export class DragAndDropManager {
   private onActiveChange: (active: boolean) => void;
   private onRawFiles: ((files: RawFilePayload[]) => void | Promise<void>) | null;
   private _dragCounter: number;
-  private _handlers: any;
+  private _handlers: {
+    onDragOverBlockAll: (e: DragEvent) => void;
+    onDragEnter: (e: DragEvent) => void;
+    onDragOver: (e: DragEvent) => void;
+    onDragLeave: (e: DragEvent) => void;
+    onDrop: (e: DragEvent) => Promise<void>;
+    target: Window | HTMLElement;
+  } | null;
 
   /**
    * @param opts Drag & Drop Callbacks

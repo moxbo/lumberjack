@@ -1,7 +1,7 @@
 // Generic sorting helpers for log entries
 // compareByTimestampId: ascending by timestamp with sub-millisecond precision if available; ties and invalid timestamps by _id
 
-function extractFractionBeyondMs(ts: any) {
+function extractFractionBeyondMs(ts: unknown): number {
   // Extract digits after the decimal point in the seconds field, beyond the first 3 (milliseconds)
   // Example: 2025-10-23T15:46:12.0493117+02:00 -> fracAll=0493117 -> beyondMs=3117 -> normalized to 6 digits
   try {
@@ -21,7 +21,7 @@ function extractFractionBeyondMs(ts: any) {
   }
 }
 
-function toMillisEx(ts: any) {
+function toMillisEx(ts: unknown): { valid: boolean; ms: number; extra: number } {
   if (ts == null) return { valid: false, ms: NaN, extra: 0 };
   try {
     const d = new Date(ts);
@@ -34,7 +34,7 @@ function toMillisEx(ts: any) {
   }
 }
 
-export function compareByTimestampId(a: any, b: any) {
+export function compareByTimestampId(a: { timestamp?: unknown; _id?: number; message?: string }, b: { timestamp?: unknown; _id?: number; message?: string }): number {
   const A = toMillisEx(a?.timestamp);
   const B = toMillisEx(b?.timestamp);
   if (A.valid && B.valid) {
