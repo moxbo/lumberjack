@@ -174,7 +174,7 @@ class DiagnosticContextFilterImpl {
       groups.get(k)!.push(e);
     }
 
-    const hasOwn = (obj: Record<string, unknown>, k: string) =>
+    const hasOwn = (obj: Record<string, unknown>, k: string): boolean =>
       Object.prototype.hasOwnProperty.call(obj, k);
 
     const obj = mdc && typeof mdc === 'object' ? (mdc as Record<string, unknown>) : {};
@@ -183,7 +183,12 @@ class DiagnosticContextFilterImpl {
       const candidates = eventKeyVariantsForCanonical(canonKey);
       // Sammle vorhandene Event-Werte für alle Kandidaten
       const present: string[] = [];
-      for (const k of candidates) if (hasOwn(obj, k)) present.push(String(obj[k] ?? ''));
+      for (const k of candidates) {
+        if (hasOwn(obj, k)) {
+          const val = obj[k];
+          present.push(val != null && val !== '' ? String(val) : '');
+        }
+      }
 
       let ok = false;
       for (const it of arr) {

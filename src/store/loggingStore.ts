@@ -3,8 +3,10 @@
 // - reset(): clears internal state and notifies listeners
 // - addLoggingStoreListener(listener): { loggingEventsAdded(events), loggingStoreReset() }
 
+type LogEvent = Record<string, unknown>;
+
 type Listener = {
-  loggingEventsAdded?: (events: any[]) => void;
+  loggingEventsAdded?: (events: LogEvent[]) => void;
   loggingStoreReset?: () => void;
 };
 
@@ -35,11 +37,11 @@ const RESERVED_STD_FIELDS = new Set([
   // trace id variants intentionally NOT excluded to show in MDC only
 ]);
 
-function isString(v: unknown) {
+function isString(v: unknown): v is string {
   return typeof v === 'string';
 }
 
-function findExternalId(raw: { [x: string]: any }) {
+function findExternalId(raw: Record<string, unknown>): string | null {
   if (!raw || typeof raw !== 'object') return null;
   const candidates = ['externalId', 'external_id', 'external.id', 'extId', 'traceparent', 'id'];
   for (const k of candidates) {

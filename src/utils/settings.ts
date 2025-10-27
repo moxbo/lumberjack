@@ -174,14 +174,14 @@ export const SETTINGS_VERSION = 1;
 /**
  * Validates a single setting value against its schema
  * @param {string} key - Setting key
- * @param {*} value - Value to validate
- * @returns {{ valid: boolean, value: *, error?: string }}
+ * @param {unknown} value - Value to validate
+ * @returns {{ valid: boolean, value: unknown, error?: string }}
  */
 export function validateSetting(
   key: string,
-  value: any
-): { valid: boolean; value: any; error?: string } {
-  const schema: any = (SETTINGS_SCHEMA as any)[key];
+  value: unknown
+): { valid: boolean; value: unknown; error?: string } {
+  const schema = (SETTINGS_SCHEMA as Record<string, { type: string; default: unknown; validate?: (val: unknown) => boolean }>)[key];
 
   if (!schema) {
     return { valid: false, value: null, error: `Unknown setting: ${key}` };

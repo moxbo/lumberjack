@@ -13,7 +13,7 @@ class SimpleEmitter {
     }
     return () => {};
   }
-  emit() {
+  emit(): void {
     for (const fn of this._ls) {
       try {
         fn();
@@ -31,7 +31,7 @@ class MDCListenerImpl {
   // No automatic subscription here. Call startListening() from app startup
   // (e.g. in App.jsx) to wire this listener after modules are initialized.
 
-  startListening() {
+  startListening(): void {
     try {
       // guard: multiple calls should not add duplicate listeners
       if (this._started) return;
@@ -39,10 +39,11 @@ class MDCListenerImpl {
       // Load LoggingStore dynamically to avoid a static circular import
       import('./loggingStore')
         .then((mod) => {
-          const LS = (mod as any)?.LoggingStore || (mod as any)?.default;
+          const modAny = mod as { LoggingStore?: { addLoggingStoreListener: (listener: unknown) => void }; default?: { addLoggingStoreListener: (listener: unknown) => void } };
+          const LS = modAny?.LoggingStore || modAny?.default;
           try {
             LS?.addLoggingStoreListener({
-              loggingEventsAdded: (events: any[]) => this._onAdded(events),
+              loggingEventsAdded: (events: Record<string, unknown>[]) => this._onAdded(events),
               loggingStoreReset: () => this._onReset(),
             });
           } catch (e) {
