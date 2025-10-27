@@ -7,6 +7,7 @@ This document details the performance optimizations made to improve Lumberjack's
 ## Baseline Performance Issues
 
 ### Identified Problems
+
 1. **Synchronous module loading**: Heavy modules loaded during startup
 2. **File I/O blocking**: Settings and logs loaded synchronously
 3. **No performance tracking**: Unable to identify bottlenecks
@@ -18,12 +19,14 @@ This document details the performance optimizations made to improve Lumberjack's
 ### 1. Lazy Module Loading
 
 **Before:**
+
 ```javascript
-const AdmZip = require('adm-zip');  // Loaded immediately
-const parsers = require('./parsers.cjs');  // Loaded at startup
+const AdmZip = require('adm-zip'); // Loaded immediately
+const parsers = require('./parsers.cjs'); // Loaded at startup
 ```
 
 **After:**
+
 ```typescript
 let AdmZip: unknown = null;
 function getAdmZip() {
@@ -39,12 +42,14 @@ function getAdmZip() {
 ### 2. Asynchronous Settings Loading
 
 **Before:**
+
 ```javascript
 // Settings loaded synchronously during startup
 const raw = fs.readFileSync(settingsPath, 'utf8');
 ```
 
 **After:**
+
 ```typescript
 // Settings loaded asynchronously after window creation
 async load(): Promise<void> {
@@ -57,6 +62,7 @@ async load(): Promise<void> {
 ### 3. Performance Tracking Service
 
 **New Addition:**
+
 ```typescript
 class PerformanceService {
   mark(name: string): void {
@@ -72,7 +78,8 @@ class PerformanceService {
 
 **Before:** Monolithic main.cjs with mixed concerns
 
-**After:** 
+**After:**
+
 - `SettingsService`: Manages settings with async/sync methods
 - `NetworkService`: Handles TCP/HTTP operations
 - `PerformanceService`: Tracks performance metrics
@@ -92,11 +99,11 @@ Pre-compiled TypeScript to CommonJS with esbuild for faster startup
 
 ### Target Improvements
 
-| Metric | Before | Target |
-|--------|--------|--------|
-| Cold Start | >20s | <3s |
-| Warm Start | ~10s | <1s |
-| Window Visible | ~15s | <1s |
+| Metric         | Before | Target |
+| -------------- | ------ | ------ |
+| Cold Start     | >20s   | <3s    |
+| Warm Start     | ~10s   | <1s    |
+| Window Visible | ~15s   | <1s    |
 
 ### Key Performance Marks
 
@@ -113,6 +120,7 @@ Pre-compiled TypeScript to CommonJS with esbuild for faster startup
 **Problem**: Application startup on Windows taking >20 seconds due to synchronous file I/O operations.
 
 **Root causes identified**:
+
 1. **Settings loading on-demand**: `SettingsService.get()` called `loadSync()` multiple times during startup, each time reading from disk synchronously
 2. **Icon extraction from ASAR**: Synchronous file reads and writes during window creation
 3. **No async initialization**: Settings loaded lazily instead of eagerly at startup
@@ -120,20 +128,22 @@ Pre-compiled TypeScript to CommonJS with esbuild for faster startup
 **Solutions implemented**:
 
 1. **Async settings loading before window creation**:
+
    ```typescript
    // Before: Settings loaded synchronously when first accessed
    const settings = settingsService.get(); // Triggers loadSync()
-   
+
    // After: Settings loaded asynchronously before window creation
    await settingsService.load(); // Async load during app.whenReady()
    const settings = settingsService.get(); // Returns cached settings
    ```
-   
+
 2. **Async icon loading after window shown**:
+
    ```typescript
    // Before: Synchronous icon extraction during window creation
    const iconPath = resolveIconPath(); // fs.readFileSync, fs.writeFileSync
-   
+
    // After: Async icon loading deferred until after window is visible
    const iconPath = await resolveIconPathAsync(); // fs.promises.readFile/writeFile
    ```
@@ -144,12 +154,14 @@ Pre-compiled TypeScript to CommonJS with esbuild for faster startup
    - Improved visibility into startup bottlenecks
 
 **Expected performance improvement**:
+
 - Settings load: ~500-2000ms saved (Windows file I/O is slow)
 - Icon extraction: ~200-500ms saved (one-time ASAR extraction)
 - Window visible: 1-3 seconds faster on cold start
 - **Total improvement**: 2-5 seconds faster startup on Windows
 
 **Code changes**:
+
 - `main.ts`: Added async settings loading in `app.whenReady()`
 - `main.ts`: Created `resolveIconPathAsync()` with async file operations
 - `main.ts`: Deferred icon loading to `setImmediate` after window shown
@@ -165,12 +177,14 @@ Pre-compiled TypeScript to CommonJS with esbuild for faster startup
 ## Testing Performance
 
 ### Manual Testing
+
 ```bash
 npm run build:zip:x64
 # Extract and run, check logs for [PERF] markers
 ```
 
 ### Performance Logging
+
 The PerformanceService automatically logs startup metrics and warns if startup exceeds 5 seconds.
 
 ## Best Practices

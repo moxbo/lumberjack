@@ -1,4 +1,4 @@
-// @ts-nocheck
+/* eslint-disable @typescript-eslint/ban-ts-comment, @typescript-eslint/no-unused-vars, @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-explicit-any, @typescript-eslint/no-base-to-string, @typescript-eslint/explicit-function-return-type, @typescript-eslint/no-misused-promises, @typescript-eslint/require-await, @typescript-eslint/no-floating-promises */
 import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import { Fragment } from 'preact';
 import { useVirtualizer } from '@tanstack/react-virtual';
@@ -13,6 +13,7 @@ import { DragAndDropManager } from '../utils/dnd';
 import { compareByTimestampId } from '../utils/sort';
 import { TimeFilter } from '../store/timeFilter';
 import { lazy, Suspense } from 'preact/compat';
+import type { ElasticSearchOptions } from '../types/ipc';
 
 // Lazy-load DCFilterDialog as a component
 const DCFilterDialog = lazy(() => import('./DCFilterDialog'));
@@ -141,8 +142,99 @@ export default function App() {
     environment: '',
   });
 
+  // Öffnet den Elastic-Search-Dialog und befüllt Formular aus TimeFilter-State
+  function openTimeFilterDialog() {
+    try {
+      const s = TimeFilter.getState?.();
+      const toLocal = (iso: unknown) => {
+        const t = String(iso || '').trim();
+        if (!t) return '';
+        const d = new Date(t);
+        if (isNaN(d.getTime())) return '';
+        const pad = (n: number) => String(n).padStart(2, '0');
+        const y = d.getFullYear();
+        const m = pad(d.getMonth() + 1);
+        const da = pad(d.getDate());
+        const hh = pad(d.getHours());
+        const mm = pad(d.getMinutes());
+        return `${y}-${m}-${da}T${hh}:${mm}`;
+      };
+      setTimeForm({
+        enabled: true,
+        mode: (s && s.mode) || 'relative',
+        duration: (s && s.duration) || '15m',
+        from: toLocal(s?.from),
+        to: toLocal(s?.to),
+        application_name: '',
+        logger: '',
+        level: '',
+        environment: '',
+      });
+    } catch {
+      setTimeForm({
+        enabled: true,
+        mode: 'relative',
+        duration: '15m',
+        from: '',
+        to: '',
+        application_name: '',
+        logger: '',
+        level: '',
+        environment: '',
+      });
+    }
+    setShowTimeDialog(true);
+  }
+
+  // Setzt das lokale Formular zurück und schließt den Dialog
+  function clearTimeFilter() {
+    setTimeForm({
+      enabled: true,
+      mode: 'relative',
+      duration: '15m',
+      from: '',
+      to: '',
+      application_name: '',
+      logger: '',
+      level: '',
+      environment: '',
+    });
+    setShowTimeDialog(false);
+  }
+
   // Filter-Historien
   const [histLogger, setHistLogger] = useState([]);
+  const [histAppName, setHistAppName] = useState([]);
+  const [histEnvironment, setHistEnvironment] = useState([]);
+
+  // History-Pflege für Elastic-Dialog
+  function addToHistory(kind: 'app' | 'env', val: string) {
+    const v = String(val || '').trim();
+    if (!v) return;
+    if (kind === 'app') {
+      setHistAppName((prev) => {
+        const list = [v, ...prev.filter((x) => x !== v)].slice(0, 10);
+        try {
+          void window.api.settingsSet({ histAppName: list } as any);
+        } catch (e){
+            logger.error('Failed to save histAppName settings:', e);
+            alert('Failed to save histAppName settings. See logs for details.');
+        }
+        return list;
+      });
+    } else if (kind === 'env') {
+      setHistEnvironment((prev) => {
+        const list = [v, ...prev.filter((x) => x !== v)].slice(0, 10);
+        try {
+          void window.api.settingsSet({ histEnvironment: list } as any);
+        } catch (e){
+            logger.error('Failed to save histEnvironment settings:', e);
+            alert('Failed to save histEnvironment settings. See logs for details.');
+        }
+        return list;
+      });
+    }
+  }
 
   const [tcpStatus, setTcpStatus] = useState('');
   const [httpStatus, setHttpStatus] = useState('');
@@ -175,6 +267,22 @@ export default function App() {
   const [httpLoadUrl, setHttpLoadUrl] = useState('');
   const [showHttpPollDlg, setShowHttpPollDlg] = useState(false);
   const [httpPollForm, setHttpPollForm] = useState({ url: '', interval: 5000 });
+  function openHttpLoadDialog() {
+    try {
+      setHttpLoadUrl(String(httpUrl || ''));
+    } catch {
+      setHttpLoadUrl('');
+    }
+    setShowHttpLoadDlg(true);
+  }
+  function openHttpPollDialog() {
+    try {
+      setHttpPollForm({ url: String(httpUrl || ''), interval: Number(httpInterval || 5000) });
+    } catch {
+      setHttpPollForm({ url: '', interval: 5000 });
+    }
+    setShowHttpPollDlg(true);
+  }
 
   // Logging-Settings (persisted state for convenience)
   const [logToFile, setLogToFile] = useState(false);
@@ -193,8 +301,126 @@ export default function App() {
   const httpBtnRef = useRef(null);
   const httpMenuRef = useRef(null);
 
-  // Drag & Drop Overlay state
-  const [dragActive, setDragActive] = useState(false);
+  // Kontextmenü für Log-Einträge
+  const [ctxMenu, setCtxMenu] = useState({ open: false, x: 0, y: 0 });
+  const ctxRef = useRef(null);
+  const colorChoices = [
+    '#F59E0B', // amber
+    '#EF4444', // red
+    '#10B981', // emerald
+    '#3B82F6', // blue
+    '#8B5CF6', // violet
+    '#EC4899', // pink
+    '#14B8A6', // teal
+    '#6B7280', // gray
+  ];
+  function closeContextMenu() {
+    setCtxMenu({ open: false, x: 0, y: 0 });
+  }
+  useEffect(() => {
+    if (!ctxMenu.open) return;
+    const onMouseDown = (e) => {
+      try {
+        if (!ctxRef.current) return closeContextMenu();
+        if (!ctxRef.current.contains(e.target)) closeContextMenu();
+      } catch {
+        closeContextMenu();
+      }
+    };
+    const onKey = (e) => {
+      if (e.key === 'Escape') closeContextMenu();
+    };
+    window.addEventListener('mousedown', onMouseDown, true);
+    window.addEventListener('keydown', onKey);
+    return () => {
+      window.removeEventListener('mousedown', onMouseDown, true);
+      window.removeEventListener('keydown', onKey);
+    };
+  }, [ctxMenu.open]);
+  function openContextMenu(ev, idx) {
+    ev.preventDefault();
+    // Falls der angeklickte Eintrag nicht selektiert ist: Einzel-Selektion setzen
+    setSelected((prev) => {
+      if (prev && prev.has(idx)) return prev;
+      return new Set([idx]);
+    });
+    setCtxMenu({ open: true, x: ev.clientX, y: ev.clientY });
+  }
+  function applyMarkColor(color) {
+    setEntries((prev) => {
+      if (!prev || !prev.length) return prev;
+      const next = prev.slice();
+      for (const i of selected) {
+        if (i >= 0 && i < next.length) {
+          const e = next[i] || {};
+          const n = { ...e };
+          if (color) n._mark = color;
+          else delete n._mark;
+          next[i] = n;
+        }
+      }
+      return next;
+    });
+    closeContextMenu();
+  }
+  function adoptTraceIds() {
+    try {
+      const variants = [
+        'TraceID',
+        'traceId',
+        'trace_id',
+        'trace.id',
+        'trace-id',
+        'x-trace-id',
+        'x_trace_id',
+        'x.trace.id',
+        'trace',
+      ];
+      const added = new Set();
+      for (const i of selected) {
+        const e = entries[i];
+        const m = e && e.mdc;
+        if (!m || typeof m !== 'object') continue;
+        for (const k of variants) {
+          if (Object.prototype.hasOwnProperty.call(m, k)) {
+            const v = String(m[k] ?? '');
+            if (v && !added.has(v)) {
+              DiagnosticContextFilter.addMdcEntry('TraceID', v);
+              added.add(v);
+            }
+          }
+        }
+      }
+      if (added.size) DiagnosticContextFilter.setEnabled(true);
+    } catch {}
+    closeContextMenu();
+  }
+  async function copyTsMsg() {
+    const list = Array.from(selected).sort((a, b) => a - b);
+    const lines = list.map((i) => {
+      const e = entries[i] || {};
+      return `${fmtTimestamp(e.timestamp)} ${String(e.message ?? '')}`;
+    });
+    const text = lines.join('\n');
+    try {
+      if (navigator?.clipboard?.writeText) {
+        await navigator.clipboard.writeText(text);
+      } else {
+        const ta = document.createElement('textarea');
+        ta.value = text;
+        ta.style.position = 'fixed';
+        ta.style.left = '-9999px';
+        document.body.appendChild(ta);
+        ta.select();
+        document.execCommand('copy');
+        document.body.removeChild(ta);
+      }
+    } catch (e) {
+        logger.error('Failed to copy to clipboard:', e);
+        alert('Failed to copy to clipboard. See logs for details.');
+    }
+    closeContextMenu();
+  }
 
   // Busy indicator and helper
   const [busy, setBusy] = useState(false);
@@ -229,7 +455,9 @@ export default function App() {
   // Refs for layout and virtualization
   const parentRef = useRef(null); // scroll container for list
   const layoutRef = useRef(null);
-  const dividerRef = useRef({ _resizing: false, _startY: 0, _startH: 0 } as any);
+  // Separate divider element ref and divider state ref
+  const dividerElRef = useRef<HTMLElement | null>(null);
+  const dividerStateRef = useRef({ _resizing: false, _startY: 0, _startH: 0 });
   const colResize = useRef({ active: null as null | string, startX: 0, startW: 0 });
 
   // Compute filtered indices based on filters, time and MDC
@@ -268,10 +496,15 @@ export default function App() {
       // Time filter and MDC filter
       try {
         if (!TimeFilter.matchesTs(e.timestamp)) continue;
-      } catch {}
+      } catch (e) {
+        logger.error('TimeFilter.matchesTs error:', e);
+        continue;
+      }
       try {
         if (!DiagnosticContextFilter.matches(e.mdc || {})) continue;
-      } catch {}
+      } catch (e) {
+        logger.error('DiagnosticContextFilter.matches error:', e);
+      }
       out.push(i);
     }
     return out;
@@ -415,7 +648,10 @@ export default function App() {
     try {
       // Attach MDC fields
       LoggingStore.addEvents(toAdd);
-    } catch {}
+    } catch (e) {
+        logger.error('LoggingStore.addEvents error:', e);
+        alert( 'Failed to process new log entries. See logs for details. ' + (e?.message || String(e)) );
+    }
     const merged = [...entries, ...toAdd].sort(compareByTimestampId);
     setEntries(merged);
     setNextId(nextId + toAdd.length);
@@ -436,7 +672,10 @@ export default function App() {
     try {
       DiagnosticContextFilter.addMdcEntry(k, v ?? '');
       DiagnosticContextFilter.setEnabled(true);
-    } catch {}
+    } catch (e) {
+        logger.error('Failed to add MDC entry to filter:', e);
+        alert('Failed to add MDC entry to filter. See logs for details.');
+    }
   }
 
   const [showMdcModal, setShowMdcModal] = useState(false);
@@ -550,6 +789,8 @@ export default function App() {
         if (typeof r.httpUrl === 'string') setHttpUrl(r.httpUrl);
         if (r.httpInterval != null) setHttpInterval(Number(r.httpInterval) || 5000);
         if (Array.isArray(r.histLogger)) setHistLogger(r.histLogger);
+        if (Array.isArray(r.histAppName)) setHistAppName(r.histAppName);
+        if (Array.isArray(r.histEnvironment)) setHistEnvironment(r.histEnvironment);
         if (typeof r.themeMode === 'string') {
           const mode = ['light', 'dark', 'system'].includes(r.themeMode) ? r.themeMode : 'system';
           setThemeMode(mode);
@@ -655,7 +896,7 @@ export default function App() {
       elasticUrl: String(form.elasticUrl || '').trim(),
       elasticSize: Math.max(1, Number(form.elasticSize || 1000)),
       elasticUser: String(form.elasticUser || '').trim(),
-    };
+    } as any;
     const newPass = String(form.elasticPassNew || '').trim();
     if (form.elasticPassClear) {
       patch['elasticPassClear'] = true;
@@ -687,166 +928,143 @@ export default function App() {
 
       setShowSettings(false);
     } catch (e) {
+        logger.error('Failed to save settings:', e);
       alert('Speichern fehlgeschlagen: ' + (e?.message || String(e)));
     }
   }
 
-  // Historie-Utils (max 6, in-use Tokens nie entfernen)
-  function setAndPersistHistory(kind, arr) {
-    if (kind === 'logger') {
-      setHistLogger(arr);
-      window.api.settingsSet({ histLogger: arr });
-    }
-  }
-  function addToHistory(kind, value) {
-    const v = String(value || '').trim();
-    if (!v) return;
-    if (kind === 'logger') {
-      const cur = histLogger.slice();
-      const idx = cur.indexOf(v);
-      if (idx >= 0) cur.splice(idx, 1);
-      cur.unshift(v);
-      setAndPersistHistory('logger', cur.slice(0, 6));
-    }
-  }
-
-  // HTTP Dropdown-Menü (toolbar)
-  function openHttpMenu(ev) {
-    ev.preventDefault();
-    const btn = httpBtnRef.current;
-    if (!btn) return;
-    const r = btn.getBoundingClientRect();
-    setHttpMenu({ open: true, x: Math.round(r.left), y: Math.round(r.bottom + 4) });
-  }
-
-  // Dialoge öffnen: HTTP einmal laden & Poll starten
-  function openHttpLoadDialog() {
-    // URL aus Settings übernehmen
-    setHttpLoadUrl(String(httpUrl || ''));
-    setShowHttpLoadDlg(true);
-  }
-  function openHttpPollDialog() {
-    const url = String(httpUrl || '');
-    const ms = Math.max(0, Number(httpInterval || 0)) || 5000;
-    setHttpPollForm({ url, interval: ms });
-    setShowHttpPollDlg(true);
-  }
-  // Zeit-Filter Modal öffnen
-  function openTimeFilterDialog() {
-    try {
-      const s = TimeFilter.getState();
-      const toLocal = (iso) => {
-        if (!iso) return '';
-        const d = new Date(iso);
-        if (isNaN(d.getTime())) return '';
-        const pad = (n) => String(n).padStart(2, '0');
-        const y = d.getFullYear();
-        const m = pad(d.getMonth() + 1);
-        const da = pad(d.getDate());
-        const hh = pad(d.getHours());
-        const mm = pad(d.getMinutes());
-        return `${y}-${m}-${da}T${hh}:${mm}`;
-      };
-      setTimeForm({
-        enabled: true,
-        mode: s.mode || 'relative',
-        duration: s.duration || '15m',
-        from: toLocal(s.from),
-        to: toLocal(s.to),
-        application_name: '',
-        logger: '',
-        level: '',
-        environment: '',
-        loadMode: 'append',
-      });
-    } catch {
-      setTimeForm({
-        enabled: true,
-        mode: 'relative',
-        duration: '15m',
-        from: '',
-        to: '',
-        application_name: '',
-        logger: '',
-        level: '',
-        environment: '',
-        loadMode: 'append',
-      });
-    }
-    setShowTimeDialog(true);
-  }
-  function applyTimeFilter() {
-    const f = timeForm;
-    // 1) Lokalen Zeitfilter weiter pflegen, damit UI-Filter wie gehabt funktionieren
-    if (f.mode === 'relative') {
-      TimeFilter.setRelative(String(f.duration || '').trim());
-    } else {
-      // convert datetime-local values to Date for ISO in store
-      const toDate = (s) => {
-        const t = String(s || '').trim();
-        if (!t) return null;
-        // treat as local time
-        const d = new Date(t);
-        return isNaN(d.getTime()) ? null : d;
-      };
-      TimeFilter.setAbsolute(toDate(f.from), toDate(f.to));
-    }
-    TimeFilter.setEnabled(!!f.enabled);
-
-    // 2) Elasticsearch-Suche auslösen und Ergebnisse anhängen
-    withBusy(async () => {
+  // HTTP Dropdown-Menü Outside-Click schließen
+  useEffect(() => {
+    if (!httpMenu.open) return;
+    const onDocDown = (e: any) => {
       try {
-        const opts = {};
-        // Zeit einschränken nur wenn aktiviert
-        if (f.enabled) {
-          if (f.mode === 'relative') {
-            const dur = String(f.duration || '').trim();
-            if (dur) opts['duration'] = dur;
-          } else {
-            const fromD = toDate(f.from);
-            const toD = toDate(f.to);
-            if (fromD) opts['from'] = fromD;
-            if (toD) opts['to'] = toD;
-          }
+        const menuEl = httpMenuRef.current as any;
+        const btnEl = httpBtnRef.current as any;
+        if (!menuEl) {
+          setHttpMenu({ open: false, x: 0, y: 0 });
+          return;
         }
-        // Zusatzfelder einbeziehen
-        const app = String(f.application_name || '').trim();
-        const lg = String(f.logger || '').trim();
-        const lvl = String(f.level || '').trim();
-        const env = String(f.environment || '').trim();
-        if (app) opts['application_name'] = app;
-        if (lg) opts['logger'] = lg;
-        if (lvl) opts['level'] = lvl;
-        if (env) opts['environment'] = env;
-
-        const res = await window.api.elasticSearch?.(opts);
-        if (!res || !res.ok) throw new Error(res?.error || 'Elasticsearch-Fehler');
-        if (Array.isArray(res.entries) && res.entries.length) appendEntries(res.entries);
-      } catch (e) {
-        alert('Elastic-Suche fehlgeschlagen: ' + (e?.message || String(e)));
+        const t = e.target as Node;
+        if (menuEl.contains(t) || (btnEl && btnEl.contains && btnEl.contains(t))) return;
+        setHttpMenu({ open: false, x: 0, y: 0 });
+      } catch {
+        setHttpMenu({ open: false, x: 0, y: 0 });
       }
-    });
+    };
+    window.addEventListener('mousedown', onDocDown, true);
+    return () => window.removeEventListener('mousedown', onDocDown, true);
+  }, [httpMenu.open]);
 
-    setShowTimeDialog(false);
-  }
-  function clearTimeFilter() {
-    TimeFilter.reset();
-    setTimeForm({
-      enabled: true,
-      mode: 'relative',
-      duration: '15m',
-      from: '',
-      to: '',
-      application_name: '',
-      logger: '',
-      level: '',
-      environment: '',
-      loadMode: 'append',
-    });
-    setShowTimeDialog(false);
-  }
+  // IPC: Logs, Menü, TCP-Status
+  useEffect(() => {
+    const offs: Array<() => void> = [];
+    try {
+      if (window.api?.onAppend) {
+        const off = window.api.onAppend((newEntries) => {
+          appendEntries(newEntries as any[]);
+        });
+        offs.push(off);
+      }
+    } catch {}
+    try {
+      if (window.api?.onMenu) {
+        const off = window.api.onMenu(async (cmd) => {
+          try {
+            const { type, tab } = cmd || ({} as any);
+            switch (type) {
+              case 'open-files': {
+                const paths = await window.api.openFiles();
+                if (paths && paths.length) {
+                  const res = await window.api.parsePaths(paths);
+                  if (res?.ok) appendEntries(res.entries);
+                }
+                break;
+              }
+              case 'open-settings': {
+                await openSettingsModal((tab as any) || 'tcp');
+                break;
+              }
+              case 'tcp-start': {
+                try {
+                  window.api.tcpStart(tcpPort);
+                } catch (e) {
+                  logger.error('Fehler beim Starten des TCP-Servers:', e);
+                }
+                break;
+              }
+              case 'tcp-stop': {
+                try {
+                  window.api.tcpStop();
+                } catch (e) {
+                  logger.error('Fehler beim Stoppen des TCP-Servers:', e);
+                }
+                break;
+              }
+              case 'http-load': {
+                openHttpLoadDialog();
+                break;
+              }
+              case 'http-start-poll': {
+                openHttpPollDialog();
+                break;
+              }
+              case 'http-stop-poll': {
+                if (httpPollId != null) void httpMenuStopPoll();
+                break;
+              }
+              case 'tcp-configure': {
+                await openSettingsModal('tcp');
+                break;
+              }
+              case 'window-title': {
+                await openSetWindowTitleDialog();
+                break;
+              }
+              default:
+                break;
+            }
+          } catch (e) {
+            logger.warn('Menu command failed:', e);
+          }
+        });
+        offs.push(off);
+      }
+    } catch (e) {
+        logger.error('onMenu setup failed:', e);
+    }
+    try {
+      if (window.api?.onTcpStatus) {
+        const off = window.api.onTcpStatus((st) => {
+          setTcpStatus(
+            st?.ok
+              ? st.running
+                ? `TCP: Port ${st.port} aktiv`
+                : 'TCP gestoppt'
+              : st.message || 'TCP-Fehler'
+          );
+        });
+        offs.push(off);
+      }
+    } catch (e) {
+        logger.error('onTcpStatus setup failed:', e);
+    }
+    return () => {
+      for (const f of offs)
+        try {
+          f();
+        } catch (e) {
+            logger.error('Failed to remove IPC listener:', e);
+        }
+    };
+  }, [httpPollId, tcpPort]);
 
-  // Drag & Drop
+  // Refs für Drag & Drop
+  // const dropRef = useRef(null);
+
+  // Drag & Drop Overlay state
+  const [dragActive, setDragActive] = useState(false);
+
+  // Drag & Drop Handler
   useEffect(() => {
     const mgr = new DragAndDropManager({
       onFiles: async (paths) => {
@@ -872,166 +1090,16 @@ export default function App() {
             if (res?.ok) appendEntries(res.entries);
             else alert('Fehler beim Laden (Drop-Rohdaten): ' + (res?.error || 'unbekannt'));
           } catch (e) {
+            logger.error('Fehler beim Einlesen der Dateien (Drop-Rohdaten):', e);
             alert('Fehler beim Einlesen der Dateien: ' + (e?.message || String(e)));
           }
         });
       },
     });
-    // war: mgr.attach(window)
-    mgr.attach(document);
+    // Global auf window hören statt auf ein null-Ref
+    mgr.attach();
     return () => mgr.detach();
   }, []);
-
-  // Kontextmenü (Zeilenmenü) – State und Helfer
-  const [ctxMenu, setCtxMenu] = useState({ open: false, x: 0, y: 0, idx: null as any });
-  const ctxRef = useRef(null);
-  const colorChoices = [
-    '#ffb3ba',
-    '#ffdfba',
-    '#ffffba',
-    '#baffc9',
-    '#bae1ff',
-    '#ffd1dc',
-    '#caffbf',
-    '#a0c4ff',
-    '#bdb2ff',
-    '#ffc6ff',
-  ];
-  function openContextMenu(ev, idx: number) {
-    ev.preventDefault();
-    // Wenn Eintrag noch nicht selektiert ist, selektiere ihn
-    setSelected((prev) => (prev.has(idx) ? prev : new Set([idx])));
-    setCtxMenu({ open: true, x: Math.round(ev.clientX), y: Math.round(ev.clientY), idx });
-  }
-  function applyMarkColor(color?: string) {
-    setEntries((prev) => {
-      if (!prev || selected.size === 0) return prev;
-      const out = prev.slice();
-      for (const i of selected) {
-        const e = out[i];
-        if (!e) continue;
-        if (color) out[i] = { ...e, _mark: color };
-        else {
-          const { _mark, ...rest } = (e as any) || {};
-          out[i] = { ...rest } as any;
-        }
-      }
-      return out;
-    });
-    setCtxMenu({ open: false, x: 0, y: 0, idx: null });
-  }
-  function adoptTraceIds() {
-    try {
-      const vals = new Set<string>();
-      for (const i of selected) {
-        const e: any = entries[i] || {};
-        const v = e?.traceId || e?.TraceID || e?.mdc?.traceId || e?.mdc?.TraceID;
-        if (v) vals.add(String(v));
-      }
-      if (vals.size > 0) {
-        for (const v of Array.from(vals)) DiagnosticContextFilter.addMdcEntry('traceId', v);
-        DiagnosticContextFilter.setEnabled(true);
-      }
-    } catch {}
-    setCtxMenu({ open: false, x: 0, y: 0, idx: null });
-  }
-  function copyTsMsg() {
-    try {
-      const idx =
-        selectedOneIdx != null ? selectedOneIdx : selected.size ? Array.from(selected)[0] : null;
-      const e: any = idx != null ? entries[idx] : null;
-      const text = e ? `${fmtTimestamp(e.timestamp)} ${e.message ?? ''}` : '';
-      navigator?.clipboard?.writeText?.(text);
-    } catch {}
-    setCtxMenu({ open: false, x: 0, y: 0, idx: null });
-  }
-
-  // Kontextmenü außerhalb schließen (Zeilenmenü)
-  useEffect(() => {
-    function onDocClick(e) {
-      if (!ctxMenu.open) return;
-      const el = ctxRef.current;
-      const path = typeof e.composedPath === 'function' ? e.composedPath() : [];
-      if (el && (el === e.target || el.contains(e.target) || (path && path.includes(el)))) return;
-      setCtxMenu({ open: false, x: 0, y: 0, idx: null });
-    }
-    window.addEventListener('mousedown', onDocClick, { capture: true, passive: true });
-    return () => window.removeEventListener('mousedown', onDocClick, { capture: true });
-  }, [ctxMenu.open]);
-
-  useEffect(() => {
-    // Guard against missing window.api (preload script not loaded)
-    if (!window.api) {
-      logger.error('window.api is not available. Preload script may have failed to load.');
-      return;
-    }
-
-    const off = window.api.onAppend((arr) => appendEntries(arr));
-    const offTcp = window.api.onTcpStatus((s) => setTcpStatus(s.message || ''));
-    const offMenu = window.api.onMenu(async (cmd) => {
-      switch (cmd?.type) {
-        case 'open-files': {
-          const files = await window.api.openFiles();
-          if (!files?.length) return;
-          await withBusy(async () => {
-            const res = await window.api.parsePaths(files);
-            if (res?.ok) appendEntries(res.entries);
-            else alert('Fehler beim Laden: ' + (res?.error || ''));
-          });
-          break;
-        }
-        case 'open-settings': {
-          openSettingsModal(cmd?.tab || 'tcp');
-          break;
-        }
-        case 'http-load': {
-          openHttpLoadDialog();
-          break;
-        }
-        case 'http-start-poll': {
-          openHttpPollDialog();
-          break;
-        }
-        case 'http-stop-poll': {
-          if (httpPollId == null) {
-            setHttpStatus('Kein aktives Polling');
-            return;
-          }
-          const r = await window.api.httpStopPoll(httpPollId);
-          if (r.ok) {
-            setHttpStatus('Poll gestoppt');
-            setHttpPollId(null);
-            setNextPollIn('');
-            setNextPollDueAt(null);
-          }
-          break;
-        }
-        case 'tcp-configure': {
-          openSettingsModal('tcp');
-          break;
-        }
-        case 'tcp-start': {
-          const port = Number(tcpPort || 5000);
-          if (!port) return;
-          window.api.tcpStart(port);
-          break;
-        }
-        case 'tcp-stop': {
-          window.api.tcpStop();
-          break;
-        }
-        case 'window-title': {
-          openSetWindowTitleDialog();
-          break;
-        }
-      }
-    });
-    return () => {
-      off?.();
-      offTcp?.();
-      offMenu?.();
-    };
-  }, [httpPollId, tcpPort, httpUrl, httpInterval]);
 
   // Toolbar-Aktion: Logs leeren
   function clearLogs() {
@@ -1040,7 +1108,10 @@ export default function App() {
     setNextId(1);
     try {
       LoggingStore.reset();
-    } catch {}
+    } catch (e) {
+        logger.error('LoggingStore.reset error:', e);
+        alert('Failed to reset logging store. See logs for details.');
+    }
     setHttpStatus('');
     setTcpStatus('');
   }
@@ -1069,9 +1140,9 @@ export default function App() {
   // Divider Drag (Höhe der Detailansicht anpassen)
   useEffect(() => {
     function onMouseMove(e) {
-      if (!dividerRef.current?._resizing) return;
-      const startY = dividerRef.current._startY;
-      const startH = dividerRef.current._startH;
+      if (!dividerStateRef.current._resizing) return;
+      const startY = dividerStateRef.current._startY;
+      const startH = dividerStateRef.current._startH;
       const dy = e.clientY - startY;
       let newH = startH - dy;
       const layout = layoutRef.current;
@@ -1088,7 +1159,7 @@ export default function App() {
       document.documentElement.style.setProperty('--detail-height', `${Math.round(newH)}px`);
     }
     async function onMouseUp() {
-      if (dividerRef.current) dividerRef.current._resizing = false;
+      dividerStateRef.current._resizing = false;
       document.body.style.userSelect = '';
       document.body.style.cursor = '';
       window.removeEventListener('mousemove', onMouseMove);
@@ -1101,17 +1172,17 @@ export default function App() {
       } catch {}
     }
     function onMouseDown(e) {
-      dividerRef.current._resizing = true;
-      dividerRef.current._startY = e.clientY;
+      dividerStateRef.current._resizing = true;
+      dividerStateRef.current._startY = e.clientY;
       const cs = getComputedStyle(document.documentElement);
       const h = cs.getPropertyValue('--detail-height').trim();
-      dividerRef.current._startH = Number(h.replace('px', '')) || 300;
+      dividerStateRef.current._startH = Number(h.replace('px', '')) || 300;
       document.body.style.userSelect = 'none';
       document.body.style.cursor = 'row-resize';
       window.addEventListener('mousemove', onMouseMove);
       window.addEventListener('mouseup', onMouseUp);
     }
-    const el = dividerRef.current;
+    const el = dividerElRef.current;
     if (el) el.addEventListener('mousedown', onMouseDown);
     return () => {
       if (el) el.removeEventListener('mousedown', onMouseDown);
@@ -1184,6 +1255,86 @@ export default function App() {
         </div>
       )}
 
+      {/* Elastic-Search Dialog */}
+      {showTimeDialog && (
+        <Suspense
+          fallback={
+            <div className="modal-backdrop">
+              <div className="modal">Lädt…</div>
+            </div>
+          }
+        >
+          <ElasticSearchDialog
+            open={showTimeDialog}
+            initial={timeForm}
+            histAppName={histAppName}
+            histEnvironment={histEnvironment}
+            firstTs={(() => {
+              const firstIdx = filteredIdx[0];
+              return firstIdx != null ? entries[firstIdx]?.timestamp : null;
+            })()}
+            lastTs={(() => {
+              const lastIdx = filteredIdx[filteredIdx.length - 1];
+              return lastIdx != null ? entries[lastIdx]?.timestamp : null;
+            })()}
+            onApply={async (
+              formVals: ElasticSearchOptions & { loadMode?: 'append' | 'replace' }
+            ) => {
+              try {
+                setShowTimeDialog(false);
+                // Persist history tokens (limited)
+                addToHistory('app', formVals?.application_name || '');
+                addToHistory('env', formVals?.environment || '');
+
+                // Apply to TimeFilter
+                if (formVals.mode === 'relative' && formVals.duration) {
+                  TimeFilter.setRelative(formVals.duration);
+                } else if (formVals.mode === 'absolute') {
+                  const from = formVals.from || undefined;
+                  const to = formVals.to || undefined;
+                  TimeFilter.setAbsolute(from as any, to as any);
+                }
+                TimeFilter.setEnabled(true);
+
+                // Fire search
+                const opts: ElasticSearchOptions = {
+                  url: elasticUrl || undefined,
+                  size: elasticSize || undefined,
+                  index: formVals.index,
+                  sort: formVals.sort,
+                  duration: formVals.mode === 'relative' ? (formVals.duration as any) : undefined,
+                  from: formVals.mode === 'absolute' ? (formVals.from as any) : undefined,
+                  to: formVals.mode === 'absolute' ? (formVals.to as any) : undefined,
+                  application_name: formVals.application_name,
+                  logger: formVals.logger,
+                  level: formVals.level,
+                  environment: formVals.environment,
+                } as any;
+
+                const res = await window.api.elasticSearch(opts);
+                if (res?.ok) {
+                  if ((formVals.loadMode || 'replace') === 'replace') {
+                    setEntries([]);
+                    setSelected(new Set());
+                    setNextId(1);
+                  }
+                  appendEntries(res.entries);
+                } else {
+                  alert('Elastic-Fehler: ' + (res?.error || 'Unbekannt'));
+                }
+              } catch (e) {
+                alert('Elastic-Fehler: ' + (e?.message || String(e)));
+              }
+            }}
+            onClear={() => {
+              clearTimeFilter();
+              TimeFilter.reset();
+            }}
+            onClose={() => setShowTimeDialog(false)}
+          />
+        </Suspense>
+      )}
+
       {/* HTTP Load Dialog */}
       {showHttpLoadDlg && (
         <div className="modal-backdrop" onClick={() => setShowHttpLoadDlg(false)}>
@@ -1211,9 +1362,8 @@ export default function App() {
                   setShowHttpLoadDlg(false);
                   await withBusy(async () => {
                     try {
-                      // Persistiere URL bequemlichkeitshalber
                       setHttpUrl(url);
-                      await window.api.settingsSet({ httpUrl: url });
+                      await window.api.settingsSet({ httpUrl: url } as any);
                       const res = await window.api.httpLoadOnce(url);
                       if (res.ok) appendEntries(res.entries);
                       else setHttpStatus('Fehler: ' + res.error);
@@ -1272,13 +1422,12 @@ export default function App() {
                     alert('Bitte eine gültige URL eingeben');
                     return;
                   }
-                  if (httpPollId != null) return; // doppelt absichern
+                  if (httpPollId != null) return;
                   setShowHttpPollDlg(false);
                   try {
-                    // Persistiere URL & Intervall
                     setHttpUrl(url);
                     setHttpInterval(ms);
-                    await window.api.settingsSet({ httpUrl: url, httpInterval: ms });
+                    await window.api.settingsSet({ httpUrl: url, httpInterval: ms } as any);
                     const r = await window.api.httpStartPoll({ url, intervalMs: ms });
                     if (r.ok) {
                       setHttpPollId(r.id);
@@ -1303,7 +1452,6 @@ export default function App() {
         <div
           className="modal-backdrop"
           onClick={() => {
-            // Revert live preview when closing without saving
             try {
               applyThemeMode(themeMode);
             } catch {}
@@ -1312,7 +1460,6 @@ export default function App() {
         >
           <div className="modal modal-settings" onClick={(e) => e.stopPropagation()}>
             <h3>Einstellungen</h3>
-
             <div className="tabs">
               <div className="tablist" role="tablist" aria-label="Einstellungen Tabs">
                 <button
@@ -1612,7 +1759,7 @@ export default function App() {
                 const v = e.currentTarget.checked;
                 setFollow(v);
                 try {
-                  await window.api.settingsSet({ follow: v });
+                  await window.api.settingsSet({ follow: v } as any);
                 } catch {}
               }}
             />
@@ -1630,13 +1777,27 @@ export default function App() {
                 const v = e.currentTarget.checked;
                 setFollowSmooth(v);
                 try {
-                  await window.api.settingsSet({ followSmooth: v });
+                  await window.api.settingsSet({ followSmooth: v } as any);
                 } catch {}
               }}
               disabled={!follow}
             />
             <span>Smooth</span>
           </label>
+        </div>
+        <div className="section">
+          {/* NEU: HTTP Menü */}
+          <button
+            ref={httpBtnRef}
+            onClick={(e) => {
+              const el = e.currentTarget as any;
+              const r = el.getBoundingClientRect();
+              setHttpMenu({ open: true, x: Math.round(r.left), y: Math.round(r.bottom + 4) });
+            }}
+            title="HTTP-Aktionen"
+          >
+            HTTP ▾
+          </button>
         </div>
         <div className="section">
           {/* NEU: Anfang/Ende */}
@@ -1813,6 +1974,17 @@ export default function App() {
           <span id="tcpStatus" className="status">
             {tcpStatus}
           </span>
+          <span id="httpStatus" className="status">
+            {httpStatus}
+          </span>
+          {nextPollIn && (
+            <span className="status" title="Nächster Poll in">
+              {nextPollIn}
+            </span>
+          )}
+        </div>
+        <div className="section">
+          <button onClick={() => openSettingsModal('tcp')}>Einstellungen…</button>
         </div>
       </header>
 
@@ -1901,396 +2073,184 @@ export default function App() {
         </div>
       )}
 
-      {/* Hauptlayout: Liste + Details als Overlay */}
-      <main className="layout" style="min-height:0;" ref={layoutRef}>
-        <aside className="list" id="listPane" ref={parentRef}>
-          <div className="list-header" role="row">
-            <div className="cell" role="columnheader">
-              Zeit
-              <span className="resizer" onMouseDown={(e) => onColMouseDown('ts', e)} />
+      {/* Hauptlayout: Liste + Overlay-Details */}
+      <div className="layout" ref={layoutRef}>
+        {/* Listen-Header */}
+        <div className="list" ref={parentRef as any}>
+          <div className="list-header">
+            <div className="cell">
+              Zeitstempel
+              <div className="resizer" onMouseDown={(e) => onColMouseDown('ts', e)} />
             </div>
-            <div className="cell" role="columnheader">
+            <div className="cell" style={{ textAlign: 'center' }}>
               Level
-              <span className="resizer" onMouseDown={(e) => onColMouseDown('lvl', e)} />
+              <div className="resizer" onMouseDown={(e) => onColMouseDown('lvl', e)} />
             </div>
-            <div className="cell" role="columnheader">
+            <div className="cell">
               Logger
-              <span className="resizer" onMouseDown={(e) => onColMouseDown('logger', e)} />
+              <div className="resizer" onMouseDown={(e) => onColMouseDown('logger', e)} />
             </div>
-            <div className="cell" role="columnheader">
-              Message
-            </div>
+            <div className="cell">Message</div>
           </div>
-          <ul
-            id="logList"
-            className="log-list"
-            style={{ position: 'relative', height: totalHeight + 'px' }}
-          >
-            {virtualItems.map((vi) => {
-              const idx = filteredIdx[vi.index];
-              const e = entries[idx];
-              const sel = selected.has(idx);
-              const s = search.trim();
-              const msgHtml = highlightAll(String(e?.message || ''), s);
-              const rowStyle = {
+
+          {/* Virtualized rows */}
+          <div style={{ height: totalHeight + 'px', position: 'relative' }}>
+            {virtualItems.map((vi: any) => {
+              const globalIdx = filteredIdx[vi.index];
+              const e = entries[globalIdx] || {};
+              const isSel = selected.has(globalIdx);
+              const rowCls = 'row' + (isSel ? ' sel' : '');
+              const mark = (e as any)._mark as string | undefined;
+              const style = {
                 position: 'absolute',
                 top: 0,
                 left: 0,
                 right: 0,
-                height: 36 + 'px',
                 transform: `translateY(${vi.start}px)`,
-              };
-              // Markierte Einträge: gut sichtbar, aber Text lesbar halten -> Farbstreifen statt Vollhintergrund
-              if (e?._mark) Object.assign(rowStyle, { boxShadow: `inset 4px 0 0 ${e._mark}` });
+                height: rowHeight + 'px',
+              } as any;
               return (
-                <li
+                <div
                   key={vi.key}
-                  className={`row${sel ? ' sel' : ''}`}
-                  data-idx={idx}
-                  style={rowStyle}
-                  onClick={(ev) => {
-                    const shift = ev.shiftKey;
-                    const meta = ev.metaKey || ev.ctrlKey;
-                    toggleSelectIndex(idx, shift, meta);
-                  }}
-                  onContextMenu={(ev) => openContextMenu(ev, idx)}
+                  className={rowCls}
+                  style={style}
+                  onClick={(ev) =>
+                    toggleSelectIndex(
+                      globalIdx,
+                      (ev as any).shiftKey,
+                      (ev as any).ctrlKey || (ev as any).metaKey
+                    )
+                  }
+                  onContextMenu={(ev) => openContextMenu(ev as any, globalIdx)}
+                  title={String(e.message || '')}
                 >
-                  <span className="col ts">{fmtTimestamp(e?.timestamp)}</span>
-                  <span className={`col lvl ${levelClass(e?.level)}`}>{fmt(e?.level || '')}</span>
-                  <span className="col logger">{fmt(e?.logger)}</span>
-                  <span className="col msg" dangerouslySetInnerHTML={{ __html: msgHtml }} />
-                </li>
+                  <div className="col ts">{fmtTimestamp(e.timestamp)}</div>
+                  <div className="col lvl">
+                    <span className={levelClass(e.level)}>{fmt(e.level)}</span>
+                  </div>
+                  <div className="col logger">{fmt(e.logger)}</div>
+                  <div
+                    className="col msg"
+                    dangerouslySetInnerHTML={{ __html: highlightAll(e.message, search) }}
+                  />
+                </div>
               );
             })}
-          </ul>
-        </aside>
+            {countFiltered === 0 && (
+              <div style={{ padding: '10px', color: '#777' }}>Keine Einträge</div>
+            )}
+          </div>
+        </div>
+
+        {/* Overlay: Divider + Detailbereich */}
         <div className="overlay">
-          <div className="divider" ref={dividerRef} title="Höhe der Details ziehen" />
-          <section
+          <div className="divider" ref={(el) => (dividerElRef.current = el as any)} />
+          <div
             className="details"
-            id="detailsPane"
-            data-tinted={selectedEntry && selectedEntry._mark ? '1' : undefined}
-            style={
-              selectedEntry && selectedEntry._mark
-                ? { ['--details-tint']: computeTint(selectedEntry._mark) }
-                : undefined
-            }
+            data-tinted={selectedEntry && (selectedEntry._mark || selectedEntry.color) ? '1' : '0'}
+            style={{
+              // sanfte Tönung aus _mark oder color ableiten
+              ['--details-tint' as any]: computeTint(
+                (selectedEntry && (selectedEntry as any)._mark) || (selectedEntry as any)?.color,
+                0.22
+              ),
+            }}
           >
-            {/* Tönung via CSS-Variable/Background-Image, kein Overlay-Element mehr nötig */}
-            {selectedOneIdx == null && <div id="detailsEmpty">Kein Eintrag ausgewählt.</div>}
+            {!selectedEntry && (
+              <div style={{ color: 'var(--color-text-secondary)' }}>Keine Auswahl</div>
+            )}
             {selectedEntry && (
-              <div id="detailsView">
-                {/* Meta-Infos kompakt in zwei Spalten */}
+              <Fragment>
+                {/* Meta */}
                 <div className="meta-grid">
-                  {/* Reihe 1: Zeit + Logger */}
-                  <div className="kv">
-                    <span>Zeit</span>
-                    <code id="dTime">{fmtTimestamp(selectedEntry.timestamp)}</code>
-                  </div>
-                  <div className="kv">
-                    <span>Logger</span>
-                    <div
-                      style={{
-                        display: 'grid',
-                        gridTemplateColumns: '1fr auto',
-                        alignItems: 'center',
-                        gap: '6px',
-                      }}
-                    >
-                      <code id="dLogger">{fmt(selectedEntry.logger)}</code>
-                      <button
-                        title="Logger in Filter übernehmen"
-                        onClick={() => {
-                          const v = String(selectedEntry.logger || '');
-                          setStdFiltersEnabled(true);
-                          setFilter((f) => ({ ...f, logger: v }));
-                          addToHistory('logger', v);
-                        }}
-                      >
-                        + Filter
-                      </button>
+                  <div>
+                    <div className="kv">
+                      <span>Zeit</span>
+                      <div>{fmtTimestamp((selectedEntry as any).timestamp)}</div>
+                    </div>
+                    <div className="kv">
+                      <span>Logger</span>
+                      <div>{fmt((selectedEntry as any).logger)}</div>
                     </div>
                   </div>
-                  {/* Reihe 2: Level + Thread */}
-                  <div className="kv">
-                    <span>Level</span>
-                    <code id="dLevel">{fmt(selectedEntry.level)}</code>
-                  </div>
-                  <div className="kv">
-                    <span>Thread</span>
-                    <div
-                      style={{
-                        display: 'grid',
-                        gridTemplateColumns: '1fr auto',
-                        alignItems: 'center',
-                        gap: '6px',
-                      }}
-                    >
-                      <code id="dThread">{fmt(selectedEntry.thread)}</code>
-                      <button
-                        title="Thread in Filter übernehmen"
-                        onClick={() => {
-                          const v = String(selectedEntry.thread || '');
-                          setStdFiltersEnabled(true);
-                          setFilter((f) => ({ ...f, thread: v }));
-                        }}
-                      >
-                        + Filter
-                      </button>
+                  <div>
+                    <div className="kv">
+                      <span>Level</span>
+                      <div>
+                        <span className={levelClass((selectedEntry as any).level)}>
+                          {fmt((selectedEntry as any).level)}
+                        </span>
+                      </div>
                     </div>
-                  </div>
-                  {/* Rest wie zuvor */}
-                  <div className="kv" style={{ gridColumn: '1 / span 2' }}>
-                    <span>Source</span>
-                    <code id="dSource">{fmt(selectedEntry.source)}</code>
+                    <div className="kv">
+                      <span>Thread</span>
+                      <div>{fmt((selectedEntry as any).thread)}</div>
+                    </div>
                   </div>
                 </div>
 
+                <div className="section-sep" />
+
+                {/* Message */}
                 <div className="kv full">
                   <span>Message</span>
                   <pre
                     id="dMessage"
                     dangerouslySetInnerHTML={{
-                      __html: highlightAll(selectedEntry.message, search),
+                      __html: highlightAll((selectedEntry as any).message || '', search),
                     }}
                   />
                 </div>
-                {selectedEntry?.stackTrace ? (
+
+                {/* Stacktrace falls vorhanden */}
+                {((selectedEntry as any).stack_trace || (selectedEntry as any).stackTrace) && (
                   <div className="kv full">
-                    <span>Stack Trace</span>
-                    <pre
-                      className="stack-trace"
-                      dangerouslySetInnerHTML={{
-                        __html: highlightAll(selectedEntry.stackTrace, search),
-                      }}
-                    />
+                    <span>Stacktrace</span>
+                    <pre className="stack-trace">
+                      {String(
+                        (selectedEntry as any).stack_trace ||
+                          (selectedEntry as any).stackTrace ||
+                          ''
+                      )}
+                    </pre>
                   </div>
-                ) : null}
+                )}
+
+                {/* MDC */}
                 {mdcPairs.length > 0 && (
                   <Fragment>
                     <div className="section-sep" />
-                    <div className="kv full">
-                      <span>MDC</span>
-                      <div>
-                        <div className="mdc-grid">
-                          {mdcPairs.map(([k, v]) => (
-                            <Fragment key={`${k}|${v}`}>
-                              <div className="mdc-key">{k}</div>
-                              <div className="mdc-val">
-                                <code>{v}</code>
-                              </div>
-                              <div className="mdc-act">
-                                <button
-                                  title="Zum DC-Filter hinzufügen"
-                                  onClick={() => addMdcToFilter(k, v)}
-                                >
-                                  + Filter
-                                </button>
-                              </div>
-                            </Fragment>
-                          ))}
-                        </div>
-                      </div>
+                    <div style={{ fontSize: '12px', color: '#666', marginBottom: '6px' }}>
+                      Diagnostic Context
+                    </div>
+                    <div className="mdc-grid">
+                      {mdcPairs.map(([k, v]) => (
+                        <Fragment key={k + '=' + v}>
+                          <div className="mdc-key">{k}</div>
+                          <div className="mdc-val">
+                            <code>{v}</code>
+                          </div>
+                          <div
+                            className="mdc-act"
+                            style={{ display: 'flex', gap: '6px', justifyContent: 'end' }}
+                          >
+                            <button
+                              onClick={() => addMdcToFilter(k, v)}
+                              title="Zum MDC-Filter hinzufügen"
+                            >
+                              +
+                            </button>
+                          </div>
+                        </Fragment>
+                      ))}
                     </div>
                   </Fragment>
                 )}
-              </div>
+              </Fragment>
             )}
-          </section>
-        </div>
-      </main>
-
-      {/* MDC-Filter Modal: aus Listenauswahl */}
-      {showMdcModal && (
-        <div className="modal-backdrop" onClick={() => setShowMdcModal(false)}>
-          <div className="modal" onClick={(e) => e.stopPropagation()}>
-            <h3>MDC-Filter aus Auswahl</h3>
-            {mdcAgg.length === 0 ? (
-              <div style={{ padding: '8px', color: '#777' }}>Keine MDC-Daten in der Auswahl</div>
-            ) : (
-              <div className="kv full">
-                <span>Schlüssel</span>
-                <div style={{ display: 'grid', gridTemplateColumns: '220px 1fr', gap: '10px' }}>
-                  <div style={{ borderRight: '1px solid var(--color-divider)' }}>
-                    {mdcAgg.map((it) => (
-                      <div
-                        key={it.key}
-                        className={`item${mdcSelKey === it.key ? ' sel' : ''}`}
-                        style={{ padding: '6px 8px', cursor: 'pointer' }}
-                        onClick={() => {
-                          setMdcSelKey(it.key);
-                          setMdcSelVals(new Set());
-                        }}
-                      >
-                        {it.key}{' '}
-                        <small style={{ color: 'var(--color-text-secondary)' }}>
-                          ({it.values.length})
-                        </small>
-                      </div>
-                    ))}
-                  </div>
-                  <div>
-                    <div
-                      style={{
-                        display: 'flex',
-                        alignItems: 'center',
-                        gap: '8px',
-                        marginBottom: '8px',
-                      }}
-                    >
-                      <button onClick={() => addSelectedMdcToFilter({ presentOnly: true })}>
-                        + Key vorhanden
-                      </button>
-                      <button
-                        onClick={() => addSelectedMdcToFilter({ allValues: true })}
-                        disabled={!mdcAgg.find((x) => x.key === mdcSelKey)}
-                      >
-                        + Alle Werte
-                      </button>
-                      <button
-                        onClick={() => addSelectedMdcToFilter()}
-                        disabled={mdcSelVals.size === 0}
-                      >
-                        + Ausgewählte Werte
-                      </button>
-                      <button
-                        onClick={removeSelectedMdcFromFilter}
-                        disabled={mdcSelVals.size === 0}
-                      >
-                        Ausgewählte entfernen
-                      </button>
-                    </div>
-                    <div
-                      style={{
-                        maxHeight: '280px',
-                        overflow: 'auto',
-                        border: '1px solid var(--color-divider)',
-                        borderRadius: '8px',
-                      }}
-                    >
-                      {(mdcAgg.find((x) => x.key === mdcSelKey)?.values || []).map(
-                        ({ val, count }) => {
-                          const id = `${mdcSelKey}|${val}`;
-                          const checked = mdcSelVals.has(val);
-                          return (
-                            <label
-                              key={id}
-                              className="item"
-                              style={{
-                                display: 'flex',
-                                alignItems: 'center',
-                                gap: '8px',
-                                padding: '6px 8px',
-                                borderBottom: '1px solid var(--color-divider)',
-                                cursor: 'pointer',
-                              }}
-                            >
-                              <input
-                                type="checkbox"
-                                checked={checked}
-                                onChange={(e) => {
-                                  setMdcSelVals((prev) => {
-                                    const next = new Set(prev);
-                                    if (e.currentTarget.checked) next.add(val);
-                                    else next.delete(val);
-                                    return next;
-                                  });
-                                }}
-                              />
-                              <code style={{ flex: 1 }}>{val}</code>
-                              <small style={{ color: 'var(--color-text-secondary)' }}>
-                                {count}
-                              </small>
-                            </label>
-                          );
-                        }
-                      )}
-                    </div>
-                  </div>
-                </div>
-              </div>
-            )}
-            <div className="modal-actions">
-              <button
-                onClick={() => {
-                  DiagnosticContextFilter.reset();
-                  setShowMdcModal(false);
-                }}
-                title="Alle MDC-Filter entfernen"
-              >
-                Leeren
-              </button>
-              <button
-                onClick={() => {
-                  DiagnosticContextFilter.setEnabled(!DiagnosticContextFilter.isEnabled());
-                  setShowMdcModal(false);
-                }}
-              >
-                {DiagnosticContextFilter.isEnabled() ? 'Deaktivieren' : 'Aktivieren'}
-              </button>
-              <button onClick={() => setShowMdcModal(false)}>Schließen</button>
-            </div>
           </div>
         </div>
-      )}
-
-      {/* Elastic-Search Dialog */}
-      {showTimeDialog && (
-        <Suspense
-          fallback={
-            <div className="modal-backdrop">
-              <div className="modal">Lädt…</div>
-            </div>
-          }
-        >
-          <ElasticSearchDialog
-            open={showTimeDialog}
-            initial={timeForm}
-            firstTs={(() => {
-              let best = Number.POSITIVE_INFINITY;
-              for (const idx of filteredIdx) {
-                const e = entries[idx];
-                const ms = e?.timestamp != null ? Number(new Date(e.timestamp)) : NaN;
-                if (!isNaN(ms) && ms < best) best = ms;
-              }
-              return best !== Number.POSITIVE_INFINITY ? new Date(best) : null;
-            })()}
-            lastTs={(() => {
-              let best = Number.NEGATIVE_INFINITY;
-              for (const idx of filteredIdx) {
-                const e = entries[idx];
-                const ms = e?.timestamp != null ? Number(new Date(e.timestamp)) : NaN;
-                if (!isNaN(ms) && ms > best) best = ms;
-              }
-              return best !== Number.NEGATIVE_INFINITY ? new Date(best) : null;
-            })()}
-            onApply={(f) => {
-              setTimeForm(f);
-              // Lokalen TimeFilter-Status aktualisieren
-              try {
-                const mode = f?.mode || 'relative';
-                if (mode === 'relative') {
-                  TimeFilter.setRelative(String(f?.duration || '').trim());
-                } else {
-                  const toDate = (s) => {
-                    const t = String(s || '').trim();
-                    if (!t) return null;
-                    const d = new Date(t);
-                    return isNaN(d.getTime()) ? null : d;
-                  };
-                  TimeFilter.setAbsolute(toDate(f?.from), toDate(f?.to));
-                }
-                TimeFilter.setEnabled(!!f?.enabled);
-              } catch {}
-              setShowTimeDialog(false);
-            }}
-            onClear={() => {
-              clearTimeFilter();
-            }}
-            onClose={() => setShowTimeDialog(false)}
-          />
-        </Suspense>
-      )}
+      </div>
 
       {/* Kontextmenü */}
       {ctxMenu.open && (
@@ -2330,10 +2290,9 @@ export default function App() {
           <div className="item" onClick={() => DiagnosticContextFilter.reset()}>
             MDC-Filter leeren
           </div>
-          <div className="item" onClick={openMdcFromSelection}>
+          <div className="item" onClick={() => openMdcFromSelection()}>
             MDC aus Auswahl…
           </div>
-          {/* Entfernt: Fenster-Titel setzen aus Kontextmenü */}
         </div>
       )}
 

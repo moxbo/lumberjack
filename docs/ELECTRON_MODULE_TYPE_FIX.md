@@ -5,8 +5,8 @@
 When `package.json` contains `"type": "module"`, Node.js and Electron interpret all `.js` files as ES modules by default. This caused an error when Electron tried to load the main process bundle:
 
 ```
-This file is being treated as an ES module because it has a '.js' file extension 
-and '/Users/mo/develop/my-electron-app/package.json' contains "type": "module". 
+This file is being treated as an ES module because it has a '.js' file extension
+and '/Users/mo/develop/my-electron-app/package.json' contains "type": "module".
 To treat it as a CommonJS script, rename it to use the '.cjs' file extension.
 ```
 
@@ -26,6 +26,7 @@ This ensures the files are always treated as CommonJS regardless of the package.
 ## Why Keep "type": "module"?
 
 The project keeps `"type": "module"` in package.json to support ES modules for:
+
 - **Renderer process code** (built with Vite) - Vite expects and requires ESM
 - **Development scripts** - Scripts use modern ESM imports
 - **Other ES module dependencies** - Many modern packages are ESM-only
@@ -39,6 +40,7 @@ By using `.cjs` extension for the main process bundle, we can have CommonJS for 
 **Detailed analysis**:
 
 **If removed** (`"type": "module"` deleted from package.json):
+
 - ✅ All `.js` files would default to CommonJS
 - ✅ Main process wouldn't need `.cjs` extension
 - ❌ Vite build would fail (expects ESM)
@@ -47,6 +49,7 @@ By using `.cjs` extension for the main process bundle, we can have CommonJS for 
 - ❌ Goes against modern JavaScript ecosystem trends
 
 **Current approach** (keep `"type": "module"`, use `.cjs` for main):
+
 - ✅ Full ESM support for renderer and scripts
 - ✅ Works with modern tooling (Vite, esbuild)
 - ✅ Stable - explicit file extensions prevent ambiguity
@@ -54,6 +57,7 @@ By using `.cjs` extension for the main process bundle, we can have CommonJS for 
 - ❌ Requires explicit `.cjs` extension for main process
 
 **Recommendation**: Keep `"type": "module"`. The current solution is actually **more stable** because:
+
 1. File extensions are explicit (`.cjs` = CommonJS, `.mjs` = ESM, `.js` = follows package.json)
 2. No ambiguity about module format
 3. Works with modern tooling ecosystem
@@ -63,7 +67,7 @@ By using `.cjs` extension for the main process bundle, we can have CommonJS for 
 
 1. **Remove "type": "module"** - Would break ES module support for renderer/scripts
 2. **Switch to full ESM** - Would require:
-   - Changing build to output `.mjs` 
+   - Changing build to output `.mjs`
    - Updating all CommonJS patterns (require, module.exports) to ESM (import/export)
    - Ensuring Electron version supports ESM main process
 3. **Conditional loading** - More complex and fragile

@@ -8,14 +8,16 @@
  */
 export interface LogEntry {
   _id?: number;
-  timestamp: string | number | Date;
-  level: string;
-  logger: string;
-  thread?: string;
+  timestamp: string | number | Date | null;
+  level?: string | null;
+  logger?: string | null;
+  thread?: string | null;
   message: string;
-  traceId?: string;
-  spanId?: string;
+  traceId?: string | null;
+  spanId?: string | null;
+  stackTrace?: string | null;
   source: string;
+  raw?: unknown;
   mdc?: Record<string, unknown>;
   mark?: string | null;
   [key: string]: unknown;
@@ -36,14 +38,34 @@ export interface Settings {
   logFilePath?: string;
   logMaxBytes?: number;
   logMaxBackups?: number;
+
+  // Elasticsearch
   elasticUrl?: string;
   elasticUser?: string;
   elasticPassEnc?: string;
   elasticSize?: number;
+
+  // Appearance
   themeMode?: 'system' | 'light' | 'dark';
+
+  // Histories
   histLogger?: string[];
+
+  // NEW: ElasticSearch dropdown histories
+  histAppName?: string[];
+  histEnvironment?: string[];
+
+  // HTTP
   httpUrl?: string;
   httpPollInterval?: number;
+
+  // UI runtime prefs (persisted)
+  follow?: boolean;
+  followSmooth?: boolean;
+  detailHeight?: number;
+  colTs?: number;
+  colLvl?: number;
+  colLogger?: number;
 }
 
 /**
@@ -91,17 +113,37 @@ export interface TcpStatus {
 }
 
 /**
+ * Elasticsearch auth options
+ */
+export type ElasticAuth =
+  | { type: 'basic'; username: string; password: string }
+  | { type: 'apiKey' | 'bearer'; token: string };
+
+/**
  * Elasticsearch search options
+ * Matches main parsers' fetchElasticLogs signature
  */
 export interface ElasticSearchOptions {
-  url?: string;
-  size?: number;
-  query?: unknown;
-  auth?: {
-    type: 'basic';
-    username: string;
-    password: string;
-  };
+  url?: string; // base URL, e.g., https://es:9200
+  index?: string; // e.g., logs-*
+  size?: number; // default 1000
+  sort?: 'asc' | 'desc'; // default desc
+
+  // time window
+  from?: string | Date; // ISO string or Date
+  to?: string | Date; // ISO string or Date
+  duration?: string; // e.g., 15m, 4h, 7d (now-duration .. now)
+
+  // common filters
+  logger?: string;
+  level?: string;
+  message?: string;
+  application_name?: string;
+  environment?: string;
+
+  // auth and TLS
+  auth?: ElasticAuth;
+  allowInsecureTLS?: boolean;
 }
 
 /**

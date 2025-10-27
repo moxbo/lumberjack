@@ -7,17 +7,20 @@ Nach dem Refactoring zu TypeScript und Service-Architektur gibt es mehrere Datei
 ## Bereits entfernte Dateien
 
 ### ✅ src/main/renderer.ts (412 Zeilen)
+
 - **Status**: Gelöscht
 - **Grund**: Alter/alternativer Renderer, wurde nicht mehr verwendet
 - **Ersetzt durch**: `src/main/util/main.tsx` ist der aktuelle Einstiegspunkt
 
-### ✅ src/main/theme.ts (286 Zeilen)  
+### ✅ src/main/theme.ts (286 Zeilen)
+
 - **Status**: Gelöscht
 - **Grund**: Keine Referenzen gefunden, nicht mehr verwendet
 
 ## Dateien die als Legacy behalten werden
 
 ### src/main/main.cjs (1119 Zeilen)
+
 - **Status**: Legacy-Datei, vollständig ersetzt durch `main.ts`
 - **Grund zum Behalten**: Referenz für Vergleich während Testphase
 - **Empfehlung**: Kann nach vollständiger Validierung von main.ts gelöscht werden
@@ -28,6 +31,7 @@ Nach dem Refactoring zu TypeScript und Service-Architektur gibt es mehrere Datei
 Diese Dateien werden automatisch im Build-Prozess generiert und sind notwendig:
 
 ### src/main/parsers.cjs
+
 - **Status**: WIRD VERWENDET
 - **Generiert von**: `parsers.ts` via esbuild
 - **Verwendet in**: `main.ts` lädt via `require('./parsers.cjs')`
@@ -35,6 +39,7 @@ Diese Dateien werden automatisch im Build-Prozess generiert und sind notwendig:
 - **Empfehlung**: BEHALTEN - notwendig für Laufzeit
 
 ### src/utils/settings.cjs
+
 - **Status**: WIRD GENERIERT
 - **Generiert von**: `settings.ts` via esbuild
 - **Verwendet in**: Parsers.cjs (Legacy-Kompatibilität)
@@ -46,31 +51,34 @@ Diese Dateien werden automatisch im Build-Prozess generiert und sind notwendig:
 ## Funktionen die in Services migriert wurden
 
 ### Aus main.cjs → SettingsService
+
 Die folgenden Funktionen wurden von `main.cjs` in `SettingsService` migriert:
 
-| Alt (main.cjs) | Neu (SettingsService) |
-|----------------|----------------------|
-| `ensureSettings()` | `get()` |
-| `loadSettings()` | `load()` |
-| `loadSettingsSyncSafe()` | `loadSync()` |
-| `saveSettings()` | `save()` / `saveSync()` |
-| `settingsPath()` | `resolveSettingsPath()` (privat) |
-| `encryptSecret()` | `encryptSecret()` |
-| `decryptSecret()` | `decryptSecret()` |
+| Alt (main.cjs)           | Neu (SettingsService)            |
+| ------------------------ | -------------------------------- |
+| `ensureSettings()`       | `get()`                          |
+| `loadSettings()`         | `load()`                         |
+| `loadSettingsSyncSafe()` | `loadSync()`                     |
+| `saveSettings()`         | `save()` / `saveSync()`          |
+| `settingsPath()`         | `resolveSettingsPath()` (privat) |
+| `encryptSecret()`        | `encryptSecret()`                |
+| `decryptSecret()`        | `decryptSecret()`                |
 
 ### Aus main.cjs → NetworkService
+
 Die folgenden Funktionen wurden in `NetworkService` migriert:
 
-| Alt (main.cjs) | Neu (NetworkService) |
-|----------------|---------------------|
-| TCP Server Setup | `startTcpServer()` |
-| TCP Server Stop | `stopTcpServer()` |
-| HTTP Polling | `httpStartPoll()` |
-| HTTP Poll Stop | `httpStopPoll()` |
-| `httpFetchText()` | `httpFetchText()` (privat) |
+| Alt (main.cjs)       | Neu (NetworkService)          |
+| -------------------- | ----------------------------- |
+| TCP Server Setup     | `startTcpServer()`            |
+| TCP Server Stop      | `stopTcpServer()`             |
+| HTTP Polling         | `httpStartPoll()`             |
+| HTTP Poll Stop       | `httpStopPoll()`              |
+| `httpFetchText()`    | `httpFetchText()` (privat)    |
 | `dedupeNewEntries()` | `dedupeNewEntries()` (privat) |
 
 ### Noch in main.ts (könnten in LogFileService)
+
 Diese Funktionen sind noch direkt in `main.ts` und könnten in einen separaten Service ausgelagert werden:
 
 - `openLogStream()`
@@ -83,14 +91,15 @@ Diese Funktionen sind noch direkt in `main.ts` und könnten in einen separaten S
 ## Duplizierte Logik
 
 ### src/utils/settings.ts vs SettingsService
+
 Die Funktionen in `settings.ts` sind größtenteils in `SettingsService` dupliziert:
 
-| settings.ts | SettingsService |
-|-------------|-----------------|
-| `getDefaultSettings()` | `getDefaults()` (static) |
-| `parseSettingsJSON()` | Teil von `load()` |
-| `stringifySettingsJSON()` | Teil von `save()` |
-| `mergeSettings()` | Teil von `update()` |
+| settings.ts               | SettingsService          |
+| ------------------------- | ------------------------ |
+| `getDefaultSettings()`    | `getDefaults()` (static) |
+| `parseSettingsJSON()`     | Teil von `load()`        |
+| `stringifySettingsJSON()` | Teil von `save()`        |
+| `mergeSettings()`         | Teil von `update()`      |
 
 **Status**: `settings.ts` wird noch für die Kompilierung zu `settings.cjs` benötigt (für parsers.cjs Legacy-Support)
 
@@ -99,25 +108,30 @@ Die Funktionen in `settings.ts` sind größtenteils in `SettingsService` duplizi
 ## Dateigröße-Einsparungen
 
 Bereits entfernt:
+
 - `renderer.ts`: ~412 Zeilen / ~12KB
 - `theme.ts`: ~286 Zeilen / ~8KB
 - **Gesamt**: ~698 Zeilen / ~20KB
 
 Potentiell entfernbar (nach Tests):
+
 - `main.cjs`: ~1119 Zeilen / ~34KB
 
 ## Empfohlene nächste Schritte
 
 ### Kurzfristig (bereits erledigt)
+
 1. ✅ `src/main/renderer.ts` gelöscht
 2. ✅ `src/main/theme.ts` gelöscht
 3. ✅ `tsconfig.json` aktualisiert
 
 ### Mittelfristig (nach Validierung)
+
 1. ⚠️ `src/main/main.cjs` löschen nach ausführlichem Testing
 2. 🔄 File-Logging in `LogFileService` auslagern (optional)
 
 ### Langfristig (Architektur)
+
 1. 🔄 `parsers.cjs` Abhängigkeit von `settings.cjs` entfernen
 2. 🔄 `settings.ts` vereinfachen oder entfernen
 

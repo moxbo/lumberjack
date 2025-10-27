@@ -39,7 +39,7 @@ export class DragAndDropManager {
       if (!dt) return false;
       if (debug) {
         try {
-          const types = Array.from(dt.types || [] as any);
+          const types = Array.from(dt.types || ([] as any));
           logger.log('[DnD] drag types:', types);
         } catch {}
       }
@@ -305,7 +305,11 @@ export class DragAndDropManager {
     };
 
     // Two layers: block default navigation and add functional handlers (with capture)
-    (target as any).addEventListener('dragover', onDragOverBlockAll as any, { capture: true } as any);
+    (target as any).addEventListener(
+      'dragover',
+      onDragOverBlockAll as any,
+      { capture: true } as any
+    );
     (target as any).addEventListener('drop', onDragOverBlockAll as any, { capture: true } as any);
 
     (target as any).addEventListener('dragenter', onDragEnter as any, { capture: true } as any);

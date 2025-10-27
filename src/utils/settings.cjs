@@ -103,6 +103,17 @@ const SETTINGS_SCHEMA = {
     default: [],
     validate: (val) => Array.isArray(val) && val.length <= 10 && val.every((item) => item.length <= 256)
   },
+  // NEW: ElasticSearch histories for dropdowns
+  histAppName: {
+    type: "array",
+    default: [],
+    validate: (val) => Array.isArray(val) && val.length <= 10 && val.every((item) => item.length <= 256)
+  },
+  histEnvironment: {
+    type: "array",
+    default: [],
+    validate: (val) => Array.isArray(val) && val.length <= 10 && val.every((item) => item.length <= 256)
+  },
   histTrace: {
     type: "array",
     default: [],

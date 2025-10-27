@@ -29,6 +29,9 @@ const DEFAULT_SETTINGS: Settings = {
   elasticSize: 1000,
   themeMode: 'system',
   histLogger: [],
+  // NEW histories for ElasticSearch dialog
+  histAppName: [],
+  histEnvironment: [],
   httpUrl: '',
   httpPollInterval: 5000,
 };

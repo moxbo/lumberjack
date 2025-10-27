@@ -7,29 +7,34 @@ This document describes the comprehensive refactoring of Lumberjack to modern Ty
 ## Goals Achieved
 
 ### ✅ Modern Electron Security Standards
+
 - **contextBridge API**: Secure preload script with typed IPC
 - **contextIsolation**: Enabled for renderer process security
 - **No nodeIntegration**: Renderer has no direct Node.js access
 - **Type-Safe IPC**: All IPC channels have TypeScript contracts
 
 ### ✅ Strict TypeScript Throughout
+
 - **Strict Mode**: All strict compiler options enabled
 - **No implicit any**: Explicit types required
 - **Explicit Return Types**: All functions have return types
 - **Type Safety**: Comprehensive type definitions for IPC and UI
 
 ### ✅ Service-Based Architecture
+
 - **SettingsService**: Settings management with encryption and validation
 - **NetworkService**: TCP and HTTP operations with proper cleanup
 - **PerformanceService**: Startup time tracking and diagnostics
 - **Separation of Concerns**: IPC handlers separate from main logic
 
 ### ✅ Code Quality Tooling
+
 - **ESLint**: TypeScript linting with recommended rules
 - **Prettier**: Code formatting (already configured)
 - **Strict tsconfig**: Enhanced compiler options for safety
 
 ### ✅ Windows Performance Optimization
+
 - **Lazy Loading**: Heavy modules loaded only when needed
 - **Async I/O**: Non-blocking file operations
 - **Performance Tracking**: Built-in metrics for startup time
@@ -69,6 +74,7 @@ lumberjack/
 ### 1. Preload Script (`preload.ts`)
 
 **New secure preload with contextBridge:**
+
 ```typescript
 const api: ElectronAPI = {
   settingsGet: () => ipcRenderer.invoke('settings:get'),
@@ -80,6 +86,7 @@ contextBridge.exposeInMainWorld('api', api);
 ```
 
 **Benefits:**
+
 - Type-safe IPC communication
 - No direct access to Electron APIs from renderer
 - Clean API surface for renderer
@@ -87,6 +94,7 @@ contextBridge.exposeInMainWorld('api', api);
 ### 2. Main Process (`src/main/main.ts`)
 
 **TypeScript rewrite with services:**
+
 ```typescript
 const settingsService = new SettingsService();
 const networkService = new NetworkService();
@@ -99,6 +107,7 @@ perfService.checkStartupPerformance(5000);
 ```
 
 **Benefits:**
+
 - Full TypeScript type safety
 - Testable service classes
 - Performance visibility
@@ -107,18 +116,21 @@ perfService.checkStartupPerformance(5000);
 ### 3. Service Classes
 
 #### SettingsService
+
 - Async and sync loading methods
 - Encryption/decryption for secrets
 - Validation with error handling
 - Portable mode support
 
 #### NetworkService
+
 - TCP server management
 - HTTP polling with deduplication
 - Proper cleanup on shutdown
 - Dependency injection for parsers
 
 #### PerformanceService
+
 - Startup time tracking
 - Performance marks throughout lifecycle
 - Automatic warnings for slow startup
@@ -127,6 +139,7 @@ perfService.checkStartupPerformance(5000);
 ### 4. IPC Handlers (`src/main/ipcHandlers.ts`)
 
 **Separated IPC logic:**
+
 ```typescript
 export function registerIpcHandlers(
   settingsService: SettingsService,
@@ -139,6 +152,7 @@ export function registerIpcHandlers(
 ```
 
 **Benefits:**
+
 - Single responsibility
 - Easier to test
 - Clear dependencies
@@ -146,12 +160,14 @@ export function registerIpcHandlers(
 ### 5. Type Definitions
 
 #### `src/types/ipc.ts`
+
 - Complete IPC contract definitions
 - LogEntry, Settings, Results interfaces
 - ElectronAPI surface
 - Window global augmentation
 
 #### `src/types/ui.ts`
+
 - UI-specific types
 - Extended log entries
 - Filter state
@@ -160,11 +176,13 @@ export function registerIpcHandlers(
 ## Build Process
 
 ### Development
+
 ```bash
 npm run dev  # Builds TS, starts Vite and Electron
 ```
 
 ### Production
+
 ```bash
 npm run prebuild         # Compiles TS to optimized JS
 npm run build:renderer   # Builds renderer with Vite
@@ -172,6 +190,7 @@ npm run build:zip:x64    # Packages for Windows
 ```
 
 ### Build Output
+
 - `dist-main/main.js`: Bundled main process
 - `preload.js`: Bundled preload script
 - `dist/`: Vite-built renderer
@@ -180,6 +199,7 @@ npm run build:zip:x64    # Packages for Windows
 ## TypeScript Configuration
 
 Enhanced `tsconfig.json` with strict options:
+
 ```json
 {
   "compilerOptions": {
@@ -196,6 +216,7 @@ Enhanced `tsconfig.json` with strict options:
 ## ESLint Configuration
 
 `.eslintrc.cjs` with TypeScript support:
+
 - TypeScript-specific rules
 - Prettier integration
 - Async/await error checking
@@ -206,6 +227,7 @@ Enhanced `tsconfig.json` with strict options:
 See [WINDOWS_PERFORMANCE.md](./WINDOWS_PERFORMANCE.md) for detailed performance analysis.
 
 **Key optimizations:**
+
 1. Lazy loading of heavy modules (AdmZip, parsers)
 2. Async settings loading after window creation
 3. Deferred icon loading (Windows)
@@ -213,6 +235,7 @@ See [WINDOWS_PERFORMANCE.md](./WINDOWS_PERFORMANCE.md) for detailed performance 
 5. TypeScript pre-compilation
 
 **Expected results:**
+
 - Cold start: <3 seconds (from >20s)
 - Window visible: <1 second
 - Built-in performance tracking
@@ -220,10 +243,11 @@ See [WINDOWS_PERFORMANCE.md](./WINDOWS_PERFORMANCE.md) for detailed performance 
 ## Testing
 
 All existing tests pass:
+
 ```bash
 npm test
 # ✅ smoke-parse.ts
-# ✅ test-msg-filter.ts  
+# ✅ test-msg-filter.ts
 # ✅ verify-mdc-flow.mjs
 ```
 
@@ -232,11 +256,13 @@ New service classes are testable units with clear interfaces.
 ## Migration Path
 
 ### Current State
+
 - Both `main.cjs` (legacy) and `main.ts` (new) exist
 - `package.json` points to `dist-main/main.js` (compiled from `main.ts`)
 - All functionality preserved
 
 ### Future Steps
+
 1. Test new TypeScript main thoroughly
 2. Remove `main.cjs` when confident
 3. Remove @ts-nocheck from remaining files
@@ -246,11 +272,13 @@ New service classes are testable units with clear interfaces.
 ## Security Improvements
 
 ### Before
+
 - `nodeIntegration: true` in some contexts
 - Direct IPC without type checking
 - No preload script security
 
 ### After
+
 - `contextIsolation: true` throughout
 - `nodeIntegration: false` in renderer
 - Type-safe contextBridge API
@@ -259,12 +287,14 @@ New service classes are testable units with clear interfaces.
 ## Code Quality Improvements
 
 ### Before
+
 - Mixed JavaScript and TypeScript
 - @ts-nocheck pragmas in multiple files
 - No linting for TypeScript
 - Monolithic main process
 
 ### After
+
 - Full TypeScript with strict mode
 - @ts-nocheck removed from core files
 - ESLint with TypeScript rules
@@ -273,6 +303,7 @@ New service classes are testable units with clear interfaces.
 ## Breaking Changes
 
 **None.** This refactoring is backward compatible:
+
 - All existing IPC channels work
 - Settings format unchanged
 - Build artifacts compatible
@@ -281,6 +312,7 @@ New service classes are testable units with clear interfaces.
 ## Performance Metrics
 
 The PerformanceService tracks:
+
 - `app-start`: 0ms (baseline)
 - `main-loaded`: ~50ms
 - `window-created`: ~200ms
@@ -309,6 +341,7 @@ When adding new features:
 ## Conclusion
 
 This refactoring delivers:
+
 - ✅ Modern Electron security standards
 - ✅ Strict TypeScript throughout
 - ✅ Service-based architecture

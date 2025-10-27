@@ -9,6 +9,9 @@ export default function ElasticSearchDialog({
   onClose,
   firstTs,
   lastTs,
+  // NEW: histories for dropdowns
+  histAppName = [],
+  histEnvironment = [],
 }) {
   const [form, setForm] = useState(
     initial || {
@@ -207,11 +210,15 @@ export default function ElasticSearchDialog({
         <div className="kv">
           <span>Application Name</span>
           <input
+            list="esAppNameHistory"
             type="text"
             value={form.application_name}
             onInput={(e) => setForm({ ...form, application_name: e.currentTarget.value })}
             placeholder="z. B. my-service"
           />
+          <datalist id="esAppNameHistory">
+            {Array.isArray(histAppName) && histAppName.map((v, i) => <option key={i} value={v} />)}
+          </datalist>
         </div>
         <div className="kv">
           <span>Logger</span>
@@ -239,11 +246,15 @@ export default function ElasticSearchDialog({
         <div className="kv">
           <span>Environment</span>
           <input
+            list="esEnvHistory"
             type="text"
             value={form.environment}
             onInput={(e) => setForm({ ...form, environment: e.currentTarget.value })}
             placeholder="z. B. prod, stage"
           />
+          <datalist id="esEnvHistory">
+            {Array.isArray(histEnvironment) && histEnvironment.map((v, i) => <option key={i} value={v} />)}
+          </datalist>
         </div>
 
         <div className="modal-actions">

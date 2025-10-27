@@ -6,6 +6,7 @@ import path from 'path';
 import { createRequire } from 'module';
 import https from 'https';
 import http from 'http';
+import log from 'electron-log/main';
 
 // Types
 type AnyMap = Record<string, any>;
@@ -147,7 +148,7 @@ function parseTextLines(filename: string, text: string): Entry[] {
       );
       if (isoMatch) ts = isoMatch[0];
       entries.push(toEntry({}, line, filename));
-      if (ts) entries[entries.length - 1].timestamp = ts;
+      if (ts) entries[entries.length - 1]!.timestamp = ts;
     }
   }
   return entries;
@@ -335,6 +336,12 @@ function postJson(
         path: `${u.pathname}${u.search}`,
         headers,
       };
+      // Lightweight debug: log target URL and size header (no credentials)
+      try {
+        // Avoid logging Authorization header
+        const { authorization: _auth, ...safeHeaders } = headers || {};
+        log.info('[Elastic] POST', `${u.protocol}//${u.host}${opts.path}`, safeHeaders);
+      } catch {}
       if (isHttps && allowInsecureTLS) {
         opts.agent = new https.Agent({ rejectUnauthorized: false });
       }

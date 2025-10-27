@@ -307,29 +307,66 @@ export function registerIpcHandlers(
         const url = opts.url || settings.elasticUrl || '';
         const size = opts.size || settings.elasticSize || 1000;
 
-        const auth = (() => {
+        const derivedAuth = (() => {
           const user = settings.elasticUser || '';
           const pass = settingsService.decryptSecret(settings.elasticPassEnc || '');
           if (user && pass) {
-            return { type: 'basic' as const, username: user, password: pass };
+            return { type: 'basic', username: user, password: pass } as const;
           }
           return undefined;
         })();
 
-        const mergedOpts = {
+        const mergedOpts: ElasticSearchOptions = {
           ...opts,
           url,
           size,
-          auth: opts.auth || auth,
+          auth: opts.auth ?? derivedAuth,
         };
 
         if (!mergedOpts.url) {
           throw new Error('Elasticsearch URL ist nicht konfiguriert');
         }
 
-        const entries = await fetchElasticLogs(mergedOpts);
+        // Vorab: finale Request-URL (Basis + Index + _search) für Logging berechnen
+        const base = String(mergedOpts.url).replace(/\/$/, '');
+        const indexStr = mergedOpts.index ?? '_all';
+        const fullUrl = `${base}/${encodeURIComponent(indexStr)}/_search`;
+
+        // Outgoing Request ins Log schreiben (ohne Secrets)
+        const mode: 'relative' | 'absolute' = mergedOpts.duration ? 'relative' : 'absolute';
+        log.info('[elastic:search] request', {
+          url: mergedOpts.url,
+          fullUrl,
+          index: indexStr,
+          size: mergedOpts.size,
+          sort: mergedOpts.sort,
+          mode,
+          from: mergedOpts.from,
+          to: mergedOpts.to,
+          application_name: mergedOpts.application_name,
+          logger: mergedOpts.logger,
+          level: mergedOpts.level,
+          environment: mergedOpts.environment,
+          allowInsecureTLS: !!mergedOpts.allowInsecureTLS,
+        });
+
+        const entries = await fetchElasticLogs(mergedOpts as unknown as Record<string, unknown>);
         return { ok: true, entries };
       } catch (err) {
+        try {
+          // Wenn möglich, URL im Fehler mitloggen (ohne Credentials)
+          const u = (opts?.url || settingsService.get()?.elasticUrl || '').toString();
+          const base = u ? u.replace(/\/$/, '') : '';
+          const idx = opts?.index ?? '_all';
+          const fullUrl = base ? `${base}/${encodeURIComponent(idx)}/_search` : '';
+          log.error('[elastic:search] failed', {
+            message: err instanceof Error ? err.message : String(err),
+            url: u || undefined,
+            fullUrl: fullUrl || undefined,
+          });
+        } catch {
+          // ignore logging issues
+        }
         log.error('Elasticsearch search failed:', err instanceof Error ? err.message : String(err));
         return { ok: false, error: err instanceof Error ? err.message : String(err) };
       }

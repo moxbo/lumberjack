@@ -41,6 +41,7 @@ var import_path = __toESM(require("path"), 1);
 var import_module = require("module");
 var import_https = __toESM(require("https"), 1);
 var import_http = __toESM(require("http"), 1);
+var import_main = __toESM(require("electron-log/main"), 1);
 let AdmZip = null;
 function getAdmZip() {
   if (!AdmZip) {
@@ -278,6 +279,11 @@ function postJson(urlStr, body, headers, allowInsecureTLS) {
         path: `${u.pathname}${u.search}`,
         headers
       };
+      try {
+        const { authorization: _auth, ...safeHeaders } = headers || {};
+        import_main.default.info("[Elastic] POST", `${u.protocol}//${u.host}${opts.path}`, safeHeaders);
+      } catch {
+      }
       if (isHttps && allowInsecureTLS) {
         opts.agent = new import_https.default.Agent({ rejectUnauthorized: false });
       }

@@ -44,10 +44,10 @@ export class PerformanceService {
   mark(name: string): void {
     const now = Date.now();
     const duration = now - this.startTime;
-    
+
     this.marks.set(name, now);
     this.metrics.push({ name, timestamp: now, duration });
-    
+
     log.info(`[PERF] ${name}: ${duration}ms`);
   }
 
@@ -57,15 +57,15 @@ export class PerformanceService {
   measure(name: string, startMark: string, endMark?: string): number | null {
     const start = this.marks.get(startMark);
     const end = endMark ? this.marks.get(endMark) : Date.now();
-    
+
     if (!start || !end) {
       log.warn(`[PERF] Cannot measure ${name}: marks not found`);
       return null;
     }
-    
+
     const duration = end - start;
     log.info(`[PERF] ${name}: ${duration}ms (${startMark} → ${endMark ?? 'now'})`);
-    
+
     return duration;
   }
 
@@ -94,18 +94,18 @@ export class PerformanceService {
    */
   logSummary(): void {
     const metrics = this.getMetrics();
-    
+
     log.info('=== Performance Summary ===');
     log.info(`Platform: ${metrics.platform}`);
     log.info(`Electron: ${metrics.electronVersion}`);
     log.info(`Node: ${metrics.nodeVersion}`);
     log.info(`Total startup time: ${metrics.startupTime}ms`);
     log.info('=== Marks ===');
-    
+
     for (const mark of metrics.marks) {
       log.info(`  ${mark.name}: ${mark.duration}ms`);
     }
-    
+
     log.info('=========================');
   }
 
@@ -114,7 +114,7 @@ export class PerformanceService {
    */
   checkStartupPerformance(thresholdMs: number = 3000): void {
     const elapsed = this.getElapsedTime();
-    
+
     if (elapsed > thresholdMs) {
       log.warn(`⚠️  Slow startup detected: ${elapsed}ms (threshold: ${thresholdMs}ms)`);
       log.warn('Consider optimizing module loading or deferring heavy operations');
