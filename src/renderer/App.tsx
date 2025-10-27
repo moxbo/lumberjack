@@ -15,6 +15,18 @@ import { TimeFilter } from '../store/timeFilter';
 import { lazy, Suspense } from 'preact/compat';
 import type { ElasticSearchOptions } from '../types/ipc';
 
+// Feste Basisfarben für Markierungen
+const BASE_MARK_COLORS = [
+  '#F59E0B', // amber
+  '#EF4444', // red
+  '#10B981', // emerald
+  '#3B82F6', // blue
+  '#8B5CF6', // violet
+  '#EC4899', // pink
+  '#14B8A6', // teal
+  '#6B7280', // gray
+];
+
 // Lazy-load DCFilterDialog as a component
 const DCFilterDialog = lazy(() => import('./DCFilterDialog'));
 const ElasticSearchDialog = lazy(() => import('./ElasticSearchDialog'));
@@ -58,58 +70,51 @@ function fmtTimestamp(ts: string | number | Date | null | undefined): string {
 function computeTint(color: string | null | undefined, alpha = 0.4): string {
   if (!color) return '';
   const c = String(color).trim();
-  const hex = c.startsWith('#') ? c.slice(1) : null;
-  if (hex) {
-    let r, g, b;
-    if (hex.length === 3) {
-      r = parseInt(hex[0] + hex[0], 16);
-      g = parseInt(hex[1] + hex[1], 16);
-      b = parseInt(hex[2] + hex[2], 16);
-      return `rgba(${r}, ${g}, ${b}, ${alpha})`;
-    }
-    if (hex.length === 6) {
-      r = parseInt(hex.slice(0, 2), 16);
-      g = parseInt(hex.slice(2, 4), 16);
-      b = parseInt(hex.slice(4, 6), 16);
-      return `rgba(${r}, ${g}, ${b}, ${alpha})`;
-    }
+  const hexRaw = c.startsWith('#') ? c.slice(1) : '';
+  const hex = String(hexRaw);
+  if (hex.length === 3) {
+    const [h0, h1, h2] = hex as unknown as [string, string, string];
+    const r = parseInt(h0 + h0, 16);
+    const g = parseInt(h1 + h1, 16);
+    const b = parseInt(h2 + h2, 16);
+    return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+  }
+  if (hex.length === 6) {
+    const r = parseInt(hex.substring(0, 2), 16);
+    const g = parseInt(hex.substring(2, 4), 16);
+    const b = parseInt(hex.substring(4, 6), 16);
+    return `rgba(${r}, ${g}, ${b}, ${alpha})`;
   }
   // Fallback: unveränderte Farbe (ohne Alpha)
   return c;
 }
 
-// Message-Filter-Logik ausgelagert nach utils/msgFilter.js
-
 export default function App() {
   const [entries, setEntries] = useState<any[]>([]);
   const [nextId, setNextId] = useState<number>(1);
+  // Persistenz: Markierungen (signature -> color)
+  const [marksMap, setMarksMap] = useState<Record<string, string>>({});
+  const [onlyMarked, setOnlyMarked] = useState<boolean>(false);
   const [selected, setSelected] = useState<Set<number>>(new Set());
   const lastClicked = useRef<number | null>(null);
 
-  // Follow-Modus: wenn aktiv, wird immer der letzte Eintrag ausgewählt & angezeigt
+  // Follow-Modus
   const [follow, setFollow] = useState<boolean>(false);
   const [followSmooth, setFollowSmooth] = useState<boolean>(false);
 
-  // Theme Mode: 'system' | 'light' | 'dark'
+  // Theme Mode
   const [themeMode, setThemeMode] = useState<'system' | 'light' | 'dark'>('system');
   function applyThemeMode(mode: string | null | undefined): void {
     const root = document.documentElement;
     if (!mode || mode === 'system') {
       root.removeAttribute('data-theme');
-      // allow prefers-color-scheme to apply
       return;
     }
     root.setAttribute('data-theme', mode);
   }
 
   const [search, setSearch] = useState<string>('');
-  const [filter, setFilter] = useState<{
-    level: string;
-    logger: string;
-    thread: string;
-    service: string;
-    message: string;
-  }>({
+  const [filter, setFilter] = useState({
     level: '',
     logger: '',
     thread: '',
@@ -198,7 +203,6 @@ export default function App() {
         environment: lastEnv,
       });
     } catch (e) {
-      console.warn('openTimeFilterDialog failed:', e);
       const { lastApp, lastEnv } = await getLasts();
       setTimeForm({
         enabled: true,
@@ -244,7 +248,6 @@ export default function App() {
       setHistAppName((prev) => {
         const list = [v, ...prev.filter((x) => x !== v)].slice(0, 10);
         try {
-          // eslint-disable-next-line @typescript-eslint/no-unsafe-argument
           void window.api.settingsSet({ histAppName: list } as any);
         } catch (e) {
           logger.error('Failed to save histAppName settings:', e);
@@ -256,7 +259,6 @@ export default function App() {
       setHistEnvironment((prev) => {
         const list = [v, ...prev.filter((x) => x !== v)].slice(0, 10);
         try {
-          // eslint-disable-next-line @typescript-eslint/no-unsafe-argument
           void window.api.settingsSet({ histEnvironment: list } as any);
         } catch (e) {
           logger.error('Failed to save histEnvironment settings:', e);
@@ -275,7 +277,6 @@ export default function App() {
   const [httpUrl, setHttpUrl] = useState<string>('');
   const [httpInterval, setHttpInterval] = useState<number>(5000);
   const [showSettings, setShowSettings] = useState<boolean>(false);
-  // neuer Tab-State für das Einstellungsfenster: 'tcp' | 'http' | 'logging' | 'appearance'
   const [settingsTab, setSettingsTab] = useState<
     'tcp' | 'http' | 'elastic' | 'logging' | 'appearance'
   >('tcp');
@@ -288,14 +289,13 @@ export default function App() {
     logMaxMB: 5,
     logMaxBackups: 3,
     themeMode: 'system',
-    // Elasticsearch form fields (nur im Dialog benutzt)
     elasticUrl: '',
     elasticSize: 1000,
     elasticUser: '',
     elasticPassNew: '',
     elasticPassClear: false,
   });
-  // Neue Dialog-States: HTTP einmal laden & Poll starten
+
   const [showHttpLoadDlg, setShowHttpLoadDlg] = useState<boolean>(false);
   const [httpLoadUrl, setHttpLoadUrl] = useState<string>('');
   const [showHttpPollDlg, setShowHttpPollDlg] = useState<boolean>(false);
@@ -303,11 +303,11 @@ export default function App() {
     url: '',
     interval: 5000,
   });
+
   function openHttpLoadDialog() {
     try {
       setHttpLoadUrl(String(httpUrl || ''));
-    } catch (e) {
-      console.warn('openHttpLoadDialog failed:', e);
+    } catch {
       setHttpLoadUrl('');
     }
     setShowHttpLoadDlg(true);
@@ -315,42 +315,45 @@ export default function App() {
   function openHttpPollDialog() {
     try {
       setHttpPollForm({ url: String(httpUrl || ''), interval: Number(httpInterval || 5000) });
-    } catch (e) {
-      console.warn('openHttpPollDialog failed:', e);
+    } catch {
       setHttpPollForm({ url: '', interval: 5000 });
     }
     setShowHttpPollDlg(true);
   }
 
-  // Logging-Settings (persisted state for convenience)
+  // Logging-Settings
   const [logToFile, setLogToFile] = useState<boolean>(false);
   const [logFilePath, setLogFilePath] = useState<string>('');
   const [logMaxBytes, setLogMaxBytes] = useState<number>(5 * 1024 * 1024);
   const [logMaxBackups, setLogMaxBackups] = useState<number>(3);
 
-  // Elasticsearch-Settings (persisted state)
+  // Elasticsearch
   const [elasticUrl, setElasticUrl] = useState<string>('');
   const [elasticSize, setElasticSize] = useState<number>(1000);
   const [elasticUser, setElasticUser] = useState<string>('');
-  const [elasticHasPass, setElasticHasPass] = useState<boolean>(false); // nur Anzeige
+  const [elasticHasPass, setElasticHasPass] = useState<boolean>(false);
 
-  // Kontextmenü für Log-Einträge
+  // Kontextmenü + Farbpalette
   const [ctxMenu, setCtxMenu] = useState<{ open: boolean; x: number; y: number }>({
     open: false,
     x: 0,
     y: 0,
   });
   const ctxRef = useRef<HTMLDivElement | null>(null);
-  const colorChoices = [
-    '#F59E0B', // amber
-    '#EF4444', // red
-    '#10B981', // emerald
-    '#3B82F6', // blue
-    '#8B5CF6', // violet
-    '#EC4899', // pink
-    '#14B8A6', // teal
-    '#6B7280', // gray
-  ];
+  const [customColors, setCustomColors] = useState<string[]>([]);
+  const [pickerColor, setPickerColor] = useState<string>('#ffcc00');
+  const palette = useMemo(() => [...BASE_MARK_COLORS, ...customColors], [customColors]);
+  function addCustomColor(c: string) {
+    const color = String(c || '').trim();
+    if (!color) return;
+    setCustomColors((prev) => {
+      const list = prev.includes(color) ? prev : [...prev, color];
+      try {
+        void window.api.settingsSet({ customMarkColors: list });
+      } catch {}
+      return list;
+    });
+  }
   function closeContextMenu() {
     setCtxMenu({ open: false, x: 0, y: 0 });
   }
@@ -360,8 +363,7 @@ export default function App() {
       try {
         if (!ctxRef.current) return closeContextMenu();
         if (!ctxRef.current.contains(e.target as Node)) closeContextMenu();
-      } catch (err) {
-        console.warn('ctx onMouseDown handler failed:', err);
+      } catch {
         closeContextMenu();
       }
     };
@@ -377,30 +379,65 @@ export default function App() {
   }, [ctxMenu.open]);
   function openContextMenu(ev: MouseEvent, idx: number) {
     ev.preventDefault();
-    // Falls der angeklickte Eintrag nicht selektiert ist: Einzel-Selektion setzen
     setSelected((prev) => {
       if (prev && prev.has(idx)) return prev;
       return new Set([idx]);
     });
     setCtxMenu({ open: true, x: ev.clientX, y: ev.clientY });
   }
+
+  // Markierung anwenden/entfernen + Persistenz
+  function entrySignature(e: any): string {
+    const ts = e?.timestamp != null ? String(e.timestamp) : '';
+    const lg = e?.logger != null ? String(e.logger) : '';
+    const msg = e?.message != null ? String(e.message) : '';
+    return `${ts}|${lg}|${msg}`;
+  }
   function applyMarkColor(color?: string) {
     setEntries((prev) => {
       if (!prev || !prev.length) return prev;
       const next = prev.slice();
+      const newMap: Record<string, string> = { ...marksMap };
       for (const i of selected) {
-        if (typeof i === 'number' && i >= 0 && i < next.length) {
+        if (i >= 0 && i < next.length) {
           const e = next[i] || {};
-          const n = { ...e };
-          if (color) n._mark = color;
-          else delete n._mark;
+          const n = { ...e } as any;
+          if (color) {
+            n._mark = color;
+            newMap[entrySignature(n)] = color;
+          } else {
+            if (n._mark) delete newMap[entrySignature(n)];
+            delete (n as any)._mark;
+          }
           (next as any)[i] = n;
         }
       }
+      setMarksMap(newMap);
+      try {
+        void window.api.settingsSet({ marksMap: newMap });
+      } catch {}
       return next;
     });
     closeContextMenu();
   }
+  // Synchronisiere bestehende Einträge, wenn marksMap geladen/aktualisiert wird
+  useEffect(() => {
+    if (!entries.length) return;
+    setEntries((prev) =>
+      prev.map((e) => {
+        const sig = entrySignature(e);
+        const c = marksMap[sig];
+        if (c && e._mark !== c) return { ...e, _mark: c } as any;
+        if (!c && e._mark) {
+          const n = { ...e } as any;
+          delete n._mark;
+          return n;
+        }
+        return e;
+      })
+    );
+  }, [marksMap]);
+
   function adoptTraceIds() {
     try {
       const variants = [
@@ -421,7 +458,7 @@ export default function App() {
         if (!m || typeof m !== 'object') continue;
         for (const k of variants) {
           if (Object.prototype.hasOwnProperty.call(m, k)) {
-            const v = String(m[k] ?? '');
+            const v = String((m as any)[k] ?? '');
             if (v && !added.has(v)) {
               (DiagnosticContextFilter as any).addMdcEntry('TraceID', v);
               added.add(v);
@@ -443,9 +480,9 @@ export default function App() {
     });
     const text = lines.join('\n');
     try {
-      if ((navigator as any)?.clipboard?.writeText) {
+      if ((navigator as any)?.clipboard?.writeText)
         await (navigator as any).clipboard.writeText(text);
-      } else {
+      else {
         const ta = document.createElement('textarea');
         ta.value = text;
         ta.style.position = 'fixed';
@@ -462,9 +499,8 @@ export default function App() {
     closeContextMenu();
   }
 
-  // Busy indicator and helper
+  // Busy helper
   const [busy, setBusy] = useState<boolean>(false);
-  // Speziell für Elasticsearch-Requests (kontextbezogener Spinner)
   const [esBusy, setEsBusy] = useState<boolean>(false);
   const withBusy = async (fn: () => Promise<void>) => {
     setBusy(true);
@@ -475,8 +511,7 @@ export default function App() {
     }
   };
 
-  // HTTP polling helper state (for status/next tick display)
-  const [pollMs, setPollMs] = useState<number>(0);
+  // HTTP polling helper state
   const [nextPollDueAt, setNextPollDueAt] = useState<number | null>(null);
   const [nextPollIn, setNextPollIn] = useState<string>('');
   useEffect(() => {
@@ -490,15 +525,13 @@ export default function App() {
       setNextPollIn(ms > 0 ? `${Math.ceil(ms / 1000)}s` : '');
     };
     tick();
-
     t = window.setInterval(tick, 250) as unknown as number;
     return () => clearInterval(t as unknown as number);
   }, [nextPollDueAt]);
 
-  // Refs for layout and virtualization
-  const parentRef = useRef<HTMLDivElement | null>(null); // scroll container for list
+  // Refs/Layout/Virtualizer
+  const parentRef = useRef<HTMLDivElement | null>(null);
   const layoutRef = useRef<HTMLDivElement | null>(null);
-  // Separate divider element ref and divider state ref
   const dividerElRef = useRef<HTMLElement | null>(null);
   const dividerStateRef = useRef<{ _resizing: boolean; _startY: number; _startH: number }>({
     _resizing: false,
@@ -511,12 +544,13 @@ export default function App() {
     startW: 0,
   });
 
-  // Compute filtered indices based on filters, time and MDC
+  // Filtered indices
   const filteredIdx = useMemo(() => {
     const out: number[] = [];
     for (let i = 0; i < entries.length; i++) {
       const e = entries[i];
       if (!e) continue;
+      if (onlyMarked && !e._mark) continue;
       if (stdFiltersEnabled) {
         if (filter.level) {
           const lev = String(e.level || '').toUpperCase();
@@ -544,7 +578,6 @@ export default function App() {
           if (!msgMatches(e.message, filter.message)) continue;
         }
       }
-      // Time filter and MDC filter
       try {
         if (!(TimeFilter as any).matchesTs(e.timestamp)) continue;
       } catch (e) {
@@ -559,14 +592,12 @@ export default function App() {
       out.push(i);
     }
     return out;
-  }, [entries, stdFiltersEnabled, filter, dcVersion, timeVersion]);
+  }, [entries, stdFiltersEnabled, filter, dcVersion, timeVersion, onlyMarked]);
 
-  // Counts for toolbar
   const countTotal = entries.length;
   const countFiltered = filteredIdx.length;
   const countSelected = selected.size;
 
-  // Virtualized list setup
   const rowHeight = 36;
   const virtualizer = useVirtualizer({
     count: filteredIdx.length,
@@ -589,7 +620,7 @@ export default function App() {
     });
   }
 
-  // Selection handling
+  // Selection
   function toggleSelectIndex(idx: number, shift: boolean, meta: boolean) {
     setSelected((prev) => {
       let next = new Set(prev);
@@ -599,9 +630,7 @@ export default function App() {
         if (a >= 0 && b >= 0) {
           const [lo, hi] = a < b ? [a, b] : [b, a];
           next = new Set(filteredIdx.slice(lo, hi + 1).map((i) => i));
-        } else {
-          next = new Set([idx]);
-        }
+        } else next = new Set([idx]);
       } else if (meta) {
         if (next.has(idx)) next.delete(idx);
         else next.add(idx);
@@ -619,35 +648,38 @@ export default function App() {
       return lastClicked.current ?? (Array.from(selected).slice(-1)[0] as number);
     return null;
   }, [selected]);
-  const selectedEntry = useMemo(() => {
-    return selectedOneIdx != null ? entries[selectedOneIdx] || null : null;
-  }, [selectedOneIdx, entries]);
+  const selectedEntry = useMemo(
+    () => (selectedOneIdx != null ? entries[selectedOneIdx] || null : null),
+    [selectedOneIdx, entries]
+  );
 
   const mdcPairs = useMemo(() => {
-    const e = selectedEntry;
-    if (!e || !e.mdc || typeof e.mdc !== 'object') return [] as [string, string][];
-    return Object.entries(e.mdc)
-      .map(([k, v]) => [String(k), String(v ?? '')] as [string, string])
-      .sort((a, b) => a[0].localeCompare(b[0]) || a[1].localeCompare(b[1]));
+    const e = selectedEntry as any;
+    const mdc = e && e.mdc && typeof e.mdc === 'object' ? (e.mdc as Record<string, unknown>) : null;
+    if (!mdc) return [] as [string, string][];
+    const pairs: Array<[string, string]> = Object.keys(mdc).map((k) => [
+      k,
+      String((mdc as any)[k] ?? ''),
+    ]);
+    pairs.sort((a, b) => a[0].localeCompare(b[0]) || a[1].localeCompare(b[1]));
+    return pairs;
   }, [selectedEntry]);
 
-  // Marked rows and navigation
   const markedIdx = useMemo(() => {
     const out: number[] = [];
     for (let vi = 0; vi < filteredIdx.length; vi++) {
-      const idx = filteredIdx[vi];
+      const idx = filteredIdx[vi]!;
       const e = entries[idx] as any;
       if (e?._mark) out.push(vi);
     }
     return out;
   }, [filteredIdx, entries]);
-
   const searchMatchIdx = useMemo(() => {
     const s = String(search || '').trim();
     if (!s) return [] as number[];
     const out: number[] = [];
     for (let vi = 0; vi < filteredIdx.length; vi++) {
-      const idx = filteredIdx[vi];
+      const idx = filteredIdx[vi]!;
       const e = entries[idx] as any;
       if (msgMatches(e?.message, s)) out.push(vi);
     }
@@ -658,14 +690,13 @@ export default function App() {
     if (!markedIdx.length) return;
     const curVi = selectedOneIdx != null ? filteredIdx.indexOf(selectedOneIdx) : -1;
     let targetVi: number;
-    if (dir > 0) {
-      targetVi = (markedIdx.find((vi) => vi > curVi) ?? markedIdx[0]) as number;
-    } else {
+    if (dir > 0) targetVi = (markedIdx.find((vi) => vi > curVi) ?? markedIdx[0]!) as number;
+    else {
       let prev = -1;
       for (const vi of markedIdx) if (vi < curVi) prev = vi;
-      targetVi = prev >= 0 ? prev : markedIdx[markedIdx.length - 1];
+      targetVi = prev >= 0 ? prev : markedIdx[markedIdx.length - 1]!;
     }
-    const globalIdx = filteredIdx[targetVi] as number;
+    const globalIdx: number = filteredIdx[targetVi]!;
     setSelected(new Set([globalIdx]));
     lastClicked.current = globalIdx;
     virtualizer.scrollToIndex(targetVi, {
@@ -673,19 +704,18 @@ export default function App() {
       behavior: followSmooth ? 'smooth' : 'auto',
     });
   }
-
   function gotoSearchMatch(dir: number) {
     if (!searchMatchIdx.length) return;
     const curVi = selectedOneIdx != null ? filteredIdx.indexOf(selectedOneIdx) : -1;
     let targetVi: number;
-    if (dir > 0) {
-      targetVi = (searchMatchIdx.find((vi) => vi > curVi) ?? searchMatchIdx[0]) as number;
-    } else {
+    if (dir > 0)
+      targetVi = (searchMatchIdx.find((vi) => vi > curVi) ?? searchMatchIdx[0]!) as number;
+    else {
       let prev = -1;
       for (const vi of searchMatchIdx) if (vi < curVi) prev = vi;
-      targetVi = prev >= 0 ? prev : searchMatchIdx[searchMatchIdx.length - 1];
+      targetVi = prev >= 0 ? prev : searchMatchIdx[searchMatchIdx.length - 1]!;
     }
-    const globalIdx = filteredIdx[targetVi] as number;
+    const globalIdx: number = filteredIdx[targetVi]!;
     setSelected(new Set([globalIdx]));
     lastClicked.current = globalIdx;
     virtualizer.scrollToIndex(targetVi, {
@@ -694,12 +724,16 @@ export default function App() {
     });
   }
 
-  // Append entries helper (assigns _id and merges + sorts)
+  // Append entries helper
   function appendEntries(newEntries: any[]) {
     if (!Array.isArray(newEntries) || newEntries.length === 0) return;
-    const toAdd = newEntries.map((e, i) => ({ ...e, _id: nextId + i }));
+    const toAdd = newEntries.map((e, i) => {
+      const n = { ...e, _id: nextId + i } as any;
+      const sig = entrySignature(n);
+      if (marksMap[sig]) (n as any)._mark = marksMap[sig];
+      return n;
+    });
     try {
-      // Attach MDC fields
       (LoggingStore as any).addEvents(toAdd);
     } catch (e) {
       logger.error('LoggingStore.addEvents error:', e);
@@ -713,17 +747,15 @@ export default function App() {
     setNextId(nextId + toAdd.length);
   }
 
-  // Follow mode: auto-select and scroll to last entry when new entries arrive
+  // Follow mode auto-select
   useEffect(() => {
     if (!follow) return;
     if (!filteredIdx.length) return;
     const lastGlobalIdx = filteredIdx[filteredIdx.length - 1] as number;
     setSelected(new Set([lastGlobalIdx]));
-    // Defer to ensure virtualizer has updated measurements
     setTimeout(() => gotoListEnd(), 0);
   }, [entries, follow, stdFiltersEnabled, filter, dcVersion, timeVersion]);
 
-  // MDC helpers
   function addMdcToFilter(k: string, v: string) {
     try {
       (DiagnosticContextFilter as any).addMdcEntry(k, v ?? '');
@@ -734,12 +766,10 @@ export default function App() {
     }
   }
 
-  const [showMdcModal, setShowMdcModal] = useState<boolean>(false);
-  const [mdcAgg, setMdcAgg] = useState(
-    [] as { key: string; values: { val: string; count: number }[] }[]
-  );
-  const [mdcSelKey, setMdcSelKey] = useState<string>('');
-  const [mdcSelVals, setMdcSelVals] = useState<Set<string>>(new Set());
+  const [, setMdcAgg] = useState([] as { key: string; values: { val: string; count: number }[] }[]);
+  const [, setMdcSelKey] = useState<string>('');
+  const [, setMdcSelVals] = useState<Set<string>>(new Set());
+  const [, setShowMdcModal] = useState<boolean>(false);
 
   function openMdcFromSelection() {
     const byKey: Map<string, Map<string, number>> = new Map();
@@ -768,30 +798,6 @@ export default function App() {
     setShowMdcModal(true);
   }
 
-  function addSelectedMdcToFilter(opts?: { presentOnly?: boolean; allValues?: boolean }) {
-    const key = mdcSelKey;
-    if (!key) return;
-    const entry = mdcAgg.find((x) => x.key === key);
-    if (!entry) return;
-    if (opts?.presentOnly) {
-      (DiagnosticContextFilter as any).addMdcEntry(key, '');
-    } else if (opts?.allValues) {
-      for (const { val } of entry.values) (DiagnosticContextFilter as any).addMdcEntry(key, val);
-    } else {
-      for (const val of Array.from(mdcSelVals))
-        (DiagnosticContextFilter as any).addMdcEntry(key, val);
-    }
-    (DiagnosticContextFilter as any).setEnabled(true);
-  }
-
-  function removeSelectedMdcFromFilter() {
-    const key = mdcSelKey;
-    if (!key) return;
-    for (const val of Array.from(mdcSelVals))
-      (DiagnosticContextFilter as any).removeMdcEntry(key, val);
-  }
-
-  // Popup: Fenster-Titel setzen
   const [showTitleDlg, setShowTitleDlg] = useState<boolean>(false);
   const [titleInput, setTitleInput] = useState<string>('Lumberjack');
   async function openSetWindowTitleDialog() {
@@ -802,8 +808,7 @@ export default function App() {
           ? String(res.title)
           : 'Lumberjack';
       setTitleInput(t);
-    } catch (e) {
-      console.warn('windowTitleGet failed:', e);
+    } catch {
       setTitleInput('Lumberjack');
     }
     setShowTitleDlg(true);
@@ -822,17 +827,12 @@ export default function App() {
     }
   }
 
-  // Initial Settings laden (inkl. CSS-Variablen und Historien)
-  // Deferred to avoid blocking initial render
+  // Settings laden
   useEffect(() => {
-    // Use setTimeout to defer loading until after first paint
     const timeoutId = setTimeout(async () => {
       try {
-        // Guard against missing window.api
         if (!window.api?.settingsGet) {
-          logger.error(
-            'window.api.settingsGet is not available. Preload script may have failed to load.'
-          );
+          logger.error('window.api.settingsGet is not available.');
           return;
         }
         const result = await window.api.settingsGet();
@@ -842,8 +842,6 @@ export default function App() {
         }
         const r = result.settings as any;
         if (!r) return;
-
-        // Apply settings
         if (r.tcpPort != null) setTcpPort(Number(r.tcpPort) || 5000);
         if (typeof r.httpUrl === 'string') setHttpUrl(r.httpUrl);
         if (r.httpInterval != null) setHttpInterval(Number(r.httpInterval) || 5000);
@@ -857,9 +855,6 @@ export default function App() {
         }
         if (typeof r.follow === 'boolean') setFollow(!!r.follow);
         if (typeof r.followSmooth === 'boolean') setFollowSmooth(!!r.followSmooth);
-        // Fenster-Titel ist nur zur Laufzeit; keine Persistenz mehr
-
-        // CSS Vars
         const root = document.documentElement;
         const detail = Number(r.detailHeight || 0);
         if (detail) root.style.setProperty('--detail-height', `${Math.round(detail)}px`);
@@ -870,18 +865,18 @@ export default function App() {
         ];
         for (const [k, v] of map)
           if (v != null) root.style.setProperty(k, `${Math.round(Number(v) || 0)}px`);
-
-        // Logging
         setLogToFile(!!r.logToFile);
         setLogFilePath(String(r.logFilePath || ''));
         setLogMaxBytes(Number(r.logMaxBytes || 5 * 1024 * 1024));
         setLogMaxBackups(Number(r.logMaxBackups || 3));
-
-        // Elasticsearch
         setElasticUrl(String(r.elasticUrl || ''));
         setElasticSize(Number(r.elasticSize || 1000));
         setElasticUser(String(r.elasticUser || ''));
         setElasticHasPass(!!String(r.elasticPassEnc || '').trim());
+        if (r.marksMap && typeof r.marksMap === 'object')
+          setMarksMap(r.marksMap as Record<string, string>);
+        if (Array.isArray(r.customMarkColors)) setCustomColors(r.customMarkColors as string[]);
+        if (typeof r.onlyMarked === 'boolean') setOnlyMarked(!!r.onlyMarked);
       } catch (e) {
         logger.error('Error loading settings:', e);
       }
@@ -892,12 +887,9 @@ export default function App() {
   async function openSettingsModal(
     initialTab?: 'tcp' | 'http' | 'elastic' | 'logging' | 'appearance'
   ) {
-    // Hole den aktuell persistierten Zustand (Race-Condition direkt nach App-Start vermeiden)
     let curMode = themeMode;
     try {
-      if (!window.api?.settingsGet) {
-        logger.warn('window.api.settingsGet is not available');
-      } else {
+      if (window.api?.settingsGet) {
         const result = await window.api.settingsGet();
         const r = result?.ok ? (result.settings as any) : null;
         if (r && typeof r.themeMode === 'string') {
@@ -909,10 +901,7 @@ export default function App() {
         if (r && typeof r.follow === 'boolean') setFollow(!!r.follow);
         if (r && typeof r.followSmooth === 'boolean') setFollowSmooth(!!r.followSmooth);
       }
-    } catch {
-      // ignore
-    }
-
+    } catch {}
     setForm({
       tcpPort,
       httpUrl,
@@ -922,7 +911,6 @@ export default function App() {
       logMaxMB: Math.max(1, Math.round((logMaxBytes || 5 * 1024 * 1024) / (1024 * 1024))),
       logMaxBackups,
       themeMode: curMode,
-      // Elasticsearch (aus persistierten States)
       elasticUrl,
       elasticSize,
       elasticUser,
@@ -939,7 +927,7 @@ export default function App() {
       return;
     }
     const interval = Math.max(500, Number(form.httpInterval || 5000));
-    const toFile = !!form.logToFile;
+    const toFile = form.logToFile;
     const path = String(form.logFilePath || '').trim();
     const maxMB = Math.max(1, Number(form.logMaxMB || 5));
     const maxBytes = Math.round(maxMB * 1024 * 1024);
@@ -947,7 +935,6 @@ export default function App() {
     const mode = ['light', 'dark', 'system'].includes(form.themeMode)
       ? (form.themeMode as any)
       : 'system';
-
     const patch: any = {
       tcpPort: port,
       httpUrl: String(form.httpUrl || '').trim(),
@@ -957,24 +944,19 @@ export default function App() {
       logMaxBytes: maxBytes,
       logMaxBackups: backups,
       themeMode: mode,
-      // Elasticsearch
       elasticUrl: String(form.elasticUrl || '').trim(),
       elasticSize: Math.max(1, Number(form.elasticSize || 1000)),
       elasticUser: String(form.elasticUser || '').trim(),
     };
     const newPass = String(form.elasticPassNew || '').trim();
-    if (form.elasticPassClear) {
-      patch['elasticPassClear'] = true;
-    } else if (newPass) {
-      patch['elasticPassPlain'] = newPass;
-    }
-
+    if (form.elasticPassClear) patch['elasticPassClear'] = true;
+    else if (newPass) patch['elasticPassPlain'] = newPass;
     try {
       const res = await window.api.settingsSet(patch);
-      // eslint-disable-next-line @typescript-eslint/no-unsafe-argument
-      if (!res || !res.ok) throw new Error((res as any)?.error || 'Unbekannter Fehler');
-
-      // Apply to local states
+      if (!res || !res.ok) {
+        alert('Speichern fehlgeschlagen: ' + ((res as any)?.error || 'Unbekannter Fehler'));
+        return;
+      }
       setTcpPort(port);
       setHttpUrl(String(form.httpUrl || '').trim());
       setHttpInterval(interval);
@@ -984,14 +966,11 @@ export default function App() {
       setLogMaxBackups(backups);
       setThemeMode(mode);
       applyThemeMode(mode);
-
-      // Elasticsearch
       setElasticUrl(String(form.elasticUrl || '').trim());
       setElasticSize(Math.max(1, Number(form.elasticSize || 1000)));
       setElasticUser(String(form.elasticUser || '').trim());
       if (form.elasticPassClear) setElasticHasPass(false);
       else if (newPass) setElasticHasPass(true);
-
       setShowSettings(false);
     } catch (e) {
       logger.error('Failed to save settings:', e);
@@ -999,7 +978,7 @@ export default function App() {
     }
   }
 
-  // IPC: Logs, Menü, TCP-Status
+  // IPC
   useEffect(() => {
     const offs: Array<() => void> = [];
     try {
@@ -1009,9 +988,7 @@ export default function App() {
         });
         offs.push(off);
       }
-    } catch {
-      // ignore
-    }
+    } catch {}
     try {
       if (window.api?.onMenu) {
         const off = window.api.onMenu(async (cmd) => {
@@ -1104,10 +1081,8 @@ export default function App() {
     };
   }, [httpPollId, tcpPort]);
 
-  // Drag & Drop Overlay state
+  // Drag & Drop
   const [dragActive, setDragActive] = useState<boolean>(false);
-
-  // Drag & Drop Handler
   useEffect(() => {
     const mgr = new DragAndDropManager({
       onFiles: async (paths) => {
@@ -1121,7 +1096,7 @@ export default function App() {
           else alert('Fehler beim Laden (Drop): ' + (res as any)?.error || 'unbekannt');
         });
       },
-      onActiveChange: (active) => setDragActive(!!active),
+      onActiveChange: (active) => setDragActive(active),
       onRawFiles: async (files) => {
         await withBusy(async () => {
           try {
@@ -1139,12 +1114,10 @@ export default function App() {
         });
       },
     });
-    // Global auf window hören statt auf ein null-Ref
     mgr.attach();
     return () => mgr.detach();
   }, []);
 
-  // Toolbar-Aktion: Logs leeren
   function clearLogs() {
     setEntries([]);
     setSelected(new Set());
@@ -1159,17 +1132,7 @@ export default function App() {
     setTcpStatus('');
   }
 
-  // Toolbar-HTTP-Menü Aktionen -> Dialoge statt direkte Aktionen
-  async function httpMenuLoadOnce() {
-    setHttpMenu({ open: false, x: 0, y: 0 });
-    openHttpLoadDialog();
-  }
-  async function httpMenuStartPoll() {
-    setHttpMenu({ open: false, x: 0, y: 0 });
-    openHttpPollDialog();
-  }
   async function httpMenuStopPoll() {
-    setHttpMenu({ open: false, x: 0, y: 0 });
     if (httpPollId == null) return;
     const r = await window.api.httpStopPoll(httpPollId);
     if (r.ok) {
@@ -1180,7 +1143,7 @@ export default function App() {
     }
   }
 
-  // Divider Drag (Höhe der Detailansicht anpassen)
+  // Divider Drag
   useEffect(() => {
     function onMouseMove(e: MouseEvent) {
       if (!dividerStateRef.current._resizing) return;
@@ -1194,7 +1157,6 @@ export default function App() {
         : document.body.clientHeight || window.innerHeight;
       const minDetail = 150;
       const minList = 140;
-      // Divider-Höhe dynamisch aus CSS-Variable lesen
       const csRoot = getComputedStyle(document.documentElement);
       const divVar = csRoot.getPropertyValue('--divider-h').trim();
       const dividerSize = Math.max(0, parseInt(divVar.replace('px', ''), 10) || 8);
@@ -1334,29 +1296,22 @@ export default function App() {
               const lastIdx = filteredIdx[filteredIdx.length - 1];
               return lastIdx != null ? entries[lastIdx]?.timestamp : null;
             })()}
-            onApply={async (
-              formVals: ElasticSearchOptions & { loadMode?: 'append' | 'replace' }
-            ) => {
+            onApply={async (formVals: any) => {
               try {
                 setShowTimeDialog(false);
-                // Persist history tokens (limited)
                 addToHistory('app', formVals?.application_name || '');
                 addToHistory('env', formVals?.environment || '');
-
-                // Apply to TimeFilter
-                if (formVals.mode === 'relative' && formVals.duration) {
+                if (formVals.mode === 'relative' && formVals.duration)
                   TimeFilter.setRelative(formVals.duration);
-                } else if (formVals.mode === 'absolute') {
+                else if (formVals.mode === 'absolute') {
                   const from = formVals.from || undefined;
                   const to = formVals.to || undefined;
                   TimeFilter.setAbsolute(from as any, to as any);
                 }
                 TimeFilter.setEnabled(true);
-
                 await withBusy(async () => {
                   setEsBusy(true);
                   try {
-                    // Build options for ES
                     const opts: ElasticSearchOptions = {
                       url: elasticUrl || undefined,
                       size: elasticSize || undefined,
@@ -1370,39 +1325,34 @@ export default function App() {
                       logger: formVals.logger,
                       level: formVals.level,
                       environment: formVals.environment,
-                      allowInsecureTLS: !!(formVals as any).allowInsecureTLS,
+                      allowInsecureTLS: !!formVals.allowInsecureTLS,
                     } as any;
-
-                    // Log start (keine Response bisher)
                     logger.info('[Elastic] Search started', { hasResponse: false });
-
                     const res = await window.api.elasticSearch(opts);
-
-                    // Log result status und Gesamtanzahl
                     const total = Array.isArray(res?.entries) ? res.entries.length : 0;
                     logger.info('[Elastic] Search finished', {
                       ok: !!res?.ok,
                       total,
                       hasResponse: true,
                     });
-
                     if (res?.ok) {
                       if ((formVals.loadMode || 'replace') === 'replace') {
                         setEntries([]);
                         setSelected(new Set());
                         setNextId(1);
                       }
-                      appendEntries(res.entries);
+                      if (Array.isArray(res.entries) && res.entries.length)
+                        appendEntries(res.entries as any[]);
                     } else {
-                      alert('Elastic-Fehler: ' + (res?.error || 'Unbekannt'));
+                      alert('Elastic-Fehler: ' + ((res as any)?.error || 'Unbekannt'));
                     }
                   } finally {
                     setEsBusy(false);
                   }
                 });
               } catch (e) {
-                logger.error('[Elastic] Search failed', e);
-                alert('Elastic-Fehler: ' + (e?.message || String(e)));
+                logger.error('[Elastic] Search failed', e as any);
+                alert('Elastic-Fehler: ' + ((e as any)?.message || String(e)));
               }
             }}
             onClear={() => {
@@ -1444,10 +1394,10 @@ export default function App() {
                       setHttpUrl(url);
                       await window.api.settingsSet({ httpUrl: url } as any);
                       const res = await window.api.httpLoadOnce(url);
-                      if (res.ok) appendEntries(res.entries);
-                      else setHttpStatus('Fehler: ' + res.error);
+                      if (res.ok) appendEntries((res.entries || []) as any[]);
+                      else setHttpStatus('Fehler: ' + (res.error || 'unbekannt'));
                     } catch (e) {
-                      setHttpStatus('Fehler: ' + (e?.message || String(e)));
+                      setHttpStatus('Fehler: ' + ((e as any)?.message || String(e)));
                     }
                   });
                 }}
@@ -1509,13 +1459,12 @@ export default function App() {
                     await window.api.settingsSet({ httpUrl: url, httpInterval: ms } as any);
                     const r = await window.api.httpStartPoll({ url, intervalMs: ms });
                     if (r.ok) {
-                      setHttpPollId(r.id);
+                      setHttpPollId(r.id!);
                       setHttpStatus(`Polling #${r.id}`);
-                      setPollMs(ms);
                       setNextPollDueAt(Date.now() + ms);
-                    } else setHttpStatus('Fehler: ' + r.error);
+                    } else setHttpStatus('Fehler: ' + (r.error || 'unbekannt'));
                   } catch (e) {
-                    setHttpStatus('Fehler: ' + (e?.message || String(e)));
+                    setHttpStatus('Fehler: ' + ((e as any)?.message || String(e)));
                   }
                 }}
               >
@@ -1533,9 +1482,7 @@ export default function App() {
           onClick={() => {
             try {
               applyThemeMode(themeMode);
-            } catch (e) {
-              logger.warn('applyThemeMode on backdrop close failed:', e as any);
-            }
+            } catch {}
             setShowSettings(false);
           }}
         >
@@ -1584,7 +1531,6 @@ export default function App() {
                   Darstellung
                 </button>
               </div>
-
               <div className="tabpanels">
                 {settingsTab === 'tcp' && (
                   <div className="tabpanel" role="tabpanel">
@@ -1602,7 +1548,6 @@ export default function App() {
                     </div>
                   </div>
                 )}
-
                 {settingsTab === 'http' && (
                   <div className="tabpanel" role="tabpanel">
                     <div className="kv">
@@ -1629,7 +1574,6 @@ export default function App() {
                     </div>
                   </div>
                 )}
-
                 {settingsTab === 'elastic' && (
                   <div className="tabpanel" role="tabpanel">
                     <div className="kv">
@@ -1703,7 +1647,6 @@ export default function App() {
                     </div>
                   </div>
                 )}
-
                 {settingsTab === 'logging' && (
                   <div className="tabpanel" role="tabpanel">
                     <div className="kv">
@@ -1711,7 +1654,7 @@ export default function App() {
                         <input
                           type="checkbox"
                           className="native-checkbox"
-                          checked={!!form.logToFile}
+                          checked={form.logToFile}
                           onChange={(e) => setForm({ ...form, logToFile: e.currentTarget.checked })}
                         />
                         <span>In Datei schreiben</span>
@@ -1770,7 +1713,6 @@ export default function App() {
                     </div>
                   </div>
                 )}
-
                 {settingsTab === 'appearance' && (
                   <div className="tabpanel" role="tabpanel">
                     <div className="kv">
@@ -1780,7 +1722,6 @@ export default function App() {
                         onChange={(e) => {
                           const v = e.currentTarget.value;
                           setForm({ ...form, themeMode: v });
-                          // Live-Vorschau, ohne zu speichern
                           applyThemeMode(['light', 'dark'].includes(v) ? v : 'system');
                         }}
                       >
@@ -1789,7 +1730,6 @@ export default function App() {
                         <option value="dark">Dunkel</option>
                       </select>
                     </div>
-                    {/* Fenster-Titel wird nicht mehr über Einstellungen geändert, nur via Kontextmenü */}
                     <div className="kv">
                       <span>Akzent</span>
                       <div>
@@ -1803,7 +1743,6 @@ export default function App() {
                 )}
               </div>
             </div>
-
             <div className="modal-actions">
               <button
                 onClick={() => {
@@ -1873,7 +1812,6 @@ export default function App() {
           </label>
         </div>
         <div className="section">
-          {/* NEU: Anfang/Ende */}
           <button
             title="Zum Anfang springen"
             onClick={gotoListStart}
@@ -1989,7 +1927,10 @@ export default function App() {
             onClick={() => {
               setSearch('');
               setFilter({ level: '', logger: '', thread: '', service: '', message: '' });
-              // Lokale Filter komplett deaktivieren
+              setOnlyMarked(false);
+              try {
+                void window.api.settingsSet({ onlyMarked: false });
+              } catch {}
               try {
                 (DiagnosticContextFilter as any).reset?.();
               } catch (e) {
@@ -2005,7 +1946,6 @@ export default function App() {
             Filter leeren
           </button>
         </div>
-        {/* DC-Filter Steuerung + Hinweis */}
         <div className="section">
           <button onClick={() => setShowDcDialog(true)} title="Diagnostic Context Filter öffnen">
             DC-Filter…
@@ -2078,9 +2018,9 @@ export default function App() {
         </div>
       </header>
 
-      {/* Aktive Filter-Chips: ohne TraceId-Chips */}
+      {/* Aktive Filter-Chips inkl. Markierungsfilter */}
       {(() => {
-        const stdFilterChips = [];
+        const stdFilterChips = [] as Array<{ key: string; label: string; onRemove: () => void }>;
         if (filter.level)
           stdFilterChips.push({
             key: 'level',
@@ -2105,13 +2045,23 @@ export default function App() {
             label: `Message: ${filter.message}`,
             onRemove: () => setFilter((f) => ({ ...f, message: '' })),
           });
-        const allChips = [...stdFilterChips.map((c) => ({ ...c, type: 'std' }))];
-        return allChips.length > 0 ? (
+        const chips = [...stdFilterChips];
+        chips.push({
+          key: 'onlyMarked',
+          label: onlyMarked ? 'Nur markierte: an' : 'Nur markierte: aus',
+          onRemove: () => {
+            setOnlyMarked(false);
+            try {
+              void window.api.settingsSet({ onlyMarked: false });
+            } catch {}
+          },
+        });
+        return (
           <div style={{ padding: '6px 12px' }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
               <div style={{ fontSize: '12px', color: '#666' }}>Aktive Filter:</div>
               <div className="chips" style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
-                {allChips.map((c) => (
+                {chips.map((c) => (
                   <span className="chip" key={c.key}>
                     {c.label}
                     <button title="Entfernen" onClick={c.onRemove}>
@@ -2122,15 +2072,49 @@ export default function App() {
               </div>
               <button
                 onClick={() =>
-                  setFilter((f) => ({ ...f, level: '', logger: '', thread: '', message: '' }))
+                  setOnlyMarked((v) => {
+                    const nv = !v;
+                    try {
+                      void window.api.settingsSet({ onlyMarked: nv });
+                    } catch {}
+                    return nv;
+                  })
                 }
+                disabled={!onlyMarked && markedIdx.length === 0}
+                title={
+                  !onlyMarked && markedIdx.length === 0
+                    ? 'Keine markierten Einträge vorhanden'
+                    : 'Nur markierte anzeigen umschalten'
+                }
+              >
+                {onlyMarked ? 'Nur markierte aus' : 'Nur markierte an'}
+              </button>
+              <button
+                onClick={() => {
+                  setSearch('');
+                  setFilter({ level: '', logger: '', thread: '', service: '', message: '' });
+                  setOnlyMarked(false);
+                  try {
+                    void window.api.settingsSet({ onlyMarked: false });
+                  } catch {}
+                  try {
+                    (DiagnosticContextFilter as any).reset?.();
+                  } catch (e) {
+                    logger.error('Resetting DiagnosticContextFilter failed:', e);
+                  }
+                  try {
+                    (TimeFilter as any).reset?.();
+                  } catch (e) {
+                    logger.error('Resetting TimeFilter failed:', e);
+                  }
+                }}
                 title="Alle Filter-Chips löschen"
               >
                 Alle löschen
               </button>
             </div>
           </div>
-        ) : null;
+        );
       })()}
 
       {/* Hauptlayout: Liste + Overlay-Details */}
@@ -2152,25 +2136,31 @@ export default function App() {
             </div>
             <div className="cell">Message</div>
           </div>
-
           {/* Virtualized rows */}
           <div style={{ height: totalHeight + 'px', position: 'relative' }}>
             {virtualItems.map((vi: any) => {
-              const globalIdx = filteredIdx[vi.index];
+              const viIndex = typeof vi?.index === 'number' ? (vi.index as number) : -1;
+              if (viIndex < 0 || viIndex >= filteredIdx.length) return null;
+              const globalIdx: number = filteredIdx[viIndex]!;
               const e = entries[globalIdx] || {};
               const isSel = selected.has(globalIdx);
               const rowCls = 'row' + (isSel ? ' sel' : '');
+              const markColor = (e && ((e as any)._mark || (e as any).color)) as string | undefined;
+              const y: number = typeof vi?.start === 'number' ? (vi.start as number) : 0;
               const style = {
                 position: 'absolute',
                 top: 0,
                 left: 0,
                 right: 0,
-                transform: `translateY(${vi.start}px)`,
+                transform: `translateY(${y}px)`,
                 height: rowHeight + 'px',
+                borderLeft: `4px solid ${markColor ? String(markColor) : 'transparent'}`,
+                background: markColor ? computeTint(markColor, 0.12) : undefined,
               } as any;
+              const key = (vi && (vi.key as any)) || `${viIndex}-${globalIdx}`;
               return (
                 <div
-                  key={vi.key}
+                  key={key}
                   className={rowCls}
                   style={style}
                   onClick={(ev) =>
@@ -2181,16 +2171,17 @@ export default function App() {
                     )
                   }
                   onContextMenu={(ev) => openContextMenu(ev as any, globalIdx)}
-                  title={String(e.message || '')}
+                  title={String((e as any).message || '')}
+                  data-marked={markColor ? '1' : '0'}
                 >
-                  <div className="col ts">{fmtTimestamp(e.timestamp)}</div>
+                  <div className="col ts">{fmtTimestamp((e as any).timestamp)}</div>
                   <div className="col lvl">
-                    <span className={levelClass(e.level)}>{fmt(e.level)}</span>
+                    <span className={levelClass((e as any).level)}>{fmt((e as any).level)}</span>
                   </div>
-                  <div className="col logger">{fmt(e.logger)}</div>
+                  <div className="col logger">{fmt((e as any).logger)}</div>
                   <div
                     className="col msg"
-                    dangerouslySetInnerHTML={{ __html: highlightAll(e.message, search) }}
+                    dangerouslySetInnerHTML={{ __html: highlightAll((e as any).message, search) }}
                   />
                 </div>
               );
@@ -2206,11 +2197,15 @@ export default function App() {
           <div className="divider" ref={(el) => (dividerElRef.current = el as any)} />
           <div
             className="details"
-            data-tinted={selectedEntry && (selectedEntry._mark || selectedEntry.color) ? '1' : '0'}
+            data-tinted={
+              selectedEntry && ((selectedEntry as any)._mark || (selectedEntry as any).color)
+                ? '1'
+                : '0'
+            }
             style={{
-              // sanfte Tönung aus _mark oder color ableiten
               ['--details-tint' as any]: computeTint(
-                (selectedEntry && selectedEntry._mark) || selectedEntry?.color,
+                ((selectedEntry as any) && (selectedEntry as any)._mark) ||
+                  (selectedEntry as any)?.color,
                 0.22
               ),
             }}
@@ -2220,58 +2215,54 @@ export default function App() {
             )}
             {selectedEntry && (
               <Fragment>
-                {/* Meta */}
                 <div className="meta-grid">
                   <div>
                     <div className="kv">
                       <span>Zeit</span>
-                      <div>{fmtTimestamp(selectedEntry.timestamp)}</div>
+                      <div>{fmtTimestamp((selectedEntry as any).timestamp)}</div>
                     </div>
                     <div className="kv">
                       <span>Logger</span>
-                      <div>{fmt(selectedEntry.logger)}</div>
+                      <div>{fmt((selectedEntry as any).logger)}</div>
                     </div>
                   </div>
                   <div>
                     <div className="kv">
                       <span>Level</span>
                       <div>
-                        <span className={levelClass(selectedEntry.level)}>
-                          {fmt(selectedEntry.level)}
+                        <span className={levelClass((selectedEntry as any).level)}>
+                          {fmt((selectedEntry as any).level)}
                         </span>
                       </div>
                     </div>
                     <div className="kv">
                       <span>Thread</span>
-                      <div>{fmt(selectedEntry.thread)}</div>
+                      <div>{fmt((selectedEntry as any).thread)}</div>
                     </div>
                   </div>
                 </div>
-
                 <div className="section-sep" />
-
-                {/* Message */}
                 <div className="kv full">
                   <span>Message</span>
                   <pre
                     id="dMessage"
                     dangerouslySetInnerHTML={{
-                      __html: highlightAll(selectedEntry.message || '', search),
+                      __html: highlightAll((selectedEntry as any).message || '', search),
                     }}
                   />
                 </div>
-
-                {/* Stacktrace falls vorhanden */}
-                {(selectedEntry.stack_trace || selectedEntry.stackTrace) && (
+                {((selectedEntry as any).stack_trace || (selectedEntry as any).stackTrace) && (
                   <div className="kv full">
                     <span>Stacktrace</span>
                     <pre className="stack-trace">
-                      {String(selectedEntry.stack_trace || selectedEntry.stackTrace || '')}
+                      {String(
+                        (selectedEntry as any).stack_trace ||
+                          (selectedEntry as any).stackTrace ||
+                          ''
+                      )}
                     </pre>
                   </div>
                 )}
-
-                {/* MDC */}
                 {mdcPairs.length > 0 && (
                   <Fragment>
                     <div className="section-sep" />
@@ -2318,7 +2309,7 @@ export default function App() {
             Markierung löschen
           </div>
           <div className="colors">
-            {colorChoices.map((c, i) => (
+            {palette.map((c, i) => (
               <div
                 key={i}
                 className="swatch"
@@ -2327,6 +2318,38 @@ export default function App() {
                 title={c}
               />
             ))}
+          </div>
+          <div
+            className="item"
+            style={{
+              display: 'grid',
+              gridTemplateColumns: 'auto 1fr auto auto',
+              alignItems: 'center',
+              gap: '8px',
+            }}
+          >
+            <span>Farbe</span>
+            <input
+              type="color"
+              value={pickerColor}
+              onInput={(e) => setPickerColor((e.currentTarget as HTMLInputElement).value)}
+              style={{
+                width: '100%',
+                height: '28px',
+                padding: 0,
+                border: 'none',
+                background: 'transparent',
+              }}
+            />
+            <button onClick={() => applyMarkColor(pickerColor)} title="Ausgewählte Farbe anwenden">
+              Anwenden
+            </button>
+            <button
+              onClick={() => addCustomColor(pickerColor)}
+              title="Farbe zur Palette hinzufügen (nur temporär)"
+            >
+              Hinzufügen
+            </button>
           </div>
           <div className="sep" />
           <div className="item" onClick={adoptTraceIds}>

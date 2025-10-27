@@ -115,7 +115,7 @@ function toEntry(obj = {}, fallbackMessage = "", source = "") {
         const s = v.map((x) => x == null ? "" : String(x)).join("\n");
         if (s.trim()) return s;
       } else {
-        const s = String(v);
+        const s = String(v ?? "");
         if (s.trim()) return s;
       }
     }
@@ -171,7 +171,11 @@ function parseJsonFile(filename, text) {
   if (trimmed.startsWith("[")) {
     try {
       const arr = JSON.parse(trimmed);
-      if (Array.isArray(arr)) return arr.map((o) => toEntry(o, "", filename));
+      if (Array.isArray(arr)) {
+        return arr.map(
+          (o) => toEntry(o && typeof o === "object" ? o : {}, "", filename)
+        );
+      }
     } catch (e) {
       import_main.default.warn(
         "parseJsonFile: JSON array parse failed:",
@@ -183,7 +187,7 @@ function parseJsonFile(filename, text) {
 }
 function parseZipFile(zipPath) {
   const ZipClass = getAdmZip();
-  const zip = new ZipClass(zipPath, null);
+  const zip = new ZipClass(zipPath);
   const entries = [];
   zip.getEntries().forEach((zEntry) => {
     const name = zEntry.entryName;
@@ -252,7 +256,7 @@ function toIsoIfDate(v) {
 function buildElasticSearchBody(opts) {
   const must = [];
   const filter = [];
-  const hasWildcard = (s) => /[\*\?]/.test(s);
+  const hasWildcard = (s) => /[*?]/.test(s);
   const addField = (field, value) => {
     const v = (value ?? "").trim();
     if (!v) return;
@@ -281,7 +285,7 @@ function buildElasticSearchBody(opts) {
     range.gte = `now-${opts.duration}`;
     range.lte = "now";
   } else {
-    const num = (x) => typeof x === "number" ? x : /^\d+$/.test(String(x || "")) ? Number(x) : null;
+    const num = (x) => typeof x === "number" ? x : /^\d+$/.test(String(x ?? "")) ? Number(x) : null;
     const fromNum = num(opts.from);
     const toNum = num(opts.to);
     if (fromNum != null || toNum != null) {
@@ -364,7 +368,7 @@ function postJson(urlStr, body, headers, allowInsecureTLS) {
       };
       try {
         const { authorization: _auth, ...safeHeaders } = headers || {};
-        import_main.default.info("[Elastic] POST", `${u.protocol}//${u.host}${opts.path}`, safeHeaders);
+        import_main.default.info("[Elastic] POST", `${u.protocol}//${u.host}${opts.path ?? ""}`, safeHeaders);
       } catch (e) {
         import_main.default.warn("Elastic POST logging failed:", e instanceof Error ? e.message : String(e));
       }
@@ -411,11 +415,20 @@ async function fetchElasticLogs(opts) {
   const body = buildElasticSearchBody(opts);
   const headers = buildElasticHeaders(opts.auth);
   const data = await postJson(url, body, headers, !!opts.allowInsecureTLS);
-  const hits = data?.hits?.hits ?? [];
+  const dataObj = data && typeof data === "object" ? data : {};
+  const hitsContainer = dataObj.hits;
+  const hitsArray = hitsContainer && typeof hitsContainer === "object" ? hitsContainer.hits : void 0;
+  const hits = Array.isArray(hitsArray) ? hitsArray : [];
   const out = [];
   for (const h of hits) {
-    const src = h?._source ?? h?.fields ?? {};
-    const e = toEntry(src, "", `elastic://${h?._index ?? opts.index ?? ""}/${h?._id ?? ""}`);
+    const hObj = h && typeof h === "object" ? h : {};
+    const src = hObj._source ?? hObj.fields ?? {};
+    const srcObj = src && typeof src === "object" ? src : {};
+    const index2 = hObj._index;
+    const id = hObj._id;
+    const indexStr = typeof index2 === "string" ? index2 : opts.index ?? "";
+    const idStr = typeof id === "string" ? id : "";
+    const e = toEntry(srcObj, "", `elastic://${indexStr}/${idStr}`);
     out.push(e);
   }
   return out;

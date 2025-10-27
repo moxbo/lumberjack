@@ -67,6 +67,11 @@ export interface Settings {
   colTs?: number;
   colLvl?: number;
   colLogger?: number;
+
+  // Markierungen
+  marksMap?: Record<string, string>; // signature -> color
+  customMarkColors?: string[]; // temporäre Palette
+  onlyMarked?: boolean; // UI-Filter: nur markierte anzeigen
 }
 
 /**
