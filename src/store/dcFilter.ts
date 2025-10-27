@@ -186,7 +186,7 @@ class DiagnosticContextFilterImpl {
       for (const k of candidates) {
         if (hasOwn(obj, k)) {
           const val = obj[k];
-          present.push(val != null && val !== '' ? String(val ?? '') : '');
+          present.push(val != null && val !== '' ? String(val) : '');
         }
       }
 

@@ -497,7 +497,9 @@ export async function fetchElasticLogs(opts: ElasticsearchOptions): Promise<Entr
   const dataObj = data && typeof data === 'object' ? (data as AnyMap) : {};
   const hitsContainer = dataObj.hits;
   const hitsArray =
-    hitsContainer && typeof hitsContainer === 'object' ? (hitsContainer as AnyMap).hits : undefined;
+    hitsContainer && typeof hitsContainer === 'object'
+      ? (hitsContainer as AnyMap).hits
+      : undefined;
   const hits: unknown[] = Array.isArray(hitsArray) ? hitsArray : [];
 
   const out: Entry[] = [];
@@ -507,7 +509,7 @@ export async function fetchElasticLogs(opts: ElasticsearchOptions): Promise<Entr
     const srcObj = src && typeof src === 'object' ? (src as AnyMap) : {};
     const index = hObj._index;
     const id = hObj._id;
-    const indexStr = typeof index === 'string' ? index : (opts.index ?? '');
+    const indexStr = typeof index === 'string' ? index : opts.index ?? '';
     const idStr = typeof id === 'string' ? id : '';
     const e = toEntry(srcObj, '', `elastic://${indexStr}/${idStr}`);
     out.push(e);
