@@ -9,7 +9,7 @@ import http from 'http';
 import log from 'electron-log/main';
 
 // Types
-type AnyMap = Record<string, any>;
+type AnyMap = Record<string, unknown>;
 interface Entry {
   timestamp: string | null;
   level: string | null;
@@ -18,7 +18,7 @@ interface Entry {
   message: string;
   traceId: string | null;
   stackTrace: string | null;
-  raw: any;
+  raw: unknown;
   source: string;
   // optional UI hints used elsewhere
   _mark?: string;
@@ -26,19 +26,32 @@ interface Entry {
   service?: string;
 }
 
+// AdmZip types
+type AdmZipConstructor = new (filePath?: string) => AdmZipInstance;
+interface AdmZipInstance {
+  getEntries(): AdmZipEntry[];
+  extractAllTo(targetPath: string, overwrite?: boolean): void;
+  readAsText(fileName: string): string;
+}
+interface AdmZipEntry {
+  entryName: string;
+  isDirectory: boolean;
+  getData(): Buffer;
+}
+
 // Lazy-load AdmZip only when needed to speed up startup
-let AdmZip: any = null;
-function getAdmZip() {
+let AdmZip: AdmZipConstructor | null = null;
+function getAdmZip(): AdmZipConstructor {
   if (!AdmZip) {
     try {
       // Prefer direct require in CJS build
-
-      AdmZip = require('adm-zip');
+      // eslint-disable-next-line @typescript-eslint/no-var-requires
+      AdmZip = require('adm-zip') as AdmZipConstructor;
     } catch (e) {
       // Fallback: use createRequire from module, anchored at cwd
       try {
         const req = createRequire(path.join(process.cwd(), 'package.json'));
-        AdmZip = req('adm-zip');
+        AdmZip = req('adm-zip') as AdmZipConstructor;
       } catch (e2) {
         log.error('Failed to load adm-zip module:', e instanceof Error ? e.message : String(e));
         throw e2;
@@ -51,9 +64,9 @@ function getAdmZip() {
 // Normalize one entry into a standard object
 function toEntry(obj: AnyMap = {}, fallbackMessage = '', source = ''): Entry {
   // Normalisiere Stacktrace aus gängigen Feldern
-  function normalizeStack(o: any): string | null {
+  function normalizeStack(o: unknown): string | null {
     if (!o || typeof o !== 'object') return null;
-    const candVals: any[] = [];
+    const candVals: unknown[] = [];
     try {
       const direct =
         (o as AnyMap).stack_trace || (o as AnyMap).stackTrace || (o as AnyMap).stacktrace;
@@ -172,8 +185,12 @@ function parseJsonFile(filename: string, text: string): Entry[] {
   if (!trimmed) return [];
   if (trimmed.startsWith('[')) {
     try {
-      const arr = JSON.parse(trimmed);
-      if (Array.isArray(arr)) return arr.map((o: AnyMap) => toEntry(o, '', filename));
+      const arr: unknown = JSON.parse(trimmed);
+      if (Array.isArray(arr)) {
+        return arr.map((o: unknown) =>
+          toEntry((o && typeof o === 'object' ? o : {}) as AnyMap, '', filename)
+        );
+      }
     } catch (e) {
       log.warn(
         'parseJsonFile: JSON array parse failed:',
@@ -187,10 +204,10 @@ function parseJsonFile(filename: string, text: string): Entry[] {
 
 function parseZipFile(zipPath: string): Entry[] {
   const ZipClass = getAdmZip();
-  const zip = new ZipClass(zipPath, null);
+  const zip = new ZipClass(zipPath);
   const entries: Entry[] = [];
-  zip.getEntries().forEach((zEntry: any) => {
-    const name = zEntry.entryName as string;
+  zip.getEntries().forEach((zEntry: AdmZipEntry) => {
+    const name = zEntry.entryName;
     const ext = path.extname(name).toLowerCase();
     if (
       !zEntry.isDirectory &&
@@ -286,14 +303,14 @@ function toIsoIfDate(v: string | number | Date | undefined): string | undefined 
   }
 }
 
-function buildElasticSearchBody(opts: ElasticsearchOptions) {
+function buildElasticSearchBody(opts: ElasticsearchOptions): AnyMap {
   const must: AnyMap[] = [];
   const filter: AnyMap[] = [];
 
-  const hasWildcard = (s: string) => /[\*\?]/.test(s);
+  const hasWildcard = (s: string): boolean => /[*?]/.test(s);
 
   // helper: add field condition, match_phrase by default; query_string if wildcards present
-  const addField = (field: string, value?: string) => {
+  const addField = (field: string, value?: string): void => {
     const v = (value ?? '').trim();
     if (!v) return;
     if (hasWildcard(v)) {
@@ -326,9 +343,10 @@ function buildElasticSearchBody(opts: ElasticsearchOptions) {
     range.lte = 'now';
   } else {
     // Detect epoch millis if numeric
-    const num = (x: unknown) => (typeof x === 'number' ? x : /^\d+$/.test(String(x || '')) ? Number(x) : null);
-    const fromNum = num(opts.from as any);
-    const toNum = num(opts.to as any);
+    const num = (x: unknown): number | null =>
+      typeof x === 'number' ? x : /^\d+$/.test(String(x || '')) ? Number(x) : null;
+    const fromNum = num(opts.from);
+    const toNum = num(opts.to);
     if (fromNum != null || toNum != null) {
       if (fromNum != null) range.gte = fromNum;
       if (toNum != null) range.lte = toNum;
@@ -401,16 +419,16 @@ function buildElasticHeaders(auth?: ElasticsearchAuth): Record<string, string> {
 
 function postJson(
   urlStr: string,
-  body: any,
+  body: unknown,
   headers: Record<string, string>,
   allowInsecureTLS?: boolean
-): Promise<any> {
+): Promise<unknown> {
   return new Promise((resolve, reject) => {
     try {
       const u = new URL(urlStr);
       const isHttps = u.protocol === 'https:';
       const mod = isHttps ? https : http;
-      const opts: any = {
+      const opts: http.RequestOptions = {
         method: 'POST',
         hostname: u.hostname,
         port: u.port ? Number(u.port) : isHttps ? 443 : 80,
@@ -421,7 +439,7 @@ function postJson(
       try {
         // Avoid logging Authorization header
         const { authorization: _auth, ...safeHeaders } = headers || {};
-        log.info('[Elastic] POST', `${u.protocol}//${u.host}${opts.path}`, safeHeaders);
+        log.info('[Elastic] POST', `${u.protocol}//${u.host}${opts.path ?? ''}`, safeHeaders);
       } catch (e) {
         log.warn('Elastic POST logging failed:', e instanceof Error ? e.message : String(e));
       }
@@ -437,8 +455,7 @@ function postJson(
           if (status >= 200 && status < 300) {
             log.info(`[Elastic] POST ${status} response received`);
             try {
-              // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
-              const json = text ? JSON.parse(text) : {};
+              const json: unknown = text ? JSON.parse(text) : {};
               resolve(json);
             } catch (e) {
               log.warn(
@@ -452,7 +469,7 @@ function postJson(
           }
         });
       });
-      req.on('error', (err: any) => reject(err));
+      req.on('error', (err: Error) => reject(err));
       const payload = body ? JSON.stringify(body) : '';
       if (payload) req.write(payload);
       req.end();
@@ -477,12 +494,24 @@ export async function fetchElasticLogs(opts: ElasticsearchOptions): Promise<Entr
   const headers = buildElasticHeaders(opts.auth);
 
   const data = await postJson(url, body, headers, !!opts.allowInsecureTLS);
-  const hits: any[] = data?.hits?.hits ?? [];
+  const dataObj = data && typeof data === 'object' ? (data as AnyMap) : {};
+  const hitsContainer = dataObj.hits;
+  const hitsArray =
+    hitsContainer && typeof hitsContainer === 'object'
+      ? (hitsContainer as AnyMap).hits
+      : undefined;
+  const hits: unknown[] = Array.isArray(hitsArray) ? hitsArray : [];
 
   const out: Entry[] = [];
   for (const h of hits) {
-    const src = h?._source ?? h?.fields ?? {};
-    const e = toEntry(src, '', `elastic://${h?._index ?? opts.index ?? ''}/${h?._id ?? ''}`);
+    const hObj = h && typeof h === 'object' ? (h as AnyMap) : {};
+    const src = hObj._source ?? hObj.fields ?? {};
+    const srcObj = src && typeof src === 'object' ? (src as AnyMap) : {};
+    const index = hObj._index;
+    const id = hObj._id;
+    const indexStr = typeof index === 'string' ? index : opts.index ?? '';
+    const idStr = typeof id === 'string' ? id : '';
+    const e = toEntry(srcObj, '', `elastic://${indexStr}/${idStr}`);
     out.push(e);
   }
   return out;
