@@ -224,15 +224,15 @@ function toEntry(obj: AnyMap, source: string): LogEntry {
 
   return {
     timestamp: String(timestamp),
-    level: String(level).toUpperCase(),
-    logger: String(logger),
-    thread: String(thread),
-    message: String(message),
-    traceId: String(traceId || ''),
+    level: String(level ?? 'INFO').toUpperCase(),
+    logger: String(logger ?? ''),
+    thread: String(thread ?? ''),
+    message: String(message ?? ''),
+    traceId: String(traceId ?? ''),
     source: source || 'unknown',
     mdc: (mdc as Record<string, unknown>) || {},
     stackTrace: stackTrace ? String(stackTrace) : undefined,
-    service: String(service),
+    service: String(service ?? ''),
     raw: obj,
   };
 }

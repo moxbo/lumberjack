@@ -181,7 +181,12 @@ export function validateSetting(
   key: string,
   value: unknown
 ): { valid: boolean; value: unknown; error?: string } {
-  const schema = (SETTINGS_SCHEMA as Record<string, { type: string; default: unknown; validate?: (val: unknown) => boolean }>)[key];
+  const schema = (
+    SETTINGS_SCHEMA as Record<
+      string,
+      { type: string; default: unknown; validate?: (val: unknown) => boolean }
+    >
+  )[key];
 
   if (!schema) {
     return { valid: false, value: null, error: `Unknown setting: ${key}` };
