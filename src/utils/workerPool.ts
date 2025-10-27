@@ -7,9 +7,9 @@ import logger from './logger';
 type PoolTask = {
   id: number;
   type: string;
-  data: any;
-  resolve: (value: any) => void;
-  reject: (reason?: any) => void;
+  data: unknown;
+  resolve: (value: unknown) => void;
+  reject: (reason?: unknown) => void;
 };
 
 type PWorker = Worker & { busy: boolean };
@@ -59,21 +59,24 @@ class WorkerPool {
     }
   }
 
-  private handleWorkerMessage(e: MessageEvent) {
-    const { id, result, error } = (e as any).data || {};
+  private handleWorkerMessage(e: MessageEvent): void {
+    const messageData = e.data as { id?: number; result?: unknown; error?: string };
+    const { id, result, error } = messageData || {};
 
     // Find the worker that sent this message
-    const worker = (e as any).target as PWorker;
+    const worker = e.target as PWorker | null;
     if (worker) worker.busy = false;
 
     // Resolve or reject the pending task
-    const task = this.pendingTasks.get(id);
-    if (task) {
-      this.pendingTasks.delete(id);
-      if (error) {
-        task.reject(new Error(error));
-      } else {
-        task.resolve(result);
+    if (id !== undefined) {
+      const task = this.pendingTasks.get(id);
+      if (task) {
+        this.pendingTasks.delete(id);
+        if (error) {
+          task.reject(new Error(error));
+        } else {
+          task.resolve(result);
+        }
       }
     }
 
@@ -81,17 +84,17 @@ class WorkerPool {
     this.processNextTask();
   }
 
-  private handleWorkerError(err: any) {
+  private handleWorkerError(err: ErrorEvent): void {
     logger.error('[WorkerPool] Worker error:', err);
     // Find the worker that errored
-    const worker = err.target as PWorker;
+    const worker = err.target as PWorker | null;
     if (worker) worker.busy = false;
 
     // Process next task
     this.processNextTask();
   }
 
-  private processNextTask() {
+  private processNextTask(): void {
     if (this.taskQueue.length === 0) return;
 
     const availableWorker = this.workers.find((w) => !w.busy);
@@ -109,13 +112,13 @@ class WorkerPool {
   /**
    * Execute a task using a worker from the pool
    */
-  private execute(type: string, data: any) {
+  private execute(type: string, data: unknown): Promise<unknown> {
     // If workers unavailable, return rejected promise
     if (this.unavailable) {
       return Promise.reject(new Error('Workers unavailable'));
     }
 
-    return new Promise<any>((resolve, reject) => {
+    return new Promise<unknown>((resolve, reject) => {
       const taskId = this.nextTaskId++;
       const task: PoolTask = {
         id: taskId,
@@ -146,28 +149,28 @@ class WorkerPool {
   /**
    * Parse text lines using worker
    */
-  parseLines(lines: string[], filename: string) {
+  parseLines(lines: string[], filename: string): Promise<unknown> {
     return this.execute('parseLines', { lines, filename });
   }
 
   /**
    * Parse JSON using worker
    */
-  parseJSON(text: string, filename: string) {
+  parseJSON(text: string, filename: string): Promise<unknown> {
     return this.execute('parseJSON', { text, filename });
   }
 
   /**
    * Parse zip entries using worker
    */
-  parseZipEntries(entries: any[], zipName: string) {
+  parseZipEntries(entries: unknown[], zipName: string): Promise<unknown> {
     return this.execute('parseZipEntries', { entries, zipName });
   }
 
   /**
    * Terminate all workers
    */
-  terminate() {
+  terminate(): void {
     for (const worker of this.workers) {
       worker.terminate();
     }
@@ -181,12 +184,12 @@ class WorkerPool {
 const WP_KEY = '__ljWorkerPool__';
 
 export function getWorkerPool(): WorkerPool | null {
-  const existing = (globalThis as any)[WP_KEY] as WorkerPool | null | undefined;
+  const existing = (globalThis as { __ljWorkerPool__?: WorkerPool }).__ljWorkerPool__;
   if (existing) return existing;
   try {
     // Use 2 workers by default for balance between parallelism and memory
     const wp = new WorkerPool('../workers/parser.worker.js', 2);
-    (globalThis as any)[WP_KEY] = wp;
+    (globalThis as { __ljWorkerPool__?: WorkerPool }).__ljWorkerPool__ = wp;
     return wp;
   } catch (err) {
     logger.warn('[WorkerPool] Failed to initialize:', err);
@@ -194,10 +197,10 @@ export function getWorkerPool(): WorkerPool | null {
   }
 }
 
-export function terminateWorkerPool() {
-  const wp = (globalThis as any)[WP_KEY] as WorkerPool | null | undefined;
+export function terminateWorkerPool(): void {
+  const wp = (globalThis as { __ljWorkerPool__?: WorkerPool }).__ljWorkerPool__;
   if (wp) {
     wp.terminate();
-    (globalThis as any)[WP_KEY] = null;
+    (globalThis as { __ljWorkerPool__?: WorkerPool | null }).__ljWorkerPool__ = null;
   }
 }

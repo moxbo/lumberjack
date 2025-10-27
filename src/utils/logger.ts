@@ -1,12 +1,19 @@
 // Unified logger using electron-log everywhere (renderer-safe)
 // We start with a console backend and try to upgrade to electron-log dynamically.
-let _backend: any = {
+interface LogBackend {
+  info: (...args: unknown[]) => void;
+  warn: (...args: unknown[]) => void;
+  error: (...args: unknown[]) => void;
+  debug: (...args: unknown[]) => void;
+}
+
+let _backend: LogBackend = {
   // eslint-disable-next-line no-console
-  info: (...args: any[]) => console.info('[lj]', ...args),
-  warn: (...args: any[]) => console.warn('[lj]', ...args),
-  error: (...args: any[]) => console.error('[lj]', ...args),
+  info: (...args: unknown[]) => console.info('[lj]', ...args),
+  warn: (...args: unknown[]) => console.warn('[lj]', ...args),
+  error: (...args: unknown[]) => console.error('[lj]', ...args),
   // eslint-disable-next-line no-console
-  debug: (...args: any[]) => console.debug('[lj]', ...args),
+  debug: (...args: unknown[]) => console.debug('[lj]', ...args),
 };
 
 // Try to dynamically import electron-log/renderer; ignore failures
@@ -43,11 +50,11 @@ try {
 }
 
 const logger = {
-  info: (...args: any[]) => _backend.info(...args),
-  warn: (...args: any[]) => _backend.warn(...args),
-  error: (...args: any[]) => _backend.error(...args),
-  debug: (...args: any[]) => _backend.debug(...args),
-  log: (...args: any[]) => _backend.info(...args),
+  info: (...args: unknown[]): void => _backend.info(...args),
+  warn: (...args: unknown[]): void => _backend.warn(...args),
+  error: (...args: unknown[]): void => _backend.error(...args),
+  debug: (...args: unknown[]): void => _backend.debug(...args),
+  log: (...args: unknown[]): void => _backend.info(...args),
 };
 
 export default logger;

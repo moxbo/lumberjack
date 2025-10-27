@@ -2,7 +2,7 @@
 // Syntax: OR mit '|', AND mit '&', Negation mit '!' vor einem Token
 // - Case-insensitive Teilstring-Suche
 // - Mehrere '!' werden als togglende Negation ausgewertet (z.B. '!!foo' == 'foo')
-export function msgMatches(message: string, expr: string) {
+export function msgMatches(message: string, expr: string): boolean {
   const m = String(message || '').toLowerCase();
   const q = String(expr || '')
     .toLowerCase()
