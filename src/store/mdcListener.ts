@@ -39,7 +39,10 @@ class MDCListenerImpl {
       // Load LoggingStore dynamically to avoid a static circular import
       import('./loggingStore')
         .then((mod) => {
-          const modAny = mod as { LoggingStore?: { addLoggingStoreListener: (listener: unknown) => void }; default?: { addLoggingStoreListener: (listener: unknown) => void } };
+          const modAny = mod as {
+            LoggingStore?: { addLoggingStoreListener: (listener: unknown) => void };
+            default?: { addLoggingStoreListener: (listener: unknown) => void };
+          };
           const LS = modAny?.LoggingStore || modAny?.default;
           try {
             LS?.addLoggingStoreListener({
