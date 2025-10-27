@@ -216,9 +216,9 @@ export default function App() {
         const list = [v, ...prev.filter((x) => x !== v)].slice(0, 10);
         try {
           void window.api.settingsSet({ histAppName: list } as any);
-        } catch (e){
-            logger.error('Failed to save histAppName settings:', e);
-            alert('Failed to save histAppName settings. See logs for details.');
+        } catch (e) {
+          logger.error('Failed to save histAppName settings:', e);
+          alert('Failed to save histAppName settings. See logs for details.');
         }
         return list;
       });
@@ -227,9 +227,9 @@ export default function App() {
         const list = [v, ...prev.filter((x) => x !== v)].slice(0, 10);
         try {
           void window.api.settingsSet({ histEnvironment: list } as any);
-        } catch (e){
-            logger.error('Failed to save histEnvironment settings:', e);
-            alert('Failed to save histEnvironment settings. See logs for details.');
+        } catch (e) {
+          logger.error('Failed to save histEnvironment settings:', e);
+          alert('Failed to save histEnvironment settings. See logs for details.');
         }
         return list;
       });
@@ -416,8 +416,8 @@ export default function App() {
         document.body.removeChild(ta);
       }
     } catch (e) {
-        logger.error('Failed to copy to clipboard:', e);
-        alert('Failed to copy to clipboard. See logs for details.');
+      logger.error('Failed to copy to clipboard:', e);
+      alert('Failed to copy to clipboard. See logs for details.');
     }
     closeContextMenu();
   }
@@ -649,8 +649,10 @@ export default function App() {
       // Attach MDC fields
       LoggingStore.addEvents(toAdd);
     } catch (e) {
-        logger.error('LoggingStore.addEvents error:', e);
-        alert( 'Failed to process new log entries. See logs for details. ' + (e?.message || String(e)) );
+      logger.error('LoggingStore.addEvents error:', e);
+      alert(
+        'Failed to process new log entries. See logs for details. ' + (e?.message || String(e))
+      );
     }
     const merged = [...entries, ...toAdd].sort(compareByTimestampId);
     setEntries(merged);
@@ -673,8 +675,8 @@ export default function App() {
       DiagnosticContextFilter.addMdcEntry(k, v ?? '');
       DiagnosticContextFilter.setEnabled(true);
     } catch (e) {
-        logger.error('Failed to add MDC entry to filter:', e);
-        alert('Failed to add MDC entry to filter. See logs for details.');
+      logger.error('Failed to add MDC entry to filter:', e);
+      alert('Failed to add MDC entry to filter. See logs for details.');
     }
   }
 
@@ -928,7 +930,7 @@ export default function App() {
 
       setShowSettings(false);
     } catch (e) {
-        logger.error('Failed to save settings:', e);
+      logger.error('Failed to save settings:', e);
       alert('Speichern fehlgeschlagen: ' + (e?.message || String(e)));
     }
   }
@@ -1030,7 +1032,7 @@ export default function App() {
         offs.push(off);
       }
     } catch (e) {
-        logger.error('onMenu setup failed:', e);
+      logger.error('onMenu setup failed:', e);
     }
     try {
       if (window.api?.onTcpStatus) {
@@ -1046,14 +1048,14 @@ export default function App() {
         offs.push(off);
       }
     } catch (e) {
-        logger.error('onTcpStatus setup failed:', e);
+      logger.error('onTcpStatus setup failed:', e);
     }
     return () => {
       for (const f of offs)
         try {
           f();
         } catch (e) {
-            logger.error('Failed to remove IPC listener:', e);
+          logger.error('Failed to remove IPC listener:', e);
         }
     };
   }, [httpPollId, tcpPort]);
@@ -1109,8 +1111,8 @@ export default function App() {
     try {
       LoggingStore.reset();
     } catch (e) {
-        logger.error('LoggingStore.reset error:', e);
-        alert('Failed to reset logging store. See logs for details.');
+      logger.error('LoggingStore.reset error:', e);
+      alert('Failed to reset logging store. See logs for details.');
     }
     setHttpStatus('');
     setTcpStatus('');

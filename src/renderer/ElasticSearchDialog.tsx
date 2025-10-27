@@ -253,7 +253,8 @@ export default function ElasticSearchDialog({
             placeholder="z. B. prod, stage"
           />
           <datalist id="esEnvHistory">
-            {Array.isArray(histEnvironment) && histEnvironment.map((v, i) => <option key={i} value={v} />)}
+            {Array.isArray(histEnvironment) &&
+              histEnvironment.map((v, i) => <option key={i} value={v} />)}
           </datalist>
         </div>
 
