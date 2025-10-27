@@ -322,7 +322,7 @@ export class NetworkService {
   /**
    * Start HTTP polling
    */
-  async httpStartPoll(
+  httpStartPoll(
     url: string,
     intervalMs: number
   ): Promise<{ ok: boolean; id?: number; error?: string }> {

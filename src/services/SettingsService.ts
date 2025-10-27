@@ -83,7 +83,9 @@ export class SettingsService {
       const raw = await fs.promises.readFile(this.settingsPath, 'utf8');
       const parsed = JSON.parse(raw) as Partial<Settings> & Record<string, unknown>;
       // Entferne veraltete Schlüssel, die nicht mehr unterstützt werden
-      delete (parsed as any).windowTitle;
+      if ('windowTitle' in parsed) {
+        delete parsed.windowTitle;
+      }
 
       // Merge with defaults to ensure all required fields exist
       this.settings = { ...DEFAULT_SETTINGS, ...parsed } as Settings;
