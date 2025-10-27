@@ -106,6 +106,10 @@ export interface ParseResult {
   ok: boolean;
   entries?: LogEntry[];
   error?: string;
+  // Pagination info for Elasticsearch queries
+  hasMore?: boolean;
+  nextSearchAfter?: Array<string | number> | null;
+  total?: number;
 }
 
 /**
@@ -150,6 +154,9 @@ export interface ElasticSearchOptions {
   // auth and TLS
   auth?: ElasticAuth;
   allowInsecureTLS?: boolean;
+
+  // Pagination: ES search_after token from previous page (array of sort values)
+  searchAfter?: Array<string | number>;
 }
 
 /**

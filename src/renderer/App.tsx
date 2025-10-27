@@ -1118,10 +1118,30 @@ export default function App() {
     return () => mgr.detach();
   }, []);
 
+  const [esHasMore, setEsHasMore] = useState<boolean>(false);
+  const [esNextSearchAfter, setEsNextSearchAfter] = useState<Array<string | number> | null>(null);
+  const [lastEsForm, setLastEsForm] = useState<any>(null);
+  const [esTotal, setEsTotal] = useState<number | null>(null);
+  const [esBaseline, setEsBaseline] = useState<number>(0);
+  const esElasticCountAll = useMemo(() => {
+    let cnt = 0;
+    for (const e of entries) {
+      const src = (e as any)?.source;
+      if (typeof src === 'string' && src.startsWith('elastic://')) cnt++;
+    }
+    return cnt;
+  }, [entries]);
+  const esLoaded = Math.max(0, esElasticCountAll - esBaseline);
+
   function clearLogs() {
     setEntries([]);
     setSelected(new Set());
     setNextId(1);
+    setEsHasMore(false);
+    setEsNextSearchAfter(null);
+    setLastEsForm(null);
+    setEsTotal(null);
+    setEsBaseline(0);
     try {
       (LoggingStore as any).reset();
     } catch (e) {
@@ -1301,6 +1321,7 @@ export default function App() {
                 setShowTimeDialog(false);
                 addToHistory('app', formVals?.application_name || '');
                 addToHistory('env', formVals?.environment || '');
+                setLastEsForm(formVals);
                 if (formVals.mode === 'relative' && formVals.duration)
                   TimeFilter.setRelative(formVals.duration);
                 else if (formVals.mode === 'absolute') {
@@ -1311,6 +1332,7 @@ export default function App() {
                 TimeFilter.setEnabled(true);
                 await withBusy(async () => {
                   setEsBusy(true);
+                  setEsTotal(null);
                   try {
                     const opts: ElasticSearchOptions = {
                       url: elasticUrl || undefined,
@@ -1328,6 +1350,9 @@ export default function App() {
                       allowInsecureTLS: !!formVals.allowInsecureTLS,
                     } as any;
                     logger.info('[Elastic] Search started', { hasResponse: false });
+                    // Set Baseline (replace => 0, sonst aktueller Elastic-Count)
+                    const loadMode = String(formVals.loadMode || 'append');
+                    setEsBaseline(loadMode === 'replace' ? 0 : esElasticCountAll);
                     const res = await window.api.elasticSearch(opts);
                     const total = Array.isArray(res?.entries) ? res.entries.length : 0;
                     logger.info('[Elastic] Search finished', {
@@ -1336,6 +1361,12 @@ export default function App() {
                       hasResponse: true,
                     });
                     if (res?.ok) {
+                      // Reset pagination when new search is started
+                      setEsHasMore(!!res.hasMore);
+                      setEsNextSearchAfter((res.nextSearchAfter as any) || null);
+                      setEsTotal(
+                        typeof (res as any)?.total === 'number' ? Number((res as any).total) : null
+                      );
                       if ((formVals.loadMode || 'replace') === 'replace') {
                         setEntries([]);
                         setSelected(new Set());
@@ -1995,6 +2026,59 @@ export default function App() {
               title="Elasticsearch-Abfrage läuft"
             >
               <span className="spinner"></span>Elastic lädt…
+            </span>
+          )}
+          {!esBusy && esHasMore && (
+            <button
+              style={{ marginLeft: '8px' }}
+              title="Weitere Ergebnisse laden (search_after)"
+              onClick={async () => {
+                if (esBusy) return;
+                const token = esNextSearchAfter;
+                if (!token || !Array.isArray(token) || token.length === 0) return;
+                await withBusy(async () => {
+                  setEsBusy(true);
+                  try {
+                    const s = TimeFilter.getState();
+                    const f = lastEsForm || {};
+                    const opts: ElasticSearchOptions = {
+                      url: elasticUrl || undefined,
+                      size: elasticSize || undefined,
+                      index: f?.index || undefined,
+                      sort: f?.sort || undefined,
+                      duration: s.mode === 'relative' ? (s.duration as any) : undefined,
+                      from: s.mode === 'absolute' ? (s.from as any) : undefined,
+                      to: s.mode === 'absolute' ? (s.to as any) : undefined,
+                      application_name: f?.application_name,
+                      logger: f?.logger,
+                      level: f?.level,
+                      environment: f?.environment,
+                      allowInsecureTLS: !!f?.allowInsecureTLS,
+                      searchAfter: token as any,
+                    } as any;
+                    const res = await window.api.elasticSearch(opts);
+                    if (res?.ok) {
+                      if (Array.isArray(res.entries) && res.entries.length)
+                        appendEntries(res.entries as any[]);
+                      setEsHasMore(!!res.hasMore);
+                      setEsNextSearchAfter((res.nextSearchAfter as any) || null);
+                      if (typeof (res as any)?.total === 'number')
+                        setEsTotal(Number((res as any).total));
+                    } else {
+                      alert('Elastic-Fehler: ' + ((res as any)?.error || 'Unbekannt'));
+                    }
+                  } finally {
+                    setEsBusy(false);
+                  }
+                });
+              }}
+            >
+              Mehr laden…
+            </button>
+          )}
+          {esTotal != null && (
+            <span className="status" style={{ marginLeft: '6px' }} title="Geladene ES-Ergebnisse">
+              Geladen: {esLoaded} von {esTotal}
             </span>
           )}
         </div>

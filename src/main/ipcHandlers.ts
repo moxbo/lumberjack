@@ -314,7 +314,7 @@ export function registerIpcHandlers(
     async (_event, opts: ElasticSearchOptions): Promise<ParseResult> => {
       try {
         const settings = settingsService.get();
-        const { fetchElasticLogs } = getParsers();
+        const { fetchElasticPage } = getParsers();
 
         const url = opts.url || settings.elasticUrl || '';
         const size = opts.size || settings.elasticSize || 1000;
@@ -360,10 +360,19 @@ export function registerIpcHandlers(
           level: mergedOpts.level,
           environment: mergedOpts.environment,
           allowInsecureTLS: !!mergedOpts.allowInsecureTLS,
+          searchAfter: Array.isArray((mergedOpts as any).searchAfter)
+            ? (mergedOpts as any).searchAfter
+            : undefined,
         });
 
-        const entries = await fetchElasticLogs(mergedOpts as unknown as Record<string, unknown>);
-        return { ok: true, entries };
+        const page = await fetchElasticPage(mergedOpts as unknown as Record<string, unknown>);
+        return {
+          ok: true,
+          entries: page.entries,
+          hasMore: page.hasMore,
+          nextSearchAfter: page.nextSearchAfter,
+          total: page.total,
+        };
       } catch (err) {
         try {
           // Wenn möglich, URL im Fehler mitloggen (ohne Credentials)

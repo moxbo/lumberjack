@@ -270,6 +270,8 @@ export interface ElasticsearchOptions {
   sort?: 'asc' | 'desc'; // default desc
   auth?: ElasticsearchAuth;
   allowInsecureTLS?: boolean; // default false
+  // Pagination: ES search_after token from previous page
+  searchAfter?: Array<string | number>;
 }
 
 function toIsoIfDate(v: string | number | Date | undefined): string | undefined {
@@ -370,6 +372,7 @@ function buildElasticSearchBody(opts: ElasticsearchOptions): AnyMap {
       {
         '@timestamp': { order: opts.sort ?? 'asc', unmapped_type: 'boolean' },
       },
+      { _id: { order: opts.sort ?? 'asc' } },
     ],
     _source: { excludes: [] },
     stored_fields: ['*'],
@@ -390,7 +393,10 @@ function buildElasticSearchBody(opts: ElasticsearchOptions): AnyMap {
       fragment_size: 2147483647,
     },
   };
-
+  // Add search_after if provided for pagination
+  if (Array.isArray(opts.searchAfter) && opts.searchAfter.length > 0) {
+    (body as any).search_after = opts.searchAfter;
+  }
   return body;
 }
 
@@ -497,9 +503,7 @@ export async function fetchElasticLogs(opts: ElasticsearchOptions): Promise<Entr
   const dataObj = data && typeof data === 'object' ? (data as AnyMap) : {};
   const hitsContainer = dataObj.hits;
   const hitsArray =
-    hitsContainer && typeof hitsContainer === 'object'
-      ? (hitsContainer as AnyMap).hits
-      : undefined;
+    hitsContainer && typeof hitsContainer === 'object' ? (hitsContainer as AnyMap).hits : undefined;
   const hits: unknown[] = Array.isArray(hitsArray) ? hitsArray : [];
 
   const out: Entry[] = [];
@@ -509,12 +513,83 @@ export async function fetchElasticLogs(opts: ElasticsearchOptions): Promise<Entr
     const srcObj = src && typeof src === 'object' ? (src as AnyMap) : {};
     const index = hObj._index;
     const id = hObj._id;
-    const indexStr = typeof index === 'string' ? index : opts.index ?? '';
+    const indexStr = typeof index === 'string' ? index : (opts.index ?? '');
     const idStr = typeof id === 'string' ? id : '';
     const e = toEntry(srcObj, '', `elastic://${indexStr}/${idStr}`);
     out.push(e);
   }
   return out;
+}
+
+/**
+ * Fetch a single page from Elasticsearch with pagination info
+ */
+export async function fetchElasticPage(opts: ElasticsearchOptions): Promise<{
+  entries: Entry[];
+  total: number;
+  hasMore: boolean;
+  nextSearchAfter: Array<string | number> | null;
+}> {
+  const base = (opts.url || '').replace(/\/$/, '');
+  if (!base) throw new Error('Elasticsearch URL (opts.url) ist erforderlich');
+  const index = encodeURIComponent(opts.index ?? '_all');
+  const url = `${base}/${index}/_search?ignore_throttled=false&ignore_unavailable=true`;
+
+  const body = buildElasticSearchBody(opts);
+  const headers = buildElasticHeaders(opts.auth);
+
+  const data = await postJson(url, body, headers, !!opts.allowInsecureTLS);
+  const dataObj = data && typeof data === 'object' ? (data as AnyMap) : {};
+  const hitsContainer = dataObj.hits as AnyMap | undefined;
+  const totalVal = (() => {
+    const t = hitsContainer && (hitsContainer as AnyMap).total;
+    if (!t) return 0;
+    if (typeof t === 'number') return t;
+    if (typeof t === 'object' && t != null && typeof (t as AnyMap).value === 'number')
+      return Number((t as AnyMap).value) || 0;
+    return 0;
+  })();
+  const hitsArray =
+    hitsContainer && Array.isArray((hitsContainer as AnyMap).hits)
+      ? ((hitsContainer as AnyMap).hits as unknown[])
+      : [];
+
+  const out: Entry[] = [];
+  for (const h of hitsArray) {
+    const hObj = h && typeof h === 'object' ? (h as AnyMap) : {};
+    const src = (hObj as AnyMap)._source ?? (hObj as AnyMap).fields ?? {};
+    const srcObj = src && typeof src === 'object' ? (src as AnyMap) : {};
+    const index = (hObj as AnyMap)._index;
+    const id = (hObj as AnyMap)._id;
+    const indexStr = typeof index === 'string' ? index : (opts.index ?? '');
+    const idStr = typeof id === 'string' ? id : '';
+    const e = toEntry(srcObj, '', `elastic://${indexStr}/${idStr}`);
+    out.push(e);
+  }
+
+  // Determine next search_after from last hit sort values
+  const lastHit = hitsArray.length > 0 ? (hitsArray[hitsArray.length - 1] as AnyMap) : null;
+  const sortVals =
+    lastHit && Array.isArray((lastHit as AnyMap).sort)
+      ? ((lastHit as AnyMap).sort as Array<string | number>)
+      : null;
+  const size = opts.size ?? 1000;
+  const hasMore = hitsArray.length >= size;
+
+  return {
+    entries: out,
+    total: totalVal,
+    hasMore,
+    nextSearchAfter: hasMore && sortVals && sortVals.length ? sortVals : null,
+  };
+}
+
+/**
+ * Back-compat: fetch first page only (no pagination info)
+ */
+export async function fetchElasticLogs(opts: ElasticsearchOptions): Promise<Entry[]> {
+  const page = await fetchElasticPage(opts);
+  return page.entries;
 }
 
 export { parsePaths, parseTextLines, parseJsonFile, parseZipFile, toEntry };
