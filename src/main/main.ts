@@ -302,7 +302,9 @@ networkService.setLogCallback((entries: LogEntry[]) => {
 });
 
 // Set up parsers for network service (lazy loaded)
+// Defer this until after window creation to avoid blocking startup
 setImmediate(() => {
+  perfService.mark('parsers-setup-start');
   // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
   const parsers = getParsers();
   networkService.setParsers({
@@ -313,6 +315,7 @@ setImmediate(() => {
     // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment,@typescript-eslint/no-unsafe-member-access
     toEntry: parsers.toEntry,
   });
+  perfService.mark('parsers-setup-complete');
 });
 
 // Register IPC handlers
