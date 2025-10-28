@@ -122,5 +122,24 @@ export class PerformanceService {
     } else {
       log.info(`✓ Startup performance OK: ${elapsed}ms`);
     }
+    
+    // Always log a detailed breakdown for analysis
+    this.logDetailedBreakdown();
+  }
+
+  /**
+   * Log detailed breakdown of time between consecutive marks
+   */
+  logDetailedBreakdown(): void {
+    if (this.metrics.length === 0) return;
+
+    log.info('=== Startup Time Breakdown ===');
+    for (let i = 1; i < this.metrics.length; i++) {
+      const prev = this.metrics[i - 1];
+      const curr = this.metrics[i];
+      const delta = (curr.duration ?? 0) - (prev.duration ?? 0);
+      log.info(`  ${prev.name} → ${curr.name}: ${delta}ms`);
+    }
+    log.info('==============================');
   }
 }

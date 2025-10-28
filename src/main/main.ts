@@ -316,7 +316,9 @@ setImmediate(() => {
 });
 
 // Register IPC handlers
+perfService.mark('ipc-handlers-register-start');
 registerIpcHandlers(settingsService, networkService, getParsers, getAdmZip);
+perfService.mark('ipc-handlers-registered');
 
 // Nach Registrierung: TCP Start/Stop abfangen, um Titel zu aktualisieren
 try {
@@ -357,6 +359,9 @@ function sendAppend(entries: LogEntry[]): void {
 
 // Cache the resolved icon path to avoid repeated filesystem operations
 let cachedIconPath: string | null = null;
+
+// Cache the resolved dist index path to avoid repeated filesystem operations on each window creation
+let cachedDistIndexPath: string | null = null;
 
 async function resolveIconPathAsync(): Promise<string | null> {
   if (cachedIconPath !== null) {
@@ -795,53 +800,62 @@ function createWindow(opts: { makePrimary?: boolean } = {}): BrowserWindow {
     process.cwd()
   );
 
+  perfService.mark('renderer-load-start');
+
   if (devUrl) {
     log.info('Loading dev server URL:', devUrl);
     void win.loadURL(devUrl);
   } else {
-    const resPath = process.resourcesPath || '';
-    const distCandidates = [
-      path.join(__dirname, 'dist', 'index.html'),
-      path.join(app.getAppPath(), 'dist', 'index.html'),
-      path.join(process.cwd(), 'dist', 'index.html'),
-      path.join(resPath, 'app.asar.unpacked', 'dist', 'index.html'),
-      path.join(resPath, 'app.asar', 'dist', 'index.html'),
-      path.join(resPath, 'dist', 'index.html'),
-    ];
+    // Use cached path if available to avoid repeated filesystem checks
+    if (cachedDistIndexPath) {
+      log.info('Loading cached dist index from', cachedDistIndexPath);
+      void win.loadFile(cachedDistIndexPath);
+    } else {
+      const resPath = process.resourcesPath || '';
+      const distCandidates = [
+        path.join(__dirname, 'dist', 'index.html'),
+        path.join(app.getAppPath(), 'dist', 'index.html'),
+        path.join(process.cwd(), 'dist', 'index.html'),
+        path.join(resPath, 'app.asar.unpacked', 'dist', 'index.html'),
+        path.join(resPath, 'app.asar', 'dist', 'index.html'),
+        path.join(resPath, 'dist', 'index.html'),
+      ];
 
-    let loaded = false;
-    for (const candidate of distCandidates) {
-      try {
-        const exists = fs.existsSync(candidate);
-        log.info('Checking for dist index at', candidate, 'exists=', exists);
-        if (exists) {
-          log.info('Loading dist index from', candidate);
-          try {
-            void win.loadFile(candidate);
-            loaded = true;
-            break;
-          } catch (e) {
-            log.error('Failed to load file', candidate, e instanceof Error ? e.message : String(e));
+      let loaded = false;
+      for (const candidate of distCandidates) {
+        try {
+          const exists = fs.existsSync(candidate);
+          if (exists) {
+            log.info('Loading dist index from', candidate);
+            try {
+              void win.loadFile(candidate);
+              cachedDistIndexPath = candidate; // Cache successful path
+              loaded = true;
+              break;
+            } catch (e) {
+              log.error('Failed to load file', candidate, e instanceof Error ? e.message : String(e));
+            }
           }
+        } catch (e) {
+          log.warn(
+            'Error while checking candidate',
+            candidate,
+            e instanceof Error ? e.message : String(e)
+          );
         }
-      } catch (e) {
-        log.warn(
-          'Error while checking candidate',
-          candidate,
-          e instanceof Error ? e.message : String(e)
-        );
       }
-    }
 
-    if (!loaded) {
-      log.info('No production dist index.html found; falling back to root index.html (likely dev)');
-      try {
-        void win.loadFile('index.html');
-      } catch (e) {
-        log.error(
-          'Failed to load fallback index.html:',
-          e instanceof Error ? e.message : String(e)
-        );
+      if (!loaded) {
+        log.info('No production dist index.html found; falling back to root index.html (likely dev)');
+        try {
+          void win.loadFile('index.html');
+          cachedDistIndexPath = 'index.html'; // Cache fallback path
+        } catch (e) {
+          log.error(
+            'Failed to load fallback index.html:',
+            e instanceof Error ? e.message : String(e)
+          );
+        }
       }
     }
   }
@@ -876,12 +890,21 @@ function createWindow(opts: { makePrimary?: boolean } = {}): BrowserWindow {
   }
 
   setImmediate(async () => {
+    perfService.mark('menu-build-start');
     buildMenu();
+    perfService.mark('menu-built');
+    
+    perfService.mark('settings-load-start');
     await settingsService.load();
+    perfService.mark('settings-loaded-deferred');
+    
     const settings = settingsService.get();
-    if (settings.logToFile) openLogStream();
+    if (settings.logToFile) {
+      perfService.mark('logstream-open-start');
+      openLogStream();
+      perfService.mark('logstream-opened');
+    }
     updateMenu();
-    perfService.mark('settings-loaded');
   });
 
   return win;
@@ -923,11 +946,11 @@ if (!gotLock) {
 void app.whenReady().then(async () => {
   perfService.mark('app-ready');
 
-  // Load settings asynchronously before window creation (critical for Windows performance)
-  perfService.mark('settings-load-start');
-  await settingsService.load();
-  perfService.mark('settings-loaded');
+  // Do NOT load settings here - they will be loaded asynchronously after window creation
+  // to avoid blocking the window from appearing
 
+  perfService.mark('platform-setup-start');
+  
   if (process.platform === 'darwin' && app.dock) {
     const macIconPath = resolveMacIconPath();
     if (macIconPath) {
@@ -970,8 +993,12 @@ void app.whenReady().then(async () => {
     }
   }
 
+  perfService.mark('platform-setup-complete');
+
   // Create the primary window by default
+  perfService.mark('create-window-start');
   createWindow({ makePrimary: true });
+  perfService.mark('create-window-initiated');
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow({ makePrimary: true });
