@@ -67,6 +67,14 @@ function eventKeyVariantsForCanonical(k: string): string[] {
   return [canon];
 }
 
+// Export: Kanonischer DC-Key für Anzeige/Filterung
+export function canonicalDcKey(k: string): string {
+  const raw = String(k || '').trim();
+  if (!raw) return '';
+  const canonical = normalizeTraceKeyName(raw);
+  return canonical || raw;
+}
+
 class DiagnosticContextFilterImpl {
   private _map = new Map<string, DcEntry>();
   private _em = new SimpleEmitter();
@@ -179,6 +187,16 @@ class DiagnosticContextFilterImpl {
 
     const obj = mdc && typeof mdc === 'object' ? (mdc as Record<string, unknown>) : {};
 
+    const toSafeString = (val: unknown): string => {
+      if (val == null) return '';
+      if (typeof val === 'string') return val;
+      try {
+        return JSON.stringify(val);
+      } catch {
+        return String(val);
+      }
+    };
+
     for (const [canonKey, arr] of groups) {
       const candidates = eventKeyVariantsForCanonical(canonKey);
       // Sammle vorhandene Event-Werte für alle Kandidaten
@@ -186,7 +204,7 @@ class DiagnosticContextFilterImpl {
       for (const k of candidates) {
         if (hasOwn(obj, k)) {
           const val = obj[k];
-          present.push(val != null && val !== '' ? String(val) : '');
+          present.push(toSafeString(val));
         }
       }
 

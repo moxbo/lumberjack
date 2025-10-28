@@ -3,7 +3,11 @@
 // - reset(): clears internal state and notifies listeners
 // - addLoggingStoreListener(listener): { loggingEventsAdded(events), loggingStoreReset() }
 
-type LogEvent = Record<string, unknown>;
+interface LogEvent {
+  [k: string]: unknown;
+  mdc?: Record<string, string>;
+  raw?: unknown;
+}
 
 type Listener = {
   loggingEventsAdded?: (events: LogEvent[]) => void;
@@ -51,38 +55,55 @@ function findExternalId(raw: Record<string, unknown>): string | null {
   return null;
 }
 
-function findTraceId(raw: { [x: string]: any }) {
+function findTraceId(raw: Record<string, unknown>): string | null {
   if (!raw || typeof raw !== 'object') return null;
   const candidates = ['traceId', 'trace_id', 'trace', 'trace.id', 'TraceID'];
   for (const k of candidates) {
     const v = raw[k];
-    if (isString(v) && v.trim()) return v.trim();
+    if (typeof v === 'string' && v.trim()) return v.trim();
   }
   return null;
 }
+export { findTraceId };
 
-export function computeMdcFromRaw(raw: { [s: string]: unknown } | ArrayLike<unknown>) {
+export function computeMdcFromRaw(
+  raw: { [s: string]: unknown } | ArrayLike<unknown>
+): Record<string, string> {
   const mdc: Record<string, string> = {};
   if (!raw || typeof raw !== 'object') return mdc;
-  for (const [k, v] of Object.entries(raw)) {
+  // Zuerst TraceID extrahieren
+  const tid = findTraceId(raw as Record<string, unknown>);
+  // Übernahme aller string-basierten Felder außer reservierten und Trace-Varianten
+  const TRACE_VARIANTS = new Set([
+    'TraceID',
+    'traceId',
+    'trace_id',
+    'trace.id',
+    'trace-id',
+    'x-trace-id',
+    'x_trace_id',
+    'x.trace.id',
+    'trace',
+  ]);
+  for (const [k, v] of Object.entries(raw as Record<string, unknown>)) {
     if (RESERVED_STD_FIELDS.has(k)) continue;
-    if (!isString(v)) continue;
+    if (TRACE_VARIANTS.has(k)) continue;
+    if (typeof v !== 'string') continue;
     const key = String(k);
     const val = String(v);
     if (!key.trim()) continue;
     mdc[key] = val;
   }
-  const ext = findExternalId(raw as any);
+  const ext = findExternalId(raw as Record<string, unknown>);
   if (ext && !mdc.externalId) mdc.externalId = ext;
-  // Normalisierte TraceId zusätzlich bereitstellen, um MDC-Filterung über einen Key zu ermöglichen
-  const tid = findTraceId(raw as any);
-  if (tid && !mdc.traceId) mdc.traceId = tid;
+  // Normalisierte TraceID im MDC nur unter dem kanonischen Key einmalig bereitstellen
+  if (tid && !mdc.TraceID) mdc.TraceID = tid;
   return mdc;
 }
 
 class LoggingStoreImpl {
   private _listeners = new Set<Listener>();
-  private _events: any[] = [];
+  private _events: LogEvent[] = [];
   addLoggingStoreListener(listener: Listener) {
     if (listener && typeof listener === 'object') {
       this._listeners.add(listener);
@@ -90,13 +111,19 @@ class LoggingStoreImpl {
     }
     return () => {};
   }
-  addEvents(events: any[]): void {
+  getAllEvents(): LogEvent[] {
+    return this._events.slice();
+  }
+  addEvents(events: LogEvent[]): void {
     if (!Array.isArray(events) || events.length === 0) return;
     for (const e of events) {
       try {
         // Attach MDC derived from raw JSON object
-        const raw = e && (e.raw || e);
-        e.mdc = computeMdcFromRaw(raw);
+        const rawObj: Record<string, unknown> =
+          e && e.raw && typeof e.raw === 'object'
+            ? (e.raw as Record<string, unknown>)
+            : (e as Record<string, unknown>);
+        e.mdc = computeMdcFromRaw(rawObj);
       } catch (err) {
         console.warn('computeMdcFromRaw failed:', err);
       }
@@ -104,7 +131,7 @@ class LoggingStoreImpl {
     this._events.push(...events);
     for (const l of this._listeners) {
       try {
-        l.loggingEventsAdded && l.loggingEventsAdded(events);
+        l.loggingEventsAdded?.(events);
       } catch (err) {
         console.warn('loggingEventsAdded listener failed:', err);
       }
@@ -114,7 +141,7 @@ class LoggingStoreImpl {
     this._events = [];
     for (const l of this._listeners) {
       try {
-        l.loggingStoreReset && l.loggingStoreReset();
+        l.loggingStoreReset?.();
       } catch (err) {
         console.warn('loggingStoreReset listener failed:', err);
       }

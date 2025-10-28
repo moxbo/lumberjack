@@ -2,6 +2,7 @@
 // keys: Map<string, Set<string>>; hält interne Sortierung nicht, liefert aber sortierte Arrays per Getter
 
 import { lazyInstance } from './_lazy';
+import { canonicalDcKey } from './dcFilter';
 
 type Listener = () => void;
 class SimpleEmitter {
@@ -40,11 +41,24 @@ class MDCListenerImpl {
       import('./loggingStore')
         .then((mod) => {
           const modAny = mod as {
-            LoggingStore?: { addLoggingStoreListener: (listener: unknown) => void };
-            default?: { addLoggingStoreListener: (listener: unknown) => void };
+            LoggingStore?: {
+              addLoggingStoreListener: (listener: unknown) => void;
+              getAllEvents?: () => Array<Record<string, unknown>>;
+            };
+            default?: {
+              addLoggingStoreListener: (listener: unknown) => void;
+              getAllEvents?: () => Array<Record<string, unknown>>;
+            };
           };
           const LS = modAny?.LoggingStore || modAny?.default;
           try {
+            // Seed with existing events (if any)
+            try {
+              const all = LS?.getAllEvents?.() || [];
+              if (Array.isArray(all) && all.length) this._onAdded(all as Array<Record<string, unknown>>);
+            } catch (e) {
+              console.warn('MDCListener seeding failed:', e);
+            }
             LS?.addLoggingStoreListener({
               loggingEventsAdded: (events: Record<string, unknown>[]) => this._onAdded(events),
               loggingStoreReset: () => this._onReset(),
@@ -61,21 +75,23 @@ class MDCListenerImpl {
     }
   }
 
-  private _onReset() {
+  private _onReset(): void {
     this.keys.clear();
     this._em.emit();
   }
-  private _onAdded(events: any[]) {
+  private _onAdded(events: Array<Record<string, unknown>>): void {
     let changed = false;
     for (const e of events || []) {
-      const mdc = (e && e.mdc) || {};
-      for (const [k, v] of Object.entries(mdc)) {
-        if (!k || typeof v !== 'string') continue;
-        if (!this.keys.has(k)) {
-          this.keys.set(k, new Set());
+      const obj = e as Record<string, unknown>;
+      const mdc = (obj && (obj['mdc'] as Record<string, unknown>)) || {};
+      for (const [k, v] of Object.entries(mdc as Record<string, unknown>)) {
+        const ck = canonicalDcKey(k);
+        if (!ck || typeof v !== 'string') continue;
+        if (!this.keys.has(ck)) {
+          this.keys.set(ck, new Set());
           changed = true;
         }
-        const set = this.keys.get(k)!;
+        const set = this.keys.get(ck)!;
         if (!set.has(v)) {
           set.add(v);
           changed = true;
@@ -87,11 +103,11 @@ class MDCListenerImpl {
   onChange(fn: Listener) {
     return this._em.on(fn);
   }
-  getSortedKeys() {
+  getSortedKeys(): string[] {
     return Array.from(this.keys.keys()).sort((a, b) => a.localeCompare(b));
   }
-  getSortedValues(key: string) {
-    const set = this.keys.get(key);
+  getSortedValues(key: string): string[] {
+    const set = this.keys.get(canonicalDcKey(key));
     if (!set) return [] as string[];
     return Array.from(set).sort((a, b) => a.localeCompare(b));
   }

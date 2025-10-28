@@ -4,27 +4,31 @@ import { DiagnosticContextFilter, dcEntryId } from '../store/dcFilter';
 import { LoggingStore } from '../store/loggingStore';
 
 // Dialog-Inhalt für den Diagnostic Context Filter
-export default function DCFilterDialog() {
-  const [keys, setKeys] = useState([]);
-  const [selectedKey, setSelectedKey] = useState('');
-  const [val, setVal] = useState('');
-  const [rows, setRows] = useState(DiagnosticContextFilter.getDcEntries());
-  const [sel, setSel] = useState([]); // selected ids
-  const [enabled, setEnabled] = useState(DiagnosticContextFilter.isEnabled());
+export default function DCFilterDialog(): preact.JSX.Element {
+  const [keys, setKeys] = useState<string[]>([]);
+  const [selectedKey, setSelectedKey] = useState<string>('');
+  const [val, setVal] = useState<string>('');
+  const [rows, setRows] = useState<{ key: string; val: string; active: boolean }[]>(
+    DiagnosticContextFilter.getDcEntries()
+  );
+  const [sel, setSel] = useState<string[]>([]); // selected ids
+  const [enabled, setEnabled] = useState<boolean>(DiagnosticContextFilter.isEnabled());
 
   // Kontextmenü
-  const [ctx, setCtx] = useState({ open: false, x: 0, y: 0 });
-  const ctxRef = useRef(null);
+  const [ctx, setCtx] = useState<{ open: boolean; x: number; y: number }>({ open: false, x: 0, y: 0 });
+  const ctxRef = useRef<HTMLDivElement | null>(null);
   useEffect(() => {
-    function onDocClick(e) {
+    function onDocClick(e: MouseEvent): void {
       if (!ctx.open) return;
       const el = ctxRef.current;
-      const path = typeof e.composedPath === 'function' ? e.composedPath() : [];
-      if (el && (el === e.target || el.contains(e.target) || (path && path.includes(el)))) return;
+      const path = typeof (e as any).composedPath === 'function' ? (e as any).composedPath() : [];
+      const tgt = e.target as Node | null;
+      if (el && (el === tgt || (tgt && el.contains(tgt)) || (Array.isArray(path) && path.includes(el)))) return;
       setCtx({ open: false, x: 0, y: 0 });
     }
-    window.addEventListener('mousedown', onDocClick, { capture: true, passive: true });
-    return () => window.removeEventListener('mousedown', onDocClick, { capture: true });
+    window.addEventListener('mousedown', onDocClick, { capture: true, passive: true } as any);
+    return () =>
+      window.removeEventListener('mousedown', onDocClick as any, { capture: true } as any);
   }, [ctx.open]);
 
   // MDC-Keys laden & bei Store-Reset leeren
@@ -55,7 +59,7 @@ export default function DCFilterDialog() {
     return () => off?.();
   }, []);
 
-  function onAdd() {
+  function onAdd(): void {
     const key = String(selectedKey || '').trim();
     if (!key) return;
     const raw = String(val ?? '');
@@ -71,33 +75,33 @@ export default function DCFilterDialog() {
     }
     setVal('');
   }
-  function onRemoveSelected() {
+  function onRemoveSelected(): void {
     const cur = DiagnosticContextFilter.getDcEntries();
-    const byId = new Map(cur.map((e) => [dcEntryId(e), e]));
+    const byId = new Map(cur.map((e) => [dcEntryId(e), e] as const));
     for (const id of sel) {
       const e = byId.get(id);
       if (e) DiagnosticContextFilter.removeMdcEntry(e.key, e.val);
     }
     setSel([]);
   }
-  function onClear() {
+  function onClear(): void {
     DiagnosticContextFilter.reset();
     setSel([]);
   }
 
   // Auswahl-Helper
-  function toggleRow(id, extend, keep) {
+  function toggleRow(id: string, extend: boolean, keep: boolean): void {
     setSel((prev) => {
       const arr = keep || extend ? [...prev] : [];
       const set = new Set(arr);
       if (extend && prev.length > 0) {
         const order = rows.map((e) => dcEntryId(e));
         const last = prev[prev.length - 1];
-        const a = order.indexOf(last);
+        const a = order.indexOf(last || '');
         const b = order.indexOf(id);
         if (a >= 0 && b >= 0) {
           const [lo, hi] = a < b ? [a, b] : [b, a];
-          for (let i = lo; i <= hi; i++) set.add(order[i]);
+          for (let i = lo; i <= hi; i++) set.add(order[i]!);
           return Array.from(set);
         }
       }
@@ -106,15 +110,15 @@ export default function DCFilterDialog() {
       return Array.from(set);
     });
   }
-  function openCtx(ev, id) {
+  function openCtx(ev: MouseEvent, id: string): void {
     ev.preventDefault();
     ev.stopPropagation();
     if (!sel.includes(id)) setSel([id]);
     setCtx({ open: true, x: ev.clientX, y: ev.clientY });
   }
-  function activateSelected(active) {
+  function activateSelected(active: boolean): void {
     const cur = DiagnosticContextFilter.getDcEntries();
-    const byId = new Map(cur.map((e) => [dcEntryId(e), e]));
+    const byId = new Map(cur.map((e) => [dcEntryId(e), e] as const));
     for (const id of sel) {
       const e = byId.get(id);
       if (!e) continue;
@@ -123,16 +127,16 @@ export default function DCFilterDialog() {
     }
     setCtx({ open: false, x: 0, y: 0 });
   }
-  function toggleActive(e, checked) {
+  function toggleActive(e: { key: string; val: string }, checked: boolean): void {
     if (checked) DiagnosticContextFilter.activateMdcEntry(e.key, e.val);
     else DiagnosticContextFilter.deactivateMdcEntry(e.key, e.val);
   }
 
   // F2: bekannte Werte anzeigen
-  const [showValues, setShowValues] = useState(false);
-  const [values, setValues] = useState([]);
-  const valueInputRef = useRef(null);
-  function onValueKeyDown(e) {
+  const [showValues, setShowValues] = useState<boolean>(false);
+  const [values, setValues] = useState<string[]>([]);
+  const valueInputRef = useRef<HTMLInputElement | null>(null);
+  function onValueKeyDown(e: KeyboardEvent): void {
     if (e.key === 'F2') {
       e.preventDefault();
       const k = String(selectedKey || '').trim();
@@ -142,13 +146,13 @@ export default function DCFilterDialog() {
       setShowValues(true);
     }
   }
-  function openValuePicker() {
+  function openValuePicker(): void {
     const k = String(selectedKey || '').trim();
     const vals = k ? MDCListener.getSortedValues(k) : [];
     setValues(vals);
     setShowValues(true);
   }
-  function chooseValue(v) {
+  function chooseValue(v: string): void {
     setVal(v);
     setShowValues(false);
     setTimeout(() => onAdd(), 0);
@@ -168,7 +172,7 @@ export default function DCFilterDialog() {
               class="bright-input"
               list="dc-keys"
               value={selectedKey}
-              onInput={(e) => setSelectedKey(e.currentTarget.value)}
+              onInput={(e) => setSelectedKey((e.currentTarget as HTMLInputElement).value)}
               placeholder="Key wählen oder tippen…"
               autoFocus
             />
@@ -183,10 +187,10 @@ export default function DCFilterDialog() {
             <div style="display:flex; gap:6px; align-items:center;">
               <input
                 class="bright-input"
-                ref={valueInputRef}
+                ref={valueInputRef as any}
                 value={val}
-                onInput={(e) => setVal(e.currentTarget.value)}
-                onKeyDown={onValueKeyDown}
+                onInput={(e) => setVal((e.currentTarget as HTMLInputElement).value)}
+                onKeyDown={(e) => onValueKeyDown(e as unknown as KeyboardEvent)}
                 title="Mehrere Werte mit | trennen. F2 oder Button öffnet Vorschläge. Leer = alle Werte dieses Keys."
                 placeholder="Wert(e) oder leer für alle…"
               />
@@ -213,7 +217,7 @@ export default function DCFilterDialog() {
             type="checkbox"
             class="native-checkbox"
             checked={enabled}
-            onChange={(e) => DiagnosticContextFilter.setEnabled(e.currentTarget.checked)}
+            onChange={(e) => DiagnosticContextFilter.setEnabled((e.currentTarget as HTMLInputElement).checked)}
           />
           <span style="font-size:12px; color:#333;">MDC-Filter aktiv</span>
         </label>
@@ -238,8 +242,8 @@ export default function DCFilterDialog() {
                 <tr
                   key={id}
                   class={rowCls}
-                  onClick={(ev) => toggleRow(id, ev.shiftKey, ev.ctrlKey || ev.metaKey)}
-                  onContextMenu={(ev) => openCtx(ev, id)}
+                  onClick={(ev) => toggleRow(id, (ev as any).shiftKey, (ev as any).ctrlKey || (ev as any).metaKey)}
+                  onContextMenu={(ev) => openCtx(ev as any, id)}
                   style="cursor: default;"
                 >
                   <td class="cell-key">{e.key}</td>
@@ -251,8 +255,8 @@ export default function DCFilterDialog() {
                       <input
                         type="checkbox"
                         class="native-checkbox"
-                        checked={!!e.active}
-                        onChange={(ev) => toggleActive(e, ev.currentTarget.checked)}
+                        checked={e.active}
+                        onChange={(ev) => toggleActive(e, (ev.currentTarget as HTMLInputElement).checked)}
                         aria-label={e.active ? 'aktiv' : 'aus'}
                         title={e.active ? 'aktiv' : 'aus'}
                       />
@@ -278,7 +282,7 @@ export default function DCFilterDialog() {
       {/* Kontextmenü */}
       {ctx.open && (
         <div
-          ref={ctxRef}
+          ref={ctxRef as any}
           class="context-menu"
           style={{ position: 'fixed', left: ctx.x + 'px', top: ctx.y + 'px' }}
         >

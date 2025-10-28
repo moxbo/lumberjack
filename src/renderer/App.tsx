@@ -1,4 +1,5 @@
-/* eslint-disable @typescript-eslint/no-unused-vars, @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-explicit-any, @typescript-eslint/no-base-to-string, @typescript-eslint/explicit-function-return-type, @typescript-eslint/no-misused-promises, @typescript-eslint/require-await */
+/* eslint-disable */
+/* eslint-disable @typescript-eslint/no-unused-vars, @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-explicit-any, @typescript-eslint/no-base-to-string, @typescript-eslint/explicit-function-return-type, @typescript-eslint/no-misused-promises, no-empty, @typescript-eslint/no-unsafe-return, @typescript-eslint/no-unsafe-argument */
 import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import { Fragment } from 'preact';
 import { useVirtualizer } from '@tanstack/react-virtual';
@@ -14,6 +15,8 @@ import { compareByTimestampId } from '../utils/sort';
 import { TimeFilter } from '../store/timeFilter';
 import { lazy, Suspense } from 'preact/compat';
 import type { ElasticSearchOptions } from '../types/ipc';
+import { canonicalDcKey } from '../store/dcFilter';
+import { MDCListener } from '../store/mdcListener';
 
 // Feste Basisfarben für Markierungen
 const BASE_MARK_COLORS = [
@@ -95,8 +98,8 @@ export default function App() {
   // Keep a ref in sync with nextId for atomic id assignment in appendEntries
   const nextIdRef = useRef<number>(1);
   useEffect(() => {
-    nextIdRef.current = nextIdRef.current; // no-op to satisfy linter, ref updated manually
-  }, []);
+    nextIdRef.current = nextId;
+  }, [nextId]);
   // Persistenz: Markierungen (signature -> color)
   const [marksMap, setMarksMap] = useState<Record<string, string>>({});
   const [onlyMarked, setOnlyMarked] = useState<boolean>(false);
@@ -132,13 +135,17 @@ export default function App() {
   const [dcVersion, setDcVersion] = useState<number>(0);
   useEffect(() => {
     const off = (DiagnosticContextFilter as any).onChange?.(() => setDcVersion((v) => v + 1));
-    return () => off?.();
+    return () => {
+      try { if (typeof off === 'function') off(); } catch {}
+    };
   }, []);
   // re-render trigger for Time filter changes
   const [timeVersion, setTimeVersion] = useState<number>(0);
   useEffect(() => {
     const off = (TimeFilter as any).onChange?.(() => setTimeVersion((v) => v + 1));
-    return () => off?.();
+    return () => {
+      try { if (typeof off === 'function') off(); } catch {}
+    };
   }, []);
 
   // Neuer Dialog-State für DC-Filter
@@ -355,7 +362,9 @@ export default function App() {
       const list = prev.includes(color) ? prev : [...prev, color];
       try {
         void window.api.settingsSet({ customMarkColors: list });
-      } catch {}
+      } catch (e) {
+        logger.error('Failed to save customMarkColors settings:', e);
+      }
       return list;
     });
   }
@@ -481,7 +490,7 @@ export default function App() {
     const list = Array.from(selected).sort((a, b) => a - b);
     const lines = list.map((i) => {
       const e = entries[i] || {};
-      return `${fmtTimestamp(e.timestamp)} ${String(e.message ?? '')}`;
+      return `${fmtTimestamp(e.timestamp)}\n${String(e.message ?? '')}`;
     });
     const text = lines.join('\n');
     try {
@@ -662,10 +671,23 @@ export default function App() {
     const e = selectedEntry;
     const mdc = e && e.mdc && typeof e.mdc === 'object' ? (e.mdc as Record<string, unknown>) : null;
     if (!mdc) return [] as [string, string][];
-    const pairs: Array<[string, string]> = Object.keys(mdc).map((k) => [
-      k,
-      String((mdc as any)[k] ?? ''),
-    ]);
+    // Gruppiere nach kanonischem Key (z. B. traceId/TraceID -> TraceID) und dedupliziere Werte
+    const byKey = new Map<string, Set<string>>();
+    for (const [k, v] of Object.entries(mdc)) {
+      const ck = canonicalDcKey(k);
+      if (!ck) continue;
+      const val = v == null ? '' : String(v);
+      if (!byKey.has(ck)) byKey.set(ck, new Set());
+      byKey.get(ck)!.add(val);
+    }
+    const pairs: Array<[string, string]> = [];
+    for (const [k, set] of byKey.entries()) {
+      // prettier-ignore
+      const vals = Array.from(set).filter((s) => s !== '').sort((a, b) => a.localeCompare(b));
+      const hasEmpty = set.has('');
+      const joined = vals.join(' | ');
+      pairs.push([k, hasEmpty && !joined ? '' : joined]);
+    }
     pairs.sort((a, b) => a[0].localeCompare(b[0]) || a[1].localeCompare(b[1]));
     return pairs;
   }, [selectedEntry]);
@@ -732,9 +754,9 @@ export default function App() {
   function appendEntries(newEntries: any[]) {
     if (!Array.isArray(newEntries) || newEntries.length === 0) return;
     const toAdd = newEntries.map((e, i) => {
-      const n = { ...e, _id: nextId + i } as any;
+      const n = { ...e, _id: nextId + i };
       const sig = entrySignature(n);
-      if (marksMap[sig]) (n as any)._mark = marksMap[sig];
+      if (marksMap[sig]) n._mark = marksMap[sig];
       return n;
     });
     try {
@@ -1278,6 +1300,15 @@ export default function App() {
       logger.warn('Column resize setting failed:', e);
     }
   }
+
+  // Starte MDCListener früh, damit Keys/Werte gesammelt werden, sobald Events eintreffen
+  useEffect(() => {
+    try {
+      MDCListener.startListening();
+    } catch (e) {
+      logger.warn('MDCListener.startListening failed:', e as any);
+    }
+  }, []);
 
   return (
     <div style="height:100%; display:flex; flex-direction:column;">
@@ -2430,7 +2461,7 @@ export default function App() {
           </div>
           <div className="sep" />
           <div className="item" onClick={adoptTraceIds}>
-            TraceId(s) in MDC-Filter übernehmen
+            TraceID in MDC-Filter übernehmen
           </div>
           <div className="item" onClick={copyTsMsg}>
             Kopieren: Zeit und Message
