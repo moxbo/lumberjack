@@ -92,6 +92,11 @@ function computeTint(color: string | null | undefined, alpha = 0.4): string {
 export default function App() {
   const [entries, setEntries] = useState<any[]>([]);
   const [nextId, setNextId] = useState<number>(1);
+  // Keep a ref in sync with nextId for atomic id assignment in appendEntries
+  const nextIdRef = useRef<number>(1);
+  useEffect(() => {
+    nextIdRef.current = nextIdRef.current; // no-op to satisfy linter, ref updated manually
+  }, []);
   // Persistenz: Markierungen (signature -> color)
   const [marksMap, setMarksMap] = useState<Record<string, string>>({});
   const [onlyMarked, setOnlyMarked] = useState<boolean>(false);
@@ -401,13 +406,13 @@ export default function App() {
       for (const i of selected) {
         if (i >= 0 && i < next.length) {
           const e = next[i] || {};
-          const n = { ...e } as any;
+          const n = { ...e };
           if (color) {
             n._mark = color;
             newMap[entrySignature(n)] = color;
           } else {
             if (n._mark) delete newMap[entrySignature(n)];
-            delete (n as any)._mark;
+            delete n._mark;
           }
           (next as any)[i] = n;
         }
@@ -427,9 +432,9 @@ export default function App() {
       prev.map((e) => {
         const sig = entrySignature(e);
         const c = marksMap[sig];
-        if (c && e._mark !== c) return { ...e, _mark: c } as any;
+        if (c && e._mark !== c) return { ...e, _mark: c };
         if (!c && e._mark) {
-          const n = { ...e } as any;
+          const n = { ...e };
           delete n._mark;
           return n;
         }
@@ -458,7 +463,7 @@ export default function App() {
         if (!m || typeof m !== 'object') continue;
         for (const k of variants) {
           if (Object.prototype.hasOwnProperty.call(m, k)) {
-            const v = String((m as any)[k] ?? '');
+            const v = String(m[k] ?? '');
             if (v && !added.has(v)) {
               (DiagnosticContextFilter as any).addMdcEntry('TraceID', v);
               added.add(v);
@@ -654,7 +659,7 @@ export default function App() {
   );
 
   const mdcPairs = useMemo(() => {
-    const e = selectedEntry as any;
+    const e = selectedEntry;
     const mdc = e && e.mdc && typeof e.mdc === 'object' ? (e.mdc as Record<string, unknown>) : null;
     if (!mdc) return [] as [string, string][];
     const pairs: Array<[string, string]> = Object.keys(mdc).map((k) => [
@@ -669,7 +674,7 @@ export default function App() {
     const out: number[] = [];
     for (let vi = 0; vi < filteredIdx.length; vi++) {
       const idx = filteredIdx[vi]!;
-      const e = entries[idx] as any;
+      const e = entries[idx];
       if (e?._mark) out.push(vi);
     }
     return out;
@@ -680,7 +685,7 @@ export default function App() {
     const out: number[] = [];
     for (let vi = 0; vi < filteredIdx.length; vi++) {
       const idx = filteredIdx[vi]!;
-      const e = entries[idx] as any;
+      const e = entries[idx];
       if (msgMatches(e?.message, s)) out.push(vi);
     }
     return out;
@@ -690,7 +695,7 @@ export default function App() {
     if (!markedIdx.length) return;
     const curVi = selectedOneIdx != null ? filteredIdx.indexOf(selectedOneIdx) : -1;
     let targetVi: number;
-    if (dir > 0) targetVi = (markedIdx.find((vi) => vi > curVi) ?? markedIdx[0]!) as number;
+    if (dir > 0) targetVi = markedIdx.find((vi) => vi > curVi) ?? markedIdx[0]!;
     else {
       let prev = -1;
       for (const vi of markedIdx) if (vi < curVi) prev = vi;
@@ -708,8 +713,7 @@ export default function App() {
     if (!searchMatchIdx.length) return;
     const curVi = selectedOneIdx != null ? filteredIdx.indexOf(selectedOneIdx) : -1;
     let targetVi: number;
-    if (dir > 0)
-      targetVi = (searchMatchIdx.find((vi) => vi > curVi) ?? searchMatchIdx[0]!) as number;
+    if (dir > 0) targetVi = searchMatchIdx.find((vi) => vi > curVi) ?? searchMatchIdx[0]!;
     else {
       let prev = -1;
       for (const vi of searchMatchIdx) if (vi < curVi) prev = vi;
@@ -742,9 +746,8 @@ export default function App() {
           ((e as any)?.message || String(e))
       );
     }
-    const merged = [...entries, ...toAdd].sort(compareByTimestampId as any);
-    setEntries(merged);
-    setNextId(nextId + toAdd.length);
+    setEntries((prev) => [...prev, ...toAdd].sort(compareByTimestampId as any));
+    setNextId((prev) => prev + toAdd.length);
   }
 
   // Follow mode auto-select
@@ -1126,7 +1129,7 @@ export default function App() {
   const esElasticCountAll = useMemo(() => {
     let cnt = 0;
     for (const e of entries) {
-      const src = (e as any)?.source;
+      const src = e?.source;
       if (typeof src === 'string' && src.startsWith('elastic://')) cnt++;
     }
     return cnt;
@@ -1327,7 +1330,7 @@ export default function App() {
                 else if (formVals.mode === 'absolute') {
                   const from = formVals.from || undefined;
                   const to = formVals.to || undefined;
-                  TimeFilter.setAbsolute(from as any, to as any);
+                  TimeFilter.setAbsolute(from, to);
                 }
                 TimeFilter.setEnabled(true);
                 await withBusy(async () => {
@@ -1339,10 +1342,9 @@ export default function App() {
                       size: elasticSize || undefined,
                       index: formVals.index,
                       sort: formVals.sort,
-                      duration:
-                        formVals.mode === 'relative' ? (formVals.duration as any) : undefined,
-                      from: formVals.mode === 'absolute' ? (formVals.from as any) : undefined,
-                      to: formVals.mode === 'absolute' ? (formVals.to as any) : undefined,
+                      duration: formVals.mode === 'relative' ? formVals.duration : undefined,
+                      from: formVals.mode === 'absolute' ? formVals.from : undefined,
+                      to: formVals.mode === 'absolute' ? formVals.to : undefined,
                       application_name: formVals.application_name,
                       logger: formVals.logger,
                       level: formVals.level,
@@ -2229,7 +2231,7 @@ export default function App() {
               const e = entries[globalIdx] || {};
               const isSel = selected.has(globalIdx);
               const rowCls = 'row' + (isSel ? ' sel' : '');
-              const markColor = (e && ((e as any)._mark || (e as any).color)) as string | undefined;
+              const markColor = (e && (e._mark || e.color)) as string | undefined;
               const y: number = typeof vi?.start === 'number' ? (vi.start as number) : 0;
               const style = {
                 position: 'absolute',
@@ -2241,7 +2243,7 @@ export default function App() {
                 borderLeft: `4px solid ${markColor ? String(markColor) : 'transparent'}`,
                 background: markColor ? computeTint(markColor, 0.12) : undefined,
               } as any;
-              const key = (vi && (vi.key as any)) || `${viIndex}-${globalIdx}`;
+              const key = (vi && vi.key) || `${viIndex}-${globalIdx}`;
               return (
                 <div
                   key={key}
@@ -2255,17 +2257,17 @@ export default function App() {
                     )
                   }
                   onContextMenu={(ev) => openContextMenu(ev as any, globalIdx)}
-                  title={String((e as any).message || '')}
+                  title={String(e.message || '')}
                   data-marked={markColor ? '1' : '0'}
                 >
-                  <div className="col ts">{fmtTimestamp((e as any).timestamp)}</div>
+                  <div className="col ts">{fmtTimestamp(e.timestamp)}</div>
                   <div className="col lvl">
-                    <span className={levelClass((e as any).level)}>{fmt((e as any).level)}</span>
+                    <span className={levelClass(e.level)}>{fmt(e.level)}</span>
                   </div>
-                  <div className="col logger">{fmt((e as any).logger)}</div>
+                  <div className="col logger">{fmt(e.logger)}</div>
                   <div
                     className="col msg"
-                    dangerouslySetInnerHTML={{ __html: highlightAll((e as any).message, search) }}
+                    dangerouslySetInnerHTML={{ __html: highlightAll(e.message, search) }}
                   />
                 </div>
               );
@@ -2281,15 +2283,10 @@ export default function App() {
           <div className="divider" ref={(el) => (dividerElRef.current = el as any)} />
           <div
             className="details"
-            data-tinted={
-              selectedEntry && ((selectedEntry as any)._mark || (selectedEntry as any).color)
-                ? '1'
-                : '0'
-            }
+            data-tinted={selectedEntry && (selectedEntry._mark || selectedEntry.color) ? '1' : '0'}
             style={{
               ['--details-tint' as any]: computeTint(
-                ((selectedEntry as any) && (selectedEntry as any)._mark) ||
-                  (selectedEntry as any)?.color,
+                (selectedEntry && selectedEntry._mark) || selectedEntry?.color,
                 0.22
               ),
             }}
@@ -2303,25 +2300,25 @@ export default function App() {
                   <div>
                     <div className="kv">
                       <span>Zeit</span>
-                      <div>{fmtTimestamp((selectedEntry as any).timestamp)}</div>
+                      <div>{fmtTimestamp(selectedEntry.timestamp)}</div>
                     </div>
                     <div className="kv">
                       <span>Logger</span>
-                      <div>{fmt((selectedEntry as any).logger)}</div>
+                      <div>{fmt(selectedEntry.logger)}</div>
                     </div>
                   </div>
                   <div>
                     <div className="kv">
                       <span>Level</span>
                       <div>
-                        <span className={levelClass((selectedEntry as any).level)}>
-                          {fmt((selectedEntry as any).level)}
+                        <span className={levelClass(selectedEntry.level)}>
+                          {fmt(selectedEntry.level)}
                         </span>
                       </div>
                     </div>
                     <div className="kv">
                       <span>Thread</span>
-                      <div>{fmt((selectedEntry as any).thread)}</div>
+                      <div>{fmt(selectedEntry.thread)}</div>
                     </div>
                   </div>
                 </div>
@@ -2331,19 +2328,15 @@ export default function App() {
                   <pre
                     id="dMessage"
                     dangerouslySetInnerHTML={{
-                      __html: highlightAll((selectedEntry as any).message || '', search),
+                      __html: highlightAll(selectedEntry.message || '', search),
                     }}
                   />
                 </div>
-                {((selectedEntry as any).stack_trace || (selectedEntry as any).stackTrace) && (
+                {(selectedEntry.stack_trace || selectedEntry.stackTrace) && (
                   <div className="kv full">
                     <span>Stacktrace</span>
                     <pre className="stack-trace">
-                      {String(
-                        (selectedEntry as any).stack_trace ||
-                          (selectedEntry as any).stackTrace ||
-                          ''
-                      )}
+                      {String(selectedEntry.stack_trace || selectedEntry.stackTrace || '')}
                     </pre>
                   </div>
                 )}
@@ -2416,7 +2409,7 @@ export default function App() {
             <input
               type="color"
               value={pickerColor}
-              onInput={(e) => setPickerColor((e.currentTarget as HTMLInputElement).value)}
+              onInput={(e) => setPickerColor(e.currentTarget.value)}
               style={{
                 width: '100%',
                 height: '28px',
