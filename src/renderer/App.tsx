@@ -2195,7 +2195,9 @@ export default function App() {
                     const nv = !v;
                     try {
                       void window.api.settingsSet({ onlyMarked: nv });
-                    } catch {}
+                    } catch (e) {
+                      logger.error('Persisting onlyMarked setting failed:', e);
+                    }
                     return nv;
                   })
                 }
