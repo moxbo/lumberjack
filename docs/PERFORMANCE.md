@@ -164,17 +164,17 @@ perfService.mark('create-window-initiated');
 
 ### Startup Sequence
 
-**Before**:
+**Before (HISTORICAL - Fixed in this PR)**:
 
 1. Load moment.js, adm-zip, canvas
-2. **Synchronously read settings file (BLOCKING!)**
+2. **Synchronously read settings file (BLOCKING!)** ← This caused 9+ second startup delays
 3. Open log stream
 4. Generate menu icons
 5. Build menu
 6. Create window (delayed by settings load)
 7. Load renderer
 
-**After**:
+**After (Current optimized flow)**:
 
 1. Create window immediately (show: false)
 2. Build menu with defaults
@@ -222,8 +222,12 @@ If you're experiencing startup times > 3 seconds, check the performance logs:
 
 1. **Settings file on slow storage**
    - Symptom: Large gap between `settings-load-start` and `settings-loaded-deferred`
-   - Solution: Settings file is on network drive or slow disk
-   - Impact: Now non-blocking (doesn't delay window), but still worth investigating
+   - Causes: Settings file on network drive, slow disk, or cloud-synced folder
+   - Solutions:
+     - Check settings file location: typically in `%AppData%\Lumberjack` (Windows) or `~/Library/Application Support/Lumberjack` (macOS)
+     - If on network drive or cloud storage, move to local SSD
+     - Disable cloud sync (OneDrive, Dropbox) for the settings directory
+   - Impact: Now non-blocking (doesn't delay window), but still worth investigating for faster settings availability
 
 2. **Antivirus scanning**
    - Symptom: Large gap between `app-ready` and `platform-setup-complete`
