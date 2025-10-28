@@ -836,7 +836,11 @@ function createWindow(opts: { makePrimary?: boolean } = {}): BrowserWindow {
               loaded = true;
               break;
             } catch (e) {
-              log.error('Failed to load file', candidate, e instanceof Error ? e.message : String(e));
+              log.error(
+                'Failed to load file',
+                candidate,
+                e instanceof Error ? e.message : String(e)
+              );
             }
           }
         } catch (e) {
@@ -849,7 +853,9 @@ function createWindow(opts: { makePrimary?: boolean } = {}): BrowserWindow {
       }
 
       if (!loaded) {
-        log.info('No production dist index.html found; falling back to root index.html (likely dev)');
+        log.info(
+          'No production dist index.html found; falling back to root index.html (likely dev)'
+        );
         try {
           void win.loadFile('index.html');
           cachedDistIndexPath = 'index.html'; // Cache fallback path
@@ -896,11 +902,11 @@ function createWindow(opts: { makePrimary?: boolean } = {}): BrowserWindow {
     perfService.mark('menu-build-start');
     buildMenu();
     perfService.mark('menu-built');
-    
+
     perfService.mark('settings-load-start');
     await settingsService.load();
     perfService.mark('settings-loaded-deferred');
-    
+
     const settings = settingsService.get();
     if (settings.logToFile) {
       perfService.mark('logstream-open-start');
@@ -953,7 +959,7 @@ void app.whenReady().then(async () => {
   // to avoid blocking the window from appearing
 
   perfService.mark('platform-setup-start');
-  
+
   if (process.platform === 'darwin' && app.dock) {
     const macIconPath = resolveMacIconPath();
     if (macIconPath) {

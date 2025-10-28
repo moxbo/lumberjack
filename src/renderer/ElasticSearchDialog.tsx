@@ -273,7 +273,8 @@ export default function ElasticSearchDialog(props: any) {
             placeholder="z. B. my-service"
           />
           <datalist id="esAppNameHistory">
-            {Array.isArray(histAppName) && histAppName.map((v: any, i: any) => <option key={i} value={v} />)}
+            {Array.isArray(histAppName) &&
+              histAppName.map((v: any, i: any) => <option key={i} value={v} />)}
           </datalist>
         </div>
         <div className="kv">

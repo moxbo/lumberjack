@@ -122,7 +122,7 @@ export class PerformanceService {
     } else {
       log.info(`✓ Startup performance OK: ${elapsed}ms`);
     }
-    
+
     // Always log a detailed breakdown for analysis
     this.logDetailedBreakdown();
   }

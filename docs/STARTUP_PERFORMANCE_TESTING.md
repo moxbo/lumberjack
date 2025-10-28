@@ -11,6 +11,7 @@ This document describes how to verify the startup performance improvements imple
 ## Expected Results
 
 After the optimization:
+
 - **Cold start**: < 2 seconds (down from 9+ seconds)
 - **Warm start**: < 1 second
 - **Time-to-interactive**: Immediate (window shows and responds right away)
@@ -20,20 +21,23 @@ After the optimization:
 ### Method 1: Check Performance Logs (Recommended)
 
 1. Build the application:
+
    ```bash
    npm run build:zip:x64
    ```
 
 2. Run the application from the built executable:
+
    ```bash
    # Windows
    .\release\win-unpacked\Lumberjack.exe
-   
+
    # macOS
    ./release/mac/Lumberjack.app/Contents/MacOS/Lumberjack
    ```
 
 3. Check the console output for performance logs. You should see:
+
    ```
    [PERF] app-start: 0ms
    [PERF] main-loaded: 45ms
@@ -51,7 +55,7 @@ After the optimization:
    [PERF] renderer-loaded: 850ms
    [PERF] window-ready-to-show: 852ms
    ✓ Startup performance OK: 852ms
-   
+
    === Startup Time Breakdown ===
      app-start → main-loaded: 45ms
      main-loaded → ipc-handlers-register-start: 1ms
@@ -73,13 +77,14 @@ After the optimization:
 4. **Verify**: The `window-ready-to-show` time should be **< 2000ms** (previously was 9172ms)
 
 5. Check that settings load happens AFTER window is shown:
+
    ```
    [PERF] menu-build-start: 855ms
    [PERF] menu-built: 858ms
    [PERF] settings-load-start: 859ms
    [PERF] settings-loaded-deferred: 1200ms
    ```
-   
+
    Note: Settings load time (859ms → 1200ms = 341ms) is now NON-BLOCKING
 
 ### Method 2: Manual Timing
@@ -96,6 +101,7 @@ After the optimization:
 If you want to see the difference:
 
 **Before (without fix)**:
+
 ```
 Checkout the commit before this PR
 Build and run
@@ -103,6 +109,7 @@ You'll see: window-ready-to-show: ~9000ms+
 ```
 
 **After (with fix)**:
+
 ```
 Checkout this PR
 Build and run
@@ -114,6 +121,7 @@ You'll see: window-ready-to-show: <2000ms
 The detailed breakdown helps identify where time is spent:
 
 ### Expected Breakdown (Good)
+
 ```
 app-start → main-loaded: ~40-60ms        (module loading)
 app-ready → platform-setup-complete: ~5-10ms  (platform initialization)
@@ -123,6 +131,7 @@ window-ready-to-show total: <2000ms
 ```
 
 ### Problem Indicators (Bad)
+
 ```
 settings-load-start → settings-loaded: >5000ms  (slow disk/network)
 renderer-load-start → renderer-loaded: >2000ms  (renderer issue)
@@ -135,13 +144,11 @@ If startup is still > 3 seconds after the fix, check:
 
 1. **Antivirus**: Add Lumberjack to exclusions
    - Symptom: Large gap between `app-ready` and `platform-setup-complete`
-   
-2. **Settings on slow storage**: 
+2. **Settings on slow storage**:
    - Check settings location: `%AppData%\Lumberjack` (Windows)
    - Move off network drive or cloud-synced folder
    - Symptom: Large gap between `settings-load-start` and `settings-loaded-deferred`
    - Note: This is now NON-BLOCKING but still worth fixing
-   
 3. **Renderer loading slow**:
    - Rebuild production bundle: `npm run build:renderer`
    - Check for corrupt build
@@ -188,7 +195,6 @@ If startup is still slow after this fix, please provide:
 - The icon loading (icon-load-start → icon-load-end) happens AFTER the window is shown
   - This is intentional and doesn't affect perceived startup time
   - Icon load time is typically < 20ms
-  
 - The parsers setup also happens in background (parsers-setup-start → parsers-setup-complete)
   - This is also non-blocking
   - Typically < 10ms

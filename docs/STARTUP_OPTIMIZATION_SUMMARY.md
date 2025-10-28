@@ -3,8 +3,9 @@
 ## Problem Statement
 
 The user reported extremely slow application startup:
+
 - **window-ready-to-show: 9172ms** (9+ seconds)
-- icon-load-start: 9175ms  
+- icon-load-start: 9175ms
 - icon-load-end: 9185ms
 
 The request was to investigate and accelerate application startup.
@@ -19,18 +20,19 @@ Through detailed code analysis, I identified the critical bottleneck:
 // BEFORE (BAD - BLOCKING)
 void app.whenReady().then(async () => {
   perfService.mark('app-ready');
-  
+
   // ❌ THIS BLOCKS EVERYTHING
   perfService.mark('settings-load-start');
-  await settingsService.load();  // <-- Can take 9+ seconds!
+  await settingsService.load(); // <-- Can take 9+ seconds!
   perfService.mark('settings-loaded');
-  
+
   // Window creation waits until settings finish loading
   createWindow({ makePrimary: true });
 });
 ```
 
 **Why this was problematic:**
+
 - If settings file was on slow storage (network drive, cloud sync, slow HDD)
 - Or if antivirus was scanning the settings file
 - Or if the disk I/O was slow for any reason
@@ -47,12 +49,12 @@ The fix was surprisingly simple but highly effective:
 // AFTER (GOOD - NON-BLOCKING)
 void app.whenReady().then(async () => {
   perfService.mark('app-ready');
-  
+
   // ✅ Create window IMMEDIATELY
   perfService.mark('create-window-start');
   createWindow({ makePrimary: true });
   perfService.mark('create-window-initiated');
-  
+
   // Settings load in background (non-blocking)
   // This happens AFTER window is already showing
 });
@@ -60,9 +62,9 @@ void app.whenReady().then(async () => {
 // Inside createWindow(), AFTER window is created:
 setImmediate(async () => {
   perfService.mark('settings-load-start');
-  await settingsService.load();  // <-- Still might take time, but doesn't block window!
+  await settingsService.load(); // <-- Still might take time, but doesn't block window!
   perfService.mark('settings-loaded-deferred');
-  
+
   // Update menu with loaded settings
   updateMenu();
 });
@@ -71,18 +73,21 @@ setImmediate(async () => {
 ## Implementation Details
 
 ### 1. Deferred Settings Loading
+
 - **Change**: Moved `await settingsService.load()` from before `createWindow()` to after
 - **Location**: From `app.whenReady()` to inside `createWindow()` using `setImmediate()`
 - **Impact**: Window appears immediately, settings load in background
 - **Result**: Startup time reduced from 9172ms to < 2000ms
 
 ### 2. Dist File Resolution Caching
+
 - **Change**: Cache the resolved `dist/index.html` path
 - **Why**: Eliminates repeated `fs.existsSync()` calls (6+ candidates checked each time)
 - **Impact**: Subsequent windows create faster (~5-10ms saved)
 - **Code**: `let cachedDistIndexPath: string | null = null;`
 
 ### 3. Comprehensive Performance Instrumentation
+
 - **Change**: Added 15+ performance marks throughout startup
 - **Marks Added**:
   - `ipc-handlers-register-start`, `ipc-handlers-registered`
@@ -97,6 +102,7 @@ setImmediate(async () => {
 - **Impact**: Better visibility into bottlenecks, helps prevent regressions
 
 ### 4. Documentation Updates
+
 - **Updated**: `docs/PERFORMANCE.md` with new optimizations
 - **Added**: Troubleshooting section with actionable solutions
 - **Created**: `docs/STARTUP_PERFORMANCE_TESTING.md` for verification
@@ -104,6 +110,7 @@ setImmediate(async () => {
 ## Results
 
 ### Before Optimization
+
 ```
 [PERF] app-ready: 120ms
 [PERF] settings-load-start: 121ms
@@ -112,6 +119,7 @@ setImmediate(async () => {
 ```
 
 ### After Optimization
+
 ```
 [PERF] app-ready: 120ms
 [PERF] create-window-start: 126ms
@@ -126,6 +134,7 @@ setImmediate(async () => {
 ```
 
 ### Performance Improvement
+
 - **Startup time**: 9172ms → 852ms (90.7% faster, 10X improvement)
 - **User experience**: Immediate window appearance vs 9s wait
 - **Settings load**: Still takes time but no longer blocks startup
@@ -133,6 +142,7 @@ setImmediate(async () => {
 ## Testing
 
 All tests pass:
+
 - ✅ Build successful
 - ✅ Unit tests pass (smoke tests, msg-filter tests, MDC flow tests)
 - ✅ Code review completed (suggestions addressed)
