@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'preact/hooks';
-import { MDCListener } from '../store/mdcListener.js';
-import { DiagnosticContextFilter, dcEntryId } from '../store/dcFilter.js';
-import { LoggingStore } from '../store/loggingStore.js';
+import { MDCListener } from '../store/mdcListener';
+import { DiagnosticContextFilter, dcEntryId } from '../store/dcFilter';
+import { LoggingStore } from '../store/loggingStore';
 
 export default function DCFilterPanel() {
   const [keys, setKeys] = useState([]);
@@ -251,6 +251,9 @@ export default function DCFilterPanel() {
                           class="native-checkbox"
                           checked={!!e.active}
                           onChange={(ev) => toggleActive(e, ev.currentTarget.checked)}
+                          onClick={(ev) => ev.stopPropagation()}
+                          onMouseDown={(ev) => ev.stopPropagation()}
+                          onContextMenu={(ev) => ev.stopPropagation()}
                           aria-label={e.active ? 'aktiv' : 'aus'}
                           title={e.active ? 'aktiv' : 'aus'}
                         />

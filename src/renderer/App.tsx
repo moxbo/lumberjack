@@ -2015,16 +2015,18 @@ export default function App() {
             DC-Filter…
           </button>
           {(() => {
-            const dcCount = DiagnosticContextFilter.getDcEntries().length;
-            const dcEnabled = DiagnosticContextFilter.isEnabled();
-            if (dcCount === 0) return null;
+            const entries = DiagnosticContextFilter.getDcEntries();
+            const total = entries.length;
+            const active = entries.filter((e) => e.active).length;
+            const enabled = DiagnosticContextFilter.isEnabled() && active > 0;
+            if (total === 0) return null;
             return (
               <span
                 className="status"
-                title={dcEnabled ? 'DC-Filter aktiv' : 'DC-Filter gesetzt, aber deaktiviert'}
+                title={enabled ? 'DC-Filter aktiv' : 'DC-Filter gesetzt, aber deaktiviert'}
                 style={{ marginLeft: '6px' }}
               >
-                {dcEnabled ? `DC ${dcCount} aktiv` : `DC ${dcCount} aus`}
+                {enabled ? `DC ${active} aktiv` : `DC ${total} aus`}
               </span>
             );
           })()}

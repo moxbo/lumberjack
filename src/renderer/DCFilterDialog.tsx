@@ -257,6 +257,9 @@ export default function DCFilterDialog(): preact.JSX.Element {
                         class="native-checkbox"
                         checked={e.active}
                         onChange={(ev) => toggleActive(e, (ev.currentTarget as HTMLInputElement).checked)}
+                        onClick={(ev) => ev.stopPropagation()}
+                        onMouseDown={(ev) => ev.stopPropagation()}
+                        onContextMenu={(ev) => ev.stopPropagation()}
                         aria-label={e.active ? 'aktiv' : 'aus'}
                         title={e.active ? 'aktiv' : 'aus'}
                       />

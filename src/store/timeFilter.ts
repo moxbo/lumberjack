@@ -157,5 +157,5 @@ class TimeFilterImpl {
 }
 
 // Lazy singleton
-import { lazyInstance } from './_lazy.js';
+import { lazyInstance } from './_lazy';
 export const TimeFilter = lazyInstance(() => new TimeFilterImpl());

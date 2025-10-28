@@ -118,27 +118,32 @@ class DiagnosticContextFilterImpl {
     const id = entryKey(k, v);
     if (this._map.delete(id)) this._em.emit();
   }
-  activateMdcEntry(key: string, val: string): void {
+  /**
+   * Setzt den Aktiv-Status für alle internen Einträge, die dem (kanonischen) Key+Value entsprechen.
+   * Das ist robuster, falls historisch Duplikate existieren sollten.
+   */
+  private _setMdcEntryActive(key: string, val: string, active: boolean): void {
     const k = this._normalizeKey(key);
     if (!k) return;
     const v = this._normalizeVal(val);
-    const id = entryKey(k, v);
-    const e = this._map.get(id);
-    if (e && !e.active) {
-      e.active = true;
-      this._em.emit();
+    let changed = false;
+    for (const e of this._map.values()) {
+      const ek = this._normalizeKey(e.key);
+      const ev = this._normalizeVal(e.val);
+      if (ek === k && ev === v) {
+        if (e.active !== active) {
+          e.active = active;
+          changed = true;
+        }
+      }
     }
+    if (changed) this._em.emit();
+  }
+  activateMdcEntry(key: string, val: string): void {
+    this._setMdcEntryActive(key, val, true);
   }
   deactivateMdcEntry(key: string, val: string): void {
-    const k = this._normalizeKey(key);
-    if (!k) return;
-    const v = this._normalizeVal(val);
-    const id = entryKey(k, v);
-    const e = this._map.get(id);
-    if (e && e.active) {
-      e.active = false;
-      this._em.emit();
-    }
+    this._setMdcEntryActive(key, val, false);
   }
   reset(): void {
     if (this._map.size) {
@@ -190,11 +195,18 @@ class DiagnosticContextFilterImpl {
     const toSafeString = (val: unknown): string => {
       if (val == null) return '';
       if (typeof val === 'string') return val;
-      try {
-        return JSON.stringify(val);
-      } catch {
+      if (typeof val === 'number' || typeof val === 'boolean' || typeof val === 'bigint') {
         return String(val);
       }
+      if (typeof val === 'object' || typeof val === 'function') {
+        try {
+          return JSON.stringify(val);
+        } catch {
+          return '';
+        }
+      }
+      // symbol/unknown
+      return '';
     };
 
     for (const [canonKey, arr] of groups) {
@@ -218,7 +230,7 @@ class DiagnosticContextFilterImpl {
           }
         } else {
           // Match, wenn einer der vorhandenen Werte exakt gleich ist
-          if (present.includes(String(it.val))) {
+          if (present.includes(it.val)) {
             ok = true;
             break;
           }
@@ -230,7 +242,7 @@ class DiagnosticContextFilterImpl {
   }
 }
 
-import { lazyInstance } from './_lazy.js';
+import { lazyInstance } from './_lazy';
 
 // Export the singleton lazily to avoid temporal-dead-zone issues when modules
 // import each other during initialization (bundlers can reorder/rename symbols).
