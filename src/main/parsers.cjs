@@ -29,6 +29,7 @@ var __toCommonJS = (mod) => __copyProps(__defProp({}, "__esModule", { value: tru
 var parsers_exports = {};
 __export(parsers_exports, {
   fetchElasticLogs: () => fetchElasticLogs,
+  fetchElasticPage: () => fetchElasticPage,
   parseJsonFile: () => parseJsonFile,
   parsePaths: () => parsePaths,
   parseTextLines: () => parseTextLines,
@@ -58,6 +59,20 @@ function getAdmZip() {
     }
   }
   return AdmZip;
+}
+function toOptionalString(v) {
+  if (v == null) return null;
+  if (typeof v === "string") return v;
+  try {
+    const s = String(v);
+    return s;
+  } catch {
+    return null;
+  }
+}
+function toStringOr(v, def) {
+  const s = toOptionalString(v);
+  return s == null ? def : s;
 }
 function toEntry(obj = {}, fallbackMessage = "", source = "") {
   function normalizeStack(o) {
@@ -122,13 +137,19 @@ function toEntry(obj = {}, fallbackMessage = "", source = "") {
     return null;
   }
   const stackTrace = normalizeStack(obj);
+  const tsVal = obj.timestamp ?? obj["@timestamp"] ?? obj.time;
+  const lvlVal = obj.level ?? obj.severity ?? obj.loglevel;
+  const loggerVal = obj.logger ?? obj.logger_name ?? obj.category;
+  const threadVal = obj.thread ?? obj.thread_name;
+  const msgVal = obj.message ?? obj.msg ?? obj.log ?? fallbackMessage ?? "";
+  const traceVal = obj.traceId ?? obj.trace_id ?? obj.trace ?? obj["trace.id"] ?? obj.TraceID;
   return {
-    timestamp: obj.timestamp || obj["@timestamp"] || obj.time || null,
-    level: obj.level || obj.severity || obj.loglevel || null,
-    logger: obj.logger || obj.logger_name || obj.category || null,
-    thread: obj.thread || obj.thread_name || null,
-    message: obj.message || obj.msg || obj.log || fallbackMessage || "",
-    traceId: obj.traceId || obj.trace_id || obj.trace || obj["trace.id"] || obj.TraceID || null,
+    timestamp: toOptionalString(tsVal),
+    level: toOptionalString(lvlVal),
+    logger: toOptionalString(loggerVal),
+    thread: toOptionalString(threadVal),
+    message: toStringOr(msgVal, ""),
+    traceId: toOptionalString(traceVal),
     stackTrace: stackTrace || null,
     raw: obj,
     source
@@ -308,7 +329,8 @@ function buildElasticSearchBody(opts) {
     sort: [
       {
         "@timestamp": { order: opts.sort ?? "asc", unmapped_type: "boolean" }
-      }
+      },
+      { _id: { order: opts.sort ?? "asc" } }
     ],
     _source: { excludes: [] },
     stored_fields: ["*"],
@@ -329,6 +351,9 @@ function buildElasticSearchBody(opts) {
       fragment_size: 2147483647
     }
   };
+  if (Array.isArray(opts.searchAfter) && opts.searchAfter.length > 0) {
+    body.search_after = opts.searchAfter;
+  }
   return body;
 }
 function buildElasticHeaders(auth) {
@@ -407,7 +432,7 @@ function postJson(urlStr, body, headers, allowInsecureTLS) {
     }
   });
 }
-async function fetchElasticLogs(opts) {
+async function fetchElasticPage(opts) {
   const base = (opts.url || "").replace(/\/$/, "");
   if (!base) throw new Error("Elasticsearch URL (opts.url) ist erforderlich");
   const index = encodeURIComponent(opts.index ?? "_all");
@@ -417,10 +442,17 @@ async function fetchElasticLogs(opts) {
   const data = await postJson(url, body, headers, !!opts.allowInsecureTLS);
   const dataObj = data && typeof data === "object" ? data : {};
   const hitsContainer = dataObj.hits;
-  const hitsArray = hitsContainer && typeof hitsContainer === "object" ? hitsContainer.hits : void 0;
-  const hits = Array.isArray(hitsArray) ? hitsArray : [];
+  const totalVal = (() => {
+    const t = hitsContainer && hitsContainer.total;
+    if (!t) return 0;
+    if (typeof t === "number") return t;
+    if (typeof t === "object" && t != null && typeof t.value === "number")
+      return Number(t.value) || 0;
+    return 0;
+  })();
+  const hitsArray = hitsContainer && Array.isArray(hitsContainer.hits) ? hitsContainer.hits : [];
   const out = [];
-  for (const h of hits) {
+  for (const h of hitsArray) {
     const hObj = h && typeof h === "object" ? h : {};
     const src = hObj._source ?? hObj.fields ?? {};
     const srcObj = src && typeof src === "object" ? src : {};
@@ -431,11 +463,25 @@ async function fetchElasticLogs(opts) {
     const e = toEntry(srcObj, "", `elastic://${indexStr}/${idStr}`);
     out.push(e);
   }
-  return out;
+  const lastHit = hitsArray.length > 0 ? hitsArray[hitsArray.length - 1] : null;
+  const sortVals = lastHit && Array.isArray(lastHit.sort) ? lastHit.sort : null;
+  const size = opts.size ?? 1e3;
+  const hasMore = hitsArray.length >= size;
+  return {
+    entries: out,
+    total: totalVal,
+    hasMore,
+    nextSearchAfter: hasMore && sortVals && sortVals.length ? sortVals : null
+  };
+}
+async function fetchElasticLogs(opts) {
+  const page = await fetchElasticPage(opts);
+  return page.entries;
 }
 // Annotate the CommonJS export names for ESM import in node:
 0 && (module.exports = {
   fetchElasticLogs,
+  fetchElasticPage,
   parseJsonFile,
   parsePaths,
   parseTextLines,

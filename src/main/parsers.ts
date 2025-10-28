@@ -61,6 +61,22 @@ function getAdmZip(): AdmZipConstructor {
   return AdmZip;
 }
 
+// Helper to safely coerce unknown to string/null
+function toOptionalString(v: unknown): string | null {
+  if (v == null) return null;
+  if (typeof v === 'string') return v;
+  try {
+    const s = String(v);
+    return s;
+  } catch {
+    return null;
+  }
+}
+function toStringOr(v: unknown, def: string): string {
+  const s = toOptionalString(v);
+  return s == null ? def : s;
+}
+
 // Normalize one entry into a standard object
 function toEntry(obj: AnyMap = {}, fallbackMessage = '', source = ''): Entry {
   // Normalisiere Stacktrace aus gängigen Feldern
@@ -130,13 +146,27 @@ function toEntry(obj: AnyMap = {}, fallbackMessage = '', source = ''): Entry {
 
   const stackTrace = normalizeStack(obj);
 
+  const tsVal = (obj as AnyMap).timestamp ?? (obj as AnyMap)['@timestamp'] ?? (obj as AnyMap).time;
+  const lvlVal = (obj as AnyMap).level ?? (obj as AnyMap).severity ?? (obj as AnyMap).loglevel;
+  const loggerVal =
+    (obj as AnyMap).logger ?? (obj as AnyMap).logger_name ?? (obj as AnyMap).category;
+  const threadVal = (obj as AnyMap).thread ?? (obj as AnyMap).thread_name;
+  const msgVal =
+    (obj as AnyMap).message ?? (obj as AnyMap).msg ?? (obj as AnyMap).log ?? fallbackMessage ?? '';
+  const traceVal =
+    (obj as AnyMap).traceId ??
+    (obj as AnyMap).trace_id ??
+    (obj as AnyMap).trace ??
+    (obj as AnyMap)['trace.id'] ??
+    (obj as AnyMap).TraceID;
+
   return {
-    timestamp: obj.timestamp || obj['@timestamp'] || obj.time || null,
-    level: obj.level || obj.severity || obj.loglevel || null,
-    logger: obj.logger || obj.logger_name || obj.category || null,
-    thread: obj.thread || obj.thread_name || null,
-    message: obj.message || obj.msg || obj.log || fallbackMessage || '',
-    traceId: obj.traceId || obj.trace_id || obj.trace || obj['trace.id'] || obj.TraceID || null,
+    timestamp: toOptionalString(tsVal),
+    level: toOptionalString(lvlVal),
+    logger: toOptionalString(loggerVal),
+    thread: toOptionalString(threadVal),
+    message: toStringOr(msgVal, ''),
+    traceId: toOptionalString(traceVal),
     stackTrace: stackTrace || null,
     raw: obj,
     source,
@@ -483,42 +513,6 @@ function postJson(
       reject(err);
     }
   });
-}
-
-/**
- * Fetch log entries from Elasticsearch via REST _search API.
- * Returns normalized Entry[] compatible with local file parsers.
- */
-export async function fetchElasticLogs(opts: ElasticsearchOptions): Promise<Entry[]> {
-  const base = (opts.url || '').replace(/\/$/, '');
-  if (!base) throw new Error('Elasticsearch URL (opts.url) ist erforderlich');
-  const index = encodeURIComponent(opts.index ?? '_all');
-  // Adjust URL to include requested query parameters
-  const url = `${base}/${index}/_search?ignore_throttled=false&ignore_unavailable=true`;
-
-  const body = buildElasticSearchBody(opts);
-  const headers = buildElasticHeaders(opts.auth);
-
-  const data = await postJson(url, body, headers, !!opts.allowInsecureTLS);
-  const dataObj = data && typeof data === 'object' ? (data as AnyMap) : {};
-  const hitsContainer = dataObj.hits;
-  const hitsArray =
-    hitsContainer && typeof hitsContainer === 'object' ? (hitsContainer as AnyMap).hits : undefined;
-  const hits: unknown[] = Array.isArray(hitsArray) ? hitsArray : [];
-
-  const out: Entry[] = [];
-  for (const h of hits) {
-    const hObj = h && typeof h === 'object' ? (h as AnyMap) : {};
-    const src = hObj._source ?? hObj.fields ?? {};
-    const srcObj = src && typeof src === 'object' ? (src as AnyMap) : {};
-    const index = hObj._index;
-    const id = hObj._id;
-    const indexStr = typeof index === 'string' ? index : (opts.index ?? '');
-    const idStr = typeof id === 'string' ? id : '';
-    const e = toEntry(srcObj, '', `elastic://${indexStr}/${idStr}`);
-    out.push(e);
-  }
-  return out;
 }
 
 /**
