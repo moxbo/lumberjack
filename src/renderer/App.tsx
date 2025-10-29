@@ -691,10 +691,16 @@ export default function App() {
     const headerEl = parent.querySelector('.list-header') as HTMLElement | null;
     const headerH = headerEl ? headerEl.offsetHeight : 0;
     const viewportH = parent.clientHeight;
-    const rowsViewportH = Math.max(0, viewportH - headerH);
+    // Höhe des unten liegenden Overlays (Details + Divider) aus CSS-Variablen
+    const csRoot = getComputedStyle(document.documentElement);
+    const detailH =
+      parseInt(csRoot.getPropertyValue('--detail-height').trim().replace('px', '')) || 0;
+    const dividerH = parseInt(csRoot.getPropertyValue('--divider-h').trim().replace('px', '')) || 0;
+    const overlayH = Math.max(0, detailH + dividerH);
+    // Tatsächlich sichtbarer Zeilenbereich zwischen Header und Overlay
+    const rowsViewportH = Math.max(0, viewportH - headerH - overlayH);
     // Bei fester Zeilenhöhe kann der Offset direkt berechnet werden
     const y = Math.max(0, Math.round(viIndex * rowHeight));
-    // Gewünschte scrollTop-Position: Zeilenmitte in die Mitte des sichtbaren Zeilenbereichs
     // Gleichung: headerH + y + rowHeight/2 = scrollTop + headerH + rowsViewportH/2
     // => scrollTop = y + rowHeight/2 - rowsViewportH/2
     const desiredTop = y + rowHeight / 2 - rowsViewportH / 2;
@@ -789,33 +795,51 @@ export default function App() {
   function gotoMarked(dir: number) {
     if (!markedIdx.length) return;
     const curVi = selectedOneIdx != null ? filteredIdx.indexOf(selectedOneIdx) : -1;
-    let targetVi: number;
-    if (dir > 0) targetVi = markedIdx.find((vi) => vi > curVi) ?? markedIdx[0]!;
-    else {
-      let prev = -1;
-      for (const vi of markedIdx) if (vi < curVi) prev = vi;
-      targetVi = prev >= 0 ? prev : markedIdx[markedIdx.length - 1]!;
+    const first = markedIdx[0]!;
+    const last = markedIdx[markedIdx.length - 1]!;
+    let targetVi: number | undefined;
+    if (dir > 0) {
+      if (curVi < 0) targetVi = first; // keine Auswahl -> zum ersten
+      else {
+        const next = markedIdx.find((vi) => vi > curVi);
+        targetVi = next != null ? next : last; // kein nächster -> am letzten stehen bleiben
+      }
+    } else {
+      if (curVi < 0) targetVi = last; // keine Auswahl -> zum letzten
+      else {
+        let prev = -1;
+        for (const vi of markedIdx) if (vi < curVi) prev = vi;
+        targetVi = prev >= 0 ? prev : first; // kein vorheriger -> am ersten stehen bleiben
+      }
     }
     const globalIdx: number = filteredIdx[targetVi]!;
     setSelected(new Set([globalIdx]));
     lastClicked.current = globalIdx;
-    // Zentriert scrollen (unter Berücksichtigung des Headers)
     scrollToIndexCenter(targetVi);
   }
   function gotoSearchMatch(dir: number) {
     if (!searchMatchIdx.length) return;
     const curVi = selectedOneIdx != null ? filteredIdx.indexOf(selectedOneIdx) : -1;
-    let targetVi: number;
-    if (dir > 0) targetVi = searchMatchIdx.find((vi) => vi > curVi) ?? searchMatchIdx[0]!;
-    else {
-      let prev = -1;
-      for (const vi of searchMatchIdx) if (vi < curVi) prev = vi;
-      targetVi = prev >= 0 ? prev : searchMatchIdx[searchMatchIdx.length - 1]!;
+    const first = searchMatchIdx[0]!;
+    const last = searchMatchIdx[searchMatchIdx.length - 1]!;
+    let targetVi: number | undefined;
+    if (dir > 0) {
+      if (curVi < 0) targetVi = first; // keine Auswahl -> zum ersten Treffer
+      else {
+        const next = searchMatchIdx.find((vi) => vi > curVi);
+        targetVi = next != null ? next : last; // kein nächster -> am letzten stehen bleiben
+      }
+    } else {
+      if (curVi < 0) targetVi = last; // keine Auswahl -> zum letzten Treffer
+      else {
+        let prev = -1;
+        for (const vi of searchMatchIdx) if (vi < curVi) prev = vi;
+        targetVi = prev >= 0 ? prev : first; // kein vorheriger -> am ersten stehen bleiben
+      }
     }
     const globalIdx: number = filteredIdx[targetVi]!;
     setSelected(new Set([globalIdx]));
     lastClicked.current = globalIdx;
-    // Zentriert scrollen (unter Berücksichtigung des Headers)
     scrollToIndexCenter(targetVi);
   }
 
@@ -2726,15 +2750,9 @@ export default function App() {
             <span>Farbe</span>
             <input
               type="color"
+              className="swatch"
               value={pickerColor}
               onInput={(e) => setPickerColor(e.currentTarget.value)}
-              style={{
-                width: '100%',
-                height: '28px',
-                padding: 0,
-                border: 'none',
-                background: 'transparent',
-              }}
             />
             <button onClick={() => applyMarkColor(pickerColor)} title="Ausgewählte Farbe anwenden">
               Anwenden

@@ -602,7 +602,7 @@ body {
 /* --- Context menu --- */
 .context-menu {
   position: fixed;
-  min-width: 200px;
+  min-width: 220px;
   background: var(--color-bg-paper);
   border: 1px solid var(--color-border);
   border-radius: 8px;
@@ -640,6 +640,30 @@ body {
   border-radius: 4px;
   cursor: pointer;
   border: 1px solid var(--color-border);
+}
+
+/* Color input wie eine Swatch darstellen */
+.context-menu input[type="color"].swatch {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border-radius: 4px;
+  border: 1px solid var(--color-border);
+  background: transparent;
+  cursor: pointer;
+}
+.context-menu input[type="color"].swatch::-webkit-color-swatch-wrapper {
+  padding: 0;
+}
+.context-menu input[type="color"].swatch::-webkit-color-swatch {
+  border: none;
+  border-radius: 4px;
+}
+.context-menu input[type="color"].swatch::-moz-color-swatch {
+  border: none;
+  border-radius: 4px;
 }
 
 /* --- Modal --- */
