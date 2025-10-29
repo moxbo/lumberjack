@@ -666,6 +666,9 @@ function createWindow(opts: { makePrimary?: boolean } = {}): BrowserWindow {
       sandbox: false,
     },
     show: false,
+    // Set background color to match the app theme to prevent white flash
+    // This allows us to show the window earlier without visible flashing
+    backgroundColor: '#0f1113',
   });
 
   if (settings.isMaximized) {
@@ -709,12 +712,25 @@ function createWindow(opts: { makePrimary?: boolean } = {}): BrowserWindow {
       }
       flushPendingAppends();
     }
+
+    // Show window shortly after load completes instead of waiting for ready-to-show
+    // The backgroundColor prevents white flash, and the UI will render progressively
+    // This dramatically improves perceived startup time
+    setTimeout(() => {
+      if (!win.isDestroyed() && !win.isVisible()) {
+        perfService.mark('window-shown-early');
+        win.show();
+      }
+    }, 50);
   });
 
   win.once('ready-to-show', () => {
     perfService.mark('window-ready-to-show');
     perfService.checkStartupPerformance(5000);
-    win.show();
+    // Only show if not already visible (we show early in did-finish-load now)
+    if (!win.isVisible()) {
+      win.show();
+    }
 
     // Defer icon loading completely after window is visible (Windows performance optimization)
     if (process.platform === 'win32') {
