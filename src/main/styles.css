@@ -351,6 +351,9 @@ body {
   /* Scrollbar unsichtbar, aber scrollen weiterhin möglich */
   scrollbar-width: none; /* Firefox */
   -ms-overflow-style: none; /* IE/Edge Legacy */
+  user-select: none; /* Standard-Textmarkierung in der Liste deaktivieren */
+  -webkit-user-select: none;
+  -ms-user-select: none;
 }
 
 /* Scrollbar komplett ausblenden (WebKit) */
