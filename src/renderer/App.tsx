@@ -1324,6 +1324,16 @@ export default function App() {
     }
   }, []);
 
+  // Track when the component has fully mounted and is interactive
+  useEffect(() => {
+    rendererPerf.mark('app-mounted');
+    // Log performance summary after a short delay to capture all initialization
+    setTimeout(() => {
+      const elapsed = rendererPerf.getElapsedTime();
+      logger.log(`[App] Fully initialized in ${Math.round(elapsed)}ms`);
+    }, 100);
+  }, []);
+
   return (
     <div style="height:100%; display:flex; flex-direction:column;">
       {dragActive && <div className="drop-overlay">Dateien hierher ziehen (.log, .json, .zip)</div>}
