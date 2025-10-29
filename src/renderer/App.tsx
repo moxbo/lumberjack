@@ -1902,6 +1902,27 @@ export default function App() {
           >
             Markierung ▶
           </button>
+          <button
+            onClick={() =>
+              setOnlyMarked((v) => {
+                const nv = !v;
+                try {
+                  void window.api.settingsSet({ onlyMarked: nv });
+                } catch (e) {
+                  logger.error('Persisting onlyMarked setting failed:', e);
+                }
+                return nv;
+              })
+            }
+            disabled={!onlyMarked && markedIdx.length === 0}
+            title={
+              !onlyMarked && markedIdx.length === 0
+                ? 'Keine markierten Einträge vorhanden'
+                : 'Nur markierte anzeigen umschalten'
+            }
+          >
+            {onlyMarked ? 'Nur markierte aus' : 'Nur markierte an'}
+          </button>
         </div>
         <div className="section">
           <label>Suche</label>
@@ -2165,20 +2186,9 @@ export default function App() {
             onRemove: () => setFilter((f) => ({ ...f, message: '' })),
           });
         const chips = [...stdFilterChips];
-        chips.push({
-          key: 'onlyMarked',
-          label: onlyMarked ? 'Nur markierte: an' : 'Nur markierte: aus',
-          onRemove: () => {
-            setOnlyMarked(false);
-            try {
-              void window.api.settingsSet({ onlyMarked: false });
-            } catch {}
-          },
-        });
         return (
           <div style={{ padding: '6px 12px' }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
-              <div style={{ fontSize: '12px', color: '#666' }}>Aktive Filter:</div>
               <div className="chips" style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
                 {chips.map((c) => (
                   <span className="chip" key={c.key}>
@@ -2189,27 +2199,6 @@ export default function App() {
                   </span>
                 ))}
               </div>
-              <button
-                onClick={() =>
-                  setOnlyMarked((v) => {
-                    const nv = !v;
-                    try {
-                      void window.api.settingsSet({ onlyMarked: nv });
-                    } catch (e) {
-                      logger.error('Persisting onlyMarked setting failed:', e);
-                    }
-                    return nv;
-                  })
-                }
-                disabled={!onlyMarked && markedIdx.length === 0}
-                title={
-                  !onlyMarked && markedIdx.length === 0
-                    ? 'Keine markierten Einträge vorhanden'
-                    : 'Nur markierte anzeigen umschalten'
-                }
-              >
-                {onlyMarked ? 'Nur markierte aus' : 'Nur markierte an'}
-              </button>
               <button
                 onClick={() => {
                   setSearch('');
