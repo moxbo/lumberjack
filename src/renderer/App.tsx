@@ -1,22 +1,22 @@
 /* eslint-disable */
 /* eslint-disable @typescript-eslint/no-unused-vars, @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-explicit-any, @typescript-eslint/no-base-to-string, @typescript-eslint/explicit-function-return-type, @typescript-eslint/no-misused-promises, no-empty, @typescript-eslint/no-unsafe-return, @typescript-eslint/no-unsafe-argument */
-import {useEffect, useMemo, useRef, useState} from 'preact/hooks';
-import {Fragment} from 'preact';
-import {useVirtualizer} from '@tanstack/react-virtual';
-import {highlightAll} from '../utils/highlight';
-import {msgMatches} from '../utils/msgFilter';
+import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
+import { Fragment } from 'preact';
+import { useVirtualizer } from '@tanstack/react-virtual';
+import { highlightAll } from '../utils/highlight';
+import { msgMatches } from '../utils/msgFilter';
 import logger from '../utils/logger';
-import {rendererPerf} from '../utils/rendererPerf';
+import { rendererPerf } from '../utils/rendererPerf';
 // Dynamic import for DCFilterDialog (code splitting)
 // Preact supports dynamic imports directly
-import {LoggingStore} from '../store/loggingStore';
-import {canonicalDcKey, DiagnosticContextFilter} from '../store/dcFilter';
-import {DragAndDropManager} from '../utils/dnd';
-import {compareByTimestampId} from '../utils/sort';
-import {TimeFilter} from '../store/timeFilter';
-import {lazy, Suspense} from 'preact/compat';
-import type {ElasticSearchOptions} from '../types/ipc';
-import {MDCListener} from '../store/mdcListener';
+import { LoggingStore } from '../store/loggingStore';
+import { canonicalDcKey, DiagnosticContextFilter } from '../store/dcFilter';
+import { DragAndDropManager } from '../utils/dnd';
+import { compareByTimestampId } from '../utils/sort';
+import { TimeFilter } from '../store/timeFilter';
+import { lazy, Suspense } from 'preact/compat';
+import type { ElasticSearchOptions } from '../types/ipc';
+import { MDCListener } from '../store/mdcListener';
 
 // Feste Basisfarben für Markierungen
 const BASE_MARK_COLORS = [
@@ -103,6 +103,8 @@ export default function App() {
   useEffect(() => {
     nextIdRef.current = nextId;
   }, [nextId]);
+  // Leichtgewichtiger Dedupe-Cache für Datei-Quellen: source -> Set(signature)
+  const fileSigCacheRef = useRef<Map<string, Set<string>>>(new Map());
   // Persistenz: Markierungen (signature -> color)
   const [marksMap, setMarksMap] = useState<Record<string, string>>({});
   const [onlyMarked, setOnlyMarked] = useState<boolean>(false);
@@ -758,14 +760,109 @@ export default function App() {
   }
 
   // Append entries helper
-  function appendEntries(newEntries: any[]) {
+  function appendEntries(newEntries: any[], options?: { ignoreExistingForElastic?: boolean }) {
     if (!Array.isArray(newEntries) || newEntries.length === 0) return;
-    const toAdd = newEntries.map((e, i) => {
-      const n = { ...e, _id: nextId + i };
+
+    const ignoreExistingForElastic = !!options?.ignoreExistingForElastic;
+
+    // Prüfe, ob Eintrag aus Elasticsearch stammt
+    const isElastic = (e: any) => typeof e?.source === 'string' && e.source.startsWith('elastic://');
+    // Datei-Quelle: source ohne Schema (kein "://")
+    const isFileSource = (e: any) => {
+      const s = e?.source;
+      return typeof s === 'string' && !s.includes('://');
+    };
+
+    // Bedarf für Dedupe bestimmen
+    const needEsDedup = newEntries.some((e) => isElastic(e));
+    const needFileDedup = newEntries.some((e) => isFileSource(e));
+
+    // Signatur-Set für bereits existierende ES-Einträge aufbauen (nur falls nötig)
+    let existingEsSigs: Set<string> | null = null;
+    if (needEsDedup && !ignoreExistingForElastic) {
+      existingEsSigs = new Set<string>();
+      for (const e of entries) {
+        if (isElastic(e)) existingEsSigs.add(entrySignature(e));
+      }
+    }
+
+    // Datei-Quelle: vorhandene Signaturen pro Quelle initialisieren, falls leer
+    if (needFileDedup && fileSigCacheRef.current.size === 0 && entries.length) {
+      const map = fileSigCacheRef.current;
+      for (const e of entries) {
+        if (!isFileSource(e)) continue;
+        const src = String(e.source);
+        let set = map.get(src);
+        if (!set) {
+          set = new Set<string>();
+          map.set(src, set);
+        }
+        set.add(entrySignature(e));
+      }
+    }
+
+    // Batch-Deduplizierung: ES intern + Datei-Quelle pro source intern
+    const batchEsSigs = new Set<string>();
+    const batchFileSigsBySrc = new Map<string, Set<string>>();
+    const accepted: any[] = [];
+
+    for (const e of newEntries) {
+      // Elasticsearch-Dedupe
+      if (needEsDedup && isElastic(e)) {
+        const sig = entrySignature(e);
+        if (!ignoreExistingForElastic && existingEsSigs && existingEsSigs.has(sig)) continue;
+        if (batchEsSigs.has(sig)) continue;
+        batchEsSigs.add(sig);
+        accepted.push(e);
+        continue;
+      }
+      // Datei-Quellen-Dedupe (pro source)
+      if (needFileDedup && isFileSource(e)) {
+        const src = String(e.source || '');
+        const sig = entrySignature(e);
+        const existingSet = fileSigCacheRef.current.get(src);
+        if (existingSet && existingSet.has(sig)) continue;
+        let batchSet = batchFileSigsBySrc.get(src);
+        if (!batchSet) {
+          batchSet = new Set<string>();
+          batchFileSigsBySrc.set(src, batchSet);
+        }
+        if (batchSet.has(sig)) continue;
+        batchSet.add(sig);
+        accepted.push(e);
+        continue;
+      }
+      // Alle anderen Quellen unverändert
+      accepted.push(e);
+    }
+
+    if (accepted.length === 0) return;
+
+    // IDs atomar über Ref vergeben und Marks anwenden
+    const baseId = nextIdRef.current;
+    const toAdd = accepted.map((e, i) => {
+      const n = { ...e, _id: baseId + i };
       const sig = entrySignature(n);
-      if (marksMap[sig]) n._mark = marksMap[sig];
+      if (marksMap[sig]) (n as any)._mark = marksMap[sig];
       return n;
     });
+    nextIdRef.current = baseId + toAdd.length;
+
+    // Datei-Cache mit neu akzeptierten Einträgen aktualisieren
+    if (needFileDedup) {
+      const map = fileSigCacheRef.current;
+      for (const n of toAdd) {
+        if (!isFileSource(n)) continue;
+        const src = String(n.source || '');
+        let set = map.get(src);
+        if (!set) {
+          set = new Set<string>();
+          map.set(src, set);
+        }
+        set.add(entrySignature(n));
+      }
+    }
+
     try {
       (LoggingStore as any).addEvents(toAdd);
     } catch (e) {
@@ -1168,6 +1265,7 @@ export default function App() {
   const [lastEsForm, setLastEsForm] = useState<any>(null);
   const [esTotal, setEsTotal] = useState<number | null>(null);
   const [esBaseline, setEsBaseline] = useState<number>(0);
+  const [esPitSessionId, setEsPitSessionId] = useState<string | null>(null);
   const esElasticCountAll = useMemo(() => {
     let cnt = 0;
     for (const e of entries) {
@@ -1187,6 +1285,15 @@ export default function App() {
     setLastEsForm(null);
     setEsTotal(null);
     setEsBaseline(0);
+    // Datei-Dedupe-Cache leeren
+    fileSigCacheRef.current = new Map();
+    // PIT-Session schließen (best effort)
+    (async () => {
+      try {
+        if (esPitSessionId) await window.api.elasticClosePit(esPitSessionId);
+      } catch {}
+      setEsPitSessionId(null);
+    })().catch(() => {});
     try {
       (LoggingStore as any).reset();
     } catch (e) {
@@ -1386,14 +1493,69 @@ export default function App() {
                 addToHistory('app', formVals?.application_name || '');
                 addToHistory('env', formVals?.environment || '');
                 setLastEsForm(formVals);
-                if (formVals.mode === 'relative' && formVals.duration)
-                  TimeFilter.setRelative(formVals.duration);
-                else if (formVals.mode === 'absolute') {
-                  const from = formVals.from || undefined;
-                  const to = formVals.to || undefined;
-                  TimeFilter.setAbsolute(from, to);
+
+                // Bestimme Load-Mode gleich zu Beginn
+                const loadMode = String(formVals.loadMode || 'append');
+
+                // Falls wir ersetzen: offene PIT-Session vorher schließen
+                if (loadMode === 'replace' && esPitSessionId) {
+                  try {
+                    await window.api.elasticClosePit(esPitSessionId);
+                  } catch (e) {
+                    logger.warn('elasticClosePit before new search failed:', e as any);
+                  }
+                  setEsPitSessionId(null);
                 }
-                TimeFilter.setEnabled(true);
+
+                // Zeitfilter-Anpassung abhängig von loadMode
+                try {
+                  if (loadMode === 'replace') {
+                    if (formVals.mode === 'relative' && formVals.duration) {
+                      TimeFilter.setRelative(formVals.duration);
+                      TimeFilter.setEnabled(true);
+                    } else if (formVals.mode === 'absolute') {
+                      const from = formVals.from || undefined;
+                      const to = formVals.to || undefined;
+                      TimeFilter.setAbsolute(from, to);
+                      TimeFilter.setEnabled(true);
+                    }
+                  } else {
+                    const state = (TimeFilter as any).getState?.();
+                    const wasEnabled = !!(state && state.enabled);
+                    if (formVals.mode === 'absolute' && wasEnabled) {
+                      const curFrom: string | null = state.from ?? null;
+                      const curTo: string | null = state.to ?? null;
+                      const newFrom: string | null = (formVals.from || '').trim() || null;
+                      const newTo: string | null = (formVals.to || '').trim() || null;
+                      const parseMs = (s: string | null) => {
+                        if (!s) return NaN;
+                        const ms = Date.parse(s);
+                        return isNaN(ms) ? NaN : ms;
+                      };
+                      const minIso = (a: string | null, b: string | null): string | undefined => {
+                        const am = parseMs(a);
+                        const bm = parseMs(b);
+                        if (isNaN(am)) return b || undefined;
+                        if (isNaN(bm)) return a || undefined;
+                        return am <= bm ? a || undefined : b || undefined;
+                      };
+                      const maxIso = (a: string | null, b: string | null): string | undefined => {
+                        const am = parseMs(a);
+                        const bm = parseMs(b);
+                        if (isNaN(am)) return b || undefined;
+                        if (isNaN(bm)) return a || undefined;
+                        return am >= bm ? a || undefined : b || undefined;
+                      };
+                      const unionFrom = minIso(curFrom, newFrom);
+                      const unionTo = maxIso(curTo, newTo);
+                      TimeFilter.setAbsolute(unionFrom, unionTo);
+                      TimeFilter.setEnabled(true);
+                    }
+                  }
+                } catch (e) {
+                  logger.warn('TimeFilter update (Elastic) failed:', e as any);
+                }
+
                 await withBusy(async () => {
                   setEsBusy(true);
                   setEsTotal(null);
@@ -1411,10 +1573,11 @@ export default function App() {
                       level: formVals.level,
                       environment: formVals.environment,
                       allowInsecureTLS: !!formVals.allowInsecureTLS,
+                      // optionale PIT-Optimierungen
+                      keepAlive: '1m',
+                      trackTotalHits: false,
                     } as any;
                     logger.info('[Elastic] Search started', { hasResponse: false });
-                    // Set Baseline (replace => 0, sonst aktueller Elastic-Count)
-                    const loadMode = String(formVals.loadMode || 'append');
                     setEsBaseline(loadMode === 'replace' ? 0 : esElasticCountAll);
                     const res = await window.api.elasticSearch(opts);
                     const total = Array.isArray(res?.entries) ? res.entries.length : 0;
@@ -1424,19 +1587,22 @@ export default function App() {
                       hasResponse: true,
                     });
                     if (res?.ok) {
-                      // Reset pagination when new search is started
                       setEsHasMore(!!res.hasMore);
                       setEsNextSearchAfter((res.nextSearchAfter as any) || null);
+                      setEsPitSessionId((res as any).pitSessionId || null);
                       setEsTotal(
                         typeof (res as any)?.total === 'number' ? Number((res as any).total) : null
                       );
-                      if ((formVals.loadMode || 'replace') === 'replace') {
+                      if (loadMode === 'replace') {
                         setEntries([]);
                         setSelected(new Set());
                         setNextId(1);
                       }
                       if (Array.isArray(res.entries) && res.entries.length)
-                        appendEntries(res.entries as any[]);
+                        appendEntries(res.entries as any[], {
+                          ignoreExistingForElastic: loadMode === 'replace',
+                        });
+                      if (!res.hasMore) setEsPitSessionId(null);
                     } else {
                       alert('Elastic-Fehler: ' + ((res as any)?.error || 'Unbekannt'));
                     }
@@ -2115,22 +2281,23 @@ export default function App() {
                 await withBusy(async () => {
                   setEsBusy(true);
                   try {
-                    const s = TimeFilter.getState();
                     const f = lastEsForm || {};
+                    const mode = (f?.mode || 'relative') as 'relative' | 'absolute';
                     const opts: ElasticSearchOptions = {
                       url: elasticUrl || undefined,
                       size: elasticSize || undefined,
                       index: f?.index || undefined,
                       sort: f?.sort || undefined,
-                      duration: s.mode === 'relative' ? (s.duration as any) : undefined,
-                      from: s.mode === 'absolute' ? (s.from as any) : undefined,
-                      to: s.mode === 'absolute' ? (s.to as any) : undefined,
+                      duration: mode === 'relative' ? (f?.duration as any) : undefined,
+                      from: mode === 'absolute' ? (f?.from as any) : undefined,
+                      to: mode === 'absolute' ? (f?.to as any) : undefined,
                       application_name: f?.application_name,
                       logger: f?.logger,
                       level: f?.level,
                       environment: f?.environment,
                       allowInsecureTLS: !!f?.allowInsecureTLS,
                       searchAfter: token as any,
+                      pitSessionId: esPitSessionId || undefined,
                     } as any;
                     const res = await window.api.elasticSearch(opts);
                     if (res?.ok) {
@@ -2138,8 +2305,10 @@ export default function App() {
                         appendEntries(res.entries as any[]);
                       setEsHasMore(!!res.hasMore);
                       setEsNextSearchAfter((res.nextSearchAfter as any) || null);
+                      setEsPitSessionId((res as any).pitSessionId || null);
                       if (typeof (res as any)?.total === 'number')
                         setEsTotal(Number((res as any).total));
+                      if (!res.hasMore) setEsPitSessionId(null);
                     } else {
                       alert('Elastic-Fehler: ' + ((res as any)?.error || 'Unbekannt'));
                     }

@@ -28,6 +28,7 @@ var api = {
   httpStopPoll: (id) => import_electron.ipcRenderer.invoke("http:stopPoll", id),
   // Elasticsearch operations
   elasticSearch: (options) => import_electron.ipcRenderer.invoke("elastic:search", options),
+  elasticClosePit: (sessionId) => import_electron.ipcRenderer.invoke("elastic:closePit", sessionId),
   // Event listeners with proper cleanup
   onAppend: (callback) => {
     const listener = (_event, entries) => {

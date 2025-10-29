@@ -28,8 +28,8 @@ var __toESM = (mod, isNodeMode, target) => (target = mod != null ? __create(__ge
 var __toCommonJS = (mod) => __copyProps(__defProp({}, "__esModule", { value: true }), mod);
 var parsers_exports = {};
 __export(parsers_exports, {
-  fetchElasticLogs: () => fetchElasticLogs,
-  fetchElasticPage: () => fetchElasticPage,
+  closeElasticPitSession: () => closeElasticPitSession,
+  fetchElasticPitPage: () => fetchElasticPitPage,
   parseJsonFile: () => parseJsonFile,
   parsePaths: () => parsePaths,
   parseTextLines: () => parseTextLines,
@@ -82,10 +82,7 @@ function toEntry(obj = {}, fallbackMessage = "", source = "") {
       const direct = o.stack_trace || o.stackTrace || o.stacktrace;
       if (direct != null) candVals.push(direct);
     } catch (e) {
-      import_main.default.warn(
-        "normalizeStack: reading direct stack fields failed:",
-        e instanceof Error ? e.message : String(e)
-      );
+      import_main.default.warn("normalizeStack: direct fields failed:", e instanceof Error ? e.message : String(e));
     }
     try {
       const err = o.error || o.err;
@@ -95,10 +92,7 @@ function toEntry(obj = {}, fallbackMessage = "", source = "") {
         if (typeof err === "string") candVals.push(err);
       }
     } catch (e) {
-      import_main.default.warn(
-        "normalizeStack: reading error fields failed:",
-        e instanceof Error ? e.message : String(e)
-      );
+      import_main.default.warn("normalizeStack: error fields failed:", e instanceof Error ? e.message : String(e));
     }
     try {
       const ex = o.exception || o.cause || o.throwable;
@@ -109,7 +103,7 @@ function toEntry(obj = {}, fallbackMessage = "", source = "") {
       }
     } catch (e) {
       import_main.default.warn(
-        "normalizeStack: reading exception fields failed:",
+        "normalizeStack: exception fields failed:",
         e instanceof Error ? e.message : String(e)
       );
     }
@@ -120,7 +114,7 @@ function toEntry(obj = {}, fallbackMessage = "", source = "") {
         candVals.push(o["error.stacktrace"]);
     } catch (e) {
       import_main.default.warn(
-        "normalizeStack: reading flattened stacktrace fields failed:",
+        "normalizeStack: flattened fields failed:",
         e instanceof Error ? e.message : String(e)
       );
     }
@@ -158,7 +152,7 @@ function toEntry(obj = {}, fallbackMessage = "", source = "") {
 function tryParseJson(line) {
   try {
     return JSON.parse(line);
-  } catch (_) {
+  } catch {
     return null;
   }
 }
@@ -177,7 +171,7 @@ function parseTextLines(filename, text) {
     } else {
       let ts = null;
       const isoMatch = line.match(
-        /\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:?\d{2})?/
+        /\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.[\d]+)?(?:Z|[+-]\d{2}:?\d{2})?/
       );
       if (isoMatch) ts = isoMatch[0];
       entries.push(toEntry({}, line, filename));
@@ -192,11 +186,10 @@ function parseJsonFile(filename, text) {
   if (trimmed.startsWith("[")) {
     try {
       const arr = JSON.parse(trimmed);
-      if (Array.isArray(arr)) {
+      if (Array.isArray(arr))
         return arr.map(
           (o) => toEntry(o && typeof o === "object" ? o : {}, "", filename)
         );
-      }
     } catch (e) {
       import_main.default.warn(
         "parseJsonFile: JSON array parse failed:",
@@ -245,28 +238,186 @@ function parsePaths(paths) {
   }
   return all;
 }
+const pitSessions = /* @__PURE__ */ new Map();
+async function httpJsonRequest(method, urlStr, body, headers, allowInsecureTLS, timeoutMs) {
+  return new Promise((resolve, reject) => {
+    try {
+      const u = new URL(urlStr);
+      const isHttps = u.protocol === "https:";
+      const mod = isHttps ? import_https.default : import_http.default;
+      const opts = {
+        method,
+        hostname: u.hostname,
+        port: u.port ? Number(u.port) : isHttps ? 443 : 80,
+        path: `${u.pathname}${u.search}`,
+        headers: { ...headers || {}, "content-type": "application/json" }
+      };
+      if (isHttps && allowInsecureTLS) opts.agent = new import_https.default.Agent({ rejectUnauthorized: false });
+      const timer = typeof timeoutMs === "number" && timeoutMs > 0 ? setTimeout(() => {
+        try {
+          req.destroy(new Error("timeout"));
+        } catch {
+        }
+      }, timeoutMs) : null;
+      const req = mod.request(opts, (res) => {
+        const chunks = [];
+        res.on("data", (c) => chunks.push(c));
+        res.on("end", () => {
+          if (timer) clearTimeout(timer);
+          const text = Buffer.concat(chunks).toString("utf8");
+          const status = Number(res.statusCode || 0);
+          let json = null;
+          try {
+            json = text ? JSON.parse(text) : {};
+          } catch {
+            json = null;
+          }
+          resolve({ status, text, json });
+        });
+      });
+      req.on("error", (err) => {
+        if (timer) clearTimeout(timer);
+        reject(err);
+      });
+      const payload = body ? JSON.stringify(body) : "";
+      if (payload) req.write(payload);
+      req.end();
+    } catch (err) {
+      reject(err);
+    }
+  });
+}
+async function requestWithRetry(exec, opts) {
+  let attempt = 0;
+  while (true) {
+    try {
+      const res = await exec();
+      const { status } = res;
+      if (status >= 200 && status < 300) return res;
+      if (status === 429 || status >= 500 && status < 600) {
+        if (attempt >= opts.maxRetries) return res;
+      } else {
+        return res;
+      }
+    } catch (e) {
+      if (attempt >= opts.maxRetries) throw e;
+    }
+    const delay = Math.round(opts.backoffBaseMs * Math.pow(2, attempt));
+    await new Promise((r) => setTimeout(r, delay));
+    attempt++;
+  }
+}
+function buildHeadersWithAuth(auth) {
+  const headers = {
+    Accept: "application/json",
+    "User-Agent": "Lumberjack/1.0 (+https://hhla.de)"
+  };
+  if (!auth) return headers;
+  try {
+    if (auth.type === "basic") {
+      const u = String(auth.username || "");
+      const p = String(auth.password || "");
+      const token = Buffer.from(`${u}:${p}`).toString("base64");
+      headers.Authorization = `Basic ${token}`;
+    } else if (auth.type === "apiKey") {
+      const t = String(auth.token || "");
+      headers.Authorization = `ApiKey ${t}`;
+    } else if (auth.type === "bearer") {
+      const t = String(auth.token || "");
+      headers.Authorization = `Bearer ${t}`;
+    }
+  } catch {
+  }
+  return headers;
+}
+function buildSortArray(order) {
+  const ord = order ?? "asc";
+  return [{ "@timestamp": { order: ord, unmapped_type: "boolean" } }, { _id: { order: ord } }];
+}
+async function tryOpenPitEs(baseUrl, index, keepAlive, headers, allowInsecureTLS, timeoutMs, maxRetries, backoffBaseMs) {
+  const idx = index && index.trim() ? index.trim() : "_all";
+  const url = `${baseUrl}/${encodeURIComponent(idx)}/_pit?keep_alive=${encodeURIComponent(keepAlive)}&ignore_unavailable=true&allow_no_indices=true&expand_wildcards=open`;
+  const exec = () => httpJsonRequest("POST", url, {}, headers, allowInsecureTLS, timeoutMs);
+  const res = await requestWithRetry(exec, { maxRetries, backoffBaseMs });
+  if (res.status >= 200 && res.status < 300) {
+    const id = res.json?.id;
+    if (typeof id === "string" && id) return id;
+    throw new Error("PIT open: Keine id im Response");
+  }
+  throw new Error(`ES PIT open failed ${res.status}: ${res.text.slice(0, 800)}`);
+}
+async function tryOpenPitOs(baseUrl, index, keepAlive, headers, allowInsecureTLS, timeoutMs, maxRetries, backoffBaseMs) {
+  const idx = index && index.trim() ? index.trim() : "_all";
+  const url = `${baseUrl}/_search/point_in_time`;
+  const body = { index: idx, keep_alive: keepAlive, expand_wildcards: "open", ignore_unavailable: true, allow_no_indices: true };
+  const exec = () => httpJsonRequest("POST", url, body, headers, allowInsecureTLS, timeoutMs);
+  const res = await requestWithRetry(exec, { maxRetries, backoffBaseMs });
+  if (res.status >= 200 && res.status < 300) {
+    const id = res.json?.pit_id || res.json?.id;
+    if (typeof id === "string" && id) return id;
+    throw new Error("OpenSearch PIT open: Keine pit_id/id im Response");
+  }
+  throw new Error(`OS PIT open failed ${res.status}: ${res.text.slice(0, 800)}`);
+}
+async function closePitEs(baseUrl, pitId, headers, allowInsecureTLS, timeoutMs, maxRetries, backoffBaseMs) {
+  const url = `${baseUrl}/_pit/close`;
+  const body = { id: pitId };
+  const exec = () => httpJsonRequest("POST", url, body, headers, allowInsecureTLS, timeoutMs);
+  const res = await requestWithRetry(exec, { maxRetries, backoffBaseMs });
+  if (!(res.status >= 200 && res.status < 300)) {
+    throw new Error(`ES PIT close failed ${res.status}: ${res.text.slice(0, 800)}`);
+  }
+}
+async function closePitOs(baseUrl, pitId, headers, allowInsecureTLS, timeoutMs, maxRetries, backoffBaseMs) {
+  const url = `${baseUrl}/_search/point_in_time`;
+  const body = { pit_id: pitId };
+  const exec = () => httpJsonRequest("DELETE", url, body, headers, allowInsecureTLS, timeoutMs);
+  const res = await requestWithRetry(exec, { maxRetries, backoffBaseMs });
+  if (!(res.status >= 200 && res.status < 300)) {
+    throw new Error(`OS PIT close failed ${res.status}: ${res.text.slice(0, 800)}`);
+  }
+}
+async function closePit(baseUrl, pitId, headers, allowInsecureTLS, timeoutMs, maxRetries, backoffBaseMs, dialect) {
+  if (dialect === "es") {
+    try {
+      await closePitEs(baseUrl, pitId, headers, allowInsecureTLS, timeoutMs, maxRetries, backoffBaseMs);
+      return;
+    } catch {
+    }
+    await closePitOs(baseUrl, pitId, headers, allowInsecureTLS, timeoutMs, maxRetries, backoffBaseMs);
+    return;
+  }
+  if (dialect === "opensearch") {
+    try {
+      await closePitOs(baseUrl, pitId, headers, allowInsecureTLS, timeoutMs, maxRetries, backoffBaseMs);
+      return;
+    } catch {
+    }
+    await closePitEs(baseUrl, pitId, headers, allowInsecureTLS, timeoutMs, maxRetries, backoffBaseMs);
+    return;
+  }
+  try {
+    await closePitEs(baseUrl, pitId, headers, allowInsecureTLS, timeoutMs, maxRetries, backoffBaseMs);
+    return;
+  } catch {
+  }
+  await closePitOs(baseUrl, pitId, headers, allowInsecureTLS, timeoutMs, maxRetries, backoffBaseMs);
+}
+function newSessionId() {
+  const rnd = Math.random().toString(36).slice(2);
+  return `pit_${Date.now().toString(36)}_${rnd}`;
+}
+function normalizeBase(url) {
+  return String(url || "").replace(/\/$/, "");
+}
 function toIsoIfDate(v) {
   if (v == null) return void 0;
   try {
     if (v instanceof Date) return v.toISOString();
     if (typeof v === "number") return new Date(v).toISOString();
-    const s = v.trim();
+    const s = String(v || "").trim();
     if (!s) return void 0;
     if (/^\d+$/.test(s)) return new Date(parseInt(s, 10)).toISOString();
-    const m = s.match(/^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})(?::(\d{2})(?:\.(\d{1,3}))?)?$/);
-    if (m) {
-      const [, Y, M, D, h, mi, sec = "0", ms = "0"] = m;
-      const d2 = new Date(
-        Number(Y),
-        Number(M) - 1,
-        Number(D),
-        Number(h),
-        Number(mi),
-        Number(sec),
-        Number(ms.padEnd(3, "0"))
-      );
-      return d2.toISOString();
-    }
     const d = new Date(s);
     if (isNaN(d.getTime())) return void 0;
     return d.toISOString();
@@ -277,24 +428,10 @@ function toIsoIfDate(v) {
 function buildElasticSearchBody(opts) {
   const must = [];
   const filter = [];
-  const hasWildcard = (s) => /[*?]/.test(s);
   const addField = (field, value) => {
-    const v = (value ?? "").trim();
+    const v = String(value || "").trim();
     if (!v) return;
-    if (hasWildcard(v)) {
-      must.push({
-        query_string: {
-          query: v,
-          default_field: field,
-          analyze_wildcard: true,
-          allow_leading_wildcard: true
-        }
-      });
-    } else {
-      must.push({
-        match_phrase: { [field]: { query: v } }
-      });
-    }
+    must.push({ match_phrase: { [field]: { query: v } } });
   };
   addField("environment", opts.environment);
   addField("application_name", opts.application_name);
@@ -306,7 +443,7 @@ function buildElasticSearchBody(opts) {
     range.gte = `now-${opts.duration}`;
     range.lte = "now";
   } else {
-    const num = (x) => typeof x === "number" ? x : /^\d+$/.test(String(x ?? "")) ? Number(x) : null;
+    const num = (x) => typeof x === "number" ? x : /^\d+$/.test(String(x || "")) ? Number(x) : null;
     const fromNum = num(opts.from);
     const toNum = num(opts.to);
     if (fromNum != null || toNum != null) {
@@ -324,18 +461,8 @@ function buildElasticSearchBody(opts) {
     must.push({ range: { "@timestamp": range } });
   }
   const body = {
-    version: true,
     size: opts.size ?? 1e3,
-    sort: [
-      {
-        "@timestamp": { order: opts.sort ?? "asc", unmapped_type: "boolean" }
-      },
-      { _id: { order: opts.sort ?? "asc" } }
-    ],
-    _source: { excludes: [] },
-    stored_fields: ["*"],
-    script_fields: {},
-    docvalue_fields: [{ field: "@timestamp", format: "date_time" }],
+    sort: [{ "@timestamp": { order: opts.sort ?? "asc", unmapped_type: "boolean" } }],
     query: {
       bool: {
         must,
@@ -343,112 +470,132 @@ function buildElasticSearchBody(opts) {
         should: [],
         must_not: []
       }
-    },
-    highlight: {
-      pre_tags: ["@kibana-highlighted-field@"],
-      post_tags: ["@/kibana-highlighted-field@"],
-      fields: { "*": {} },
-      fragment_size: 2147483647
     }
   };
-  if (Array.isArray(opts.searchAfter) && opts.searchAfter.length > 0) {
-    body.search_after = opts.searchAfter;
-  }
   return body;
 }
-function buildElasticHeaders(auth) {
-  const headers = { "content-type": "application/json" };
-  if (!auth) return headers;
-  switch (auth.type) {
-    case "basic": {
-      const user = auth.username ?? "";
-      const pass = auth.password ?? "";
-      const token = Buffer.from(`${user}:${pass}`, "utf8").toString("base64");
-      headers["authorization"] = `Basic ${token}`;
-      break;
-    }
-    case "apiKey": {
-      if (auth.token) headers["authorization"] = `ApiKey ${auth.token}`;
-      break;
-    }
-    case "bearer": {
-      if (auth.token) headers["authorization"] = `Bearer ${auth.token}`;
-      break;
-    }
-  }
-  return headers;
+function buildQueryBodyWithPit(opts, pitId) {
+  const baseBody = buildElasticSearchBody({ ...opts, searchAfter: opts.searchAfter });
+  baseBody.size = opts.size ?? 1e3;
+  baseBody.sort = buildSortArray(opts.sort);
+  baseBody.pit = { id: pitId, keep_alive: opts.keepAlive ?? "1m" };
+  const inc = Array.isArray(opts.sourceIncludes) ? opts.sourceIncludes : void 0;
+  const exc = Array.isArray(opts.sourceExcludes) ? opts.sourceExcludes : void 0;
+  if (inc || exc)
+    baseBody._source = {
+      ...inc ? { includes: inc } : {},
+      ...exc ? { excludes: exc } : {}
+    };
+  if (opts.trackTotalHits != null) baseBody.track_total_hits = opts.trackTotalHits;
+  else baseBody.track_total_hits = false;
+  if (Array.isArray(opts.searchAfter) && opts.searchAfter.length)
+    baseBody.search_after = opts.searchAfter;
+  return baseBody;
 }
-function postJson(urlStr, body, headers, allowInsecureTLS) {
-  return new Promise((resolve, reject) => {
-    try {
-      const u = new URL(urlStr);
-      const isHttps = u.protocol === "https:";
-      const mod = isHttps ? import_https.default : import_http.default;
-      const opts = {
-        method: "POST",
-        hostname: u.hostname,
-        port: u.port ? Number(u.port) : isHttps ? 443 : 80,
-        path: `${u.pathname}${u.search}`,
-        headers
-      };
-      try {
-        const { authorization: _auth, ...safeHeaders } = headers || {};
-        import_main.default.info("[Elastic] POST", `${u.protocol}//${u.host}${opts.path ?? ""}`, safeHeaders);
-      } catch (e) {
-        import_main.default.warn("Elastic POST logging failed:", e instanceof Error ? e.message : String(e));
-      }
-      if (isHttps && allowInsecureTLS) {
-        opts.agent = new import_https.default.Agent({ rejectUnauthorized: false });
-      }
-      const req = mod.request(opts, (res) => {
-        const chunks = [];
-        res.on("data", (c) => chunks.push(c));
-        res.on("end", () => {
-          const text = Buffer.concat(chunks).toString("utf8");
-          const status = Number(res.statusCode || 0);
-          if (status >= 200 && status < 300) {
-            import_main.default.info(`[Elastic] POST ${status} response received`);
-            try {
-              const json = text ? JSON.parse(text) : {};
-              resolve(json);
-            } catch (e) {
-              import_main.default.warn(
-                "Elastic POST response parse failed, returning empty object:",
-                e instanceof Error ? e.message : String(e)
-              );
-              resolve({});
-            }
-          } else {
-            reject(new Error(`Elasticsearch-Fehler ${status}: ${text}`));
-          }
-        });
-      });
-      req.on("error", (err) => reject(err));
-      const payload = body ? JSON.stringify(body) : "";
-      if (payload) req.write(payload);
-      req.end();
-    } catch (err) {
-      reject(err);
-    }
+async function searchWithPit(sess, body) {
+  const url = `${sess.baseUrl}/_search`;
+  const exec = () => httpJsonRequest("POST", url, body, sess.headers, !!sess.allowInsecureTLS, sess.timeoutMs);
+  const res = await requestWithRetry(exec, {
+    maxRetries: sess.maxRetries,
+    backoffBaseMs: sess.backoffBaseMs
   });
+  return { status: res.status, text: res.text, json: res.json || null };
 }
-async function fetchElasticPage(opts) {
-  const base = (opts.url || "").replace(/\/$/, "");
-  if (!base) throw new Error("Elasticsearch URL (opts.url) ist erforderlich");
-  const index = encodeURIComponent(opts.index ?? "_all");
-  const url = `${base}/${index}/_search?ignore_throttled=false&ignore_unavailable=true`;
-  const body = buildElasticSearchBody(opts);
-  const headers = buildElasticHeaders(opts.auth);
-  const data = await postJson(url, body, headers, !!opts.allowInsecureTLS);
-  const dataObj = data && typeof data === "object" ? data : {};
-  const hitsContainer = dataObj.hits;
+function getOrCreateSessionSyncState(opts) {
+  const baseUrl = normalizeBase(opts.url || "");
+  if (!baseUrl) throw new Error("Elasticsearch URL (opts.url) ist erforderlich");
+  const indexRaw = String(opts.index ?? "").trim();
+  const index = indexRaw ? indexRaw : "_all";
+  const keepAlive = String(opts.keepAlive || "1m");
+  const timeoutMs = Math.max(1e3, Number(opts.timeoutMs ?? 15e3));
+  const maxRetries = Math.max(0, Number(opts.maxRetries ?? 3));
+  const backoffBaseMs = Math.max(50, Number(opts.backoffBaseMs ?? 200));
+  const headers = buildHeadersWithAuth(opts.auth);
+  if (opts.pitSessionId && pitSessions.has(opts.pitSessionId)) {
+    const existing = pitSessions.get(opts.pitSessionId);
+    existing.keepAlive = keepAlive;
+    existing.lastUsed = Date.now();
+    existing.timeoutMs = timeoutMs;
+    existing.maxRetries = maxRetries;
+    existing.backoffBaseMs = backoffBaseMs;
+    existing.allowInsecureTLS = !!opts.allowInsecureTLS;
+    return existing;
+  }
+  const sessionId = opts.pitSessionId && !pitSessions.has(opts.pitSessionId) ? String(opts.pitSessionId) : newSessionId();
+  const sess = {
+    sessionId,
+    pitId: "",
+    baseUrl,
+    index,
+    headers,
+    allowInsecureTLS: !!opts.allowInsecureTLS,
+    keepAlive,
+    lastUsed: Date.now(),
+    timeoutMs,
+    maxRetries,
+    backoffBaseMs
+  };
+  pitSessions.set(sessionId, sess);
+  return sess;
+}
+async function ensurePitOpened(sess) {
+  if (sess.pitId) return;
+  try {
+    const id = await tryOpenPitEs(
+      sess.baseUrl,
+      sess.index,
+      sess.keepAlive,
+      sess.headers,
+      sess.allowInsecureTLS,
+      sess.timeoutMs,
+      sess.maxRetries,
+      sess.backoffBaseMs
+    );
+    sess.pitId = id;
+    sess.dialect = "es";
+    return;
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    if (/unrecognized parameter|unknown url|_pit\]|\[\/\/_pit/i.test(msg)) {
+      try {
+        const id = await tryOpenPitOs(
+          sess.baseUrl,
+          sess.index,
+          sess.keepAlive,
+          sess.headers,
+          sess.allowInsecureTLS,
+          sess.timeoutMs,
+          sess.maxRetries,
+          sess.backoffBaseMs
+        );
+        sess.pitId = id;
+        sess.dialect = "opensearch";
+        return;
+      } catch (e2) {
+        const m2 = e2 instanceof Error ? e2.message : String(e2);
+        if (/security_exception|unauthorized|forbidden|403/.test(m2)) {
+          sess.dialect = "scroll";
+          return;
+        }
+        throw e2;
+      }
+    }
+    if (/security_exception|unauthorized|forbidden|403/.test(msg)) {
+      sess.dialect = "scroll";
+      return;
+    }
+    throw e;
+  }
+}
+function parseHitsResponse(data, size) {
+  const hitsContainer = data && data.hits;
   const totalVal = (() => {
     const t = hitsContainer && hitsContainer.total;
-    if (!t) return 0;
+    if (!t) return null;
     if (typeof t === "number") return t;
-    if (typeof t === "object" && t != null && typeof t.value === "number")
+    if (typeof t === "object" && typeof t.value === "number")
       return Number(t.value) || 0;
-    return 0;
+    return null;
   })();
   const hitsArray = hitsContainer && Array.isArray(hitsContainer.hits) ? hitsContainer.hits : [];
   const out = [];
@@ -456,32 +603,193 @@ async function fetchElasticPage(opts) {
     const hObj = h && typeof h === "object" ? h : {};
     const src = hObj._source ?? hObj.fields ?? {};
     const srcObj = src && typeof src === "object" ? src : {};
-    const index2 = hObj._index;
+    const index = hObj._index;
     const id = hObj._id;
-    const indexStr = typeof index2 === "string" ? index2 : opts.index ?? "";
+    const indexStr = typeof index === "string" ? index : "";
     const idStr = typeof id === "string" ? id : "";
     const e = toEntry(srcObj, "", `elastic://${indexStr}/${idStr}`);
     out.push(e);
   }
   const lastHit = hitsArray.length > 0 ? hitsArray[hitsArray.length - 1] : null;
   const sortVals = lastHit && Array.isArray(lastHit.sort) ? lastHit.sort : null;
-  const size = opts.size ?? 1e3;
-  const hasMore = hitsArray.length >= size;
+  const hasMore = hitsArray.length >= (size || 0);
   return {
     entries: out,
     total: totalVal,
     hasMore,
-    nextSearchAfter: hasMore && sortVals && sortVals.length ? sortVals : null
+    nextSearchAfter: hasMore && sortVals ? sortVals : null
   };
 }
-async function fetchElasticLogs(opts) {
-  const page = await fetchElasticPage(opts);
-  return page.entries;
+async function fetchElasticPitPage(opts) {
+  const sess = getOrCreateSessionSyncState(opts);
+  await ensurePitOpened(sess);
+  if (sess.dialect === "scroll") {
+    let entries2 = [];
+    let total2 = null;
+    if (!sess.pitId) {
+      const first = await openScroll(
+        sess.baseUrl,
+        sess.index,
+        sess.keepAlive,
+        opts.size ?? 1e3,
+        opts.sort,
+        sess.headers,
+        sess.allowInsecureTLS,
+        sess.timeoutMs,
+        sess.maxRetries,
+        sess.backoffBaseMs
+      );
+      sess.pitId = first.scrollId;
+      entries2 = first.entries;
+      total2 = first.total;
+    } else {
+      const next = await scrollNext(
+        sess.baseUrl,
+        sess.keepAlive,
+        sess.pitId,
+        sess.headers,
+        sess.allowInsecureTLS,
+        sess.timeoutMs,
+        sess.maxRetries,
+        sess.backoffBaseMs
+      );
+      sess.pitId = next.scrollId;
+      entries2 = next.entries;
+    }
+    const hasMore2 = entries2.length > 0;
+    sess.lastUsed = Date.now();
+    if (!hasMore2) {
+      try {
+        if (sess.pitId) await closeScroll(
+          sess.baseUrl,
+          sess.pitId,
+          sess.headers,
+          sess.allowInsecureTLS,
+          sess.timeoutMs,
+          sess.maxRetries,
+          sess.backoffBaseMs
+        );
+      } catch (e) {
+        import_main.default.warn("Scroll close after completion failed:", e instanceof Error ? e.message : String(e));
+      } finally {
+        pitSessions.delete(sess.sessionId);
+      }
+    }
+    return { entries: entries2, total: total2, hasMore: hasMore2, nextSearchAfter: null, pitSessionId: sess.sessionId };
+  }
+  const body = buildQueryBodyWithPit({ ...opts, keepAlive: sess.keepAlive }, sess.pitId);
+  const res = await searchWithPit(sess, body);
+  if (!(res.status >= 200 && res.status < 300))
+    throw new Error(`Elasticsearch-Fehler ${res.status}: ${res.text.slice(0, 1200)}`);
+  const { entries, total, hasMore, nextSearchAfter } = parseHitsResponse(
+    res.json || null,
+    opts.size ?? 1e3
+  );
+  sess.lastUsed = Date.now();
+  if (!hasMore) {
+    try {
+      await closePit(
+        sess.baseUrl,
+        sess.pitId,
+        sess.headers,
+        sess.allowInsecureTLS,
+        sess.timeoutMs,
+        sess.maxRetries,
+        sess.backoffBaseMs,
+        sess.dialect
+      );
+    } catch (e) {
+      import_main.default.warn("PIT close after completion failed:", e instanceof Error ? e.message : String(e));
+    } finally {
+      pitSessions.delete(sess.sessionId);
+    }
+  }
+  return { entries, total, hasMore, nextSearchAfter, pitSessionId: sess.sessionId };
+}
+async function closeElasticPitSession(sessionId) {
+  try {
+    if (!sessionId) return;
+    const sess = pitSessions.get(sessionId);
+    if (!sess) return;
+    if (sess.pitId) {
+      try {
+        if (sess.dialect === "scroll") {
+          await closeScroll(
+            sess.baseUrl,
+            sess.pitId,
+            sess.headers,
+            sess.allowInsecureTLS,
+            sess.timeoutMs,
+            sess.maxRetries,
+            sess.backoffBaseMs
+          );
+        } else {
+          await closePit(
+            sess.baseUrl,
+            sess.pitId,
+            sess.headers,
+            sess.allowInsecureTLS,
+            sess.timeoutMs,
+            sess.maxRetries,
+            sess.backoffBaseMs,
+            sess.dialect
+          );
+        }
+      } catch (e) {
+        import_main.default.warn("PIT/Scroll close failed:", e instanceof Error ? e.message : String(e));
+      }
+    }
+  } finally {
+    pitSessions.delete(sessionId);
+  }
+}
+async function openScroll(baseUrl, index, keepAlive, size, sortOrder, headers, allowInsecureTLS, timeoutMs, maxRetries, backoffBaseMs) {
+  const idx = index && index.trim() ? index.trim() : "_all";
+  const url = `${baseUrl}/${encodeURIComponent(idx)}/_search?scroll=${encodeURIComponent(keepAlive)}&ignore_unavailable=true&allow_no_indices=true&expand_wildcards=open`;
+  const body = buildElasticSearchBody({ url: baseUrl, index: idx, size, sort: sortOrder });
+  const exec = () => httpJsonRequest("POST", url, body, headers, allowInsecureTLS, timeoutMs);
+  const res = await requestWithRetry(exec, { maxRetries, backoffBaseMs });
+  if (!(res.status >= 200 && res.status < 300)) {
+    throw new Error(`Scroll open failed ${res.status}: ${res.text.slice(0, 800)}`);
+  }
+  const j = res.json || {};
+  const scrollId = j._scroll_id || j.scroll_id || "";
+  const { entries, total } = parseHitsResponse(j, size);
+  if (!scrollId) {
+    throw new Error("Scroll open: Keine _scroll_id im Response");
+  }
+  return { scrollId, entries, total };
+}
+async function scrollNext(baseUrl, keepAlive, scrollId, headers, allowInsecureTLS, timeoutMs, maxRetries, backoffBaseMs) {
+  const url = `${baseUrl}/_search/scroll`;
+  const body = { scroll: keepAlive, scroll_id: scrollId };
+  const exec = () => httpJsonRequest("POST", url, body, headers, allowInsecureTLS, timeoutMs);
+  const res = await requestWithRetry(exec, { maxRetries, backoffBaseMs });
+  if (!(res.status >= 200 && res.status < 300)) {
+    throw new Error(`Scroll next failed ${res.status}: ${res.text.slice(0, 800)}`);
+  }
+  const j = res.json || {};
+  const newScrollId = j._scroll_id || j.scroll_id || scrollId;
+  const entries = parseHitsResponse(j, Number.MAX_SAFE_INTEGER).entries;
+  return { scrollId: newScrollId, entries };
+}
+async function closeScroll(baseUrl, scrollId, headers, allowInsecureTLS, timeoutMs, maxRetries, backoffBaseMs) {
+  const url = `${baseUrl}/_search/scroll`;
+  const body = { scroll_id: [scrollId] };
+  const tryOnce = async (method) => {
+    const exec = () => httpJsonRequest(method, url, body, headers, allowInsecureTLS, timeoutMs);
+    const res = await requestWithRetry(exec, { maxRetries, backoffBaseMs });
+    return res.status >= 200 && res.status < 300;
+  };
+  const ok = await tryOnce("DELETE") || await tryOnce("POST");
+  if (!ok) {
+    throw new Error("Scroll close failed");
+  }
 }
 // Annotate the CommonJS export names for ESM import in node:
 0 && (module.exports = {
-  fetchElasticLogs,
-  fetchElasticPage,
+  closeElasticPitSession,
+  fetchElasticPitPage,
   parseJsonFile,
   parsePaths,
   parseTextLines,

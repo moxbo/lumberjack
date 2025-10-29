@@ -67,6 +67,8 @@ const api: ElectronAPI = {
   elasticSearch: (options: ElasticSearchOptions): Promise<ParseResult> =>
     ipcRenderer.invoke('elastic:search', options),
 
+  elasticClosePit: (sessionId: string) => ipcRenderer.invoke('elastic:closePit', sessionId),
+
   // Event listeners with proper cleanup
   onAppend: (callback: (entries: LogEntry[]) => void): (() => void) => {
     const listener = (_event: IpcRendererEvent, entries: LogEntry[]): void => {

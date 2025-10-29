@@ -314,7 +314,7 @@ export function registerIpcHandlers(
     async (_event, opts: ElasticSearchOptions): Promise<ParseResult> => {
       try {
         const settings = settingsService.get();
-        const { fetchElasticPage } = getParsers();
+        const { fetchElasticPitPage } = getParsers();
 
         const url = opts.url || settings.elasticUrl || '';
         const size = opts.size || settings.elasticSize || 1000;
@@ -333,23 +333,28 @@ export function registerIpcHandlers(
           url,
           size,
           auth: opts.auth ?? derivedAuth,
-        };
+          // defaults for PIT/retries
+          keepAlive: opts.keepAlive || '1m',
+          trackTotalHits: opts.trackTotalHits ?? false,
+          timeoutMs: opts.timeoutMs ?? 15000,
+          maxRetries: opts.maxRetries ?? 3,
+          backoffBaseMs: opts.backoffBaseMs ?? 200,
+        } as ElasticSearchOptions;
 
         if (!mergedOpts.url) {
           throw new Error('Elasticsearch URL ist nicht konfiguriert');
         }
 
-        // Vorab: finale Request-URL (Basis + Index + _search) für Logging berechnen
+        // Vorab: finale Request-URL (Basis + _search) für Logging berechnen
         const base = String(mergedOpts.url).replace(/\/$/, '');
-        const indexStr = mergedOpts.index ?? '_all';
-        const fullUrl = `${base}/${encodeURIComponent(indexStr)}/_search`;
+        const fullUrl = `${base}/_search`;
 
         // Outgoing Request ins Log schreiben (ohne Secrets)
         const mode: 'relative' | 'absolute' = mergedOpts.duration ? 'relative' : 'absolute';
         log.info('[elastic:search] request', {
           url: mergedOpts.url,
           fullUrl,
-          index: indexStr,
+          index: mergedOpts.index ?? '_all',
           size: mergedOpts.size,
           sort: mergedOpts.sort,
           mode,
@@ -360,26 +365,37 @@ export function registerIpcHandlers(
           level: mergedOpts.level,
           environment: mergedOpts.environment,
           allowInsecureTLS: !!mergedOpts.allowInsecureTLS,
-          searchAfter: Array.isArray((mergedOpts as any).searchAfter)
-            ? (mergedOpts as any).searchAfter
-            : undefined,
+          searchAfter: Array.isArray(mergedOpts.searchAfter) ? mergedOpts.searchAfter : undefined,
+          pitSessionId: mergedOpts.pitSessionId || undefined,
+          keepAlive: mergedOpts.keepAlive,
+          trackTotalHits: mergedOpts.trackTotalHits,
         });
 
-        const page = await fetchElasticPage(mergedOpts as unknown as Record<string, unknown>);
+        type PitPage = {
+          entries: Array<unknown>;
+          total: number | null;
+          hasMore: boolean;
+          nextSearchAfter: Array<string | number> | null;
+          pitSessionId: string;
+        };
+        const page = (await (fetchElasticPitPage as unknown as (o: ElasticSearchOptions) => Promise<PitPage>)(
+          mergedOpts
+        )) as PitPage;
+
         return {
           ok: true,
-          entries: page.entries,
+          entries: page.entries as any,
           hasMore: page.hasMore,
           nextSearchAfter: page.nextSearchAfter,
-          total: page.total,
-        };
+          total: page.total == null ? undefined : page.total,
+          pitSessionId: page.pitSessionId,
+        } as ParseResult;
       } catch (err) {
         try {
           // Wenn möglich, URL im Fehler mitloggen (ohne Credentials)
           const u = (opts?.url || settingsService.get()?.elasticUrl || '').toString();
           const base = u ? u.replace(/\/$/, '') : '';
-          const idx = opts?.index ?? '_all';
-          const fullUrl = base ? `${base}/${encodeURIComponent(idx)}/_search` : '';
+          const fullUrl = base ? `${base}/_search` : '';
           log.error('[elastic:search] failed', {
             message: err instanceof Error ? err.message : String(err),
             url: u || undefined,
@@ -393,4 +409,16 @@ export function registerIpcHandlers(
       }
     }
   );
+
+  // Explizites PIT-Schließen
+  ipcMain.handle('elastic:closePit', async (_event, sessionId: string) => {
+    try {
+      const { closeElasticPitSession } = getParsers();
+      await closeElasticPitSession(String(sessionId || ''));
+      return { ok: true };
+    } catch (err) {
+      log.warn('elastic:closePit failed:', err instanceof Error ? err.message : String(err));
+      return { ok: false, error: err instanceof Error ? err.message : String(err) };
+    }
+  });
 }

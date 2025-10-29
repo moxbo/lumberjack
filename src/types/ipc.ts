@@ -110,6 +110,8 @@ export interface ParseResult {
   hasMore?: boolean;
   nextSearchAfter?: Array<string | number> | null;
   total?: number;
+  // PIT session id for deep pagination lifecycle
+  pitSessionId?: string | null;
 }
 
 /**
@@ -157,6 +159,16 @@ export interface ElasticSearchOptions {
 
   // Pagination: ES search_after token from previous page (array of sort values)
   searchAfter?: Array<string | number>;
+
+  // PIT & performance options
+  keepAlive?: string; // e.g., '1m'
+  trackTotalHits?: boolean | number; // default false
+  sourceIncludes?: string[]; // _source includes
+  sourceExcludes?: string[]; // _source excludes
+  pitSessionId?: string; // reuse existing PIT session
+  timeoutMs?: number; // request timeout
+  maxRetries?: number; // retry count for 429/5xx/timeouts
+  backoffBaseMs?: number; // base for exponential backoff
 }
 
 /**
@@ -222,6 +234,7 @@ export interface ElectronAPI {
 
   // Elasticsearch
   elasticSearch: (options: ElasticSearchOptions) => Promise<ParseResult>;
+  elasticClosePit: (sessionId: string) => Promise<Result<void>>;
 
   // Event listeners
   onAppend: (callback: (entries: LogEntry[]) => void) => () => void;

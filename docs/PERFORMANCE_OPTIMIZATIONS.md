@@ -28,11 +28,12 @@ The `ready-to-show` event in Electron's BrowserWindow fires when Chromium believ
 **Impact**: Expected ~15-second improvement in perceived startup time
 
 **Implementation**:
+
 ```typescript
 // In createWindow function (main.ts)
 win.webContents.on('did-finish-load', () => {
   // ... existing code ...
-  
+
   // Show window shortly after load completes
   setTimeout(() => {
     if (!win.isDestroyed() && !win.isVisible()) {
@@ -47,6 +48,7 @@ win.webContents.on('did-finish-load', () => {
 ### 2. Deferred Renderer Initialization
 
 **Changes**:
+
 - Service worker registration deferred using `requestIdleCallback`
 - Settings loading deferred using `requestIdleCallback` with 100ms timeout
 - IPC event listeners setup remains in useEffect (already deferred)
@@ -54,6 +56,7 @@ win.webContents.on('did-finish-load', () => {
 **Impact**: Reduces blocking during initial render, improves time-to-interactive
 
 **Implementation**:
+
 ```typescript
 // Service worker registration (main.tsx)
 requestIdleCallback(() => {
@@ -71,6 +74,7 @@ requestIdleCallback(() => {
 **Added**: Comprehensive performance tracking in renderer process
 
 **Marks tracked**:
+
 - `renderer-init`: When rendererPerf module initializes
 - `main-tsx-start`: When main.tsx starts executing
 - `pre-render`: Before React/Preact render
@@ -87,6 +91,7 @@ requestIdleCallback(() => {
 ### 4. Main Process Optimizations (Already Present)
 
 These were already implemented:
+
 - Lazy loading of heavy modules (AdmZip, parsers)
 - Deferred settings/menu/logstream setup using setImmediate
 - Icon loading deferred until after window is visible
@@ -94,10 +99,12 @@ These were already implemented:
 ## Expected Results
 
 Before optimizations:
+
 - Total startup: ~20.8s
 - Window visible: ~20.8s
 
 After optimizations:
+
 - Total startup: ~20.8s (unchanged - this is when ready-to-show fires)
 - **Window visible: ~5.6s** (50ms after did-finish-load)
 - **Perceived startup improvement: ~15s faster** ✅
@@ -106,7 +113,7 @@ The window now shows as soon as the renderer has loaded and painted, rather than
 
 ## Future Optimization Opportunities
 
-1. **Bundle size optimization**: 
+1. **Bundle size optimization**:
    - Current main bundle: ~45KB (gzipped: ~14KB) - already well-optimized
    - Code splitting is implemented for dialogs
 
@@ -126,12 +133,14 @@ The window now shows as soon as the renderer has loaded and painted, rather than
 ## Validation
 
 To validate improvements:
+
 1. Build the app: `npm run prebuild && npm run build:renderer`
 2. Run the app: `npm start` or packaged executable
 3. Check console logs for performance marks
 4. Compare window visible time vs previous ~20s baseline
 
 Look for these log entries:
+
 - `[PERF] window-shown-early` - should be ~50ms after renderer-loaded
 - `[RENDERER-PERF]` logs showing initialization phases
 - Main process performance summary (always logged on startup)
@@ -141,6 +150,7 @@ Look for these log entries:
 ### Why not use `show: true` on BrowserWindow?
 
 Setting `show: true` would show the window immediately, but before any content is loaded, causing a white flash. Our approach:
+
 1. Create window with `show: false` and `backgroundColor`
 2. Load content
 3. Show window after `did-finish-load` + 50ms delay
@@ -149,6 +159,7 @@ Setting `show: true` would show the window immediately, but before any content i
 ### Why 50ms delay?
 
 The 50ms delay allows the browser's rendering pipeline to complete:
+
 - Parse HTML/CSS
 - Build render tree
 - Layout
@@ -159,6 +170,7 @@ Without this delay, the window might show before the first paint, still causing 
 ### RequestIdleCallback vs setTimeout
 
 `requestIdleCallback` is preferred for non-critical work because:
+
 - Executes during idle time (when event loop is not busy)
 - Doesn't delay critical rendering
 - Has timeout option to ensure work completes eventually
@@ -168,6 +180,7 @@ Without this delay, the window might show before the first paint, still causing 
 ## Monitoring
 
 Enable additional debugging:
+
 ```bash
 # Renderer debugging
 LJ_DEBUG_RENDERER=1 npm start

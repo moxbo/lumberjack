@@ -15,7 +15,11 @@ export default function DCFilterDialog(): preact.JSX.Element {
   const [enabled, setEnabled] = useState<boolean>(DiagnosticContextFilter.isEnabled());
 
   // Kontextmenü
-  const [ctx, setCtx] = useState<{ open: boolean; x: number; y: number }>({ open: false, x: 0, y: 0 });
+  const [ctx, setCtx] = useState<{ open: boolean; x: number; y: number }>({
+    open: false,
+    x: 0,
+    y: 0,
+  });
   const ctxRef = useRef<HTMLDivElement | null>(null);
   useEffect(() => {
     function onDocClick(e: MouseEvent): void {
@@ -23,7 +27,11 @@ export default function DCFilterDialog(): preact.JSX.Element {
       const el = ctxRef.current;
       const path = typeof (e as any).composedPath === 'function' ? (e as any).composedPath() : [];
       const tgt = e.target as Node | null;
-      if (el && (el === tgt || (tgt && el.contains(tgt)) || (Array.isArray(path) && path.includes(el)))) return;
+      if (
+        el &&
+        (el === tgt || (tgt && el.contains(tgt)) || (Array.isArray(path) && path.includes(el)))
+      )
+        return;
       setCtx({ open: false, x: 0, y: 0 });
     }
     window.addEventListener('mousedown', onDocClick, { capture: true, passive: true } as any);
@@ -217,7 +225,9 @@ export default function DCFilterDialog(): preact.JSX.Element {
             type="checkbox"
             class="native-checkbox"
             checked={enabled}
-            onChange={(e) => DiagnosticContextFilter.setEnabled((e.currentTarget as HTMLInputElement).checked)}
+            onChange={(e) =>
+              DiagnosticContextFilter.setEnabled((e.currentTarget as HTMLInputElement).checked)
+            }
           />
           <span style="font-size:12px; color:#333;">MDC-Filter aktiv</span>
         </label>
@@ -242,7 +252,9 @@ export default function DCFilterDialog(): preact.JSX.Element {
                 <tr
                   key={id}
                   class={rowCls}
-                  onClick={(ev) => toggleRow(id, (ev as any).shiftKey, (ev as any).ctrlKey || (ev as any).metaKey)}
+                  onClick={(ev) =>
+                    toggleRow(id, (ev as any).shiftKey, (ev as any).ctrlKey || (ev as any).metaKey)
+                  }
                   onContextMenu={(ev) => openCtx(ev as any, id)}
                   style="cursor: default;"
                 >
@@ -256,7 +268,9 @@ export default function DCFilterDialog(): preact.JSX.Element {
                         type="checkbox"
                         class="native-checkbox"
                         checked={e.active}
-                        onChange={(ev) => toggleActive(e, (ev.currentTarget as HTMLInputElement).checked)}
+                        onChange={(ev) =>
+                          toggleActive(e, (ev.currentTarget as HTMLInputElement).checked)
+                        }
                         onClick={(ev) => ev.stopPropagation()}
                         onMouseDown={(ev) => ev.stopPropagation()}
                         onContextMenu={(ev) => ev.stopPropagation()}
