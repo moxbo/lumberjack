@@ -14,6 +14,7 @@ rendererPerf.mark('main-tsx-start');
 // Only attempt registration when not in dev and not loaded from file: protocol.
 if (
   'serviceWorker' in navigator &&
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-member-access
   !(import.meta as any).env?.DEV &&
   window?.location?.protocol !== 'file:'
 ) {
@@ -39,12 +40,12 @@ const root = document.getElementById('app');
 if (root) {
   render(<App />, root);
   rendererPerf.mark('post-render');
-  
+
   // Signal that the renderer is ready for first paint
   // Use requestAnimationFrame to ensure the render has painted
   requestAnimationFrame(() => {
     rendererPerf.mark('first-paint-ready');
-    
+
     // Force a repaint to ensure the window can show without flashing
     requestAnimationFrame(() => {
       rendererPerf.mark('renderer-ready');

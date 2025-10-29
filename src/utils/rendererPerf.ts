@@ -19,8 +19,9 @@ class RendererPerformanceTracker {
     const now = performance.now();
     const duration = now - this.startTime;
     this.marks.set(name, now);
-    
+
     // Log to console for debugging
+    // eslint-disable-next-line no-console
     console.log(`[RENDERER-PERF] ${name}: ${Math.round(duration)}ms`);
   }
 
@@ -44,7 +45,10 @@ class RendererPerformanceTracker {
     }
 
     const duration = end - start;
-    console.log(`[RENDERER-PERF] ${name}: ${Math.round(duration)}ms (${startMark} → ${endMark ?? 'now'})`);
+    // eslint-disable-next-line no-console
+    console.log(
+      `[RENDERER-PERF] ${name}: ${Math.round(duration)}ms (${startMark} → ${endMark ?? 'now'})`
+    );
     return duration;
   }
 }
