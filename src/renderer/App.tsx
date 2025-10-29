@@ -780,6 +780,7 @@ export default function App() {
     }
     return out;
   }, [filteredIdx, entries]);
+
   const searchMatchIdx = useMemo(() => {
     const s = String(search || '').trim();
     if (!s) return [] as number[];
@@ -840,6 +841,40 @@ export default function App() {
     const globalIdx: number = filteredIdx[targetVi]!;
     setSelected(new Set([globalIdx]));
     lastClicked.current = globalIdx;
+    scrollToIndexCenter(targetVi);
+  }
+
+  // Tastaturnavigation: ↑/↓ (Shift erweitert Auswahl)
+  function moveSelectionBy(dir: 1 | -1, extend: boolean) {
+    if (!filteredIdx.length) return;
+    const curGlobal =
+      selectedOneIdx != null
+        ? (selectedOneIdx as number)
+        : lastClicked.current != null
+        ? (lastClicked.current as number)
+        : null;
+    const curVi = curGlobal != null ? filteredIdx.indexOf(curGlobal) : -1;
+
+    let targetVi = curVi < 0 ? (dir > 0 ? 0 : filteredIdx.length - 1) : curVi + dir;
+    if (targetVi < 0) targetVi = 0;
+    if (targetVi > filteredIdx.length - 1) targetVi = filteredIdx.length - 1;
+
+    const targetGlobal = filteredIdx[targetVi]!;
+    if (!extend) {
+      setSelected(new Set([targetGlobal]));
+      lastClicked.current = targetGlobal;
+    } else {
+      const anchorGlobal =
+        lastClicked.current != null ? (lastClicked.current as number) : (curGlobal ?? targetGlobal);
+      const a = filteredIdx.indexOf(anchorGlobal);
+      const b = targetVi;
+      if (a >= 0 && b >= 0) {
+        const [lo, hi] = a < b ? [a, b] : [b, a];
+        setSelected(new Set(filteredIdx.slice(lo, hi + 1)));
+      } else {
+        setSelected(new Set([targetGlobal]));
+      }
+    }
     scrollToIndexCenter(targetVi);
   }
 
@@ -954,7 +989,7 @@ export default function App() {
       logger.error('LoggingStore.addEvents error:', e);
       alert(
         'Failed to process new log entries. See logs for details. ' +
-          ((e as any)?.message || String(e))
+        ((e as any)?.message || String(e))
       );
     }
     setEntries((prev) => [...prev, ...toAdd].sort(compareByTimestampId as any));
@@ -972,6 +1007,19 @@ export default function App() {
     appendEntries(batch.slice(0, take), options);
     return take;
   }
+
+  const onListKeyDown = (e: KeyboardEvent) => {
+    if (!filteredIdx.length) return;
+    // Nur reagieren, wenn Fokus auf der Liste liegt
+    // preventDefault stoppt Textcursor in Inputs außerhalb nicht, da wir nur bei Fokus der Liste sind
+    if (e.key === 'ArrowDown') {
+      e.preventDefault();
+      moveSelectionBy(1, !!(e as any).shiftKey);
+    } else if (e.key === 'ArrowUp') {
+      e.preventDefault();
+      moveSelectionBy(-1, !!(e as any).shiftKey);
+    }
+  };
 
   // Follow mode auto-select
   useEffect(() => {
@@ -2548,7 +2596,14 @@ export default function App() {
       {/* Hauptlayout: Liste + Overlay-Details */}
       <div className="layout" ref={layoutRef}>
         {/* Listen-Header */}
-        <div className="list" ref={parentRef as any}>
+        <div
+          className="list"
+          ref={parentRef as any}
+          tabIndex={0}
+          role="listbox"
+          aria-label="Logeinträge"
+          onKeyDown={onListKeyDown as any}
+        >
           <div className="list-header">
             <div className="cell">
               Zeitstempel
@@ -2591,13 +2646,16 @@ export default function App() {
                   key={key}
                   className={rowCls}
                   style={style}
-                  onClick={(ev) =>
+                  role="option"
+                  aria-selected={isSel}
+                  onClick={(ev) => {
                     toggleSelectIndex(
                       globalIdx,
                       (ev as any).shiftKey,
                       (ev as any).ctrlKey || (ev as any).metaKey
-                    )
-                  }
+                    );
+                    try { (parentRef.current as any)?.focus?.(); } catch {}
+                  }}
                   onContextMenu={(ev) => openContextMenu(ev as any, globalIdx)}
                   title={String(e.message || '')}
                   data-marked={markColor ? '1' : '0'}
