@@ -2060,15 +2060,9 @@ export default function App() {
             try {
               const s = TimeFilter.getState();
               if (!s.enabled) return null;
-              const label =
-                s.mode === 'relative' && s.duration
-                  ? `Elastic: ${s.duration}`
-                  : s.from || s.to
-                    ? `Elastic: ${s.from ? 'von' : ''} ${s.from || ''} ${s.to ? 'bis ' + s.to : ''}`
-                    : 'Elastic aktiv';
               return (
                 <span className="status" style={{ marginLeft: '6px' }} title="Elastic-Search aktiv">
-                  {label}
+                  Elastic aktiv
                 </span>
               );
             } catch {
