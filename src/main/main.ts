@@ -47,8 +47,8 @@ function getParsers(): typeof import('./parsers.cjs') {
 
 // Windows/Meta
 let mainWindow: BrowserWindow | null = null;
-let iconPlay: NativeImage | null = null;
-let iconStop: NativeImage | null = null;
+const iconPlay: NativeImage | null = null;
+const iconStop: NativeImage | null = null;
 const windows = new Set<BrowserWindow>();
 
 type WindowMeta = {
@@ -151,7 +151,7 @@ function applyWindowTitles(): void {
 // Buffers
 const MAX_PENDING_APPENDS = 5000;
 let pendingAppends: LogEntry[] = [];
-let pendingMenuCmdsByWindow = new Map<number, Array<{ type: string; tab?: string }>>();
+const pendingMenuCmdsByWindow = new Map<number, Array<{ type: string; tab?: string }>>();
 let lastFocusedWindowId: number | null = null;
 const pendingAppendsByWindow = new Map<number, LogEntry[]>();
 

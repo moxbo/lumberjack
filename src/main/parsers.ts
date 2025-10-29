@@ -855,9 +855,9 @@ function parseHitsResponse(
   hasMore: boolean;
   nextSearchAfter: Array<string | number> | null;
 } {
-  const hitsContainer = (data && (data as AnyMap).hits) as AnyMap | undefined;
+  const hitsContainer = (data && data.hits) as AnyMap | undefined;
   const totalVal = (() => {
-    const t = hitsContainer && (hitsContainer as AnyMap).total;
+    const t = hitsContainer && hitsContainer.total;
     if (!t) return null;
     if (typeof t === 'number') return t;
     if (typeof t === 'object' && typeof (t as AnyMap).value === 'number')
@@ -865,9 +865,7 @@ function parseHitsResponse(
     return null;
   })();
   const hitsArray =
-    hitsContainer && Array.isArray((hitsContainer as AnyMap).hits)
-      ? ((hitsContainer as AnyMap).hits as unknown[])
-      : [];
+    hitsContainer && Array.isArray(hitsContainer.hits) ? (hitsContainer.hits as unknown[]) : [];
   const out: Entry[] = [];
   for (const h of hitsArray) {
     const hObj = h && typeof h === 'object' ? (h as AnyMap) : {};
@@ -919,7 +917,7 @@ async function openScroll(
     throw new Error(`Scroll open failed ${res.status}: ${res.text.slice(0, 800)}`);
   const j = (res.json as AnyMap) || {};
   const scrollId = (j._scroll_id as string) || (j.scroll_id as string) || '';
-  const { entries, total } = parseHitsResponse(j as AnyMap, size);
+  const { entries, total } = parseHitsResponse(j, size);
   if (!scrollId) {
     if (entries.length === 0) return { scrollId: '', entries: [], total: total ?? 0 };
     throw new Error('Scroll open: Keine _scroll_id im Response');
@@ -945,7 +943,7 @@ async function scrollNext(
     throw new Error(`Scroll next failed ${res.status}: ${res.text.slice(0, 800)}`);
   const j = (res.json as AnyMap) || {};
   const newScrollId = (j._scroll_id as string) || (j.scroll_id as string) || '';
-  const entries = parseHitsResponse(j as AnyMap, Number.MAX_SAFE_INTEGER).entries;
+  const entries = parseHitsResponse(j, Number.MAX_SAFE_INTEGER).entries;
   if (!newScrollId && entries.length === 0) return { scrollId: '', entries: [] };
   if (!newScrollId) throw new Error('Scroll next: Keine _scroll_id im Response');
   return { scrollId: newScrollId, entries };

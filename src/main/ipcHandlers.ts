@@ -145,7 +145,7 @@ export function registerIpcHandlers(
         return { ok: false, error: validation.error };
       }
 
-      let updated = settingsService.update(clone);
+      const updated = settingsService.update(clone);
 
       // Apply password updates after merge
       if (passClear) {
@@ -437,9 +437,9 @@ export function registerIpcHandlers(
           nextSearchAfter: Array<string | number> | null;
           pitSessionId: string;
         };
-        const page = (await (
+        const page = await (
           fetchElasticPitPage as unknown as (o: ElasticSearchOptions) => Promise<PitPage>
-        )(mergedOpts)) as PitPage;
+        )(mergedOpts);
 
         return {
           ok: true,

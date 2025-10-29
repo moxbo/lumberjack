@@ -180,7 +180,7 @@ export default function DCFilterDialog(): preact.JSX.Element {
               class="bright-input"
               list="dc-keys"
               value={selectedKey}
-              onInput={(e) => setSelectedKey((e.currentTarget as HTMLInputElement).value)}
+              onInput={(e) => setSelectedKey(e.currentTarget.value)}
               placeholder="Key wählen oder tippen…"
               autoFocus
             />
@@ -197,7 +197,7 @@ export default function DCFilterDialog(): preact.JSX.Element {
                 class="bright-input"
                 ref={valueInputRef as any}
                 value={val}
-                onInput={(e) => setVal((e.currentTarget as HTMLInputElement).value)}
+                onInput={(e) => setVal(e.currentTarget.value)}
                 onKeyDown={(e) => onValueKeyDown(e as unknown as KeyboardEvent)}
                 title="Mehrere Werte mit | trennen. F2 oder Button öffnet Vorschläge. Leer = alle Werte dieses Keys."
                 placeholder="Wert(e) oder leer für alle…"
@@ -225,9 +225,7 @@ export default function DCFilterDialog(): preact.JSX.Element {
             type="checkbox"
             class="native-checkbox"
             checked={enabled}
-            onChange={(e) =>
-              DiagnosticContextFilter.setEnabled((e.currentTarget as HTMLInputElement).checked)
-            }
+            onChange={(e) => DiagnosticContextFilter.setEnabled(e.currentTarget.checked)}
           />
           <span style="font-size:12px; color:#333;">MDC-Filter aktiv</span>
         </label>
@@ -268,9 +266,7 @@ export default function DCFilterDialog(): preact.JSX.Element {
                         type="checkbox"
                         class="native-checkbox"
                         checked={e.active}
-                        onChange={(ev) =>
-                          toggleActive(e, (ev.currentTarget as HTMLInputElement).checked)
-                        }
+                        onChange={(ev) => toggleActive(e, ev.currentTarget.checked)}
                         onClick={(ev) => ev.stopPropagation()}
                         onMouseDown={(ev) => ev.stopPropagation()}
                         onContextMenu={(ev) => ev.stopPropagation()}

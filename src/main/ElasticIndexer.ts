@@ -77,7 +77,7 @@ export function defaultFingerprint(
   const parts: string[] = [];
   for (const f of cfg.fields) {
     const raw = (event as any)[f];
-    const norm = normalizers[f] ? normalizers[f]!(raw) : String(raw ?? '');
+    const norm = normalizers[f] ? normalizers[f](raw) : String(raw ?? '');
     parts.push(`${f}=${norm}`);
   }
   const data = parts.join('|');
@@ -179,7 +179,7 @@ export class ElasticIndexer {
         if (res.status >= 200 && res.status < 300) {
           const body = await res.json().catch(() => null as any);
           const items: any[] = Array.isArray(body?.items) ? body.items : [];
-          let nextRetry: Array<{ e: Record<string, unknown>; id: string }> = [];
+          const nextRetry: Array<{ e: Record<string, unknown>; id: string }> = [];
           for (let i = 0; i < (items.length || 0); i++) {
             const it = items[i];
             const r = it?.create || it?.index || it?.update || it?.delete;

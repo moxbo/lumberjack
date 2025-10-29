@@ -55,8 +55,7 @@ class MDCListenerImpl {
             // Seed with existing events (if any)
             try {
               const all = LS?.getAllEvents?.() || [];
-              if (Array.isArray(all) && all.length)
-                this._onAdded(all as Array<Record<string, unknown>>);
+              if (Array.isArray(all) && all.length) this._onAdded(all);
             } catch (e) {
               console.warn('MDCListener seeding failed:', e);
             }
@@ -83,9 +82,9 @@ class MDCListenerImpl {
   private _onAdded(events: Array<Record<string, unknown>>): void {
     let changed = false;
     for (const e of events || []) {
-      const obj = e as Record<string, unknown>;
+      const obj = e;
       const mdc = (obj && (obj['mdc'] as Record<string, unknown>)) || {};
-      for (const [k, v] of Object.entries(mdc as Record<string, unknown>)) {
+      for (const [k, v] of Object.entries(mdc)) {
         const ck = canonicalDcKey(k);
         if (!ck || typeof v !== 'string') continue;
         if (!this.keys.has(ck)) {

@@ -646,7 +646,7 @@ body {
 }
 
 /* Color input wie eine Swatch darstellen */
-.context-menu input[type="color"].swatch {
+.context-menu input[type='color'].swatch {
   -webkit-appearance: none;
   appearance: none;
   width: 20px;
@@ -657,14 +657,14 @@ body {
   background: transparent;
   cursor: pointer;
 }
-.context-menu input[type="color"].swatch::-webkit-color-swatch-wrapper {
+.context-menu input[type='color'].swatch::-webkit-color-swatch-wrapper {
   padding: 0;
 }
-.context-menu input[type="color"].swatch::-webkit-color-swatch {
+.context-menu input[type='color'].swatch::-webkit-color-swatch {
   border: none;
   border-radius: 4px;
 }
-.context-menu input[type="color"].swatch::-moz-color-swatch {
+.context-menu input[type='color'].swatch::-moz-color-swatch {
   border: none;
   border-radius: 4px;
 }

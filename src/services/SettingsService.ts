@@ -186,7 +186,6 @@ export class SettingsService {
     // Entferne veraltete Schlüssel aus Patches
     try {
       if (patch && typeof patch === 'object' && 'windowTitle' in patch) {
-        // eslint-disable-next-line @typescript-eslint/no-dynamic-delete
         delete (patch as Record<string, unknown>)['windowTitle'];
       }
     } catch (e) {
