@@ -106,6 +106,13 @@ export interface WindowTitleResult {
   error?: string;
 }
 
+// Per-Window permissions
+export interface WindowPermsResult {
+  ok: boolean;
+  canTcpControl?: boolean;
+  error?: string;
+}
+
 /**
  * Log parsing result
  */
@@ -223,6 +230,10 @@ export interface ElectronAPI {
   // Window title (session)
   windowTitleGet: () => Promise<WindowTitleResult>;
   windowTitleSet: (title: string) => Promise<Result<void>>;
+
+  // Per-window permissions (not persisted in Settings)
+  windowPermsGet: () => Promise<WindowPermsResult>;
+  windowPermsSet: (patch: { canTcpControl?: boolean }) => Promise<Result<void>>;
 
   // Dialogs
   openFiles: () => Promise<string[]>;

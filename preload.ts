@@ -34,6 +34,12 @@ const api: ElectronAPI = {
   windowTitleSet: (title: string): Promise<Result<void>> =>
     ipcRenderer.invoke('windowTitle:set', title),
 
+  // Per-window permissions
+  windowPermsGet: (): Promise<{ ok: boolean; canTcpControl?: boolean; error?: string }> =>
+    ipcRenderer.invoke('windowPerms:get'),
+  windowPermsSet: (patch: { canTcpControl?: boolean }): Promise<Result<void>> =>
+    ipcRenderer.invoke('windowPerms:set', patch),
+
   // Dialog operations
   openFiles: (): Promise<string[]> => ipcRenderer.invoke('dialog:openFiles'),
 

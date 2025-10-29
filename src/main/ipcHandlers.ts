@@ -36,12 +36,24 @@ export function registerIpcHandlers(
     }
   }
 
-  // Window title (session-scoped) handlers
-  ipcMain.handle('windowTitle:get', () => {
+  function updateAppMenu(): void {
     try {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const getter = (global as any)?.__getRuntimeTitleOverride;
-      const title = typeof getter === 'function' ? getter() : null;
+      const upd = (global as any)?.__updateAppMenu;
+      if (typeof upd === 'function') upd();
+    } catch (e) {
+      log.warn('updateAppMenu helper failed:', e instanceof Error ? e.message : String(e));
+    }
+  }
+
+  // Window title (per-window, session-scoped) handlers
+  ipcMain.handle('windowTitle:get', (event) => {
+    try {
+      const wc = event.sender;
+      const win = BrowserWindow.fromWebContents(wc);
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const getter = (global as any)?.__getWindowBaseTitle;
+      const title = typeof getter === 'function' && win ? getter(win.id) : '';
       return { ok: true, title: title || '' };
     } catch (err) {
       log.error('Error getting window title:', err instanceof Error ? err.message : String(err));
@@ -49,16 +61,50 @@ export function registerIpcHandlers(
     }
   });
 
-  ipcMain.handle('windowTitle:set', (_event, title: string) => {
+  ipcMain.handle('windowTitle:set', (event, title: string) => {
     try {
+      const wc = event.sender;
+      const win = BrowserWindow.fromWebContents(wc);
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const setter = (global as any)?.__setRuntimeTitleOverride;
-      if (typeof setter === 'function') setter(String(title ?? ''));
+      const setter = (global as any)?.__setWindowBaseTitle;
+      if (typeof setter === 'function' && win) setter(win.id, String(title ?? ''));
       updateWindowTitles();
       return { ok: true };
     } catch (err) {
       log.error('Error setting window title:', err instanceof Error ? err.message : String(err));
       return { ok: false, error: err instanceof Error ? err.message : String(err) };
+    }
+  });
+
+  // Per-Window Permissions (e.g., TCP control)
+  ipcMain.handle('windowPerms:get', (event) => {
+    try {
+      const wc = event.sender;
+      const win = BrowserWindow.fromWebContents(wc);
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const getter = (global as any)?.__getWindowCanTcpControl;
+      const allowed = typeof getter === 'function' && win ? !!getter(win.id) : true;
+      return { ok: true, canTcpControl: allowed } as any;
+    } catch (err) {
+      log.error('Error getting window perms:', err instanceof Error ? err.message : String(err));
+      return { ok: false, error: err instanceof Error ? err.message : String(err) } as any;
+    }
+  });
+
+  ipcMain.handle('windowPerms:set', (event, patch: { canTcpControl?: boolean }) => {
+    try {
+      const wc = event.sender;
+      const win = BrowserWindow.fromWebContents(wc);
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const setter = (global as any)?.__setWindowCanTcpControl;
+      if (win && typeof patch?.canTcpControl === 'boolean' && typeof setter === 'function') {
+        setter(win.id, patch.canTcpControl);
+        updateAppMenu();
+      }
+      return { ok: true } as any;
+    } catch (err) {
+      log.error('Error setting window perms:', err instanceof Error ? err.message : String(err));
+      return { ok: false, error: err instanceof Error ? err.message : String(err) } as any;
     }
   });
 
@@ -104,13 +150,13 @@ export function registerIpcHandlers(
       // Apply password updates after merge
       if (passClear) {
         updated.elasticPassEnc = '';
-      } else if (passPlain && typeof passPlain === 'string' && passPlain.trim()) {
+      } else if (passPlain && passPlain.trim()) {
         updated.elasticPassEnc = settingsService.encryptSecret(passPlain.trim());
       }
 
       // Update again if password changed
       if (passClear || passPlain) {
-        updated = settingsService.update(updated);
+        settingsService.update(updated);
       }
 
       // Save to disk
@@ -193,7 +239,7 @@ export function registerIpcHandlers(
         if (!name || !data) continue;
         if (ext === '.zip') {
           const buf = Buffer.from(data, enc === 'base64' ? 'base64' : 'utf8');
-          const zip = new ZipClass(buf);
+          const zip = new (ZipClass as any)(buf);
           zip.getEntries().forEach((zEntry: any) => {
             const ename = zEntry.entryName;
             const eext = path.extname(ename).toLowerCase();
@@ -229,28 +275,32 @@ export function registerIpcHandlers(
   ipcMain.on('tcp:start', (event, { port }: { port: number }) => {
     (async () => {
       try {
+        const win = BrowserWindow.fromWebContents(event.sender);
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const canFn = (global as any)?.__getWindowCanTcpControl;
+        const allowed = win && typeof canFn === 'function' ? !!canFn(win.id) : true;
+        if (!allowed) {
+          event.reply('tcp:status', { ok: false, message: 'In diesem Fenster nicht erlaubt' });
+          return;
+        }
         const status = await networkService.startTcpServer(port);
         event.reply('tcp:status', status);
 
-        if (status.ok) {
+        if (status.ok && win) {
           const settings = settingsService.get();
           settings.tcpPort = port;
           settingsService.update(settings);
           void settingsService.save();
+          // Eigentümer auf dieses Fenster setzen
+          try {
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            (global as any).__setTcpOwnerWindowId?.(win.id);
+          } catch {}
         }
 
         // Titel und Menü aktualisieren
         updateWindowTitles();
-        try {
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          const upd = (global as any)?.__updateAppMenu;
-          if (typeof upd === 'function') upd();
-        } catch (e) {
-          log.warn(
-            'Failed to trigger app menu update after TCP start:',
-            e instanceof Error ? e.message : String(e)
-          );
-        }
+        updateAppMenu();
         setTimeout(updateWindowTitles, 50);
         setTimeout(updateWindowTitles, 200);
       } catch (err) {
@@ -266,20 +316,25 @@ export function registerIpcHandlers(
   ipcMain.on('tcp:stop', (event) => {
     (async () => {
       try {
+        const win = BrowserWindow.fromWebContents(event.sender);
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const canFn = (global as any)?.__getWindowCanTcpControl;
+        const allowed = win && typeof canFn === 'function' ? !!canFn(win.id) : true;
+        if (!allowed) {
+          event.reply('tcp:status', { ok: false, message: 'In diesem Fenster nicht erlaubt' });
+          return;
+        }
         const status = await networkService.stopTcpServer();
         event.reply('tcp:status', status);
+        if (status.ok) {
+          try {
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            (global as any).__setTcpOwnerWindowId?.(null);
+          } catch {}
+        }
         // Titel und Menü aktualisieren
         updateWindowTitles();
-        try {
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          const upd = (global as any)?.__updateAppMenu;
-          if (typeof upd === 'function') upd();
-        } catch (e) {
-          log.warn(
-            'Failed to trigger app menu update after TCP stop:',
-            e instanceof Error ? e.message : String(e)
-          );
-        }
+        updateAppMenu();
         setTimeout(updateWindowTitles, 50);
         setTimeout(updateWindowTitles, 200);
       } catch (err) {

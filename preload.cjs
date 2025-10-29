@@ -9,6 +9,9 @@ var api = {
   // Window title (session) operations
   windowTitleGet: () => import_electron.ipcRenderer.invoke("windowTitle:get"),
   windowTitleSet: (title) => import_electron.ipcRenderer.invoke("windowTitle:set", title),
+  // Per-window permissions
+  windowPermsGet: () => import_electron.ipcRenderer.invoke("windowPerms:get"),
+  windowPermsSet: (patch) => import_electron.ipcRenderer.invoke("windowPerms:set", patch),
   // Dialog operations
   openFiles: () => import_electron.ipcRenderer.invoke("dialog:openFiles"),
   chooseLogFile: () => import_electron.ipcRenderer.invoke("dialog:chooseLogFile"),

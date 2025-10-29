@@ -444,6 +444,7 @@ export default function App() {
   const [httpStatus, setHttpStatus] = useState<string>('');
   const [httpPollId, setHttpPollId] = useState<number | null>(null);
   const [tcpPort, setTcpPort] = useState<number>(5000);
+  const [canTcpControlWindow, setCanTcpControlWindow] = useState<boolean>(true);
 
   const [httpUrl, setHttpUrl] = useState<string>('');
   const [httpInterval, setHttpInterval] = useState<number>(5000);
@@ -785,14 +786,27 @@ export default function App() {
 
   function gotoListStart() {
     if (!filteredIdx.length) return;
-    virtualizer.scrollToIndex(0, { align: 'start', behavior: followSmooth ? 'smooth' : 'auto' });
+    const targetVi = 0;
+    const globalIdx = filteredIdx[targetVi]!;
+    setSelected(new Set([globalIdx]));
+    lastClicked.current = globalIdx;
+    // In den sichtbaren Bereich (zwischen Header und Detail-Overlay) zentrieren
+    scrollToIndexCenter(targetVi);
+    try {
+      (parentRef.current as any)?.focus?.();
+    } catch {}
   }
   function gotoListEnd() {
     if (!filteredIdx.length) return;
-    virtualizer.scrollToIndex(filteredIdx.length - 1, {
-      align: 'end',
-      behavior: followSmooth ? 'smooth' : 'auto',
-    });
+    const targetVi = filteredIdx.length - 1;
+    const globalIdx = filteredIdx[targetVi]!;
+    setSelected(new Set([globalIdx]));
+    lastClicked.current = globalIdx;
+    // In den sichtbaren Bereich (zwischen Header und Detail-Overlay) zentrieren
+    scrollToIndexCenter(targetVi);
+    try {
+      (parentRef.current as any)?.focus?.();
+    } catch {}
   }
 
   // Hilfsfunktion: Ziel-Index mittig im sichtbaren Bereich (unterhalb des Headers) anzeigen
@@ -1143,7 +1157,10 @@ export default function App() {
     if (!filteredIdx.length) return;
     const lastGlobalIdx = filteredIdx[filteredIdx.length - 1] as number;
     setSelected(new Set([lastGlobalIdx]));
-    setTimeout(() => gotoListEnd(), 0);
+    // Sicherstellen, dass der letzte Eintrag korrekt sichtbar ist (oberhalb des Detail-Overlays)
+    setTimeout(() => {
+      scrollToIndexCenter(filteredIdx.length - 1);
+    }, 0);
   }, [entries, follow, stdFiltersEnabled, filter, dcVersion, timeVersion]);
 
   function addMdcToFilter(k: string, v: string) {
@@ -1248,6 +1265,13 @@ export default function App() {
       } catch (e) {
         logger.error('Error loading settings:', e);
       }
+      // Per-Window Berechtigungen laden
+      try {
+        const perms = await window.api?.windowPermsGet?.();
+        if (perms?.ok) setCanTcpControlWindow(perms.canTcpControl !== false);
+      } catch (e) {
+        logger.warn('windowPermsGet failed:', e as any);
+      }
     };
 
     // Use requestIdleCallback with a timeout to ensure settings load eventually
@@ -1259,7 +1283,7 @@ export default function App() {
     );
     return () => cancelIdleCallback(idleId);
   }, []);
-
+  // ...existing code...
   async function openSettingsModal(
     initialTab?: 'tcp' | 'http' | 'elastic' | 'logging' | 'appearance'
   ) {
@@ -2108,6 +2132,25 @@ export default function App() {
                           setForm({ ...form, tcpPort: Number(e.currentTarget.value || 0) })
                         }
                       />
+                    </div>
+                    <div className="kv">
+                      <label style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                        <input
+                          type="checkbox"
+                          className="native-checkbox"
+                          checked={canTcpControlWindow}
+                          onChange={async (e) => {
+                            const v = e.currentTarget.checked;
+                            setCanTcpControlWindow(v);
+                            try {
+                              await window.api?.windowPermsSet?.({ canTcpControl: v });
+                            } catch (err) {
+                              logger.warn('windowPermsSet failed:', err as any);
+                            }
+                          }}
+                        />
+                        <span>Dieses Fenster darf TCP starten/stoppen</span>
+                      </label>
                     </div>
                   </div>
                 )}
