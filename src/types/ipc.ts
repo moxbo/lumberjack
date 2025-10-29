@@ -55,6 +55,10 @@ export interface Settings {
   // NEW: ElasticSearch dropdown histories
   histAppName?: string[];
   histEnvironment?: string[];
+  // NEW: Index history (analog application_name)
+  histIndex?: string[];
+  // NEW: persist last chosen Environment-Case across sessions
+  lastEnvironmentCase?: 'original' | 'lower' | 'upper' | 'case-sensitive';
 
   // HTTP
   httpUrl?: string;
@@ -72,6 +76,9 @@ export interface Settings {
   marksMap?: Record<string, string>; // signature -> color
   customMarkColors?: string[]; // temporäre Palette
   onlyMarked?: boolean; // UI-Filter: nur markierte anzeigen
+
+  // Elasticsearch Performance
+  elasticMaxParallel?: number; // maximale parallele Seiten (1 = sequentiell)
 }
 
 /**
@@ -152,6 +159,8 @@ export interface ElasticSearchOptions {
   message?: string;
   application_name?: string;
   environment?: string;
+  // NEW: case handling for environment
+  environmentCase?: 'original' | 'lower' | 'upper' | 'case-sensitive';
 
   // auth and TLS
   auth?: ElasticAuth;

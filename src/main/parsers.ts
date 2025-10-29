@@ -8,6 +8,14 @@ import https from 'https';
 import http from 'http';
 import log from 'electron-log/main';
 
+// Keep-Alive Agents für HTTP/HTTPS (inkl. unsicherem TLS)
+const HTTP_KEEPALIVE_AGENT = new http.Agent({ keepAlive: true, maxSockets: 8 });
+const HTTPS_KEEPALIVE_AGENT = new https.Agent({ keepAlive: true });
+const HTTPS_INSECURE_KEEPALIVE_AGENT = new https.Agent({
+  keepAlive: true,
+  rejectUnauthorized: false,
+});
+
 // Types
 type AnyMap = Record<string, unknown>;
 export interface Entry {
@@ -26,8 +34,8 @@ export interface Entry {
   service?: string;
 }
 
-// AdmZip types
-type AdmZipConstructor = new (filePath?: string) => AdmZipInstance;
+// AdmZip lazy
+type AdmZipConstructor = new (filePath?: string | Buffer) => AdmZipInstance;
 interface AdmZipInstance {
   getEntries(): AdmZipEntry[];
 }
@@ -36,23 +44,15 @@ interface AdmZipEntry {
   isDirectory: boolean;
   getData(): Buffer;
 }
-
-// Lazy-load AdmZip only when needed to speed up startup
 let AdmZip: AdmZipConstructor | null = null;
 function getAdmZip(): AdmZipConstructor {
   if (!AdmZip) {
     try {
-      // Prefer direct require in CJS build
       // eslint-disable-next-line @typescript-eslint/no-require-imports
       AdmZip = require('adm-zip') as AdmZipConstructor;
     } catch (e) {
-      try {
-        const req = createRequire(path.join(process.cwd(), 'package.json'));
-        AdmZip = req('adm-zip') as AdmZipConstructor;
-      } catch (e2) {
-        log.error('Failed to load adm-zip module:', e instanceof Error ? e.message : String(e));
-        throw e2;
-      }
+      const req = createRequire(path.join(process.cwd(), 'package.json'));
+      AdmZip = req('adm-zip') as AdmZipConstructor;
     }
   }
   return AdmZip;
@@ -79,50 +79,34 @@ function toEntry(obj: AnyMap = {}, fallbackMessage = '', source = ''): Entry {
   // Normalisiere Stacktrace aus gängigen Feldern
   function normalizeStack(o: unknown): string | null {
     if (!o || typeof o !== 'object') return null;
-    const candVals: unknown[] = [];
+    const cand: unknown[] = [];
     try {
       const direct =
         (o as AnyMap).stack_trace || (o as AnyMap).stackTrace || (o as AnyMap).stacktrace;
-      if (direct != null) candVals.push(direct);
-    } catch (e) {
-      log.warn('normalizeStack: direct fields failed:', e instanceof Error ? e.message : String(e));
-    }
+      if (direct != null) cand.push(direct);
+    } catch {}
     try {
       const err = (o as AnyMap).error || (o as AnyMap).err;
       if (err) {
-        if ((err as AnyMap).stack != null) candVals.push((err as AnyMap).stack);
-        if ((err as AnyMap).trace != null) candVals.push((err as AnyMap).trace);
-        if (typeof err === 'string') candVals.push(err);
+        if ((err as AnyMap).stack != null) cand.push((err as AnyMap).stack);
+        if ((err as AnyMap).trace != null) cand.push((err as AnyMap).trace);
+        if (typeof err === 'string') cand.push(err);
       }
-    } catch (e) {
-      log.warn('normalizeStack: error fields failed:', e instanceof Error ? e.message : String(e));
-    }
+    } catch {}
     try {
       const ex = (o as AnyMap).exception || (o as AnyMap).cause || (o as AnyMap).throwable;
       if (ex) {
-        if ((ex as AnyMap).stack != null) candVals.push((ex as AnyMap).stack);
-        if ((ex as AnyMap).stackTrace != null) candVals.push((ex as AnyMap).stackTrace);
-        if (typeof ex === 'string') candVals.push(ex);
+        if ((ex as AnyMap).stack != null) cand.push((ex as AnyMap).stack);
+        if ((ex as AnyMap).stackTrace != null) cand.push((ex as AnyMap).stackTrace);
+        if (typeof ex === 'string') cand.push(ex);
       }
-    } catch (e) {
-      log.warn(
-        'normalizeStack: exception fields failed:',
-        e instanceof Error ? e.message : String(e)
-      );
-    }
+    } catch {}
     try {
       if ((o as AnyMap)['exception.stacktrace'] != null)
-        candVals.push((o as AnyMap)['exception.stacktrace']);
-      if ((o as AnyMap)['error.stacktrace'] != null)
-        candVals.push((o as AnyMap)['error.stacktrace']);
-    } catch (e) {
-      log.warn(
-        'normalizeStack: flattened fields failed:',
-        e instanceof Error ? e.message : String(e)
-      );
-    }
-
-    for (const v of candVals) {
+        cand.push((o as AnyMap)['exception.stacktrace']);
+      if ((o as AnyMap)['error.stacktrace'] != null) cand.push((o as AnyMap)['error.stacktrace']);
+    } catch {}
+    for (const v of cand) {
       if (v == null) continue;
       if (Array.isArray(v)) {
         const s = v.map((x) => (x == null ? '' : String(x))).join('\n');
@@ -136,7 +120,6 @@ function toEntry(obj: AnyMap = {}, fallbackMessage = '', source = ''): Entry {
   }
 
   const stackTrace = normalizeStack(obj);
-
   const tsVal = obj.timestamp ?? obj['@timestamp'] ?? obj.time;
   const lvlVal = obj.level ?? obj.severity ?? obj.loglevel;
   const loggerVal = obj.logger ?? obj.logger_name ?? obj.category;
@@ -279,24 +262,27 @@ export interface ElasticsearchOptions {
   message?: string;
   application_name?: string;
   environment?: string;
+  // NEW: case handling for environment
+  environmentCase?: 'original' | 'lower' | 'upper' | 'case-sensitive';
   size?: number;
   sort?: 'asc' | 'desc';
   auth?: ElasticsearchAuth;
   allowInsecureTLS?: boolean;
   // Pagination: ES search_after token from previous page
   searchAfter?: Array<string | number>;
+  // Zusätze für ES6-kompatiblen Query-Body
+  dateFormat?: string; // z.B. 'yyyy-MM-dd HH:mm:ss'
+  levelValueGte?: number | string; // mappt auf range level_value.gte
 }
-
-// Erweiterte Optionen für PIT-basierte Suche
 export interface ElasticsearchPitOptions extends ElasticsearchOptions {
-  keepAlive?: string; // z. B. '1m'
-  trackTotalHits?: boolean | number; // default: false
-  sourceIncludes?: string[]; // _source includes
-  sourceExcludes?: string[]; // _source excludes
-  pitSessionId?: string; // bestehende Session wiederverwenden
-  timeoutMs?: number; // Request-Timeout
-  maxRetries?: number; // 429/5xx/Timeout Retries
-  backoffBaseMs?: number; // Basis für Exponential Backoff
+  keepAlive?: string;
+  trackTotalHits?: boolean | number;
+  sourceIncludes?: string[];
+  sourceExcludes?: string[];
+  pitSessionId?: string;
+  timeoutMs?: number;
+  maxRetries?: number;
+  backoffBaseMs?: number;
 }
 
 // PIT session state
@@ -316,7 +302,7 @@ interface PitSession {
 }
 const pitSessions = new Map<string, PitSession>();
 
-// HTTP JSON request with timeout
+// HTTP JSON request with timeout + keep-alive
 async function httpJsonRequest(
   method: 'POST' | 'DELETE',
   urlStr: string,
@@ -335,15 +321,25 @@ async function httpJsonRequest(
         hostname: u.hostname,
         port: u.port ? Number(u.port) : isHttps ? 443 : 80,
         path: `${u.pathname}${u.search}`,
-        headers: { ...(headers || {}), 'content-type': 'application/json' },
+        headers: {
+          ...(headers || {}),
+          'content-type': 'application/json',
+          Connection: 'keep-alive',
+        },
+        agent: isHttps
+          ? allowInsecureTLS
+            ? HTTPS_INSECURE_KEEPALIVE_AGENT
+            : HTTPS_KEEPALIVE_AGENT
+          : HTTP_KEEPALIVE_AGENT,
       };
-      if (isHttps && allowInsecureTLS) opts.agent = new https.Agent({ rejectUnauthorized: false });
       const timer =
         typeof timeoutMs === 'number' && timeoutMs > 0
           ? setTimeout(() => {
               try {
                 req.destroy(new Error('timeout'));
-              } catch {}
+              } catch (e) {
+                log.error('httpJsonRequest: timeout destroy error:', e);
+              }
             }, timeoutMs)
           : null;
       const req = mod.request(opts, (res: http.IncomingMessage) => {
@@ -380,7 +376,6 @@ async function requestWithRetry(
   opts: { maxRetries: number; backoffBaseMs: number }
 ): Promise<{ status: number; text: string; json: unknown | null }> {
   let attempt = 0;
-  // retry with exponential backoff
   while (true) {
     try {
       const res = await exec();
@@ -410,21 +405,18 @@ function buildHeadersWithAuth(auth?: ElasticsearchAuth): Record<string, string> 
     if (auth.type === 'basic') {
       const u = String(auth.username || '');
       const p = String(auth.password || '');
-      const token = Buffer.from(`${u}:${p}`).toString('base64');
-      headers.Authorization = `Basic ${token}`;
+      headers.Authorization = `Basic ${Buffer.from(`${u}:${p}`).toString('base64')}`;
     } else if (auth.type === 'apiKey') {
-      const t = String(auth.token || '');
-      headers.Authorization = `ApiKey ${t}`;
+      headers.Authorization = `ApiKey ${String(auth.token || '')}`;
     } else if (auth.type === 'bearer') {
-      const t = String(auth.token || '');
-      headers.Authorization = `Bearer ${t}`;
+      headers.Authorization = `Bearer ${String(auth.token || '')}`;
     }
   } catch {}
   return headers;
 }
 
 function buildSortArray(order: 'asc' | 'desc' | undefined): AnyMap[] {
-  const ord = order ?? 'asc';
+  const ord = order ?? 'desc';
   return [{ '@timestamp': { order: ord, unmapped_type: 'boolean' } }, { _id: { order: ord } }];
 }
 
@@ -462,7 +454,13 @@ async function tryOpenPitOs(
 ): Promise<string> {
   const idx = index && index.trim() ? index.trim() : '_all';
   const url = `${baseUrl}/_search/point_in_time`;
-  const body = { index: idx, keep_alive: keepAlive, expand_wildcards: 'open', ignore_unavailable: true, allow_no_indices: true } as AnyMap;
+  const body = {
+    index: idx,
+    keep_alive: keepAlive,
+    expand_wildcards: 'open',
+    ignore_unavailable: true,
+    allow_no_indices: true,
+  } as AnyMap;
   const exec = () => httpJsonRequest('POST', url, body, headers, allowInsecureTLS, timeoutMs);
   const res = await requestWithRetry(exec, { maxRetries, backoffBaseMs });
   if (res.status >= 200 && res.status < 300) {
@@ -486,9 +484,8 @@ async function closePitEs(
   const body = { id: pitId };
   const exec = () => httpJsonRequest('POST', url, body, headers, allowInsecureTLS, timeoutMs);
   const res = await requestWithRetry(exec, { maxRetries, backoffBaseMs });
-  if (!(res.status >= 200 && res.status < 300)) {
+  if (!(res.status >= 200 && res.status < 300))
     throw new Error(`ES PIT close failed ${res.status}: ${res.text.slice(0, 800)}`);
-  }
 }
 
 async function closePitOs(
@@ -504,9 +501,8 @@ async function closePitOs(
   const body = { pit_id: pitId };
   const exec = () => httpJsonRequest('DELETE', url, body, headers, allowInsecureTLS, timeoutMs);
   const res = await requestWithRetry(exec, { maxRetries, backoffBaseMs });
-  if (!(res.status >= 200 && res.status < 300)) {
+  if (!(res.status >= 200 && res.status < 300))
     throw new Error(`OS PIT close failed ${res.status}: ${res.text.slice(0, 800)}`);
-  }
 }
 
 async function closePit(
@@ -519,19 +515,66 @@ async function closePit(
   backoffBaseMs: number,
   dialect?: 'es' | 'opensearch'
 ): Promise<void> {
-  // Versuche bevorzugt passenden Dialekt; sonst Fallback
   if (dialect === 'es') {
-    try { await closePitEs(baseUrl, pitId, headers, allowInsecureTLS, timeoutMs, maxRetries, backoffBaseMs); return; } catch {}
-    await closePitOs(baseUrl, pitId, headers, allowInsecureTLS, timeoutMs, maxRetries, backoffBaseMs);
+    try {
+      await closePitEs(
+        baseUrl,
+        pitId,
+        headers,
+        allowInsecureTLS,
+        timeoutMs,
+        maxRetries,
+        backoffBaseMs
+      );
+      return;
+    } catch {}
+    await closePitOs(
+      baseUrl,
+      pitId,
+      headers,
+      allowInsecureTLS,
+      timeoutMs,
+      maxRetries,
+      backoffBaseMs
+    );
     return;
   }
   if (dialect === 'opensearch') {
-    try { await closePitOs(baseUrl, pitId, headers, allowInsecureTLS, timeoutMs, maxRetries, backoffBaseMs); return; } catch {}
-    await closePitEs(baseUrl, pitId, headers, allowInsecureTLS, timeoutMs, maxRetries, backoffBaseMs);
+    try {
+      await closePitOs(
+        baseUrl,
+        pitId,
+        headers,
+        allowInsecureTLS,
+        timeoutMs,
+        maxRetries,
+        backoffBaseMs
+      );
+      return;
+    } catch {}
+    await closePitEs(
+      baseUrl,
+      pitId,
+      headers,
+      allowInsecureTLS,
+      timeoutMs,
+      maxRetries,
+      backoffBaseMs
+    );
     return;
   }
-  // Unbekannt: erst ES, dann OS
-  try { await closePitEs(baseUrl, pitId, headers, allowInsecureTLS, timeoutMs, maxRetries, backoffBaseMs); return; } catch {}
+  try {
+    await closePitEs(
+      baseUrl,
+      pitId,
+      headers,
+      allowInsecureTLS,
+      timeoutMs,
+      maxRetries,
+      backoffBaseMs
+    );
+    return;
+  } catch {}
   await closePitOs(baseUrl, pitId, headers, allowInsecureTLS, timeoutMs, maxRetries, backoffBaseMs);
 }
 
@@ -542,7 +585,6 @@ function newSessionId(): string {
 function normalizeBase(url: string): string {
   return String(url || '').replace(/\/$/, '');
 }
-
 function toIsoIfDate(v: unknown): string | undefined {
   if (v == null) return undefined;
   try {
@@ -563,46 +605,102 @@ function buildElasticSearchBody(opts: ElasticsearchOptions): AnyMap {
   const must: AnyMap[] = [];
   const filter: AnyMap[] = [];
 
+  // Immer match_all gemäß Referenz-Body
+  must.push({ match_all: {} } as AnyMap);
+
+  // environment je nach Case-Option
+  const rawEnv = String(opts.environment || '').trim();
+  if (rawEnv) {
+    const mode = opts.environmentCase || 'original';
+    if (mode === 'case-sensitive') {
+      // Versuche exakten, nicht-analysierten Abgleich: sowohl environment als auch environment.keyword berücksichtigen
+      must.push({
+        bool: {
+          should: [
+            { term: { environment: rawEnv } } as AnyMap,
+            { term: { 'environment.keyword': rawEnv } } as AnyMap,
+          ],
+          minimum_should_match: 1,
+        },
+      } as AnyMap);
+    } else if (mode === 'lower') {
+      must.push({ match_phrase: { environment: { query: rawEnv.toLowerCase() } } } as AnyMap);
+    } else if (mode === 'upper') {
+      must.push({ match_phrase: { environment: { query: rawEnv.toUpperCase() } } } as AnyMap);
+    } else {
+      must.push({ match_phrase: { environment: { query: rawEnv } } } as AnyMap);
+    }
+  }
+
+  // application_name als query_string (analyze_wildcard/allow_leading_wildcard)
+  const app = String(opts.application_name || '').trim();
+  if (app) {
+    const q =
+      app.includes(' ') || /["*?:\\/()\[\]{}]/.test(app) ? `"${app.replace(/"/g, '\\"')}"` : app;
+    must.push({
+      query_string: {
+        query: `application_name:${q}`,
+        analyze_wildcard: true,
+        allow_leading_wildcard: true,
+      },
+    } as AnyMap);
+  }
+
+  // Weitere Felder optional weiterhin als match_phrase
   const addField = (field: string, value?: string) => {
     const v = String(value || '').trim();
     if (!v) return;
     must.push({ match_phrase: { [field]: { query: v } } } as AnyMap);
   };
-
-  addField('environment', opts.environment);
-  addField('application_name', opts.application_name);
   addField('logger', opts.logger);
   addField('level', opts.level);
   addField('message', opts.message);
 
+  // Zeitbereich – unterstütze explizites Format
   const range: AnyMap = {};
+  const fmt = String((opts as AnyMap).dateFormat || '').trim();
   if (opts.duration && String(opts.duration).trim()) {
     range.gte = `now-${opts.duration}`;
     range.lte = 'now';
   } else {
-    // epoch millis numeric handling
-    const num = (x: unknown) =>
-      typeof x === 'number' ? x : /^\d+$/.test(String(x || '')) ? Number(x) : null;
-    const fromNum = num(opts.from as unknown);
-    const toNum = num(opts.to as unknown);
-    if (fromNum != null || toNum != null) {
-      if (fromNum != null) range.gte = fromNum;
-      if (toNum != null) range.lte = toNum;
-      range.format = 'epoch_millis';
+    if (fmt) {
+      const fromStr = opts.from != null ? String(opts.from) : '';
+      const toStr = opts.to != null ? String(opts.to) : '';
+      if (fromStr) range.gte = fromStr;
+      if (toStr) range.lte = toStr;
+      if (fromStr || toStr) range.format = fmt;
     } else {
-      const from = toIsoIfDate(opts.from as unknown);
-      const to = toIsoIfDate(opts.to as unknown);
-      if (from) range.gte = from;
-      if (to) range.lte = to;
+      // epoch millis oder ISO
+      const num = (x: unknown) =>
+        typeof x === 'number' ? x : /^\d+$/.test(String(x || '')) ? Number(x) : null;
+      const fromNum = num(opts.from as unknown);
+      const toNum = num(opts.to as unknown);
+      if (fromNum != null || toNum != null) {
+        if (fromNum != null) range.gte = fromNum;
+        if (toNum != null) range.lte = toNum;
+        range.format = 'epoch_millis';
+      } else {
+        const from = toIsoIfDate(opts.from as unknown);
+        const to = toIsoIfDate(opts.to as unknown);
+        if (from) range.gte = from;
+        if (to) range.lte = to;
+      }
     }
   }
   if (Object.keys(range).length > 0) {
     must.push({ range: { '@timestamp': range } } as AnyMap);
   }
 
+  // Optional: level_value Mindestwert
+  const lv = (opts as AnyMap).levelValueGte;
+  if (lv != null && String(lv).trim() !== '') {
+    must.push({ range: { level_value: { gte: lv } } } as AnyMap);
+  }
+
   const body: AnyMap = {
+    version: true,
     size: opts.size ?? 1000,
-    sort: [{ '@timestamp': { order: opts.sort ?? 'asc', unmapped_type: 'boolean' } }],
+    sort: [{ '@timestamp': { order: opts.sort ?? 'desc', unmapped_type: 'boolean' } }],
     query: {
       bool: {
         must,
@@ -611,6 +709,8 @@ function buildElasticSearchBody(opts: ElasticsearchOptions): AnyMap {
         must_not: [],
       },
     },
+    _source: { excludes: [] },
+    timeout: '30s',
   };
   return body;
 }
@@ -627,8 +727,7 @@ function buildQueryBodyWithPit(opts: ElasticsearchPitOptions, pitId: string): An
       ...(inc ? { includes: inc } : {}),
       ...(exc ? { excludes: exc } : {}),
     } as AnyMap;
-  if (opts.trackTotalHits != null) baseBody.track_total_hits = opts.trackTotalHits;
-  else baseBody.track_total_hits = false;
+  baseBody.track_total_hits = opts.trackTotalHits != null ? opts.trackTotalHits : false;
   if (Array.isArray(opts.searchAfter) && opts.searchAfter.length)
     baseBody.search_after = opts.searchAfter;
   return baseBody;
@@ -638,7 +737,7 @@ async function searchWithPit(
   sess: PitSession,
   body: AnyMap
 ): Promise<{ status: number; text: string; json: AnyMap | null }> {
-  const url = `${sess.baseUrl}/_search`;
+  const url = `${sess.baseUrl}/_search?filter_path=hits.hits._source,hits.hits.sort,hits.total`;
   const exec = () =>
     httpJsonRequest('POST', url, body, sess.headers, !!sess.allowInsecureTLS, sess.timeoutMs);
   const res = await requestWithRetry(exec, {
@@ -654,9 +753,9 @@ function getOrCreateSessionSyncState(opts: ElasticsearchPitOptions): PitSession 
   const indexRaw = String(opts.index ?? '').trim();
   const index = indexRaw ? indexRaw : '_all';
   const keepAlive = String(opts.keepAlive || '1m');
-  const timeoutMs = Math.max(1000, Number(opts.timeoutMs ?? 15000));
-  const maxRetries = Math.max(0, Number(opts.maxRetries ?? 3));
-  const backoffBaseMs = Math.max(50, Number(opts.backoffBaseMs ?? 200));
+  const timeoutMs = Math.max(1000, Number(opts.timeoutMs ?? 45000));
+  const maxRetries = Math.max(0, Number(opts.maxRetries ?? 4));
+  const backoffBaseMs = Math.max(50, Number(opts.backoffBaseMs ?? 300));
   const headers = buildHeadersWithAuth(opts.auth);
   if (opts.pitSessionId && pitSessions.has(opts.pitSessionId)) {
     const existing = pitSessions.get(opts.pitSessionId)!;
@@ -691,7 +790,6 @@ function getOrCreateSessionSyncState(opts: ElasticsearchPitOptions): PitSession 
 
 async function ensurePitOpened(sess: PitSession): Promise<void> {
   if (sess.pitId) return;
-  // Erst Elastic-Style versuchen; bei Fehler Fallback auf OpenSearch-Style; bei Security-Fehlern -> Scroll
   try {
     const id = await tryOpenPitEs(
       sess.baseUrl,
@@ -708,7 +806,11 @@ async function ensurePitOpened(sess: PitSession): Promise<void> {
     return;
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
-    if (/unrecognized parameter|unknown url|_pit\]|\[\/\/_pit/i.test(msg)) {
+    if (
+      /unrecognized parameter|unknown url|_pit\]|\[\/\/_pit|unknown|not found|illegal_argument/i.test(
+        msg
+      )
+    ) {
       try {
         const id = await tryOpenPitOs(
           sess.baseUrl,
@@ -726,19 +828,21 @@ async function ensurePitOpened(sess: PitSession): Promise<void> {
       } catch (e2) {
         const m2 = e2 instanceof Error ? e2.message : String(e2);
         if (/security_exception|unauthorized|forbidden|403/.test(m2)) {
-          // Fallback: Scroll verwenden
           sess.dialect = 'scroll';
           return;
         }
-        throw e2;
+        // Generischer Fallback: ältere ES-Versionen (z. B. 6.x) -> Scroll verwenden
+        sess.dialect = 'scroll';
+        return;
       }
     }
     if (/security_exception|unauthorized|forbidden|403/.test(msg)) {
-      // Fallback: Scroll verwenden
       sess.dialect = 'scroll';
       return;
     }
-    throw e;
+    // Letzte Rettung: Auch hier auf Scroll wechseln, um Suche dennoch zu ermöglichen
+    sess.dialect = 'scroll';
+    return;
   }
 }
 
@@ -751,9 +855,9 @@ function parseHitsResponse(
   hasMore: boolean;
   nextSearchAfter: Array<string | number> | null;
 } {
-  const hitsContainer = (data && data.hits) as AnyMap | undefined;
+  const hitsContainer = (data && (data as AnyMap).hits) as AnyMap | undefined;
   const totalVal = (() => {
-    const t = hitsContainer && hitsContainer.total;
+    const t = hitsContainer && (hitsContainer as AnyMap).total;
     if (!t) return null;
     if (typeof t === 'number') return t;
     if (typeof t === 'object' && typeof (t as AnyMap).value === 'number')
@@ -761,7 +865,9 @@ function parseHitsResponse(
     return null;
   })();
   const hitsArray =
-    hitsContainer && Array.isArray(hitsContainer.hits) ? (hitsContainer.hits as unknown[]) : [];
+    hitsContainer && Array.isArray((hitsContainer as AnyMap).hits)
+      ? ((hitsContainer as AnyMap).hits as unknown[])
+      : [];
   const out: Entry[] = [];
   for (const h of hitsArray) {
     const hObj = h && typeof h === 'object' ? (h as AnyMap) : {};
@@ -786,8 +892,95 @@ function parseHitsResponse(
   };
 }
 
-// PIT-Suche: asynchrone Ausführung mit Session-Management
-// Entfernt: elasticsearchPitSearch Generator, da nicht genutzt und potenziell fehleranfällig
+async function openScroll(
+  baseUrl: string,
+  index: string,
+  keepAlive: string,
+  size: number,
+  sortOrder: 'asc' | 'desc' | undefined,
+  headers: Record<string, string>,
+  allowInsecureTLS: boolean | undefined,
+  timeoutMs: number,
+  maxRetries: number,
+  backoffBaseMs: number,
+  queryOpts?: ElasticsearchOptions
+): Promise<{ scrollId: string; entries: Entry[]; total: number | null }> {
+  const idx = index && index.trim() ? index.trim() : '_all';
+  const url = `${baseUrl}/${encodeURIComponent(idx)}/_search?scroll=${encodeURIComponent(keepAlive)}&ignore_unavailable=true&allow_no_indices=true&expand_wildcards=open&filter_path=hits.hits._source,hits.hits.sort,hits.total,_scroll_id`;
+  const body = buildElasticSearchBody({
+    ...(queryOpts || {}),
+    index: idx,
+    size,
+    sort: sortOrder,
+  } as ElasticsearchOptions);
+  const exec = () => httpJsonRequest('POST', url, body, headers, allowInsecureTLS, timeoutMs);
+  const res = await requestWithRetry(exec, { maxRetries, backoffBaseMs });
+  if (!(res.status >= 200 && res.status < 300))
+    throw new Error(`Scroll open failed ${res.status}: ${res.text.slice(0, 800)}`);
+  const j = (res.json as AnyMap) || {};
+  const scrollId = (j._scroll_id as string) || (j.scroll_id as string) || '';
+  const { entries, total } = parseHitsResponse(j as AnyMap, size);
+  if (!scrollId) {
+    if (entries.length === 0) return { scrollId: '', entries: [], total: total ?? 0 };
+    throw new Error('Scroll open: Keine _scroll_id im Response');
+  }
+  return { scrollId, entries, total };
+}
+
+async function scrollNext(
+  baseUrl: string,
+  keepAlive: string,
+  scrollId: string,
+  headers: Record<string, string>,
+  allowInsecureTLS: boolean | undefined,
+  timeoutMs: number,
+  maxRetries: number,
+  backoffBaseMs: number
+): Promise<{ scrollId: string; entries: Entry[] }> {
+  const url = `${baseUrl}/_search/scroll?filter_path=hits.hits._source,hits.hits.sort,_scroll_id`;
+  const body = { scroll: keepAlive, scroll_id: scrollId } as AnyMap;
+  const exec = () => httpJsonRequest('POST', url, body, headers, allowInsecureTLS, timeoutMs);
+  const res = await requestWithRetry(exec, { maxRetries, backoffBaseMs });
+  if (!(res.status >= 200 && res.status < 300))
+    throw new Error(`Scroll next failed ${res.status}: ${res.text.slice(0, 800)}`);
+  const j = (res.json as AnyMap) || {};
+  const newScrollId = (j._scroll_id as string) || (j.scroll_id as string) || '';
+  const entries = parseHitsResponse(j as AnyMap, Number.MAX_SAFE_INTEGER).entries;
+  if (!newScrollId && entries.length === 0) return { scrollId: '', entries: [] };
+  if (!newScrollId) throw new Error('Scroll next: Keine _scroll_id im Response');
+  return { scrollId: newScrollId, entries };
+}
+
+async function closeScroll(
+  baseUrl: string,
+  scrollId: string,
+  headers: Record<string, string>,
+  allowInsecureTLS: boolean | undefined,
+  timeoutMs: number,
+  maxRetries: number,
+  backoffBaseMs: number
+): Promise<void> {
+  if (!scrollId) return;
+  const url = `${baseUrl}/_search/scroll`;
+  const execPost = async (payload: AnyMap) => {
+    const exec = () => httpJsonRequest('POST', url, payload, headers, allowInsecureTLS, timeoutMs);
+    const res = await requestWithRetry(exec, { maxRetries, backoffBaseMs });
+    return res.status >= 200 && res.status < 300;
+  };
+  const tryDeletePath = async () => {
+    const delUrl = `${baseUrl}/_search/scroll/${encodeURIComponent(scrollId)}`;
+    const exec = () => httpJsonRequest('DELETE', delUrl, {}, headers, allowInsecureTLS, timeoutMs);
+    const res = await requestWithRetry(exec, { maxRetries, backoffBaseMs });
+    return res.status >= 200 && res.status < 300;
+  };
+  const ok =
+    (await execPost({ scroll_id: scrollId } as AnyMap)) ||
+    (await execPost({ scroll_id: [scrollId] } as AnyMap)) ||
+    (await tryDeletePath());
+  if (!ok) {
+    log.warn('closeScroll: failed to clear scroll_id');
+  }
+}
 
 // Öffentliche API: Hole eine Seite via PIT+search_after und verwalte Session
 export async function fetchElasticPitPage(opts: ElasticsearchPitOptions): Promise<{
@@ -799,7 +992,6 @@ export async function fetchElasticPitPage(opts: ElasticsearchPitOptions): Promis
 }> {
   const sess = getOrCreateSessionSyncState(opts);
   await ensurePitOpened(sess);
-  // Scroll-Fall
   if (sess.dialect === 'scroll') {
     let entries: Entry[] = [];
     let total: number | null = null;
@@ -814,7 +1006,8 @@ export async function fetchElasticPitPage(opts: ElasticsearchPitOptions): Promis
         sess.allowInsecureTLS,
         sess.timeoutMs,
         sess.maxRetries,
-        sess.backoffBaseMs
+        sess.backoffBaseMs,
+        opts
       );
       sess.pitId = first.scrollId;
       entries = first.entries;
@@ -837,17 +1030,21 @@ export async function fetchElasticPitPage(opts: ElasticsearchPitOptions): Promis
     sess.lastUsed = Date.now();
     if (!hasMore) {
       try {
-        if (sess.pitId) await closeScroll(
-          sess.baseUrl,
-          sess.pitId,
-          sess.headers,
-          sess.allowInsecureTLS,
-          sess.timeoutMs,
-          sess.maxRetries,
-          sess.backoffBaseMs
-        );
+        if (sess.pitId)
+          await closeScroll(
+            sess.baseUrl,
+            sess.pitId,
+            sess.headers,
+            sess.allowInsecureTLS,
+            sess.timeoutMs,
+            sess.maxRetries,
+            sess.backoffBaseMs
+          );
       } catch (e) {
-        log.warn('Scroll close after completion failed:', e instanceof Error ? e.message : String(e));
+        log.warn(
+          'Scroll close after completion failed:',
+          e instanceof Error ? e.message : String(e)
+        );
       } finally {
         pitSessions.delete(sess.sessionId);
       }
@@ -922,80 +1119,6 @@ export async function closeElasticPitSession(sessionId: string): Promise<void> {
     }
   } finally {
     pitSessions.delete(sessionId);
-  }
-}
-
-async function openScroll(
-  baseUrl: string,
-  index: string,
-  keepAlive: string,
-  size: number,
-  sortOrder: 'asc' | 'desc' | undefined,
-  headers: Record<string, string>,
-  allowInsecureTLS: boolean | undefined,
-  timeoutMs: number,
-  maxRetries: number,
-  backoffBaseMs: number
-): Promise<{ scrollId: string; entries: Entry[]; total: number | null }> {
-  const idx = index && index.trim() ? index.trim() : '_all';
-  const url = `${baseUrl}/${encodeURIComponent(idx)}/_search?scroll=${encodeURIComponent(keepAlive)}&ignore_unavailable=true&allow_no_indices=true&expand_wildcards=open`;
-  const body = buildElasticSearchBody({ url: baseUrl, index: idx, size, sort: sortOrder } as ElasticsearchOptions);
-  const exec = () => httpJsonRequest('POST', url, body, headers, allowInsecureTLS, timeoutMs);
-  const res = await requestWithRetry(exec, { maxRetries, backoffBaseMs });
-  if (!(res.status >= 200 && res.status < 300)) {
-    throw new Error(`Scroll open failed ${res.status}: ${res.text.slice(0, 800)}`);
-  }
-  const j = (res.json as AnyMap) || {};
-  const scrollId = (j._scroll_id as string) || (j.scroll_id as string) || '';
-  const { entries, total } = parseHitsResponse(j as AnyMap, size);
-  if (!scrollId) {
-    throw new Error('Scroll open: Keine _scroll_id im Response');
-  }
-  return { scrollId, entries, total };
-}
-
-async function scrollNext(
-  baseUrl: string,
-  keepAlive: string,
-  scrollId: string,
-  headers: Record<string, string>,
-  allowInsecureTLS: boolean | undefined,
-  timeoutMs: number,
-  maxRetries: number,
-  backoffBaseMs: number
-): Promise<{ scrollId: string; entries: Entry[] }> {
-  const url = `${baseUrl}/_search/scroll`;
-  const body = { scroll: keepAlive, scroll_id: scrollId } as AnyMap;
-  const exec = () => httpJsonRequest('POST', url, body, headers, allowInsecureTLS, timeoutMs);
-  const res = await requestWithRetry(exec, { maxRetries, backoffBaseMs });
-  if (!(res.status >= 200 && res.status < 300)) {
-    throw new Error(`Scroll next failed ${res.status}: ${res.text.slice(0, 800)}`);
-  }
-  const j = (res.json as AnyMap) || {};
-  const newScrollId = (j._scroll_id as string) || (j.scroll_id as string) || scrollId;
-  const entries = parseHitsResponse(j as AnyMap, Number.MAX_SAFE_INTEGER).entries;
-  return { scrollId: newScrollId, entries };
-}
-
-async function closeScroll(
-  baseUrl: string,
-  scrollId: string,
-  headers: Record<string, string>,
-  allowInsecureTLS: boolean | undefined,
-  timeoutMs: number,
-  maxRetries: number,
-  backoffBaseMs: number
-): Promise<void> {
-  const url = `${baseUrl}/_search/scroll`;
-  const body = { scroll_id: [scrollId] } as AnyMap;
-  const tryOnce = async (method: 'DELETE' | 'POST') => {
-    const exec = () => httpJsonRequest(method, url, body, headers, allowInsecureTLS, timeoutMs);
-    const res = await requestWithRetry(exec, { maxRetries, backoffBaseMs });
-    return res.status >= 200 && res.status < 300;
-  };
-  const ok = (await tryOnce('DELETE')) || (await tryOnce('POST'));
-  if (!ok) {
-    throw new Error('Scroll close failed');
   }
 }
 

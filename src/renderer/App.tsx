@@ -172,6 +172,9 @@ export default function App() {
     logger: '',
     level: '',
     environment: '',
+    // NEW: Felder für Index & Environment-Case
+    index: '',
+    environmentCase: 'original',
   });
 
   // Öffnet den Elastic-Search-Dialog und befüllt Formular aus TimeFilter-State
@@ -181,7 +184,9 @@ export default function App() {
       let lastApp = (histAppName && histAppName.length > 0 ? String(histAppName[0]) : '') || '';
       let lastEnv =
         (histEnvironment && histEnvironment.length > 0 ? String(histEnvironment[0]) : '') || '';
-      if ((!lastApp || !lastEnv) && window.api?.settingsGet) {
+      let lastIndex = (histIndex && histIndex.length > 0 ? String(histIndex[0]) : '') || '';
+      let lastEnvCase: string | undefined;
+      if (window.api?.settingsGet) {
         try {
           const res = await window.api.settingsGet();
           const r = res?.ok ? (res.settings as any) : null;
@@ -189,11 +194,14 @@ export default function App() {
             lastApp = String(r.histAppName[0] || '');
           if (!lastEnv && Array.isArray(r?.histEnvironment) && r.histEnvironment.length)
             lastEnv = String(r.histEnvironment[0] || '');
+          if (!lastIndex && Array.isArray(r?.histIndex) && r.histIndex.length)
+            lastIndex = String(r.histIndex[0] || '');
+          if (r && typeof r.lastEnvironmentCase === 'string') lastEnvCase = r.lastEnvironmentCase;
         } catch {
           // ignore
         }
       }
-      return { lastApp, lastEnv };
+      return { lastApp, lastEnv, lastIndex, lastEnvCase };
     };
 
     try {
@@ -211,7 +219,11 @@ export default function App() {
         const mm = pad(d.getMinutes());
         return `${y}-${m}-${da}T${hh}:${mm}`;
       };
-      const { lastApp, lastEnv } = await getLasts();
+      const { lastApp, lastEnv, lastIndex, lastEnvCase } = await getLasts();
+      // Bestimme zuletzt verwendete Werte aus der letzten Suche (falls vorhanden)
+      const prev = lastEsForm || {};
+      const initIndex = String(prev.index || lastIndex || '');
+      const initEnvCase = String(prev.environmentCase || lastEnvCase || timeForm.environmentCase || 'original');
       setTimeForm({
         enabled: true,
         mode: (s && s.mode) || 'relative',
@@ -222,9 +234,14 @@ export default function App() {
         logger: '',
         level: '',
         environment: lastEnv,
+        index: initIndex,
+        environmentCase: initEnvCase,
       });
     } catch (e) {
-      const { lastApp, lastEnv } = await getLasts();
+      const { lastApp, lastEnv, lastIndex, lastEnvCase } = await getLasts();
+      const prev = lastEsForm || {};
+      const initIndex = String(prev.index || lastIndex || '');
+      const initEnvCase = String(prev.environmentCase || lastEnvCase || timeForm.environmentCase || 'original');
       setTimeForm({
         enabled: true,
         mode: 'relative',
@@ -235,6 +252,8 @@ export default function App() {
         logger: '',
         level: '',
         environment: lastEnv,
+        index: initIndex,
+        environmentCase: initEnvCase,
       });
     }
     setShowTimeDialog(true);
@@ -252,6 +271,8 @@ export default function App() {
       logger: '',
       level: '',
       environment: '',
+      index: '',
+      environmentCase: 'original',
     });
     setShowTimeDialog(false);
   }
@@ -260,9 +281,11 @@ export default function App() {
   const [histLogger, setHistLogger] = useState<string[]>([]);
   const [histAppName, setHistAppName] = useState<string[]>([]);
   const [histEnvironment, setHistEnvironment] = useState<string[]>([]);
+  // NEW: Index history
+  const [histIndex, setHistIndex] = useState<string[]>([]);
 
   // History-Pflege für Elastic-Dialog
-  function addToHistory(kind: 'app' | 'env', val: string) {
+  function addToHistory(kind: 'app' | 'env' | 'index', val: string) {
     const v = String(val || '').trim();
     if (!v) return;
     if (kind === 'app') {
@@ -284,6 +307,17 @@ export default function App() {
         } catch (e) {
           logger.error('Failed to save histEnvironment settings:', e);
           alert('Failed to save histEnvironment settings. See logs for details.');
+        }
+        return list;
+      });
+    } else if (kind === 'index') {
+      setHistIndex((prev) => {
+        const list = [v, ...prev.filter((x) => x !== v)].slice(0, 10);
+        try {
+          void window.api.settingsSet({ histIndex: list } as any);
+        } catch (e) {
+          logger.error('Failed to save histIndex settings:', e);
+          alert('Failed to save histIndex settings. See logs for details.');
         }
         return list;
       });
@@ -315,6 +349,7 @@ export default function App() {
     elasticUser: '',
     elasticPassNew: '',
     elasticPassClear: false,
+    elasticMaxParallel: 1,
   });
 
   const [showHttpLoadDlg, setShowHttpLoadDlg] = useState<boolean>(false);
@@ -353,6 +388,7 @@ export default function App() {
   const [elasticSize, setElasticSize] = useState<number>(1000);
   const [elasticUser, setElasticUser] = useState<string>('');
   const [elasticHasPass, setElasticHasPass] = useState<boolean>(false);
+  const [elasticMaxParallel, setElasticMaxParallel] = useState<number>(1);
 
   // Kontextmenü + Farbpalette
   const [ctxMenu, setCtxMenu] = useState<{ open: boolean; x: number; y: number }>({
@@ -643,6 +679,30 @@ export default function App() {
     });
   }
 
+  // Hilfsfunktion: Ziel-Index mittig im sichtbaren Bereich (unterhalb des Headers) anzeigen
+  function scrollToIndexCenter(viIndex: number) {
+    const parent = parentRef.current as HTMLDivElement | null;
+    if (!parent) return;
+    // Header innerhalb der Scroll-List ermitteln
+    const headerEl = parent.querySelector('.list-header') as HTMLElement | null;
+    const headerH = headerEl ? headerEl.offsetHeight : 0;
+    const viewportH = parent.clientHeight;
+    const rowsViewportH = Math.max(0, viewportH - headerH);
+    // Bei fester Zeilenhöhe kann der Offset direkt berechnet werden
+    const y = Math.max(0, Math.round(viIndex * rowHeight));
+    // Gewünschte scrollTop-Position: Zeilenmitte in die Mitte des sichtbaren Zeilenbereichs
+    // Gleichung: headerH + y + rowHeight/2 = scrollTop + headerH + rowsViewportH/2
+    // => scrollTop = y + rowHeight/2 - rowsViewportH/2
+    const desiredTop = y + rowHeight / 2 - rowsViewportH / 2;
+    const maxTop = Math.max(0, parent.scrollHeight - viewportH);
+    const top = Math.max(0, Math.min(maxTop, desiredTop));
+    try {
+      parent.scrollTo({ top, behavior: (followSmooth ? 'smooth' : 'auto') as ScrollBehavior });
+    } catch {
+      parent.scrollTop = top;
+    }
+  }
+
   // Selection
   function toggleSelectIndex(idx: number, shift: boolean, meta: boolean) {
     setSelected((prev) => {
@@ -735,10 +795,8 @@ export default function App() {
     const globalIdx: number = filteredIdx[targetVi]!;
     setSelected(new Set([globalIdx]));
     lastClicked.current = globalIdx;
-    virtualizer.scrollToIndex(targetVi, {
-      align: 'center',
-      behavior: followSmooth ? 'smooth' : 'auto',
-    });
+    // Zentriert scrollen (unter Berücksichtigung des Headers)
+    scrollToIndexCenter(targetVi);
   }
   function gotoSearchMatch(dir: number) {
     if (!searchMatchIdx.length) return;
@@ -753,10 +811,8 @@ export default function App() {
     const globalIdx: number = filteredIdx[targetVi]!;
     setSelected(new Set([globalIdx]));
     lastClicked.current = globalIdx;
-    virtualizer.scrollToIndex(targetVi, {
-      align: 'center',
-      behavior: followSmooth ? 'smooth' : 'auto',
-    });
+    // Zentriert scrollen (unter Berücksichtigung des Headers)
+    scrollToIndexCenter(targetVi);
   }
 
   // Append entries helper
@@ -766,7 +822,8 @@ export default function App() {
     const ignoreExistingForElastic = !!options?.ignoreExistingForElastic;
 
     // Prüfe, ob Eintrag aus Elasticsearch stammt
-    const isElastic = (e: any) => typeof e?.source === 'string' && e.source.startsWith('elastic://');
+    const isElastic = (e: any) =>
+      typeof e?.source === 'string' && e.source.startsWith('elastic://');
     // Datei-Quelle: source ohne Schema (kein "://")
     const isFileSource = (e: any) => {
       const s = e?.source;
@@ -876,6 +933,18 @@ export default function App() {
     setNextId((prev) => prev + toAdd.length);
   }
 
+  // Hilfsfunktion: Anhängen mit Kappung auf verfügbare Slots
+  function appendElasticCapped(
+    batch: any[],
+    available: number,
+    options?: { ignoreExistingForElastic?: boolean }
+  ): number {
+    const take = Math.max(0, Math.min(available, Array.isArray(batch) ? batch.length : 0));
+    if (take <= 0) return 0;
+    appendEntries(batch.slice(0, take), options);
+    return take;
+  }
+
   // Follow mode auto-select
   useEffect(() => {
     if (!follow) return;
@@ -979,6 +1048,11 @@ export default function App() {
         if (Array.isArray(r.histLogger)) setHistLogger(r.histLogger);
         if (Array.isArray(r.histAppName)) setHistAppName(r.histAppName);
         if (Array.isArray(r.histEnvironment)) setHistEnvironment(r.histEnvironment);
+        // NEW: load histIndex
+        if (Array.isArray(r.histIndex)) setHistIndex(r.histIndex);
+        // Merke zuletzt verwendeten Environment-Case für Fallback im Dialog
+        const lastEnvCase = (r.lastEnvironmentCase as any) || 'original';
+        setTimeForm((prev) => ({ ...prev, environmentCase: String(lastEnvCase || 'original') }));
         if (typeof r.themeMode === 'string') {
           const mode = ['light', 'dark', 'system'].includes(r.themeMode) ? r.themeMode : 'system';
           setThemeMode(mode);
@@ -1004,6 +1078,7 @@ export default function App() {
         setElasticSize(Number(r.elasticSize || 1000));
         setElasticUser(String(r.elasticUser || ''));
         setElasticHasPass(!!String(r.elasticPassEnc || '').trim());
+        setElasticMaxParallel(Math.max(1, Number(r.elasticMaxParallel || 1)));
         if (r.marksMap && typeof r.marksMap === 'object')
           setMarksMap(r.marksMap as Record<string, string>);
         if (Array.isArray(r.customMarkColors)) setCustomColors(r.customMarkColors as string[]);
@@ -1056,6 +1131,7 @@ export default function App() {
       elasticUser,
       elasticPassNew: '',
       elasticPassClear: false,
+      elasticMaxParallel: elasticMaxParallel || 1,
     });
     setSettingsTab(initialTab || 'tcp');
     setShowSettings(true);
@@ -1087,6 +1163,7 @@ export default function App() {
       elasticUrl: String(form.elasticUrl || '').trim(),
       elasticSize: Math.max(1, Number(form.elasticSize || 1000)),
       elasticUser: String(form.elasticUser || '').trim(),
+      elasticMaxParallel: Math.max(1, Number((form as any).elasticMaxParallel || elasticMaxParallel || 1)),
     };
     const newPass = String(form.elasticPassNew || '').trim();
     if (form.elasticPassClear) patch['elasticPassClear'] = true;
@@ -1275,6 +1352,8 @@ export default function App() {
     return cnt;
   }, [entries]);
   const esLoaded = Math.max(0, esElasticCountAll - esBaseline);
+  const esTarget = Math.max(1, Number(elasticSize || 0));
+  const esPct = esTotal && esTotal > 0 ? Math.min(100, Math.round((esLoaded / esTarget) * 100)) : Math.round((esLoaded / esTarget) * 100) || 0;
 
   function clearLogs() {
     setEntries([]);
@@ -1479,6 +1558,7 @@ export default function App() {
             initial={timeForm}
             histAppName={histAppName}
             histEnvironment={histEnvironment}
+            histIndex={histIndex} // NEW: pass histIndex to dialog
             firstTs={(() => {
               const firstIdx = filteredIdx[0];
               return firstIdx != null ? entries[firstIdx]?.timestamp : null;
@@ -1492,7 +1572,13 @@ export default function App() {
                 setShowTimeDialog(false);
                 addToHistory('app', formVals?.application_name || '');
                 addToHistory('env', formVals?.environment || '');
+                addToHistory('index', formVals?.index || ''); // NEW: save index to history
                 setLastEsForm(formVals);
+                try {
+                  await window.api.settingsSet({ lastEnvironmentCase: String(formVals?.environmentCase || 'original') } as any);
+                } catch (e) {
+                  logger.warn('Persisting lastEnvironmentCase failed:', e as any);
+                }
 
                 // Bestimme Load-Mode gleich zu Beginn
                 const loadMode = String(formVals.loadMode || 'append');
@@ -1572,6 +1658,7 @@ export default function App() {
                       logger: formVals.logger,
                       level: formVals.level,
                       environment: formVals.environment,
+                      environmentCase: formVals.environmentCase || 'original',
                       allowInsecureTLS: !!formVals.allowInsecureTLS,
                       // optionale PIT-Optimierungen
                       keepAlive: '1m',
@@ -1579,6 +1666,16 @@ export default function App() {
                     } as any;
                     logger.info('[Elastic] Search started', { hasResponse: false });
                     setEsBaseline(loadMode === 'replace' ? 0 : esElasticCountAll);
+                    // Verfügbare Slots anhand aktuellem Stand bestimmen (nur Elastic-Einträge zählen)
+                    let available = Math.max(
+                      0,
+                      (elasticSize || 0) - (loadMode === 'replace' ? 0 : esElasticCountAll)
+                    );
+                    let carriedPit: string | null = null;
+                    let nextToken: Array<string | number> | null = null;
+                    let hasMore = false;
+
+                    // Erste Seite holen
                     const res = await window.api.elasticSearch(opts);
                     const total = Array.isArray(res?.entries) ? res.entries.length : 0;
                     logger.info('[Elastic] Search finished', {
@@ -1587,22 +1684,59 @@ export default function App() {
                       hasResponse: true,
                     });
                     if (res?.ok) {
-                      setEsHasMore(!!res.hasMore);
-                      setEsNextSearchAfter((res.nextSearchAfter as any) || null);
-                      setEsPitSessionId((res as any).pitSessionId || null);
+                      hasMore = !!res.hasMore;
+                      nextToken = (res.nextSearchAfter as any) || null;
+                      carriedPit = (res as any).pitSessionId || null;
+                      setEsHasMore(hasMore);
+                      setEsNextSearchAfter(nextToken);
+                      setEsPitSessionId(carriedPit);
                       setEsTotal(
                         typeof (res as any)?.total === 'number' ? Number((res as any).total) : null
                       );
+
                       if (loadMode === 'replace') {
                         setEntries([]);
                         setSelected(new Set());
                         setNextId(1);
                       }
-                      if (Array.isArray(res.entries) && res.entries.length)
-                        appendEntries(res.entries as any[], {
+
+                      // Anhängen mit Kappung
+                      if (Array.isArray(res.entries) && res.entries.length) {
+                        const used = appendElasticCapped(res.entries as any[], available, {
                           ignoreExistingForElastic: loadMode === 'replace',
                         });
-                      if (!res.hasMore) setEsPitSessionId(null);
+                        available = Math.max(0, available - used);
+                      }
+
+                      // Auto-Nachladen bis Cap erreicht oder keine weiteren Seiten
+                      while (available > 0 && hasMore) {
+                        const moreOpts: ElasticSearchOptions = {
+                          ...opts,
+                          // Für PIT: nextSearchAfter übergeben; für Scroll bleibt es undefiniert
+                          ...(nextToken && Array.isArray(nextToken) && nextToken.length > 0
+                            ? { searchAfter: nextToken as any }
+                            : {}),
+                          pitSessionId: carriedPit || undefined,
+                        } as any;
+                        const r2 = await window.api.elasticSearch(moreOpts);
+                        if (!r2?.ok) break;
+                        hasMore = !!r2.hasMore;
+                        nextToken = (r2.nextSearchAfter as any) || null;
+                        carriedPit = (r2 as any).pitSessionId || carriedPit;
+                        setEsHasMore(hasMore);
+                        setEsNextSearchAfter(nextToken);
+                        setEsPitSessionId(carriedPit);
+                        if (Array.isArray(r2.entries) && r2.entries.length) {
+                          const used2 = appendElasticCapped(r2.entries as any[], available);
+                          available = Math.max(0, available - used2);
+                        }
+                        if (!hasMore) break;
+                      }
+
+                      if (!hasMore || available <= 0) {
+                        // Session beenden, wenn nichts mehr oder Cap erreicht
+                        if (!hasMore) setEsPitSessionId(null);
+                      }
                     } else {
                       alert('Elastic-Fehler: ' + ((res as any)?.error || 'Unbekannt'));
                     }
@@ -1858,6 +1992,21 @@ export default function App() {
                             ...form,
                             elasticSize: Math.max(1, Number(e.currentTarget.value || 1000)),
                           })
+                        }
+                      />
+                    </div>
+                    <div className="kv">
+                      <span>Max. parallele Seiten</span>
+                      <input
+                        type="number"
+                        min="1"
+                        max="8"
+                        value={(form as any).elasticMaxParallel || 1}
+                        onInput={(e) =>
+                          setForm({
+                            ...form,
+                            elasticMaxParallel: Math.max(1, Number(e.currentTarget.value || 1)),
+                          } as any)
                         }
                       />
                     </div>
@@ -2249,7 +2398,7 @@ export default function App() {
           })()}
         </div>
         <div className="section">
-          <button onClick={openTimeFilterDialog} title="Elastic-Search öffnen">
+          <button disabled={esBusy} onClick={openTimeFilterDialog} title="Elastic-Search öffnen">
             Elastic-Search…
           </button>
           {(() => {
@@ -2266,8 +2415,8 @@ export default function App() {
             }
           })()}
           {esBusy && (
-            <span>
-              <span className="spinner"></span>Elastic lädt…
+            <span className="status" title="Ladefortschritt Elasticsearch">
+              Lädt … {esLoaded}/{esTarget} ({Math.max(0, Math.min(100, esPct))}%)
             </span>
           )}
           {!esBusy && esHasMore && (
@@ -2277,15 +2426,23 @@ export default function App() {
               onClick={async () => {
                 if (esBusy) return;
                 const token = esNextSearchAfter;
-                if (!token || !Array.isArray(token) || token.length === 0) return;
+                // Für Scroll gibt es keinen Token; wir laden fort, wenn eine Session aktiv ist
+                if (!esPitSessionId && (!token || !Array.isArray(token) || token.length === 0))
+                  return;
                 await withBusy(async () => {
                   setEsBusy(true);
                   try {
                     const f = lastEsForm || {};
                     const mode = (f?.mode || 'relative') as 'relative' | 'absolute';
+                    // Verfügbare Slots vor dem Nachladen bestimmen
+                    let available = Math.max(0, (elasticSize || 0) - esElasticCountAll);
+                    if (available <= 0) {
+                      setEsBusy(false);
+                      return;
+                    }
                     const opts: ElasticSearchOptions = {
                       url: elasticUrl || undefined,
-                      size: elasticSize || undefined,
+                      size: Math.min(elasticSize || 1000, available),
                       index: f?.index || undefined,
                       sort: f?.sort || undefined,
                       duration: mode === 'relative' ? (f?.duration as any) : undefined,
@@ -2295,20 +2452,25 @@ export default function App() {
                       logger: f?.logger,
                       level: f?.level,
                       environment: f?.environment,
+                      environmentCase: f?.environmentCase || 'original',
                       allowInsecureTLS: !!f?.allowInsecureTLS,
-                      searchAfter: token as any,
+                      ...(token && Array.isArray(token) && token.length > 0
+                        ? { searchAfter: token as any }
+                        : {}),
                       pitSessionId: esPitSessionId || undefined,
                     } as any;
                     const res = await window.api.elasticSearch(opts);
                     if (res?.ok) {
-                      if (Array.isArray(res.entries) && res.entries.length)
-                        appendEntries(res.entries as any[]);
-                      setEsHasMore(!!res.hasMore);
+                      if (Array.isArray(res.entries) && res.entries.length) {
+                        const used = appendElasticCapped(res.entries as any[], available);
+                        available = Math.max(0, available - used);
+                      }
+                      setEsHasMore(!!res.hasMore && available > 0);
                       setEsNextSearchAfter((res.nextSearchAfter as any) || null);
                       setEsPitSessionId((res as any).pitSessionId || null);
                       if (typeof (res as any)?.total === 'number')
                         setEsTotal(Number((res as any).total));
-                      if (!res.hasMore) setEsPitSessionId(null);
+                      if (!res.hasMore || available <= 0) setEsPitSessionId(null);
                     } else {
                       alert('Elastic-Fehler: ' + ((res as any)?.error || 'Unbekannt'));
                     }
@@ -2318,7 +2480,7 @@ export default function App() {
                 });
               }}
             >
-              Mehr laden…
+              Weitere laden
             </button>
           )}
           {esTotal != null && (

@@ -33,8 +33,13 @@ const DEFAULT_SETTINGS: Settings = {
   // NEW histories for ElasticSearch dialog
   histAppName: [],
   histEnvironment: [],
+  // NEW: Index history
+  histIndex: [],
+  // NEW: last environment-case used in Elastic dialog
+  lastEnvironmentCase: 'original',
   httpUrl: '',
   httpPollInterval: 5000,
+  elasticMaxParallel: 1,
 };
 
 /**
@@ -50,7 +55,7 @@ interface ValidationResult {
  */
 export class SettingsService {
   private settings: Settings;
-  private settingsPath: string;
+  private readonly settingsPath: string;
   private loaded = false;
 
   constructor() {
@@ -63,7 +68,7 @@ export class SettingsService {
    */
   private resolveSettingsPath(): string {
     const portableDir = process.env.PORTABLE_EXECUTABLE_DIR;
-    if (portableDir && typeof portableDir === 'string' && portableDir.length) {
+    if (portableDir && portableDir.length) {
       return path.join(portableDir, 'data', 'settings.json');
     }
     return path.join(app.getPath('userData'), 'settings.json');
@@ -111,7 +116,9 @@ export class SettingsService {
       const raw = fs.readFileSync(this.settingsPath, 'utf8');
       const parsed = JSON.parse(raw) as Partial<Settings> & Record<string, unknown>;
       // Entferne veraltete Schlüssel
-      delete (parsed as any).windowTitle;
+      if ('windowTitle' in parsed) {
+        delete (parsed as Record<string, unknown>)['windowTitle'];
+      }
       this.settings = { ...DEFAULT_SETTINGS, ...parsed } as Settings;
       this.loaded = true;
     } catch (err) {
@@ -178,7 +185,10 @@ export class SettingsService {
 
     // Entferne veraltete Schlüssel aus Patches
     try {
-      delete (patch as any).windowTitle;
+      if (patch && typeof patch === 'object' && 'windowTitle' in patch) {
+        // eslint-disable-next-line @typescript-eslint/no-dynamic-delete
+        delete (patch as Record<string, unknown>)['windowTitle'];
+      }
     } catch (e) {
       log.warn(
         'Failed to strip legacy windowTitle from settings patch:',
@@ -207,6 +217,13 @@ export class SettingsService {
 
     if (settings.tcpPort !== undefined && (settings.tcpPort < 1 || settings.tcpPort > 65535)) {
       return { success: false, error: 'tcpPort must be between 1 and 65535' };
+    }
+
+    if (settings.elasticMaxParallel !== undefined) {
+      const v = Number(settings.elasticMaxParallel);
+      if (!Number.isFinite(v) || v < 1) {
+        return { success: false, error: 'elasticMaxParallel must be >= 1' };
+      }
     }
 
     return { success: true };
@@ -251,7 +268,7 @@ export class SettingsService {
    * Decrypt a secret
    */
   decryptSecret(encrypted: string): string {
-    if (!encrypted || typeof encrypted !== 'string') return '';
+    if (!encrypted) return '';
 
     try {
       if (encrypted.startsWith('ss1:')) {

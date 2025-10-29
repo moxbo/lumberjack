@@ -43,19 +43,20 @@ var import_module = require("module");
 var import_https = __toESM(require("https"), 1);
 var import_http = __toESM(require("http"), 1);
 var import_main = __toESM(require("electron-log/main"), 1);
+const HTTP_KEEPALIVE_AGENT = new import_http.default.Agent({ keepAlive: true, maxSockets: 8 });
+const HTTPS_KEEPALIVE_AGENT = new import_https.default.Agent({ keepAlive: true });
+const HTTPS_INSECURE_KEEPALIVE_AGENT = new import_https.default.Agent({
+  keepAlive: true,
+  rejectUnauthorized: false
+});
 let AdmZip = null;
 function getAdmZip() {
   if (!AdmZip) {
     try {
       AdmZip = require("adm-zip");
     } catch (e) {
-      try {
-        const req = (0, import_module.createRequire)(import_path.default.join(process.cwd(), "package.json"));
-        AdmZip = req("adm-zip");
-      } catch (e2) {
-        import_main.default.error("Failed to load adm-zip module:", e instanceof Error ? e.message : String(e));
-        throw e2;
-      }
+      const req = (0, import_module.createRequire)(import_path.default.join(process.cwd(), "package.json"));
+      AdmZip = req("adm-zip");
     }
   }
   return AdmZip;
@@ -77,48 +78,37 @@ function toStringOr(v, def) {
 function toEntry(obj = {}, fallbackMessage = "", source = "") {
   function normalizeStack(o) {
     if (!o || typeof o !== "object") return null;
-    const candVals = [];
+    const cand = [];
     try {
       const direct = o.stack_trace || o.stackTrace || o.stacktrace;
-      if (direct != null) candVals.push(direct);
-    } catch (e) {
-      import_main.default.warn("normalizeStack: direct fields failed:", e instanceof Error ? e.message : String(e));
+      if (direct != null) cand.push(direct);
+    } catch {
     }
     try {
       const err = o.error || o.err;
       if (err) {
-        if (err.stack != null) candVals.push(err.stack);
-        if (err.trace != null) candVals.push(err.trace);
-        if (typeof err === "string") candVals.push(err);
+        if (err.stack != null) cand.push(err.stack);
+        if (err.trace != null) cand.push(err.trace);
+        if (typeof err === "string") cand.push(err);
       }
-    } catch (e) {
-      import_main.default.warn("normalizeStack: error fields failed:", e instanceof Error ? e.message : String(e));
+    } catch {
     }
     try {
       const ex = o.exception || o.cause || o.throwable;
       if (ex) {
-        if (ex.stack != null) candVals.push(ex.stack);
-        if (ex.stackTrace != null) candVals.push(ex.stackTrace);
-        if (typeof ex === "string") candVals.push(ex);
+        if (ex.stack != null) cand.push(ex.stack);
+        if (ex.stackTrace != null) cand.push(ex.stackTrace);
+        if (typeof ex === "string") cand.push(ex);
       }
-    } catch (e) {
-      import_main.default.warn(
-        "normalizeStack: exception fields failed:",
-        e instanceof Error ? e.message : String(e)
-      );
+    } catch {
     }
     try {
       if (o["exception.stacktrace"] != null)
-        candVals.push(o["exception.stacktrace"]);
-      if (o["error.stacktrace"] != null)
-        candVals.push(o["error.stacktrace"]);
-    } catch (e) {
-      import_main.default.warn(
-        "normalizeStack: flattened fields failed:",
-        e instanceof Error ? e.message : String(e)
-      );
+        cand.push(o["exception.stacktrace"]);
+      if (o["error.stacktrace"] != null) cand.push(o["error.stacktrace"]);
+    } catch {
     }
-    for (const v of candVals) {
+    for (const v of cand) {
       if (v == null) continue;
       if (Array.isArray(v)) {
         const s = v.map((x) => x == null ? "" : String(x)).join("\n");
@@ -250,13 +240,18 @@ async function httpJsonRequest(method, urlStr, body, headers, allowInsecureTLS, 
         hostname: u.hostname,
         port: u.port ? Number(u.port) : isHttps ? 443 : 80,
         path: `${u.pathname}${u.search}`,
-        headers: { ...headers || {}, "content-type": "application/json" }
+        headers: {
+          ...headers || {},
+          "content-type": "application/json",
+          Connection: "keep-alive"
+        },
+        agent: isHttps ? allowInsecureTLS ? HTTPS_INSECURE_KEEPALIVE_AGENT : HTTPS_KEEPALIVE_AGENT : HTTP_KEEPALIVE_AGENT
       };
-      if (isHttps && allowInsecureTLS) opts.agent = new import_https.default.Agent({ rejectUnauthorized: false });
       const timer = typeof timeoutMs === "number" && timeoutMs > 0 ? setTimeout(() => {
         try {
           req.destroy(new Error("timeout"));
-        } catch {
+        } catch (e) {
+          import_main.default.error("httpJsonRequest: timeout destroy error:", e);
         }
       }, timeoutMs) : null;
       const req = mod.request(opts, (res) => {
@@ -317,21 +312,18 @@ function buildHeadersWithAuth(auth) {
     if (auth.type === "basic") {
       const u = String(auth.username || "");
       const p = String(auth.password || "");
-      const token = Buffer.from(`${u}:${p}`).toString("base64");
-      headers.Authorization = `Basic ${token}`;
+      headers.Authorization = `Basic ${Buffer.from(`${u}:${p}`).toString("base64")}`;
     } else if (auth.type === "apiKey") {
-      const t = String(auth.token || "");
-      headers.Authorization = `ApiKey ${t}`;
+      headers.Authorization = `ApiKey ${String(auth.token || "")}`;
     } else if (auth.type === "bearer") {
-      const t = String(auth.token || "");
-      headers.Authorization = `Bearer ${t}`;
+      headers.Authorization = `Bearer ${String(auth.token || "")}`;
     }
   } catch {
   }
   return headers;
 }
 function buildSortArray(order) {
-  const ord = order ?? "asc";
+  const ord = order ?? "desc";
   return [{ "@timestamp": { order: ord, unmapped_type: "boolean" } }, { _id: { order: ord } }];
 }
 async function tryOpenPitEs(baseUrl, index, keepAlive, headers, allowInsecureTLS, timeoutMs, maxRetries, backoffBaseMs) {
@@ -349,7 +341,13 @@ async function tryOpenPitEs(baseUrl, index, keepAlive, headers, allowInsecureTLS
 async function tryOpenPitOs(baseUrl, index, keepAlive, headers, allowInsecureTLS, timeoutMs, maxRetries, backoffBaseMs) {
   const idx = index && index.trim() ? index.trim() : "_all";
   const url = `${baseUrl}/_search/point_in_time`;
-  const body = { index: idx, keep_alive: keepAlive, expand_wildcards: "open", ignore_unavailable: true, allow_no_indices: true };
+  const body = {
+    index: idx,
+    keep_alive: keepAlive,
+    expand_wildcards: "open",
+    ignore_unavailable: true,
+    allow_no_indices: true
+  };
   const exec = () => httpJsonRequest("POST", url, body, headers, allowInsecureTLS, timeoutMs);
   const res = await requestWithRetry(exec, { maxRetries, backoffBaseMs });
   if (res.status >= 200 && res.status < 300) {
@@ -364,40 +362,78 @@ async function closePitEs(baseUrl, pitId, headers, allowInsecureTLS, timeoutMs, 
   const body = { id: pitId };
   const exec = () => httpJsonRequest("POST", url, body, headers, allowInsecureTLS, timeoutMs);
   const res = await requestWithRetry(exec, { maxRetries, backoffBaseMs });
-  if (!(res.status >= 200 && res.status < 300)) {
+  if (!(res.status >= 200 && res.status < 300))
     throw new Error(`ES PIT close failed ${res.status}: ${res.text.slice(0, 800)}`);
-  }
 }
 async function closePitOs(baseUrl, pitId, headers, allowInsecureTLS, timeoutMs, maxRetries, backoffBaseMs) {
   const url = `${baseUrl}/_search/point_in_time`;
   const body = { pit_id: pitId };
   const exec = () => httpJsonRequest("DELETE", url, body, headers, allowInsecureTLS, timeoutMs);
   const res = await requestWithRetry(exec, { maxRetries, backoffBaseMs });
-  if (!(res.status >= 200 && res.status < 300)) {
+  if (!(res.status >= 200 && res.status < 300))
     throw new Error(`OS PIT close failed ${res.status}: ${res.text.slice(0, 800)}`);
-  }
 }
 async function closePit(baseUrl, pitId, headers, allowInsecureTLS, timeoutMs, maxRetries, backoffBaseMs, dialect) {
   if (dialect === "es") {
     try {
-      await closePitEs(baseUrl, pitId, headers, allowInsecureTLS, timeoutMs, maxRetries, backoffBaseMs);
+      await closePitEs(
+        baseUrl,
+        pitId,
+        headers,
+        allowInsecureTLS,
+        timeoutMs,
+        maxRetries,
+        backoffBaseMs
+      );
       return;
     } catch {
     }
-    await closePitOs(baseUrl, pitId, headers, allowInsecureTLS, timeoutMs, maxRetries, backoffBaseMs);
+    await closePitOs(
+      baseUrl,
+      pitId,
+      headers,
+      allowInsecureTLS,
+      timeoutMs,
+      maxRetries,
+      backoffBaseMs
+    );
     return;
   }
   if (dialect === "opensearch") {
     try {
-      await closePitOs(baseUrl, pitId, headers, allowInsecureTLS, timeoutMs, maxRetries, backoffBaseMs);
+      await closePitOs(
+        baseUrl,
+        pitId,
+        headers,
+        allowInsecureTLS,
+        timeoutMs,
+        maxRetries,
+        backoffBaseMs
+      );
       return;
     } catch {
     }
-    await closePitEs(baseUrl, pitId, headers, allowInsecureTLS, timeoutMs, maxRetries, backoffBaseMs);
+    await closePitEs(
+      baseUrl,
+      pitId,
+      headers,
+      allowInsecureTLS,
+      timeoutMs,
+      maxRetries,
+      backoffBaseMs
+    );
     return;
   }
   try {
-    await closePitEs(baseUrl, pitId, headers, allowInsecureTLS, timeoutMs, maxRetries, backoffBaseMs);
+    await closePitEs(
+      baseUrl,
+      pitId,
+      headers,
+      allowInsecureTLS,
+      timeoutMs,
+      maxRetries,
+      backoffBaseMs
+    );
     return;
   } catch {
   }
@@ -428,41 +464,86 @@ function toIsoIfDate(v) {
 function buildElasticSearchBody(opts) {
   const must = [];
   const filter = [];
+  must.push({ match_all: {} });
+  const rawEnv = String(opts.environment || "").trim();
+  if (rawEnv) {
+    const mode = opts.environmentCase || "original";
+    if (mode === "case-sensitive") {
+      must.push({
+        bool: {
+          should: [
+            { term: { environment: rawEnv } },
+            { term: { "environment.keyword": rawEnv } }
+          ],
+          minimum_should_match: 1
+        }
+      });
+    } else if (mode === "lower") {
+      must.push({ match_phrase: { environment: { query: rawEnv.toLowerCase() } } });
+    } else if (mode === "upper") {
+      must.push({ match_phrase: { environment: { query: rawEnv.toUpperCase() } } });
+    } else {
+      must.push({ match_phrase: { environment: { query: rawEnv } } });
+    }
+  }
+  const app = String(opts.application_name || "").trim();
+  if (app) {
+    const q = app.includes(" ") || /["*?:\\/()\[\]{}]/.test(app) ? `"${app.replace(/"/g, '\\"')}"` : app;
+    must.push({
+      query_string: {
+        query: `application_name:${q}`,
+        analyze_wildcard: true,
+        allow_leading_wildcard: true
+      }
+    });
+  }
   const addField = (field, value) => {
     const v = String(value || "").trim();
     if (!v) return;
     must.push({ match_phrase: { [field]: { query: v } } });
   };
-  addField("environment", opts.environment);
-  addField("application_name", opts.application_name);
   addField("logger", opts.logger);
   addField("level", opts.level);
   addField("message", opts.message);
   const range = {};
+  const fmt = String(opts.dateFormat || "").trim();
   if (opts.duration && String(opts.duration).trim()) {
     range.gte = `now-${opts.duration}`;
     range.lte = "now";
   } else {
-    const num = (x) => typeof x === "number" ? x : /^\d+$/.test(String(x || "")) ? Number(x) : null;
-    const fromNum = num(opts.from);
-    const toNum = num(opts.to);
-    if (fromNum != null || toNum != null) {
-      if (fromNum != null) range.gte = fromNum;
-      if (toNum != null) range.lte = toNum;
-      range.format = "epoch_millis";
+    if (fmt) {
+      const fromStr = opts.from != null ? String(opts.from) : "";
+      const toStr = opts.to != null ? String(opts.to) : "";
+      if (fromStr) range.gte = fromStr;
+      if (toStr) range.lte = toStr;
+      if (fromStr || toStr) range.format = fmt;
     } else {
-      const from = toIsoIfDate(opts.from);
-      const to = toIsoIfDate(opts.to);
-      if (from) range.gte = from;
-      if (to) range.lte = to;
+      const num = (x) => typeof x === "number" ? x : /^\d+$/.test(String(x || "")) ? Number(x) : null;
+      const fromNum = num(opts.from);
+      const toNum = num(opts.to);
+      if (fromNum != null || toNum != null) {
+        if (fromNum != null) range.gte = fromNum;
+        if (toNum != null) range.lte = toNum;
+        range.format = "epoch_millis";
+      } else {
+        const from = toIsoIfDate(opts.from);
+        const to = toIsoIfDate(opts.to);
+        if (from) range.gte = from;
+        if (to) range.lte = to;
+      }
     }
   }
   if (Object.keys(range).length > 0) {
     must.push({ range: { "@timestamp": range } });
   }
+  const lv = opts.levelValueGte;
+  if (lv != null && String(lv).trim() !== "") {
+    must.push({ range: { level_value: { gte: lv } } });
+  }
   const body = {
+    version: true,
     size: opts.size ?? 1e3,
-    sort: [{ "@timestamp": { order: opts.sort ?? "asc", unmapped_type: "boolean" } }],
+    sort: [{ "@timestamp": { order: opts.sort ?? "desc", unmapped_type: "boolean" } }],
     query: {
       bool: {
         must,
@@ -470,7 +551,9 @@ function buildElasticSearchBody(opts) {
         should: [],
         must_not: []
       }
-    }
+    },
+    _source: { excludes: [] },
+    timeout: "30s"
   };
   return body;
 }
@@ -486,14 +569,13 @@ function buildQueryBodyWithPit(opts, pitId) {
       ...inc ? { includes: inc } : {},
       ...exc ? { excludes: exc } : {}
     };
-  if (opts.trackTotalHits != null) baseBody.track_total_hits = opts.trackTotalHits;
-  else baseBody.track_total_hits = false;
+  baseBody.track_total_hits = opts.trackTotalHits != null ? opts.trackTotalHits : false;
   if (Array.isArray(opts.searchAfter) && opts.searchAfter.length)
     baseBody.search_after = opts.searchAfter;
   return baseBody;
 }
 async function searchWithPit(sess, body) {
-  const url = `${sess.baseUrl}/_search`;
+  const url = `${sess.baseUrl}/_search?filter_path=hits.hits._source,hits.hits.sort,hits.total`;
   const exec = () => httpJsonRequest("POST", url, body, sess.headers, !!sess.allowInsecureTLS, sess.timeoutMs);
   const res = await requestWithRetry(exec, {
     maxRetries: sess.maxRetries,
@@ -507,9 +589,9 @@ function getOrCreateSessionSyncState(opts) {
   const indexRaw = String(opts.index ?? "").trim();
   const index = indexRaw ? indexRaw : "_all";
   const keepAlive = String(opts.keepAlive || "1m");
-  const timeoutMs = Math.max(1e3, Number(opts.timeoutMs ?? 15e3));
-  const maxRetries = Math.max(0, Number(opts.maxRetries ?? 3));
-  const backoffBaseMs = Math.max(50, Number(opts.backoffBaseMs ?? 200));
+  const timeoutMs = Math.max(1e3, Number(opts.timeoutMs ?? 45e3));
+  const maxRetries = Math.max(0, Number(opts.maxRetries ?? 4));
+  const backoffBaseMs = Math.max(50, Number(opts.backoffBaseMs ?? 300));
   const headers = buildHeadersWithAuth(opts.auth);
   if (opts.pitSessionId && pitSessions.has(opts.pitSessionId)) {
     const existing = pitSessions.get(opts.pitSessionId);
@@ -556,7 +638,9 @@ async function ensurePitOpened(sess) {
     return;
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
-    if (/unrecognized parameter|unknown url|_pit\]|\[\/\/_pit/i.test(msg)) {
+    if (/unrecognized parameter|unknown url|_pit\]|\[\/\/_pit|unknown|not found|illegal_argument/i.test(
+      msg
+    )) {
       try {
         const id = await tryOpenPitOs(
           sess.baseUrl,
@@ -577,14 +661,16 @@ async function ensurePitOpened(sess) {
           sess.dialect = "scroll";
           return;
         }
-        throw e2;
+        sess.dialect = "scroll";
+        return;
       }
     }
     if (/security_exception|unauthorized|forbidden|403/.test(msg)) {
       sess.dialect = "scroll";
       return;
     }
-    throw e;
+    sess.dialect = "scroll";
+    return;
   }
 }
 function parseHitsResponse(data, size) {
@@ -620,6 +706,61 @@ function parseHitsResponse(data, size) {
     nextSearchAfter: hasMore && sortVals ? sortVals : null
   };
 }
+async function openScroll(baseUrl, index, keepAlive, size, sortOrder, headers, allowInsecureTLS, timeoutMs, maxRetries, backoffBaseMs, queryOpts) {
+  const idx = index && index.trim() ? index.trim() : "_all";
+  const url = `${baseUrl}/${encodeURIComponent(idx)}/_search?scroll=${encodeURIComponent(keepAlive)}&ignore_unavailable=true&allow_no_indices=true&expand_wildcards=open&filter_path=hits.hits._source,hits.hits.sort,hits.total,_scroll_id`;
+  const body = buildElasticSearchBody({
+    ...queryOpts || {},
+    index: idx,
+    size,
+    sort: sortOrder
+  });
+  const exec = () => httpJsonRequest("POST", url, body, headers, allowInsecureTLS, timeoutMs);
+  const res = await requestWithRetry(exec, { maxRetries, backoffBaseMs });
+  if (!(res.status >= 200 && res.status < 300))
+    throw new Error(`Scroll open failed ${res.status}: ${res.text.slice(0, 800)}`);
+  const j = res.json || {};
+  const scrollId = j._scroll_id || j.scroll_id || "";
+  const { entries, total } = parseHitsResponse(j, size);
+  if (!scrollId) {
+    if (entries.length === 0) return { scrollId: "", entries: [], total: total ?? 0 };
+    throw new Error("Scroll open: Keine _scroll_id im Response");
+  }
+  return { scrollId, entries, total };
+}
+async function scrollNext(baseUrl, keepAlive, scrollId, headers, allowInsecureTLS, timeoutMs, maxRetries, backoffBaseMs) {
+  const url = `${baseUrl}/_search/scroll?filter_path=hits.hits._source,hits.hits.sort,_scroll_id`;
+  const body = { scroll: keepAlive, scroll_id: scrollId };
+  const exec = () => httpJsonRequest("POST", url, body, headers, allowInsecureTLS, timeoutMs);
+  const res = await requestWithRetry(exec, { maxRetries, backoffBaseMs });
+  if (!(res.status >= 200 && res.status < 300))
+    throw new Error(`Scroll next failed ${res.status}: ${res.text.slice(0, 800)}`);
+  const j = res.json || {};
+  const newScrollId = j._scroll_id || j.scroll_id || "";
+  const entries = parseHitsResponse(j, Number.MAX_SAFE_INTEGER).entries;
+  if (!newScrollId && entries.length === 0) return { scrollId: "", entries: [] };
+  if (!newScrollId) throw new Error("Scroll next: Keine _scroll_id im Response");
+  return { scrollId: newScrollId, entries };
+}
+async function closeScroll(baseUrl, scrollId, headers, allowInsecureTLS, timeoutMs, maxRetries, backoffBaseMs) {
+  if (!scrollId) return;
+  const url = `${baseUrl}/_search/scroll`;
+  const execPost = async (payload) => {
+    const exec = () => httpJsonRequest("POST", url, payload, headers, allowInsecureTLS, timeoutMs);
+    const res = await requestWithRetry(exec, { maxRetries, backoffBaseMs });
+    return res.status >= 200 && res.status < 300;
+  };
+  const tryDeletePath = async () => {
+    const delUrl = `${baseUrl}/_search/scroll/${encodeURIComponent(scrollId)}`;
+    const exec = () => httpJsonRequest("DELETE", delUrl, {}, headers, allowInsecureTLS, timeoutMs);
+    const res = await requestWithRetry(exec, { maxRetries, backoffBaseMs });
+    return res.status >= 200 && res.status < 300;
+  };
+  const ok = await execPost({ scroll_id: scrollId }) || await execPost({ scroll_id: [scrollId] }) || await tryDeletePath();
+  if (!ok) {
+    import_main.default.warn("closeScroll: failed to clear scroll_id");
+  }
+}
 async function fetchElasticPitPage(opts) {
   const sess = getOrCreateSessionSyncState(opts);
   await ensurePitOpened(sess);
@@ -637,7 +778,8 @@ async function fetchElasticPitPage(opts) {
         sess.allowInsecureTLS,
         sess.timeoutMs,
         sess.maxRetries,
-        sess.backoffBaseMs
+        sess.backoffBaseMs,
+        opts
       );
       sess.pitId = first.scrollId;
       entries2 = first.entries;
@@ -660,17 +802,21 @@ async function fetchElasticPitPage(opts) {
     sess.lastUsed = Date.now();
     if (!hasMore2) {
       try {
-        if (sess.pitId) await closeScroll(
-          sess.baseUrl,
-          sess.pitId,
-          sess.headers,
-          sess.allowInsecureTLS,
-          sess.timeoutMs,
-          sess.maxRetries,
-          sess.backoffBaseMs
-        );
+        if (sess.pitId)
+          await closeScroll(
+            sess.baseUrl,
+            sess.pitId,
+            sess.headers,
+            sess.allowInsecureTLS,
+            sess.timeoutMs,
+            sess.maxRetries,
+            sess.backoffBaseMs
+          );
       } catch (e) {
-        import_main.default.warn("Scroll close after completion failed:", e instanceof Error ? e.message : String(e));
+        import_main.default.warn(
+          "Scroll close after completion failed:",
+          e instanceof Error ? e.message : String(e)
+        );
       } finally {
         pitSessions.delete(sess.sessionId);
       }
@@ -741,49 +887,6 @@ async function closeElasticPitSession(sessionId) {
     }
   } finally {
     pitSessions.delete(sessionId);
-  }
-}
-async function openScroll(baseUrl, index, keepAlive, size, sortOrder, headers, allowInsecureTLS, timeoutMs, maxRetries, backoffBaseMs) {
-  const idx = index && index.trim() ? index.trim() : "_all";
-  const url = `${baseUrl}/${encodeURIComponent(idx)}/_search?scroll=${encodeURIComponent(keepAlive)}&ignore_unavailable=true&allow_no_indices=true&expand_wildcards=open`;
-  const body = buildElasticSearchBody({ url: baseUrl, index: idx, size, sort: sortOrder });
-  const exec = () => httpJsonRequest("POST", url, body, headers, allowInsecureTLS, timeoutMs);
-  const res = await requestWithRetry(exec, { maxRetries, backoffBaseMs });
-  if (!(res.status >= 200 && res.status < 300)) {
-    throw new Error(`Scroll open failed ${res.status}: ${res.text.slice(0, 800)}`);
-  }
-  const j = res.json || {};
-  const scrollId = j._scroll_id || j.scroll_id || "";
-  const { entries, total } = parseHitsResponse(j, size);
-  if (!scrollId) {
-    throw new Error("Scroll open: Keine _scroll_id im Response");
-  }
-  return { scrollId, entries, total };
-}
-async function scrollNext(baseUrl, keepAlive, scrollId, headers, allowInsecureTLS, timeoutMs, maxRetries, backoffBaseMs) {
-  const url = `${baseUrl}/_search/scroll`;
-  const body = { scroll: keepAlive, scroll_id: scrollId };
-  const exec = () => httpJsonRequest("POST", url, body, headers, allowInsecureTLS, timeoutMs);
-  const res = await requestWithRetry(exec, { maxRetries, backoffBaseMs });
-  if (!(res.status >= 200 && res.status < 300)) {
-    throw new Error(`Scroll next failed ${res.status}: ${res.text.slice(0, 800)}`);
-  }
-  const j = res.json || {};
-  const newScrollId = j._scroll_id || j.scroll_id || scrollId;
-  const entries = parseHitsResponse(j, Number.MAX_SAFE_INTEGER).entries;
-  return { scrollId: newScrollId, entries };
-}
-async function closeScroll(baseUrl, scrollId, headers, allowInsecureTLS, timeoutMs, maxRetries, backoffBaseMs) {
-  const url = `${baseUrl}/_search/scroll`;
-  const body = { scroll_id: [scrollId] };
-  const tryOnce = async (method) => {
-    const exec = () => httpJsonRequest(method, url, body, headers, allowInsecureTLS, timeoutMs);
-    const res = await requestWithRetry(exec, { maxRetries, backoffBaseMs });
-    return res.status >= 200 && res.status < 300;
-  };
-  const ok = await tryOnce("DELETE") || await tryOnce("POST");
-  if (!ok) {
-    throw new Error("Scroll close failed");
   }
 }
 // Annotate the CommonJS export names for ESM import in node:

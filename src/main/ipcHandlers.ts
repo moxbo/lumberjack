@@ -317,7 +317,11 @@ export function registerIpcHandlers(
         const { fetchElasticPitPage } = getParsers();
 
         const url = opts.url || settings.elasticUrl || '';
-        const size = opts.size || settings.elasticSize || 1000;
+        const requestedSize = Number(opts.size ?? settings.elasticSize ?? 1000);
+        const size = Math.max(
+          1,
+          Math.min(10000, Number.isFinite(requestedSize) ? requestedSize : 1000)
+        );
 
         const derivedAuth = (() => {
           const user = settings.elasticUser || '';
@@ -336,9 +340,9 @@ export function registerIpcHandlers(
           // defaults for PIT/retries
           keepAlive: opts.keepAlive || '1m',
           trackTotalHits: opts.trackTotalHits ?? false,
-          timeoutMs: opts.timeoutMs ?? 15000,
-          maxRetries: opts.maxRetries ?? 3,
-          backoffBaseMs: opts.backoffBaseMs ?? 200,
+          timeoutMs: opts.timeoutMs ?? 45000,
+          maxRetries: opts.maxRetries ?? 4,
+          backoffBaseMs: opts.backoffBaseMs ?? 300,
         } as ElasticSearchOptions;
 
         if (!mergedOpts.url) {
@@ -378,9 +382,9 @@ export function registerIpcHandlers(
           nextSearchAfter: Array<string | number> | null;
           pitSessionId: string;
         };
-        const page = (await (fetchElasticPitPage as unknown as (o: ElasticSearchOptions) => Promise<PitPage>)(
-          mergedOpts
-        )) as PitPage;
+        const page = (await (
+          fetchElasticPitPage as unknown as (o: ElasticSearchOptions) => Promise<PitPage>
+        )(mergedOpts)) as PitPage;
 
         return {
           ok: true,
