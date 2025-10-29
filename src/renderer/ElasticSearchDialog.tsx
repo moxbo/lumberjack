@@ -164,8 +164,12 @@ export default function ElasticSearchDialog(props: any) {
               cursor: 'pointer',
               borderRadius: '4px',
             }}
-            onMouseOver={(e) => ((e.currentTarget as HTMLDivElement).style.backgroundColor = 'rgba(0,0,0,0.06)')}
-            onMouseOut={(e) => ((e.currentTarget as HTMLDivElement).style.backgroundColor = 'transparent')}
+            onMouseOver={(e) =>
+              ((e.currentTarget as HTMLDivElement).style.backgroundColor = 'rgba(0,0,0,0.06)')
+            }
+            onMouseOut={(e) =>
+              ((e.currentTarget as HTMLDivElement).style.backgroundColor = 'transparent')
+            }
             title={String(v)}
           >
             {String(v)}
@@ -345,7 +349,13 @@ export default function ElasticSearchDialog(props: any) {
                   setForm({ ...form, index: v });
                   setShowIdxList(false);
                 }}
-                style={{ position: 'absolute', top: 'calc(100% + 4px)', left: 0, right: 0, marginTop: 0 }}
+                style={{
+                  position: 'absolute',
+                  top: 'calc(100% + 4px)',
+                  left: 0,
+                  right: 0,
+                  marginTop: 0,
+                }}
               />
             )}
           </div>
@@ -400,7 +410,13 @@ export default function ElasticSearchDialog(props: any) {
                   setForm({ ...form, application_name: v });
                   setShowAppList(false);
                 }}
-                style={{ position: 'absolute', top: 'calc(100% + 4px)', left: 0, right: 0, marginTop: 0 }}
+                style={{
+                  position: 'absolute',
+                  top: 'calc(100% + 4px)',
+                  left: 0,
+                  right: 0,
+                  marginTop: 0,
+                }}
               />
             )}
           </div>
@@ -468,7 +484,13 @@ export default function ElasticSearchDialog(props: any) {
                   setForm({ ...form, environment: v });
                   setShowEnvList(false);
                 }}
-                style={{ position: 'absolute', top: 'calc(100% + 4px)', left: 0, right: 0, marginTop: 0 }}
+                style={{
+                  position: 'absolute',
+                  top: 'calc(100% + 4px)',
+                  left: 0,
+                  right: 0,
+                  marginTop: 0,
+                }}
               />
             )}
           </div>

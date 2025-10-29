@@ -223,7 +223,9 @@ export default function App() {
       // Bestimme zuletzt verwendete Werte aus der letzten Suche (falls vorhanden)
       const prev = lastEsForm || {};
       const initIndex = String(prev.index || lastIndex || '');
-      const initEnvCase = String(prev.environmentCase || lastEnvCase || timeForm.environmentCase || 'original');
+      const initEnvCase = String(
+        prev.environmentCase || lastEnvCase || timeForm.environmentCase || 'original'
+      );
       setTimeForm({
         enabled: true,
         mode: (s && s.mode) || 'relative',
@@ -241,7 +243,9 @@ export default function App() {
       const { lastApp, lastEnv, lastIndex, lastEnvCase } = await getLasts();
       const prev = lastEsForm || {};
       const initIndex = String(prev.index || lastIndex || '');
-      const initEnvCase = String(prev.environmentCase || lastEnvCase || timeForm.environmentCase || 'original');
+      const initEnvCase = String(
+        prev.environmentCase || lastEnvCase || timeForm.environmentCase || 'original'
+      );
       setTimeForm({
         enabled: true,
         mode: 'relative',
@@ -1163,7 +1167,10 @@ export default function App() {
       elasticUrl: String(form.elasticUrl || '').trim(),
       elasticSize: Math.max(1, Number(form.elasticSize || 1000)),
       elasticUser: String(form.elasticUser || '').trim(),
-      elasticMaxParallel: Math.max(1, Number((form as any).elasticMaxParallel || elasticMaxParallel || 1)),
+      elasticMaxParallel: Math.max(
+        1,
+        Number((form as any).elasticMaxParallel || elasticMaxParallel || 1)
+      ),
     };
     const newPass = String(form.elasticPassNew || '').trim();
     if (form.elasticPassClear) patch['elasticPassClear'] = true;
@@ -1353,7 +1360,10 @@ export default function App() {
   }, [entries]);
   const esLoaded = Math.max(0, esElasticCountAll - esBaseline);
   const esTarget = Math.max(1, Number(elasticSize || 0));
-  const esPct = esTotal && esTotal > 0 ? Math.min(100, Math.round((esLoaded / esTarget) * 100)) : Math.round((esLoaded / esTarget) * 100) || 0;
+  const esPct =
+    esTotal && esTotal > 0
+      ? Math.min(100, Math.round((esLoaded / esTarget) * 100))
+      : Math.round((esLoaded / esTarget) * 100) || 0;
 
   function clearLogs() {
     setEntries([]);
@@ -1575,7 +1585,9 @@ export default function App() {
                 addToHistory('index', formVals?.index || ''); // NEW: save index to history
                 setLastEsForm(formVals);
                 try {
-                  await window.api.settingsSet({ lastEnvironmentCase: String(formVals?.environmentCase || 'original') } as any);
+                  await window.api.settingsSet({
+                    lastEnvironmentCase: String(formVals?.environmentCase || 'original'),
+                  } as any);
                 } catch (e) {
                   logger.warn('Persisting lastEnvironmentCase failed:', e as any);
                 }
