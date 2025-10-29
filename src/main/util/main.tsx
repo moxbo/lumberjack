@@ -2,8 +2,12 @@ import { render } from 'preact';
 import App from '../../renderer/App';
 import '../styles.css';
 import logger from '../../utils/logger';
+import { rendererPerf } from '../../utils/rendererPerf';
 
-// Register service worker for caching static assets
+// Mark when main.tsx starts executing
+rendererPerf.mark('main-tsx-start');
+
+// Register service worker for caching static assets (deferred to avoid blocking startup)
 // Guard registration: service workers require a secure origin (https:// or localhost)
 // In Electron packaged apps the renderer is often loaded via file:// which can't register
 // a service worker and results in errors like "Failed to register a ServiceWorker for scope ('file:///C:/')".
@@ -13,19 +17,38 @@ if (
   !(import.meta as any).env?.DEV &&
   window?.location?.protocol !== 'file:'
 ) {
-  window.addEventListener('load', () => {
-    navigator.serviceWorker
-      .register('/service-worker.js')
-      .then((registration) => {
-        logger.log('[App] ServiceWorker registered:', registration.scope);
-      })
-      .catch((error) => {
-        logger.warn('[App] ServiceWorker registration failed:', error);
-      });
-  });
+  // Defer service worker registration until after initial render to avoid blocking
+  requestIdleCallback(
+    () => {
+      navigator.serviceWorker
+        .register('/service-worker.js')
+        .then((registration) => {
+          logger.log('[App] ServiceWorker registered:', registration.scope);
+        })
+        .catch((error) => {
+          logger.warn('[App] ServiceWorker registration failed:', error);
+        });
+    },
+    { timeout: 5000 }
+  );
 }
+
+rendererPerf.mark('pre-render');
 
 const root = document.getElementById('app');
 if (root) {
   render(<App />, root);
+  rendererPerf.mark('post-render');
+  
+  // Signal that the renderer is ready for first paint
+  // Use requestAnimationFrame to ensure the render has painted
+  requestAnimationFrame(() => {
+    rendererPerf.mark('first-paint-ready');
+    
+    // Force a repaint to ensure the window can show without flashing
+    requestAnimationFrame(() => {
+      rendererPerf.mark('renderer-ready');
+      logger.log('[App] Renderer ready for display');
+    });
+  });
 }

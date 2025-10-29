@@ -6,6 +6,7 @@ import { useVirtualizer } from '@tanstack/react-virtual';
 import { highlightAll } from '../utils/highlight';
 import { msgMatches } from '../utils/msgFilter';
 import logger from '../utils/logger';
+import { rendererPerf } from '../utils/rendererPerf';
 // Dynamic import for DCFilterDialog (code splitting)
 // Preact supports dynamic imports directly
 import { LoggingStore } from '../store/loggingStore';
@@ -93,6 +94,9 @@ function computeTint(color: string | null | undefined, alpha = 0.4): string {
 }
 
 export default function App() {
+  // Track component initialization
+  rendererPerf.mark('app-component-init');
+  
   const [entries, setEntries] = useState<any[]>([]);
   const [nextId, setNextId] = useState<number>(1);
   // Keep a ref in sync with nextId for atomic id assignment in appendEntries
@@ -852,9 +856,11 @@ export default function App() {
     }
   }
 
-  // Settings laden
+  // Settings laden (deferred to not block initial render)
   useEffect(() => {
-    const timeoutId = setTimeout(async () => {
+    // Use requestIdleCallback to defer settings load until after initial render
+    const loadSettings = async () => {
+      rendererPerf.mark('settings-load-start');
       try {
         if (!window.api?.settingsGet) {
           logger.error('window.api.settingsGet is not available.');
@@ -902,11 +908,17 @@ export default function App() {
           setMarksMap(r.marksMap as Record<string, string>);
         if (Array.isArray(r.customMarkColors)) setCustomColors(r.customMarkColors as string[]);
         if (typeof r.onlyMarked === 'boolean') setOnlyMarked(!!r.onlyMarked);
+        rendererPerf.mark('settings-loaded');
       } catch (e) {
         logger.error('Error loading settings:', e);
       }
-    }, 0);
-    return () => clearTimeout(timeoutId);
+    };
+    
+    // Use requestIdleCallback with a timeout to ensure settings load eventually
+    const idleId = requestIdleCallback(() => {
+      loadSettings();
+    }, { timeout: 100 });
+    return () => cancelIdleCallback(idleId);
   }, []);
 
   async function openSettingsModal(
@@ -1003,8 +1015,9 @@ export default function App() {
     }
   }
 
-  // IPC
+  // IPC listeners setup (deferred to not block rendering)
   useEffect(() => {
+    rendererPerf.mark('ipc-setup-start');
     const offs: Array<() => void> = [];
     try {
       if (window.api?.onAppend) {
@@ -1096,6 +1109,7 @@ export default function App() {
     } catch (e) {
       logger.error('onTcpStatus setup failed:', e);
     }
+    rendererPerf.mark('ipc-setup-complete');
     return () => {
       for (const f of offs)
         try {
