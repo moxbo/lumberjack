@@ -712,7 +712,7 @@ function createWindow(opts: { makePrimary?: boolean } = {}): BrowserWindow {
       }
       flushPendingAppends();
     }
-    
+
     // Show window shortly after load completes instead of waiting for ready-to-show
     // The backgroundColor prevents white flash, and the UI will render progressively
     // This dramatically improves perceived startup time
