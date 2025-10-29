@@ -800,17 +800,17 @@ export default function App() {
     const last = markedIdx[markedIdx.length - 1]!;
     let targetVi: number | undefined;
     if (dir > 0) {
-      if (curVi < 0) targetVi = first; // keine Auswahl -> zum ersten
+      if (curVi < 0) targetVi = first; // keine Auswahl → zum ersten
       else {
         const next = markedIdx.find((vi) => vi > curVi);
-        targetVi = next != null ? next : last; // kein nächster -> am letzten stehen bleiben
+        targetVi = next != null ? next : last; // kein nächster → am letzten stehen bleiben
       }
     } else {
-      if (curVi < 0) targetVi = last; // keine Auswahl -> zum letzten
+      if (curVi < 0) targetVi = last; // keine Auswahl → zum letzten
       else {
         let prev = -1;
         for (const vi of markedIdx) if (vi < curVi) prev = vi;
-        targetVi = prev >= 0 ? prev : first; // kein vorheriger -> am ersten stehen bleiben
+        targetVi = prev >= 0 ? prev : first; // kein vorheriger → am ersten stehen bleiben
       }
     }
     const globalIdx: number = filteredIdx[targetVi]!;
@@ -825,17 +825,17 @@ export default function App() {
     const last = searchMatchIdx[searchMatchIdx.length - 1]!;
     let targetVi: number | undefined;
     if (dir > 0) {
-      if (curVi < 0) targetVi = first; // keine Auswahl -> zum ersten Treffer
+      if (curVi < 0) targetVi = first; // keine Auswahl → zum ersten Treffer
       else {
         const next = searchMatchIdx.find((vi) => vi > curVi);
-        targetVi = next != null ? next : last; // kein nächster -> am letzten stehen bleiben
+        targetVi = next != null ? next : last; // kein nächster → am letzten stehen bleiben
       }
     } else {
-      if (curVi < 0) targetVi = last; // keine Auswahl -> zum letzten Treffer
+      if (curVi < 0) targetVi = last; // keine Auswahl → zum letzten Treffer
       else {
         let prev = -1;
         for (const vi of searchMatchIdx) if (vi < curVi) prev = vi;
-        targetVi = prev >= 0 ? prev : first; // kein vorheriger -> am ersten stehen bleiben
+        targetVi = prev >= 0 ? prev : first; // kein vorheriger → am ersten stehen bleiben
       }
     }
     const globalIdx: number = filteredIdx[targetVi]!;
@@ -1038,38 +1038,6 @@ export default function App() {
       logger.error('Failed to add MDC entry to filter:', e);
       alert('Failed to add MDC entry to filter. See logs for details.');
     }
-  }
-
-  const [, setMdcAgg] = useState([] as { key: string; values: { val: string; count: number }[] }[]);
-  const [, setMdcSelKey] = useState<string>('');
-  const [, setMdcSelVals] = useState<Set<string>>(new Set());
-  const [, setShowMdcModal] = useState<boolean>(false);
-
-  function openMdcFromSelection() {
-    const byKey: Map<string, Map<string, number>> = new Map();
-    for (const idx of selected) {
-      const e = entries[idx];
-      const m = e && e.mdc;
-      if (!m || typeof m !== 'object') continue;
-      for (const [k, v] of Object.entries(m)) {
-        const key = String(k);
-        const val = String(v ?? '');
-        if (!byKey.has(key)) byKey.set(key, new Map());
-        const mm = byKey.get(key)!;
-        mm.set(val, (mm.get(val) || 0) + 1);
-      }
-    }
-    const agg = Array.from(byKey.entries()).map(([key, mm]) => ({
-      key,
-      values: Array.from(mm.entries())
-        .map(([val, count]) => ({ val, count }))
-        .sort((a, b) => b.count - a.count || a.val.localeCompare(b.val)),
-    }));
-    agg.sort((a, b) => a.key.localeCompare(b.key));
-    setMdcAgg(agg);
-    setMdcSelKey(agg[0]?.key || '');
-    setMdcSelVals(new Set());
-    setShowMdcModal(true);
   }
 
   const [showTitleDlg, setShowTitleDlg] = useState<boolean>(false);
@@ -1626,7 +1594,7 @@ export default function App() {
         </div>
       )}
 
-      {/* Elastic-Search Dialog */}
+      {/* Elasticsearch Dialog */}
       {showTimeDialog && (
         <Suspense
           fallback={
@@ -2828,19 +2796,6 @@ export default function App() {
           </div>
           <div className="item" onClick={copyTsMsg}>
             Kopieren: Zeit und Message
-          </div>
-          <div className="sep" />
-          <div className="item" onClick={() => DiagnosticContextFilter.setEnabled(true)}>
-            MDC-Filter aktivieren
-          </div>
-          <div className="item" onClick={() => DiagnosticContextFilter.setEnabled(false)}>
-            MDC-Filter deaktivieren
-          </div>
-          <div className="item" onClick={() => DiagnosticContextFilter.reset()}>
-            MDC-Filter leeren
-          </div>
-          <div className="item" onClick={() => openMdcFromSelection()}>
-            MDC aus Auswahl…
           </div>
         </div>
       )}
