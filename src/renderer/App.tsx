@@ -1,23 +1,22 @@
 /* eslint-disable */
 /* eslint-disable @typescript-eslint/no-unused-vars, @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-explicit-any, @typescript-eslint/no-base-to-string, @typescript-eslint/explicit-function-return-type, @typescript-eslint/no-misused-promises, no-empty, @typescript-eslint/no-unsafe-return, @typescript-eslint/no-unsafe-argument */
-import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
-import { Fragment } from 'preact';
-import { useVirtualizer } from '@tanstack/react-virtual';
-import { highlightAll } from '../utils/highlight';
-import { msgMatches } from '../utils/msgFilter';
+import {useEffect, useMemo, useRef, useState} from 'preact/hooks';
+import {Fragment} from 'preact';
+import {useVirtualizer} from '@tanstack/react-virtual';
+import {highlightAll} from '../utils/highlight';
+import {msgMatches} from '../utils/msgFilter';
 import logger from '../utils/logger';
-import { rendererPerf } from '../utils/rendererPerf';
+import {rendererPerf} from '../utils/rendererPerf';
 // Dynamic import for DCFilterDialog (code splitting)
 // Preact supports dynamic imports directly
-import { LoggingStore } from '../store/loggingStore';
-import { DiagnosticContextFilter } from '../store/dcFilter';
-import { DragAndDropManager } from '../utils/dnd';
-import { compareByTimestampId } from '../utils/sort';
-import { TimeFilter } from '../store/timeFilter';
-import { lazy, Suspense } from 'preact/compat';
-import type { ElasticSearchOptions } from '../types/ipc';
-import { canonicalDcKey } from '../store/dcFilter';
-import { MDCListener } from '../store/mdcListener';
+import {LoggingStore} from '../store/loggingStore';
+import {canonicalDcKey, DiagnosticContextFilter} from '../store/dcFilter';
+import {DragAndDropManager} from '../utils/dnd';
+import {compareByTimestampId} from '../utils/sort';
+import {TimeFilter} from '../store/timeFilter';
+import {lazy, Suspense} from 'preact/compat';
+import type {ElasticSearchOptions} from '../types/ipc';
+import {MDCListener} from '../store/mdcListener';
 
 // Feste Basisfarben für Markierungen
 const BASE_MARK_COLORS = [
@@ -96,7 +95,7 @@ function computeTint(color: string | null | undefined, alpha = 0.4): string {
 export default function App() {
   // Track component initialization
   rendererPerf.mark('app-component-init');
-  
+
   const [entries, setEntries] = useState<any[]>([]);
   const [nextId, setNextId] = useState<number>(1);
   // Keep a ref in sync with nextId for atomic id assignment in appendEntries
@@ -140,7 +139,9 @@ export default function App() {
   useEffect(() => {
     const off = (DiagnosticContextFilter as any).onChange?.(() => setDcVersion((v) => v + 1));
     return () => {
-      try { if (typeof off === 'function') off(); } catch {}
+      try {
+        if (typeof off === 'function') off();
+      } catch {}
     };
   }, []);
   // re-render trigger for Time filter changes
@@ -148,7 +149,9 @@ export default function App() {
   useEffect(() => {
     const off = (TimeFilter as any).onChange?.(() => setTimeVersion((v) => v + 1));
     return () => {
-      try { if (typeof off === 'function') off(); } catch {}
+      try {
+        if (typeof off === 'function') off();
+      } catch {}
     };
   }, []);
 
@@ -913,11 +916,14 @@ export default function App() {
         logger.error('Error loading settings:', e);
       }
     };
-    
+
     // Use requestIdleCallback with a timeout to ensure settings load eventually
-    const idleId = requestIdleCallback(() => {
-      loadSettings();
-    }, { timeout: 100 });
+    const idleId = requestIdleCallback(
+      () => {
+        loadSettings();
+      },
+      { timeout: 100 }
+    );
     return () => cancelIdleCallback(idleId);
   }, []);
 
@@ -2094,11 +2100,7 @@ export default function App() {
             }
           })()}
           {esBusy && (
-            <span
-              className="status"
-              style={{ marginLeft: '6px' }}
-              title="Elasticsearch-Abfrage läuft"
-            >
+            <span>
               <span className="spinner"></span>Elastic lädt…
             </span>
           )}
