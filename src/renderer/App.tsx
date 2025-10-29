@@ -14,7 +14,7 @@ import { canonicalDcKey, DiagnosticContextFilter } from '../store/dcFilter';
 import { DragAndDropManager } from '../utils/dnd';
 import { compareByTimestampId } from '../utils/sort';
 import { TimeFilter } from '../store/timeFilter';
-import { lazy, Suspense } from 'preact/compat';
+import { lazy, Suspense, createPortal } from 'preact/compat';
 import type { ElasticSearchOptions } from '../types/ipc';
 import { MDCListener } from '../store/mdcListener';
 
@@ -135,6 +135,117 @@ export default function App() {
     message: '',
   });
   const [stdFiltersEnabled, setStdFiltersEnabled] = useState<boolean>(true);
+
+  // NEU: Flüchtige Verlaufslisten (Session-only, keine Persistenz)
+  const [fltHistSearch, setFltHistSearch] = useState<string[]>([]);
+  const [fltHistLogger, setFltHistLogger] = useState<string[]>([]);
+  const [fltHistThread, setFltHistThread] = useState<string[]>([]);
+  const [fltHistMessage, setFltHistMessage] = useState<string[]>([]);
+  // NEU: Sichtbarkeit der Popover-Listen + Refs für Outside-Click
+  const [showSearchHist, setShowSearchHist] = useState<boolean>(false);
+  const [showLoggerHist, setShowLoggerHist] = useState<boolean>(false);
+  const [showThreadHist, setShowThreadHist] = useState<boolean>(false);
+  const [showMessageHist, setShowMessageHist] = useState<boolean>(false);
+  const searchHistRef = useRef<HTMLDivElement | null>(null);
+  const loggerHistRef = useRef<HTMLDivElement | null>(null);
+  const threadHistRef = useRef<HTMLDivElement | null>(null);
+  const messageHistRef = useRef<HTMLDivElement | null>(null);
+  // Popover-Container-Refs (für Outside-Click) + Positionen
+  const searchPopRef = useRef<HTMLDivElement | null>(null);
+  const loggerPopRef = useRef<HTMLDivElement | null>(null);
+  const threadPopRef = useRef<HTMLDivElement | null>(null);
+  const messagePopRef = useRef<HTMLDivElement | null>(null);
+  const [searchPos, setSearchPos] = useState<{ left: number; top: number; width: number } | null>(
+    null
+  );
+  const [loggerPos, setLoggerPos] = useState<{ left: number; top: number; width: number } | null>(
+    null
+  );
+  const [threadPos, setThreadPos] = useState<{ left: number; top: number; width: number } | null>(
+    null
+  );
+  const [messagePos, setMessagePos] = useState<{ left: number; top: number; width: number } | null>(
+    null
+  );
+
+  function computePosFor(
+    el: HTMLElement | null
+  ): { left: number; top: number; width: number } | null {
+    if (!el) return null;
+    const r = el.getBoundingClientRect();
+    return { left: Math.round(r.left), top: Math.round(r.bottom + 2), width: Math.round(r.width) };
+  }
+  function updateVisiblePopoverPositions() {
+    if (showSearchHist) setSearchPos(computePosFor(searchHistRef.current));
+    if (showLoggerHist) setLoggerPos(computePosFor(loggerHistRef.current));
+    if (showThreadHist) setThreadPos(computePosFor(threadHistRef.current));
+    if (showMessageHist) setMessagePos(computePosFor(messageHistRef.current));
+  }
+  useEffect(() => {
+    // Bei Öffnen Position initial berechnen
+    updateVisiblePopoverPositions();
+  }, [showSearchHist, showLoggerHist, showThreadHist, showMessageHist]);
+  useEffect(() => {
+    if (!showSearchHist && !showLoggerHist && !showThreadHist && !showMessageHist) return;
+    const onResize = () => updateVisiblePopoverPositions();
+    const onScroll = () => updateVisiblePopoverPositions();
+    window.addEventListener('resize', onResize);
+    window.addEventListener('scroll', onScroll, true);
+    return () => {
+      window.removeEventListener('resize', onResize);
+      window.removeEventListener('scroll', onScroll, true);
+    };
+  }, [showSearchHist, showLoggerHist, showThreadHist, showMessageHist]);
+
+  function addFilterHistory(kind: 'search' | 'logger' | 'thread' | 'message', val: string) {
+    const v = String(val || '').trim();
+    if (!v) return;
+    const upd = (prev: string[]) => [v, ...prev.filter((x) => x !== v)].slice(0, 20);
+    switch (kind) {
+      case 'search':
+        setFltHistSearch(upd);
+        break;
+      case 'logger':
+        setFltHistLogger(upd);
+        break;
+      case 'thread':
+        setFltHistThread(upd);
+        break;
+      case 'message':
+        setFltHistMessage(upd);
+        break;
+    }
+  }
+
+  function closeAllHistoryPopovers() {
+    setShowSearchHist(false);
+    setShowLoggerHist(false);
+    setShowThreadHist(false);
+    setShowMessageHist(false);
+  }
+  useEffect(() => {
+    if (!showSearchHist && !showLoggerHist && !showThreadHist && !showMessageHist) return;
+    const onDocDown = (ev: MouseEvent) => {
+      try {
+        const t = ev.target as Node;
+        if (
+          (searchHistRef.current && searchHistRef.current.contains(t)) ||
+          (loggerHistRef.current && loggerHistRef.current.contains(t)) ||
+          (threadHistRef.current && threadHistRef.current.contains(t)) ||
+          (messageHistRef.current && messageHistRef.current.contains(t)) ||
+          (searchPopRef.current && searchPopRef.current.contains(t)) ||
+          (loggerPopRef.current && loggerPopRef.current.contains(t)) ||
+          (threadPopRef.current && threadPopRef.current.contains(t)) ||
+          (messagePopRef.current && messagePopRef.current.contains(t))
+        ) {
+          return; // Klick innerhalb eines Wrappers → nicht schließen
+        }
+      } catch {}
+      closeAllHistoryPopovers();
+    };
+    window.addEventListener('mousedown', onDocDown, true);
+    return () => window.removeEventListener('mousedown', onDocDown, true);
+  }, [showSearchHist, showLoggerHist, showThreadHist, showMessageHist]);
 
   // re-render trigger for MDC filter changes
   const [dcVersion, setDcVersion] = useState<number>(0);
@@ -282,7 +393,8 @@ export default function App() {
   }
 
   // Filter-Historien
-  const [histLogger, setHistLogger] = useState<string[]>([]);
+  // Entfernt: persistente Logger-Historie; stattdessen flüchtige Verlaufslisten
+  // const [histLogger, setHistLogger] = useState<string[]>([]);
   const [histAppName, setHistAppName] = useState<string[]>([]);
   const [histEnvironment, setHistEnvironment] = useState<string[]>([]);
   // NEW: Index history
@@ -800,13 +912,15 @@ export default function App() {
     const last = markedIdx[markedIdx.length - 1]!;
     let targetVi: number | undefined;
     if (dir > 0) {
-      if (curVi < 0) targetVi = first; // keine Auswahl → zum ersten
+      if (curVi < 0)
+        targetVi = first; // keine Auswahl → zum ersten
       else {
         const next = markedIdx.find((vi) => vi > curVi);
         targetVi = next != null ? next : last; // kein nächster → am letzten stehen bleiben
       }
     } else {
-      if (curVi < 0) targetVi = last; // keine Auswahl → zum letzten
+      if (curVi < 0)
+        targetVi = last; // keine Auswahl → zum letzten
       else {
         let prev = -1;
         for (const vi of markedIdx) if (vi < curVi) prev = vi;
@@ -825,13 +939,15 @@ export default function App() {
     const last = searchMatchIdx[searchMatchIdx.length - 1]!;
     let targetVi: number | undefined;
     if (dir > 0) {
-      if (curVi < 0) targetVi = first; // keine Auswahl → zum ersten Treffer
+      if (curVi < 0)
+        targetVi = first; // keine Auswahl → zum ersten Treffer
       else {
         const next = searchMatchIdx.find((vi) => vi > curVi);
         targetVi = next != null ? next : last; // kein nächster → am letzten stehen bleiben
       }
     } else {
-      if (curVi < 0) targetVi = last; // keine Auswahl → zum letzten Treffer
+      if (curVi < 0)
+        targetVi = last; // keine Auswahl → zum letzten Treffer
       else {
         let prev = -1;
         for (const vi of searchMatchIdx) if (vi < curVi) prev = vi;
@@ -851,8 +967,8 @@ export default function App() {
       selectedOneIdx != null
         ? (selectedOneIdx as number)
         : lastClicked.current != null
-        ? (lastClicked.current as number)
-        : null;
+          ? (lastClicked.current as number)
+          : null;
     const curVi = curGlobal != null ? filteredIdx.indexOf(curGlobal) : -1;
 
     let targetVi = curVi < 0 ? (dir > 0 ? 0 : filteredIdx.length - 1) : curVi + dir;
@@ -989,7 +1105,7 @@ export default function App() {
       logger.error('LoggingStore.addEvents error:', e);
       alert(
         'Failed to process new log entries. See logs for details. ' +
-        ((e as any)?.message || String(e))
+          ((e as any)?.message || String(e))
       );
     }
     setEntries((prev) => [...prev, ...toAdd].sort(compareByTimestampId as any));
@@ -1089,7 +1205,8 @@ export default function App() {
         if (r.tcpPort != null) setTcpPort(Number(r.tcpPort) || 5000);
         if (typeof r.httpUrl === 'string') setHttpUrl(r.httpUrl);
         if (r.httpInterval != null) setHttpInterval(Number(r.httpInterval) || 5000);
-        if (Array.isArray(r.histLogger)) setHistLogger(r.histLogger);
+        // Entfernt: Laden einer persistierten Logger-Historie, damit Verlauf nur temporär ist
+        // if (Array.isArray(r.histLogger)) setHistLogger(r.histLogger);
         if (Array.isArray(r.histAppName)) setHistAppName(r.histAppName);
         if (Array.isArray(r.histEnvironment)) setHistEnvironment(r.histEnvironment);
         // NEW: load histIndex
@@ -2323,13 +2440,94 @@ export default function App() {
         </div>
         <div className="section">
           <label>Suche</label>
-          <input
-            id="searchText"
-            type="text"
-            value={search}
-            onInput={(e) => setSearch(e.currentTarget.value)}
-            placeholder="Volltext in message… (unterstützt &, |, !)"
-          />
+          <div
+            ref={searchHistRef as any}
+            style={{
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: '6px',
+              position: 'relative',
+            }}
+          >
+            <input
+              id="searchText"
+              type="text"
+              value={search}
+              onInput={(e) => setSearch(e.currentTarget.value)}
+              onKeyDown={(e) => {
+                if ((e as any).key === 'Enter')
+                  addFilterHistory('search', (e.currentTarget as any).value);
+                if ((e as any).key === 'ArrowDown') setShowSearchHist(true);
+                const key = (e as any).key?.toLowerCase?.() || '';
+                if (key === 'a' && ((e as any).ctrlKey || (e as any).metaKey)) {
+                  e.preventDefault();
+                  try {
+                    (e.currentTarget as HTMLInputElement).select();
+                  } catch {}
+                }
+              }}
+              onFocus={() => setShowSearchHist(true)}
+              onBlur={(e) => addFilterHistory('search', e.currentTarget.value)}
+              placeholder="Volltext in message… (unterstützt &, |, !)"
+              style={{ minWidth: '260px', paddingRight: '26px' }}
+            />
+            <button
+              type="button"
+              title={showSearchHist ? 'Historie ausblenden' : 'Historie anzeigen'}
+              onClick={() => setShowSearchHist((v) => !v)}
+              style={{
+                position: 'absolute',
+                right: '6px',
+                top: '50%',
+                transform: 'translateY(-50%)',
+                height: '22px',
+                minWidth: '22px',
+                padding: '0 4px',
+              }}
+            >
+              ▾
+            </button>
+          </div>
+          {showSearchHist &&
+            fltHistSearch.length > 0 &&
+            searchPos &&
+            createPortal(
+              <div
+                ref={searchPopRef as any}
+                role="listbox"
+                style={{
+                  position: 'fixed',
+                  left: searchPos.left + 'px',
+                  top: searchPos.top + 'px',
+                  width: searchPos.width + 'px',
+                  background: 'var(--color-bg, #fff)',
+                  border: '1px solid #cfcfcf',
+                  borderRadius: '6px',
+                  padding: '4px',
+                  zIndex: 200000,
+                  maxHeight: '220px',
+                  overflowY: 'auto',
+                  boxShadow: '0 8px 28px rgba(0,0,0,0.2)',
+                }}
+              >
+                {fltHistSearch.map((v, i) => (
+                  <div
+                    key={i}
+                    style={{ padding: '4px 6px', cursor: 'pointer' }}
+                    onClick={() => {
+                      setSearch(v);
+                      addFilterHistory('search', v);
+                      setShowSearchHist(false);
+                    }}
+                    onMouseDown={(e) => e.preventDefault()}
+                    title={v}
+                  >
+                    {v}
+                  </div>
+                ))}
+              </div>,
+              document.body
+            )}
           <button
             id="btnPrevMatch"
             title="Vorheriger Treffer"
@@ -2372,38 +2570,278 @@ export default function App() {
             ))}
           </select>
           <label>Logger</label>
-          <input
-            id="filterLogger"
-            list="loggerHistoryList"
-            type="text"
-            value={filter.logger}
-            onInput={(e) => setFilter({ ...filter, logger: e.currentTarget.value })}
-            placeholder="Logger enthält…"
-            disabled={!stdFiltersEnabled}
-          />
-          <datalist id="loggerHistoryList">
-            {histLogger.map((v, i) => (
-              <option key={i} value={v} />
-            ))}
-          </datalist>
+          <div
+            ref={loggerHistRef as any}
+            style={{
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: '6px',
+              position: 'relative',
+            }}
+          >
+            <input
+              id="filterLogger"
+              type="text"
+              value={filter.logger}
+              onInput={(e) => setFilter({ ...filter, logger: e.currentTarget.value })}
+              onKeyDown={(e) => {
+                if ((e as any).key === 'Enter')
+                  addFilterHistory('logger', (e.currentTarget as any).value);
+                if ((e as any).key === 'ArrowDown') setShowLoggerHist(true);
+                const key = (e as any).key?.toLowerCase?.() || '';
+                if (key === 'a' && ((e as any).ctrlKey || (e as any).metaKey)) {
+                  e.preventDefault();
+                  try {
+                    (e.currentTarget as HTMLInputElement).select();
+                  } catch {}
+                }
+              }}
+              onFocus={() => setShowLoggerHist(true)}
+              onBlur={(e) => addFilterHistory('logger', e.currentTarget.value)}
+              placeholder="Logger enthält…"
+              disabled={!stdFiltersEnabled}
+              style={{ minWidth: '180px', paddingRight: '26px' }}
+            />
+            <button
+              type="button"
+              title={showLoggerHist ? 'Historie ausblenden' : 'Historie anzeigen'}
+              onClick={() => setShowLoggerHist((v) => !v)}
+              disabled={!stdFiltersEnabled}
+              style={{
+                position: 'absolute',
+                right: '6px',
+                top: '50%',
+                transform: 'translateY(-50%)',
+                height: '22px',
+                minWidth: '22px',
+                padding: '0 4px',
+              }}
+            >
+              ▾
+            </button>
+          </div>
+          {showLoggerHist &&
+            fltHistLogger.length > 0 &&
+            loggerPos &&
+            createPortal(
+              <div
+                ref={loggerPopRef as any}
+                role="listbox"
+                style={{
+                  position: 'fixed',
+                  left: loggerPos.left + 'px',
+                  top: loggerPos.top + 'px',
+                  width: loggerPos.width + 'px',
+                  background: 'var(--color-bg, #fff)',
+                  border: '1px solid #cfcfcf',
+                  borderRadius: '6px',
+                  padding: '4px',
+                  zIndex: 200000,
+                  maxHeight: '220px',
+                  overflowY: 'auto',
+                  boxShadow: '0 8px 28px rgba(0,0,0,0.2)',
+                }}
+              >
+                {fltHistLogger.map((v, i) => (
+                  <div
+                    key={i}
+                    style={{ padding: '4px 6px', cursor: 'pointer' }}
+                    onClick={() => {
+                      setFilter({ ...filter, logger: v });
+                      addFilterHistory('logger', v);
+                      setShowLoggerHist(false);
+                    }}
+                    onMouseDown={(e) => e.preventDefault()}
+                    title={v}
+                  >
+                    {v}
+                  </div>
+                ))}
+              </div>,
+              document.body
+            )}
           <label>Thread</label>
-          <input
-            id="filterThread"
-            type="text"
-            value={filter.thread}
-            onInput={(e) => setFilter({ ...filter, thread: e.currentTarget.value })}
-            placeholder="Thread enthält…"
-            disabled={!stdFiltersEnabled}
-          />
+          <div
+            ref={threadHistRef as any}
+            style={{
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: '6px',
+              position: 'relative',
+            }}
+          >
+            <input
+              id="filterThread"
+              type="text"
+              value={filter.thread}
+              onInput={(e) => setFilter({ ...filter, thread: e.currentTarget.value })}
+              onKeyDown={(e) => {
+                if ((e as any).key === 'Enter')
+                  addFilterHistory('thread', (e.currentTarget as any).value);
+                if ((e as any).key === 'ArrowDown') setShowThreadHist(true);
+                const key = (e as any).key?.toLowerCase?.() || '';
+                if (key === 'a' && ((e as any).ctrlKey || (e as any).metaKey)) {
+                  e.preventDefault();
+                  try {
+                    (e.currentTarget as HTMLInputElement).select();
+                  } catch {}
+                }
+              }}
+              onFocus={() => setShowThreadHist(true)}
+              onBlur={(e) => addFilterHistory('thread', e.currentTarget.value)}
+              placeholder="Thread enthält…"
+              disabled={!stdFiltersEnabled}
+              style={{ minWidth: '160px', paddingRight: '26px' }}
+            />
+            <button
+              type="button"
+              title={showThreadHist ? 'Historie ausblenden' : 'Historie anzeigen'}
+              onClick={() => setShowThreadHist((v) => !v)}
+              disabled={!stdFiltersEnabled}
+              style={{
+                position: 'absolute',
+                right: '6px',
+                top: '50%',
+                transform: 'translateY(-50%)',
+                height: '22px',
+                minWidth: '22px',
+                padding: '0 4px',
+              }}
+            >
+              ▾
+            </button>
+          </div>
+          {showThreadHist &&
+            fltHistThread.length > 0 &&
+            threadPos &&
+            createPortal(
+              <div
+                ref={threadPopRef as any}
+                role="listbox"
+                style={{
+                  position: 'fixed',
+                  left: threadPos.left + 'px',
+                  top: threadPos.top + 'px',
+                  width: threadPos.width + 'px',
+                  background: 'var(--color-bg, #fff)',
+                  border: '1px solid #cfcfcf',
+                  borderRadius: '6px',
+                  padding: '4px',
+                  zIndex: 200000,
+                  maxHeight: '220px',
+                  overflowY: 'auto',
+                  boxShadow: '0 8px 28px rgba(0,0,0,0.2)',
+                }}
+              >
+                {fltHistThread.map((v, i) => (
+                  <div
+                    key={i}
+                    style={{ padding: '4px 6px', cursor: 'pointer' }}
+                    onClick={() => {
+                      setFilter({ ...filter, thread: v });
+                      addFilterHistory('thread', v);
+                      setShowThreadHist(false);
+                    }}
+                    onMouseDown={(e) => e.preventDefault()}
+                    title={v}
+                  >
+                    {v}
+                  </div>
+                ))}
+              </div>,
+              document.body
+            )}
           <label>Message</label>
-          <input
-            id="filterMessage"
-            type="text"
-            value={filter.message}
-            onInput={(e) => setFilter({ ...filter, message: e.currentTarget.value })}
-            placeholder="Message-Filter: & = UND, | = ODER, ! = NICHT"
-            disabled={!stdFiltersEnabled}
-          />
+          <div
+            ref={messageHistRef as any}
+            style={{
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: '6px',
+              position: 'relative',
+            }}
+          >
+            <input
+              id="filterMessage"
+              type="text"
+              value={filter.message}
+              onInput={(e) => setFilter({ ...filter, message: e.currentTarget.value })}
+              onKeyDown={(e) => {
+                if ((e as any).key === 'Enter')
+                  addFilterHistory('message', (e.currentTarget as any).value);
+                if ((e as any).key === 'ArrowDown') setShowMessageHist(true);
+                const key = (e as any).key?.toLowerCase?.() || '';
+                if (key === 'a' && ((e as any).ctrlKey || (e as any).metaKey)) {
+                  e.preventDefault();
+                  try {
+                    (e.currentTarget as HTMLInputElement).select();
+                  } catch {}
+                }
+              }}
+              onFocus={() => setShowMessageHist(true)}
+              onBlur={(e) => addFilterHistory('message', e.currentTarget.value)}
+              placeholder="Message-Filter: & = UND, | = ODER, ! = NICHT"
+              disabled={!stdFiltersEnabled}
+              style={{ minWidth: '240px', paddingRight: '26px' }}
+            />
+            <button
+              type="button"
+              title={showMessageHist ? 'Historie ausblenden' : 'Historie anzeigen'}
+              onClick={() => setShowMessageHist((v) => !v)}
+              disabled={!stdFiltersEnabled}
+              style={{
+                position: 'absolute',
+                right: '6px',
+                top: '50%',
+                transform: 'translateY(-50%)',
+                height: '22px',
+                minWidth: '22px',
+                padding: '0 4px',
+              }}
+            >
+              ▾
+            </button>
+          </div>
+          {showMessageHist &&
+            fltHistMessage.length > 0 &&
+            messagePos &&
+            createPortal(
+              <div
+                ref={messagePopRef as any}
+                role="listbox"
+                style={{
+                  position: 'fixed',
+                  left: messagePos.left + 'px',
+                  top: messagePos.top + 'px',
+                  width: messagePos.width + 'px',
+                  background: 'var(--color-bg, #fff)',
+                  border: '1px solid #cfcfcf',
+                  borderRadius: '6px',
+                  padding: '4px',
+                  zIndex: 200000,
+                  maxHeight: '220px',
+                  overflowY: 'auto',
+                  boxShadow: '0 8px 28px rgba(0,0,0,0.2)',
+                }}
+              >
+                {fltHistMessage.map((v, i) => (
+                  <div
+                    key={i}
+                    style={{ padding: '4px 6px', cursor: 'pointer' }}
+                    onClick={() => {
+                      setFilter({ ...filter, message: v });
+                      addFilterHistory('message', v);
+                      setShowMessageHist(false);
+                    }}
+                    onMouseDown={(e) => e.preventDefault()}
+                    title={v}
+                  >
+                    {v}
+                  </div>
+                ))}
+              </div>,
+              document.body
+            )}
           <button
             id="btnClearFilters"
             onClick={() => {
@@ -2519,7 +2957,9 @@ export default function App() {
                       }
                       setEsHasMore(!!res.hasMore && available > 0);
                       setEsNextSearchAfter((res.nextSearchAfter as any) || null);
-                      setEsPitSessionId((res as any).pitSessionId || null);
+                      setEsPitSessionId(
+                        ((res as any)?.pitSessionId as string) || esPitSessionId || null
+                      );
                       if (typeof (res as any)?.total === 'number')
                         setEsTotal(Number((res as any).total));
                       if (!res.hasMore || available <= 0) setEsPitSessionId(null);
@@ -2622,7 +3062,9 @@ export default function App() {
                       (ev as any).shiftKey,
                       (ev as any).ctrlKey || (ev as any).metaKey
                     );
-                    try { (parentRef.current as any)?.focus?.(); } catch {}
+                    try {
+                      (parentRef.current as any)?.focus?.();
+                    } catch {}
                   }}
                   onContextMenu={(ev) => openContextMenu(ev as any, globalIdx)}
                   title={String(e.message || '')}
