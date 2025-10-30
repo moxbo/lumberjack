@@ -17,6 +17,7 @@
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "icon:generate": "tsx ./scripts/make-icon.ts",
+    "build:x64": "npm run prebuild && npm run build:renderer && cross-env CSC_IDENTITY_AUTO_DISCOVERY=false electron-builder --win nsis --x64",
     "build:portable": "npm run prebuild && npm run build:renderer && cross-env CSC_IDENTITY_AUTO_DISCOVERY=false electron-builder --win portable",
     "build:portable:x64": "npm run prebuild && npm run build:renderer && cross-env CSC_IDENTITY_AUTO_DISCOVERY=false electron-builder --win portable --x64",
     "build:mac:dmg": "npm run prebuild && npm run build:renderer && cross-env ELECTRON_BUILDER_DISABLE_PUBLISH=true CSC_IDENTITY_AUTO_DISCOVERY=false electron-builder --mac dmg --publish never"
