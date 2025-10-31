@@ -25,7 +25,8 @@ export function msgMatches(message: string, expr: string): boolean {
     const toks: Token[] = [];
     let i = 0;
     const N = s.length;
-    const isOp = (ch: string): boolean => ch === '&' || ch === '|' || ch === '!' || ch === '(' || ch === ')';
+    const isOp = (ch: string): boolean =>
+      ch === '&' || ch === '|' || ch === '!' || ch === '(' || ch === ')';
     while (i < N) {
       const ch = s[i]!;
       if (ch <= ' ') {
