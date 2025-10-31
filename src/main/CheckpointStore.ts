@@ -25,18 +25,22 @@ export class CheckpointStore {
     this.load();
   }
 
-  private load() {
+  private load(): void {
     try {
       if (!fs.existsSync(this.filePath)) return;
       const raw = fs.readFileSync(this.filePath, 'utf8');
-      const obj = JSON.parse(raw);
-      for (const [k, v] of Object.entries(obj || {})) this.map.set(k, v as any);
+      const obj = JSON.parse(raw) as Record<string, unknown>;
+      for (const [k, v] of Object.entries(obj || {})) {
+        if (v && typeof v === 'object' && 'offset' in v && 'mtimeMs' in v && 'size' in v) {
+          this.map.set(k, v as CheckpointValue);
+        }
+      }
     } catch {
       // ignore corrupt
     }
   }
 
-  private save() {
+  private save(): void {
     try {
       const dir = path.dirname(this.filePath);
       fs.mkdirSync(dir, { recursive: true });

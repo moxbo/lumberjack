@@ -36,7 +36,7 @@ class WorkerPool {
     this.initializePool();
   }
 
-  private initializePool() {
+  private initializePool(): void {
     for (let i = 0; i < this.poolSize; i++) {
       try {
         // Use provided path relative to this module so bundlers (Vite) can locate the worker at build time
@@ -44,7 +44,7 @@ class WorkerPool {
           type: 'module',
         }) as PWorker;
         worker.onmessage = (e: MessageEvent) => this.handleWorkerMessage(e);
-        worker.onerror = (err: any) => this.handleWorkerError(err);
+        worker.onerror = (err: ErrorEvent) => this.handleWorkerError(err);
         worker.busy = false;
         this.workers.push(worker);
       } catch (err) {
@@ -181,7 +181,7 @@ class WorkerPool {
 }
 
 // Singleton helpers stored on globalThis to avoid module resolution quirks
-const WP_KEY = '__ljWorkerPool__';
+const _WP_KEY = '__ljWorkerPool__';
 
 export function getWorkerPool(): WorkerPool | null {
   const existing = (globalThis as { __ljWorkerPool__?: WorkerPool }).__ljWorkerPool__;

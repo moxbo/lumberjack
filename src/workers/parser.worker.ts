@@ -222,17 +222,26 @@ function toEntry(obj: AnyMap, source: string): LogEntry {
   // Service/app name
   const service = obj.service || obj.app || obj.application || obj.serviceName || '';
 
+  // Helper to safely convert to string
+  const safeString = (v: unknown, fallback = ''): string => {
+    if (v == null) return fallback;
+    if (typeof v === 'string' || typeof v === 'number' || typeof v === 'boolean') {
+      return String(v);
+    }
+    return fallback;
+  };
+
   return {
     timestamp: String(timestamp),
-    level: String(level ?? 'INFO').toUpperCase(),
-    logger: String(logger ?? ''),
-    thread: String(thread ?? ''),
-    message: String(message ?? ''),
-    traceId: String(traceId ?? ''),
+    level: safeString(level, 'INFO').toUpperCase(),
+    logger: safeString(logger),
+    thread: safeString(thread),
+    message: safeString(message),
+    traceId: safeString(traceId),
     source: source || 'unknown',
     mdc: (mdc as Record<string, unknown>) || {},
-    stackTrace: stackTrace ? String(stackTrace) : undefined,
-    service: String(service ?? ''),
+    stackTrace: stackTrace ? safeString(stackTrace) : undefined,
+    service: safeString(service),
     raw: obj,
   };
 }
