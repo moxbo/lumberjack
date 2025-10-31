@@ -69,6 +69,7 @@
       "output": "release",
       "buildResources": "images"
     },
+    "icon": "icon.ico",
     "files": [
       "dist/**/*",
       "dist-main/**/*",
@@ -109,12 +110,20 @@
           "arch": [
             "x64"
           ]
-        }
+        },
+        "nsis"
       ],
       "signAndEditExecutable": false,
       "forceCodeSigning": false,
       "signExts": [],
       "icon": "icon.ico"
+    },
+    "nsis": {
+      "oneClick": true,
+      "installerIcon": "icon.ico",
+      "uninstallerIcon": "icon.ico",
+      "createDesktopShortcut": true,
+      "shortcutName": "Lumberjack"
     },
     "mac": {
       "target": [

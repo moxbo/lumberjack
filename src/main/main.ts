@@ -89,7 +89,12 @@ function setTcpOwnerWindowId(winId: number | null): void {
   try {
     applyWindowTitles();
     updateMenu();
-  } catch {}
+  } catch (e) {
+    log.error(
+      'setTcpOwnerWindowId applyWindowTitles/updateMenu failed:',
+      e instanceof Error ? e.message : String(e)
+    );
+  }
 }
 function getTcpOwnerWindowId(): number | null {
   return tcpOwnerWindowId;
@@ -121,7 +126,9 @@ function applyWindowTitles(): void {
   try {
     const w = BrowserWindow.fromId?.(winId);
     if (w) return windowMeta.get(winId)?.baseTitle || '';
-  } catch {}
+  } catch (e) {
+    log.error('__getWindowBaseTitle failed:', e instanceof Error ? e.message : String(e));
+  }
   return '';
 };
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -129,7 +136,9 @@ function applyWindowTitles(): void {
   try {
     const w = BrowserWindow.fromId?.(winId);
     if (w) setWindowBaseTitle(w, title);
-  } catch {}
+  } catch (e) {
+    log.error('__setWindowBaseTitle failed:', e instanceof Error ? e.message : String(e));
+  }
 };
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 (global as any).__getWindowCanTcpControl = (winId: number) => {
@@ -137,6 +146,7 @@ function applyWindowTitles(): void {
     const w = BrowserWindow.fromId?.(winId);
     return getWindowCanTcpControl(w);
   } catch {
+    log.error('__getWindowCanTcpControl failed');
     return true;
   }
 };
@@ -145,7 +155,9 @@ function applyWindowTitles(): void {
   try {
     const w = BrowserWindow.fromId?.(winId);
     if (w) setWindowCanTcpControl(w, allowed);
-  } catch {}
+  } catch (e) {
+    log.error('__setWindowCanTcpControl failed:', e instanceof Error ? e.message : String(e));
+  }
 };
 
 // Buffers
@@ -165,7 +177,9 @@ function defaultLogFilePath(): string {
 function closeLogStream(): void {
   try {
     logStream?.end?.();
-  } catch {}
+  } catch (e){
+    log.error('Fehler beim Schließen des Log-Streams:', e instanceof Error ? e.message : String(e));
+  }
   logStream = null;
   logBytes = 0;
 }
@@ -201,16 +215,20 @@ function rotateIfNeeded(extraBytes: number): void {
       if (fs.existsSync(src)) {
         try {
           fs.renameSync(src, dst);
-        } catch {}
+        } catch (e) {
+          log.error('Log rotation rename failed:', e instanceof Error ? e.message : String(e));
+        }
       }
     }
     if (backups >= 1 && fs.existsSync(p)) {
       try {
         fs.renameSync(p, `${p}.1`);
-      } catch {}
+      } catch (e) {
+        log.error('Log rotation rename failed:', e instanceof Error ? e.message : String(e));
+      }
     }
   } catch (e) {
-    log.warn('Log rotation failed:', e instanceof Error ? e.message : String(e));
+    log.error('Log rotation failed:', e instanceof Error ? e.message : String(e));
   }
   openLogStream();
 }
@@ -332,7 +350,8 @@ function flushPendingAppendsFor(win: BrowserWindow): void {
       const slice = buf.slice(i, i + CHUNK);
       wc.send('logs:append', slice);
     }
-  } catch {
+  } catch (e) {
+    log.error('flushPendingAppendsFor send failed:', e instanceof Error ? e.message : String(e));
     return;
   }
   pendingAppendsByWindow.delete(win.id);
@@ -385,6 +404,45 @@ function sendAppend(entries: LogEntry[]): void {
 // Cache icon/dist paths
 let cachedIconPath: string | null = null;
 let cachedDistIndexPath: string | null = null;
+function resolveIconPathSync(): string | null {
+  if (cachedIconPath !== null) return cachedIconPath || null;
+  const resPath = process.resourcesPath || '';
+  const candidates = [
+    path.join(resPath, 'app.asar.unpacked', 'images', 'icon.ico'),
+    path.join(resPath, 'images', 'icon.ico'),
+    path.join(__dirname, 'images', 'icon.ico'),
+    path.join(app.getAppPath?.() || '', 'images', 'icon.ico'),
+    path.join(process.cwd(), 'images', 'icon.ico'),
+  ].filter(Boolean);
+  for (const p of candidates) {
+    try {
+      if (p && fs.existsSync(p)) {
+        cachedIconPath = p;
+        try {
+          log.debug?.('[icon] resolveIconPathSync hit:', p);
+        } catch (e) {
+          log.error(
+            '[icon] resolveIconPathSync log error:',
+            e instanceof Error ? e.message : String(e)
+          );
+        }
+        return p;
+      }
+    } catch (e) {
+      log.error(
+        '[icon] resolveIconPathSync exists check error:',
+        e instanceof Error ? e.message : String(e)
+      );
+    }
+  }
+  try {
+    log.warn?.('[icon] resolveIconPathSync: no candidate exists');
+  } catch (e) {
+    log.error('[icon] resolveIconPathSync log error:', e instanceof Error ? e.message : String(e));
+  }
+  cachedIconPath = '';
+  return null;
+}
 async function resolveIconPathAsync(): Promise<string | null> {
   if (cachedIconPath !== null) return cachedIconPath;
   const resPath = process.resourcesPath || '';
@@ -392,6 +450,7 @@ async function resolveIconPathAsync(): Promise<string | null> {
     path.join(resPath, 'app.asar.unpacked', 'images', 'icon.ico'),
     path.join(resPath, 'images', 'icon.ico'),
     path.join(__dirname, 'images', 'icon.ico'),
+    path.join(app.getAppPath?.() || '', 'images', 'icon.ico'),
     path.join(process.cwd(), 'images', 'icon.ico'),
   ];
   for (const p of candidates) {
@@ -402,9 +461,27 @@ async function resolveIconPathAsync(): Promise<string | null> {
         .catch(() => false);
       if (exists) {
         cachedIconPath = p;
+        try {
+          log.debug?.('[icon] resolveIconPathAsync hit:', p);
+        } catch (e) {
+          log.error(
+            '[icon] resolveIconPathAsync log error:',
+            e instanceof Error ? e.message : String(e)
+          );
+        }
         return p;
       }
-    } catch {}
+    } catch (e) {
+      log.error(
+        '[icon] resolveIconPathAsync exists check error:',
+        e instanceof Error ? e.message : String(e)
+      );
+    }
+  }
+  try {
+    log.warn?.('[icon] resolveIconPathAsync: no candidate exists');
+  } catch (e) {
+    log.error('[icon] resolveIconPathAsync log error:', e instanceof Error ? e.message : String(e));
   }
   cachedIconPath = '';
   return null;
@@ -569,6 +646,13 @@ function createWindow(opts: { makePrimary?: boolean } = {}): BrowserWindow {
     height: height || 800,
     ...(x != null && y != null ? { x, y } : {}),
     title: getDefaultBaseTitle(),
+    // Icon bereits beim Erzeugen setzen (wichtig für Taskbar/Alt-Tab unter Windows)
+    ...(process.platform === 'win32'
+      ? (() => {
+          const iconPath = resolveIconPathSync();
+          return iconPath ? { icon: iconPath } : {};
+        })()
+      : {}),
     webPreferences: {
       preload: path.join(app.getAppPath(), 'preload.cjs'),
       contextIsolation: true,
@@ -634,9 +718,30 @@ function createWindow(opts: { makePrimary?: boolean } = {}): BrowserWindow {
           if (iconPath && !win.isDestroyed()) {
             try {
               win.setIcon(iconPath);
+              try {
+                log.debug?.('[icon] BrowserWindow.setIcon applied:', iconPath);
+              } catch {}
+            } catch (e) {
+              try {
+                log.warn?.(
+                  '[icon] BrowserWindow.setIcon failed:',
+                  e instanceof Error ? e.message : String(e)
+                );
+              } catch {}
+            }
+          } else {
+            try {
+              log.warn?.('[icon] No iconPath resolved for setIcon');
             } catch {}
           }
-        } catch {}
+        } catch (e) {
+          try {
+            log.warn?.(
+              '[icon] resolve/set icon error:',
+              e instanceof Error ? e.message : String(e)
+            );
+          } catch {}
+        }
       });
     }
   });

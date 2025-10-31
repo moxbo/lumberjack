@@ -19,7 +19,7 @@ if (pngToIco && typeof pngToIco !== 'function' && typeof (pngToIco as any).defau
   pngToIco = (pngToIco as any).default;
 }
 
-(async () => {
+await (async () => {
   try {
     const baseDir = path.join(__dirname, '..');
     const imagesDir = path.join(baseDir, 'images');
