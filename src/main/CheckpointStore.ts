@@ -31,7 +31,19 @@ export class CheckpointStore {
       const raw = fs.readFileSync(this.filePath, 'utf8');
       const obj = JSON.parse(raw) as Record<string, unknown>;
       for (const [k, v] of Object.entries(obj || {})) {
-        if (v && typeof v === 'object' && 'offset' in v && 'mtimeMs' in v && 'size' in v) {
+        // Validate checkpoint value structure and types
+        if (
+          v &&
+          typeof v === 'object' &&
+          'offset' in v &&
+          'mtimeMs' in v &&
+          'size' in v &&
+          'updatedAt' in v &&
+          typeof v.offset === 'number' &&
+          typeof v.mtimeMs === 'number' &&
+          typeof v.size === 'number' &&
+          typeof v.updatedAt === 'number'
+        ) {
           this.map.set(k, v as CheckpointValue);
         }
       }
