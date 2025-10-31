@@ -219,7 +219,8 @@ export class DragAndDropManager {
               fr.readAsText(f, 'utf-8');
             }
           } catch {
-            const fileName = f && typeof f === 'object' && 'name' in f && typeof f.name === 'string' ? f.name : '';
+            const fileName =
+              f && typeof f === 'object' && 'name' in f && typeof f.name === 'string' ? f.name : '';
             resolve({ name: fileName, data: '', encoding: 'utf8' });
           }
         });

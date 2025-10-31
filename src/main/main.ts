@@ -17,7 +17,8 @@ import { registerIpcHandlers } from './ipcHandlers';
 const isDev = process.env.NODE_ENV === 'development' || Boolean(process.env.VITE_DEV_SERVER_URL);
 log.initialize();
 log.transports.console.level = 'debug';
-log.transports.file.level = isDev ? false : 'info';
+// Schreibe in Nicht-Dev alle Level in die Datei
+log.transports.file.level = isDev ? false : 'silly';
 
 // Services
 const perfService = new PerformanceService();

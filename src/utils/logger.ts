@@ -21,41 +21,18 @@ try {
   import('electron-log/renderer.js')
     .then((mod) => {
       try {
-        const el = (mod as { default?: LogBackend }).default || (mod as LogBackend);
+        const el = (mod as any)?.default || (mod as any);
         if (el) {
           // Configure transports defensively
           try {
-            // Type guard for import.meta.env
-            const env = (import.meta as { env?: Record<string, unknown> }).env || {};
-            const viteLevel = env.VITE_LOG_CONSOLE_LEVEL;
-            const logLevel = env.LOG_CONSOLE_LEVEL;
-            const lvl =
-              typeof viteLevel === 'string' || typeof viteLevel === 'number'
-                ? String(viteLevel)
-                : typeof logLevel === 'string' || typeof logLevel === 'number'
-                  ? String(logLevel)
-                  : 'error';
-            // Type guard for electron-log object with transports
-            const elWithTransports = el as {
-              transports?: {
-                console?: { level?: string | boolean };
-                remote?: { level?: string | boolean };
-                file?: { level?: string | boolean };
-              };
-            };
-            if (elWithTransports.transports?.console) {
-              elWithTransports.transports.console.level = lvl;
-            }
-            if (elWithTransports.transports?.remote) {
-              elWithTransports.transports.remote.level = false;
-            }
+            const env: any = (import.meta as any)?.env || {};
+            const lvl = String(env.VITE_LOG_CONSOLE_LEVEL || env.LOG_CONSOLE_LEVEL || 'error');
+            if (el.transports?.console) el.transports.console.level = lvl;
+            if (el.transports?.remote) el.transports.remote.level = false as any;
             const isDev =
               !!env?.DEV ||
-              (typeof process !== 'undefined' &&
-                (process as { env?: { NODE_ENV?: string } })?.env?.NODE_ENV === 'development');
-            if (elWithTransports.transports?.file) {
-              elWithTransports.transports.file.level = isDev ? false : 'info';
-            }
+              (typeof process !== 'undefined' && (process as any)?.env?.NODE_ENV === 'development');
+            if (el.transports?.file) el.transports.file.level = isDev ? (false as any) : 'silly';
           } catch (e) {
             console.warn('logger: dynamic configure failed:', e);
           }
