@@ -328,7 +328,7 @@ async function httpJsonRequest(
   headers: Record<string, string>,
   allowInsecureTLS?: boolean,
   timeoutMs?: number
-): Promise<{ status: number; text: string; json: unknown | null }> {
+): Promise<{ status: number; text: string; json: unknown }> {
   return new Promise((resolve, reject) => {
     try {
       const u = new URL(urlStr);
@@ -367,7 +367,7 @@ async function httpJsonRequest(
           if (timer) clearTimeout(timer);
           const text = Buffer.concat(chunks).toString('utf8');
           const status = Number(res.statusCode || 0);
-          let json: unknown | null = null;
+          let json: unknown = null;
           try {
             json = text ? JSON.parse(text) : {};
           } catch {
@@ -390,9 +390,9 @@ async function httpJsonRequest(
 }
 
 async function requestWithRetry(
-  exec: () => Promise<{ status: number; text: string; json: unknown | null }>,
+  exec: () => Promise<{ status: number; text: string; json: unknown }>,
   opts: { maxRetries: number; backoffBaseMs: number }
-): Promise<{ status: number; text: string; json: unknown | null }> {
+): Promise<{ status: number; text: string; json: unknown }> {
   let attempt = 0;
   while (true) {
     try {
