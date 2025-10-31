@@ -177,7 +177,7 @@ function defaultLogFilePath(): string {
 function closeLogStream(): void {
   try {
     logStream?.end?.();
-  } catch (e){
+  } catch (e) {
     log.error('Fehler beim Schließen des Log-Streams:', e instanceof Error ? e.message : String(e));
   }
   logStream = null;
