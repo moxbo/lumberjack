@@ -2,7 +2,10 @@
 function toStringSafe(v: unknown): string {
   if (v == null) return '';
   const t = typeof v;
-  return t === 'string' || t === 'number' || t === 'boolean' ? String(v) : '';
+  if (t === 'string' || t === 'number' || t === 'boolean') {
+    return String(v);
+  }
+  return '';
 }
 
 export function escapeHtml(s: unknown): string {

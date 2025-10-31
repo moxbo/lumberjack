@@ -5,7 +5,8 @@ function extractFractionBeyondMs(ts: unknown): number {
   // Extract digits after the decimal point in the seconds field, beyond the first 3 (milliseconds)
   // Example: 2025-10-23T15:46:12.0493117+02:00 -> fracAll=0493117 -> beyondMs=3117 -> normalized to 6 digits
   try {
-    const s = String(ts ?? '');
+    if (ts == null || (typeof ts !== 'string' && typeof ts !== 'number')) return 0;
+    const s = String(ts);
     const m = s.match(/T\d{2}:\d{2}:\d{2}\.(\d+)/);
     if (!m) return 0;
     const frac = m[1] || '';
@@ -16,7 +17,7 @@ function extractFractionBeyondMs(ts: unknown): number {
     const norm = (beyond + '000000').slice(0, 6); // padEnd to 6, then cut to 6
     const num = Number(norm);
     return Number.isFinite(num) ? num : 0;
-  } catch (_) {
+  } catch {
     return 0;
   }
 }
@@ -29,7 +30,7 @@ function toMillisEx(ts: unknown): { valid: boolean; ms: number; extra: number } 
     if (!Number.isFinite(ms)) return { valid: false, ms: NaN, extra: 0 };
     const extra = extractFractionBeyondMs(ts);
     return { valid: true, ms, extra };
-  } catch (_) {
+  } catch {
     return { valid: false, ms: NaN, extra: 0 };
   }
 }

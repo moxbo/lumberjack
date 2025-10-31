@@ -411,7 +411,7 @@ export class NetworkService {
   cleanup(): void {
     this.stopAllHttpPollers();
     if (this.tcpServer) {
-      this.stopTcpServer();
+      void this.stopTcpServer();
     }
   }
 }

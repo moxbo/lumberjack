@@ -100,7 +100,7 @@ class MDCListenerImpl {
     }
     if (changed) this._em.emit();
   }
-  onChange(fn: Listener) {
+  onChange(fn: Listener): () => void {
     return this._em.on(fn);
   }
   getSortedKeys(): string[] {
