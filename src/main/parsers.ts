@@ -59,12 +59,22 @@ function getAdmZip(): AdmZipConstructor {
 }
 
 // Safe string helpers
+function safeString(v: unknown, fallback = ''): string {
+  if (v == null) return fallback;
+  if (typeof v === 'string' || typeof v === 'number' || typeof v === 'boolean') {
+    return String(v);
+  }
+  return fallback;
+}
+
 function toOptionalString(v: unknown): string | null {
   if (v == null) return null;
   if (typeof v === 'string') return v;
   try {
-    const s = String(v);
-    return s;
+    if (typeof v === 'number' || typeof v === 'boolean') {
+      return String(v);
+    }
+    return null;
   } catch {
     return null;
   }
@@ -84,7 +94,9 @@ function toEntry(obj: AnyMap = {}, fallbackMessage = '', source = ''): Entry {
       const direct =
         (o as AnyMap).stack_trace || (o as AnyMap).stackTrace || (o as AnyMap).stacktrace;
       if (direct != null) cand.push(direct);
-    } catch {}
+    } catch {
+      // Intentionally empty - ignore errors
+    }
     try {
       const err = (o as AnyMap).error || (o as AnyMap).err;
       if (err) {
@@ -92,7 +104,9 @@ function toEntry(obj: AnyMap = {}, fallbackMessage = '', source = ''): Entry {
         if ((err as AnyMap).trace != null) cand.push((err as AnyMap).trace);
         if (typeof err === 'string') cand.push(err);
       }
-    } catch {}
+    } catch {
+      // Intentionally empty - ignore errors
+    }
     try {
       const ex = (o as AnyMap).exception || (o as AnyMap).cause || (o as AnyMap).throwable;
       if (ex) {
@@ -100,19 +114,23 @@ function toEntry(obj: AnyMap = {}, fallbackMessage = '', source = ''): Entry {
         if ((ex as AnyMap).stackTrace != null) cand.push((ex as AnyMap).stackTrace);
         if (typeof ex === 'string') cand.push(ex);
       }
-    } catch {}
+    } catch {
+      // Intentionally empty - ignore errors
+    }
     try {
       if ((o as AnyMap)['exception.stacktrace'] != null)
         cand.push((o as AnyMap)['exception.stacktrace']);
       if ((o as AnyMap)['error.stacktrace'] != null) cand.push((o as AnyMap)['error.stacktrace']);
-    } catch {}
+    } catch {
+      // Intentionally empty - ignore errors
+    }
     for (const v of cand) {
       if (v == null) continue;
       if (Array.isArray(v)) {
-        const s = v.map((x) => (x == null ? '' : String(x))).join('\n');
+        const s = v.map((x) => safeString(x)).join('\n');
         if (s.trim()) return s;
       } else {
-        const s = String(v ?? '');
+        const s = safeString(v);
         if (s.trim()) return s;
       }
     }
@@ -411,7 +429,9 @@ function buildHeadersWithAuth(auth?: ElasticsearchAuth): Record<string, string> 
     } else if (auth.type === 'bearer') {
       headers.Authorization = `Bearer ${String(auth.token || '')}`;
     }
-  } catch {}
+  } catch {
+    // Intentionally empty - ignore errors
+  }
   return headers;
 }
 
@@ -527,7 +547,9 @@ async function closePit(
         backoffBaseMs
       );
       return;
-    } catch {}
+    } catch {
+      // Intentionally empty - ignore errors
+    }
     await closePitOs(
       baseUrl,
       pitId,
@@ -551,7 +573,9 @@ async function closePit(
         backoffBaseMs
       );
       return;
-    } catch {}
+    } catch {
+      // Intentionally empty - ignore errors
+    }
     await closePitEs(
       baseUrl,
       pitId,
@@ -574,7 +598,9 @@ async function closePit(
       backoffBaseMs
     );
     return;
-  } catch {}
+  } catch {
+    // Intentionally empty - ignore errors
+  }
   await closePitOs(baseUrl, pitId, headers, allowInsecureTLS, timeoutMs, maxRetries, backoffBaseMs);
 }
 
@@ -583,14 +609,14 @@ function newSessionId(): string {
   return `pit_${Date.now().toString(36)}_${rnd}`;
 }
 function normalizeBase(url: string): string {
-  return String(url || '').replace(/\/$/, '');
+  return safeString(url).replace(/\/$/, '');
 }
 function toIsoIfDate(v: unknown): string | undefined {
   if (v == null) return undefined;
   try {
     if (v instanceof Date) return v.toISOString();
     if (typeof v === 'number') return new Date(v).toISOString();
-    const s = String(v || '').trim();
+    const s = safeString(v).trim();
     if (!s) return undefined;
     if (/^\d+$/.test(s)) return new Date(parseInt(s, 10)).toISOString();
     const d = new Date(s);
@@ -647,8 +673,8 @@ function buildElasticSearchBody(opts: ElasticsearchOptions): AnyMap {
   }
 
   // Weitere Felder optional weiterhin als match_phrase
-  const addField = (field: string, value?: string) => {
-    const v = String(value || '').trim();
+  const addField = (field: string, value?: string): void => {
+    const v = safeString(value).trim();
     if (!v) return;
     must.push({ match_phrase: { [field]: { query: v } } } as AnyMap);
   };
@@ -658,21 +684,23 @@ function buildElasticSearchBody(opts: ElasticsearchOptions): AnyMap {
 
   // Zeitbereich – unterstütze explizites Format
   const range: AnyMap = {};
-  const fmt = String((opts as AnyMap).dateFormat || '').trim();
-  if (opts.duration && String(opts.duration).trim()) {
+  const dateFormat = (opts as AnyMap).dateFormat;
+  const fmt = safeString(dateFormat).trim();
+  const duration = opts.duration;
+  if (duration && safeString(duration).trim()) {
     range.gte = `now-${opts.duration}`;
     range.lte = 'now';
   } else {
     if (fmt) {
-      const fromStr = opts.from != null ? String(opts.from) : '';
-      const toStr = opts.to != null ? String(opts.to) : '';
+      const fromStr = opts.from != null ? safeString(opts.from) : '';
+      const toStr = opts.to != null ? safeString(opts.to) : '';
       if (fromStr) range.gte = fromStr;
       if (toStr) range.lte = toStr;
       if (fromStr || toStr) range.format = fmt;
     } else {
       // epoch millis oder ISO
-      const num = (x: unknown) =>
-        typeof x === 'number' ? x : /^\d+$/.test(String(x || '')) ? Number(x) : null;
+      const num = (x: unknown): number | null =>
+        typeof x === 'number' ? x : /^\d+$/.test(safeString(x)) ? Number(x) : null;
       const fromNum = num(opts.from as unknown);
       const toNum = num(opts.to as unknown);
       if (fromNum != null || toNum != null) {
@@ -693,7 +721,7 @@ function buildElasticSearchBody(opts: ElasticsearchOptions): AnyMap {
 
   // Optional: level_value Mindestwert
   const lv = (opts as AnyMap).levelValueGte;
-  if (lv != null && String(lv).trim() !== '') {
+  if (lv != null && safeString(lv).trim() !== '') {
     must.push({ range: { level_value: { gte: lv } } } as AnyMap);
   }
 

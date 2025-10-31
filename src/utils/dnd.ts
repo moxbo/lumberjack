@@ -210,12 +210,17 @@ export class DragAndDropManager {
               fr.onerror = () => resolve({ name, data: '', encoding: 'base64' });
               fr.readAsArrayBuffer(f);
             } else {
-              fr.onload = () => resolve({ name, data: String(fr.result || ''), encoding: 'utf8' });
+              fr.onload = () => {
+                const result = fr.result;
+                const data = typeof result === 'string' ? result : '';
+                resolve({ name, data, encoding: 'utf8' });
+              };
               fr.onerror = () => resolve({ name, data: '', encoding: 'utf8' });
               fr.readAsText(f, 'utf-8');
             }
           } catch {
-            resolve({ name: String((f as any)?.name || ''), data: '', encoding: 'utf8' });
+            const fileName = f && typeof f === 'object' && 'name' in f && typeof f.name === 'string' ? f.name : '';
+            resolve({ name: fileName, data: '', encoding: 'utf8' });
           }
         });
       for (let i = 0; i < fileList.length; i++) out.push(await readOne(fileList[i]!));
