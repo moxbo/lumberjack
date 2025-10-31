@@ -42,11 +42,35 @@ export interface IndexResult {
   error?: string;
 }
 
+// Type definitions for Elasticsearch responses
+interface BulkResponseItem {
+  create?: { status: number; error?: { type: string; reason: string } };
+  index?: { status: number; error?: { type: string; reason: string } };
+  update?: { status: number; error?: { type: string; reason: string } };
+  delete?: { status: number; error?: { type: string; reason: string } };
+}
+
+interface BulkResponse {
+  items?: BulkResponseItem[];
+}
+
+// Helper to safely convert values to strings
+function safeString(v: unknown, fallback = ''): string {
+  if (v == null) return fallback;
+  if (typeof v === 'string' || typeof v === 'number' || typeof v === 'boolean') {
+    return String(v);
+  }
+  return fallback;
+}
+
 function toIsoMs(ts: unknown): string {
   if (ts == null) return '';
-  const d = new Date(ts as any);
-  if (isNaN(d.getTime())) return String(ts ?? '');
-  const pad = (n: number, w: number) => String(n).padStart(w, '0');
+  if (typeof ts !== 'string' && typeof ts !== 'number' && !(ts instanceof Date)) {
+    return safeString(ts);
+  }
+  const d = new Date(ts);
+  if (isNaN(d.getTime())) return safeString(ts);
+  const pad = (n: number, w: number): string => String(n).padStart(w, '0');
   return (
     `${d.getUTCFullYear()}-` +
     `${pad(d.getUTCMonth() + 1, 2)}-` +
@@ -68,16 +92,17 @@ export function defaultFingerprint(
   };
   const normalizers: Partial<Record<string, (v: unknown) => string>> = {
     '@timestamp': toIsoMs,
-    message: (v) => String(v ?? ''),
-    logger: (v) => String(v ?? ''),
-    thread: (v) => String(v ?? ''),
-    traceId: (v) => String(v ?? ''),
+    message: (v) => safeString(v),
+    logger: (v) => safeString(v),
+    thread: (v) => safeString(v),
+    traceId: (v) => safeString(v),
     ...(cfg.normalizers || {}),
   };
   const parts: string[] = [];
   for (const f of cfg.fields) {
-    const raw = (event as any)[f];
-    const norm = normalizers[f] ? normalizers[f](raw) : String(raw ?? '');
+    const raw = event[f];
+    const normalizer = normalizers[f];
+    const norm = normalizer ? normalizer(raw) : safeString(raw);
     parts.push(`${f}=${norm}`);
   }
   const data = parts.join('|');
@@ -112,9 +137,10 @@ export class ElasticIndexer {
   private async doFetch(path: string, init: RequestInit & { method: string }): Promise<Response> {
     const base = this.opts.baseUrl.replace(/\/$/, '');
     const url = `${base}${path}`;
+    const initHeaders = (init.headers as Record<string, string>) || {};
     const headers: Record<string, string> = {
       'content-type': 'application/json',
-      ...(init.headers as any),
+      ...initHeaders,
     };
     // Auth
     const auth = this.opts.auth;
@@ -130,7 +156,7 @@ export class ElasticIndexer {
     }
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), this.opts.timeoutMs);
-    const transport = this.opts.transport ?? (globalThis as any).fetch;
+    const transport = this.opts.transport ?? (globalThis as { fetch?: typeof fetch }).fetch;
     if (!transport) throw new Error('No fetch available. Provide options.transport');
     try {
       return await transport(url, { ...init, headers, signal: controller.signal });
@@ -146,7 +172,7 @@ export class ElasticIndexer {
     if (this.opts.useCreate) qp.set('op_type', 'create');
     const res = await this.doFetch(
       `/${encodeURIComponent(this.opts.index)}/_doc/${encodeURIComponent(id)}?${qp.toString()}`,
-      { method: 'PUT', body: JSON.stringify(event) } as any
+      { method: 'PUT', body: JSON.stringify(event) }
     );
     if (res.status === 201 || res.status === 200) {
       this.metrics.created++;
@@ -175,12 +201,12 @@ export class ElasticIndexer {
           method: 'POST',
           headers: { 'content-type': 'application/x-ndjson' },
           body: ndjson,
-        } as any);
+        });
         if (res.status >= 200 && res.status < 300) {
-          const body = await res.json().catch(() => null as any);
-          const items: any[] = Array.isArray(body?.items) ? body.items : [];
+          const body = (await res.json().catch(() => null)) as BulkResponse | null;
+          const items: BulkResponseItem[] = Array.isArray(body?.items) ? body.items : [];
           const nextRetry: Array<{ e: Record<string, unknown>; id: string }> = [];
-          for (let i = 0; i < (items.length || 0); i++) {
+          for (let i = 0; i < items.length; i++) {
             const it = items[i];
             const r = it?.create || it?.index || it?.update || it?.delete;
             const status = r?.status;
@@ -234,7 +260,7 @@ function actionAndSource(
   pipeline: string | undefined,
   src: Record<string, unknown>
 ): string {
-  const meta: any = { _index: index, _id: id };
+  const meta: { _index: string; _id: string; pipeline?: string } = { _index: index, _id: id };
   if (pipeline) meta.pipeline = pipeline;
   const action = { create: meta };
   return JSON.stringify(action) + '\n' + JSON.stringify(src) + '\n';
