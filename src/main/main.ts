@@ -955,7 +955,7 @@ if (!gotLock) {
   });
 }
 
-void app.whenReady().then(async () => {
+void app.whenReady().then(() => {
   if (process.platform === 'darwin' && app.dock) {
     const macIconPath = resolveMacIconPath();
     if (macIconPath) {

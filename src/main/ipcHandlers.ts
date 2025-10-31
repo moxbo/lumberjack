@@ -213,6 +213,7 @@ export function registerIpcHandlers(
   });
 
   // Log parsing handlers
+  // eslint-disable-next-line @typescript-eslint/require-await
   ipcMain.handle('logs:parsePaths', async (_event, filePaths: string[]): Promise<ParseResult> => {
     try {
       const { parsePaths } = getParsers();
@@ -224,6 +225,7 @@ export function registerIpcHandlers(
     }
   });
 
+  // eslint-disable-next-line @typescript-eslint/require-await
   ipcMain.handle('logs:parseRaw', async (_event, files: DroppedFile[]): Promise<ParseResult> => {
     try {
       if (!Array.isArray(files) || !files.length) return { ok: true, entries: [] };
@@ -363,6 +365,7 @@ export function registerIpcHandlers(
     }
   );
 
+  // eslint-disable-next-line @typescript-eslint/require-await
   ipcMain.handle('http:stopPoll', async (_event, id: number) => {
     return networkService.httpStopPoll(id);
   });
