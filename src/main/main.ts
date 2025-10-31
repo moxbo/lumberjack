@@ -361,7 +361,9 @@ function flushPendingAppendsFor(win: BrowserWindow): void {
 function sendAppend(entries: LogEntry[]): void {
   try {
     writeEntriesToFile(entries);
-  } catch {}
+  } catch {
+    // Intentionally empty - ignore errors
+  }
 
   const isTcpEntry = (e: LogEntry) => typeof e?.source === 'string' && e.source.startsWith('tcp:');
   const tcpEntries: LogEntry[] = [];
@@ -497,7 +499,9 @@ function resolveMacIconPath(): string | null {
   for (const p of candidates) {
     try {
       if (fs.existsSync(p)) return p;
-    } catch {}
+    } catch {
+      // Intentionally empty - ignore errors
+    }
   }
   return null;
 }
@@ -677,7 +681,9 @@ function createWindow(opts: { makePrimary?: boolean } = {}): BrowserWindow {
       updateMenu();
     });
     win.on('blur', () => updateMenu());
-  } catch {}
+  } catch {
+    // Intentionally empty - ignore errors
+  }
 
   win.webContents.on('will-navigate', (event) => event.preventDefault());
 
@@ -691,16 +697,22 @@ function createWindow(opts: { makePrimary?: boolean } = {}): BrowserWindow {
         for (const cmd of queued) {
           try {
             win.webContents.send('menu:cmd', cmd);
-          } catch {}
+          } catch {
+            // Intentionally empty - ignore errors
+          }
         }
         pendingMenuCmdsByWindow.delete(win.id);
       }
-    } catch {}
+    } catch {
+      // Intentionally empty - ignore errors
+    }
 
     // Flush window-specific logs
     try {
       flushPendingAppendsFor(win);
-    } catch {}
+    } catch {
+      // Intentionally empty - ignore errors
+    }
 
     if (win === mainWindow) flushPendingAppends();
 
@@ -720,19 +732,25 @@ function createWindow(opts: { makePrimary?: boolean } = {}): BrowserWindow {
               win.setIcon(iconPath);
               try {
                 log.debug?.('[icon] BrowserWindow.setIcon applied:', iconPath);
-              } catch {}
+              } catch {
+                // Intentionally empty - ignore errors
+              }
             } catch (e) {
               try {
                 log.warn?.(
                   '[icon] BrowserWindow.setIcon failed:',
                   e instanceof Error ? e.message : String(e)
                 );
-              } catch {}
+              } catch {
+                // Intentionally empty - ignore errors
+              }
             }
           } else {
             try {
               log.warn?.('[icon] No iconPath resolved for setIcon');
-            } catch {}
+            } catch {
+              // Intentionally empty - ignore errors
+            }
           }
         } catch (e) {
           try {
@@ -740,7 +758,9 @@ function createWindow(opts: { makePrimary?: boolean } = {}): BrowserWindow {
               '[icon] resolve/set icon error:',
               e instanceof Error ? e.message : String(e)
             );
-          } catch {}
+          } catch {
+            // Intentionally empty - ignore errors
+          }
         }
       });
     }
@@ -752,7 +772,9 @@ function createWindow(opts: { makePrimary?: boolean } = {}): BrowserWindow {
       s.isMaximized = true;
       settingsService.update(s);
       void settingsService.save();
-    } catch {}
+    } catch {
+      // Intentionally empty - ignore errors
+    }
   });
   win.on('unmaximize', () => {
     try {
@@ -760,7 +782,9 @@ function createWindow(opts: { makePrimary?: boolean } = {}): BrowserWindow {
       s.isMaximized = false;
       settingsService.update(s);
       void settingsService.save();
-    } catch {}
+    } catch {
+      // Intentionally empty - ignore errors
+    }
   });
 
   win.on('close', () => {
@@ -773,7 +797,9 @@ function createWindow(opts: { makePrimary?: boolean } = {}): BrowserWindow {
         settingsService.update(s);
         void settingsService.save();
       }
-    } catch {}
+    } catch {
+      // Intentionally empty - ignore errors
+    }
   });
 
   win.on('closed', () => {
@@ -783,7 +809,9 @@ function createWindow(opts: { makePrimary?: boolean } = {}): BrowserWindow {
     if (tcpOwnerWindowId != null && tcpOwnerWindowId === win.id) {
       try {
         void networkService.stopTcpServer();
-      } catch {}
+      } catch {
+        // Intentionally empty - ignore errors
+      }
       setTcpOwnerWindowId(null);
     }
     if (win === mainWindow) mainWindow = null;
@@ -814,15 +842,21 @@ function createWindow(opts: { makePrimary?: boolean } = {}): BrowserWindow {
               cachedDistIndexPath = candidate;
               loaded = true;
               break;
-            } catch {}
+            } catch {
+              // Intentionally empty - ignore errors
+            }
           }
-        } catch {}
+        } catch {
+          // Intentionally empty - ignore errors
+        }
       }
       if (!loaded) {
         try {
           void win.loadFile('index.html');
           cachedDistIndexPath = 'index.html';
-        } catch {}
+        } catch {
+          // Intentionally empty - ignore errors
+        }
       }
     }
   }
@@ -838,9 +872,13 @@ function createWindow(opts: { makePrimary?: boolean } = {}): BrowserWindow {
     if (isDev || process.env.LJ_DEBUG_RENDERER === '1') {
       try {
         wc.openDevTools({ mode: 'bottom' });
-      } catch {}
+      } catch {
+        // Intentionally empty - ignore errors
+      }
     }
-  } catch {}
+  } catch {
+    // Intentionally empty - ignore errors
+  }
 
   setImmediate(async () => {
     buildMenu();
@@ -883,13 +921,17 @@ try {
     applyWindowTitles();
     updateMenu();
   });
-} catch {}
+} catch {
+  // Intentionally empty - ignore errors
+}
 
 // App lifecycle
 if (process.platform === 'win32') {
   try {
     app.setAppUserModelId('de.hhla.lumberjack');
-  } catch {}
+  } catch {
+    // Intentionally empty - ignore errors
+  }
 }
 
 const gotLock = app.requestSingleInstanceLock();
@@ -917,14 +959,18 @@ void app.whenReady().then(async () => {
       try {
         const img = nativeImage.createFromPath(macIconPath);
         if (!img.isEmpty()) app.dock.setIcon(img);
-      } catch {}
+      } catch {
+        // Intentionally empty - ignore errors
+      }
     }
     try {
       const dockMenu = Menu.buildFromTemplate([
         { label: 'Neues Fenster', click: () => createWindow({ makePrimary: false }) },
       ]);
       app.dock.setMenu(dockMenu);
-    } catch {}
+    } catch {
+      // Intentionally empty - ignore errors
+    }
   }
 
   createWindow({ makePrimary: true });
@@ -932,7 +978,9 @@ void app.whenReady().then(async () => {
   try {
     app.on('browser-window-focus', () => updateMenu());
     app.on('browser-window-blur', () => updateMenu());
-  } catch {}
+  } catch {
+    // Intentionally empty - ignore errors
+  }
 
   if (process.argv.some((a) => a === '--new-window')) {
     createWindow({ makePrimary: false });

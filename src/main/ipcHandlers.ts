@@ -295,7 +295,9 @@ export function registerIpcHandlers(
           try {
             // eslint-disable-next-line @typescript-eslint/no-explicit-any
             (global as any).__setTcpOwnerWindowId?.(win.id);
-          } catch {}
+          } catch {
+            // Intentionally empty - ignore errors
+          }
         }
 
         // Titel und Menü aktualisieren
@@ -330,7 +332,9 @@ export function registerIpcHandlers(
           try {
             // eslint-disable-next-line @typescript-eslint/no-explicit-any
             (global as any).__setTcpOwnerWindowId?.(null);
-          } catch {}
+          } catch {
+            // Intentionally empty - ignore errors
+          }
         }
         // Titel und Menü aktualisieren
         updateWindowTitles();
