@@ -25,7 +25,7 @@ function testDeterministicId() {
   if (id1 !== id2) throw new Error('Fingerprint not deterministic');
 }
 
-function test409HandlingSingle() {
+async function test409HandlingSingle(): Promise<void> {
   const seen = new Set<string>();
   const fetch = makeFetch((url, init) => {
     if (url.includes('/_doc/')) {
@@ -43,7 +43,7 @@ function test409HandlingSingle() {
   if (!r1.ok || r2.error || !r2.ok || !r2.duplicate) throw new Error('409 handling failed');
 }
 
-function testBulkPartialConflictsAndRetries() {
+async function testBulkPartialConflictsAndRetries(): Promise<void> {
   let tries = 0;
   const seen = new Set<string>();
   const fetch = makeFetch((url, init) => {
@@ -92,13 +92,13 @@ function testBulkPartialConflictsAndRetries() {
   if (m.retries < 1) throw new Error('no retries counted');
 }
 
-async function run() {
+async function run(): Promise<void> {
   console.log('[tests] start ElasticIndexer');
   testDeterministicId();
   console.log('[tests] deterministic id ok');
-  test409HandlingSingle();
+  await test409HandlingSingle();
   console.log('[tests] 409 single ok');
-  testBulkPartialConflictsAndRetries();
+  await testBulkPartialConflictsAndRetries();
   console.log('[tests] bulk ok');
   console.log('[tests] ElasticIndexer ok');
   process.exit(0);

@@ -25,7 +25,9 @@ const settingsService = new SettingsService();
 const networkService = new NetworkService();
 
 // Lazy modules
-let AdmZip: any | null = null;
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+let AdmZip: any = null;
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
 function getAdmZip(): any {
   if (!AdmZip) {
     // eslint-disable-next-line @typescript-eslint/no-require-imports
@@ -34,7 +36,8 @@ function getAdmZip(): any {
   return AdmZip;
 }
 
-let parsers: any | null = null;
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+let parsers: any = null;
 function getParsers(): typeof import('./parsers.cjs') {
   if (!parsers) {
     const appRoot = app.getAppPath();

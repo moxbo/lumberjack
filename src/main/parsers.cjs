@@ -61,12 +61,21 @@ function getAdmZip() {
   }
   return AdmZip;
 }
+function safeString(v, fallback = "") {
+  if (v == null) return fallback;
+  if (typeof v === "string" || typeof v === "number" || typeof v === "boolean") {
+    return String(v);
+  }
+  return fallback;
+}
 function toOptionalString(v) {
   if (v == null) return null;
   if (typeof v === "string") return v;
   try {
-    const s = String(v);
-    return s;
+    if (typeof v === "number" || typeof v === "boolean") {
+      return String(v);
+    }
+    return null;
   } catch {
     return null;
   }
@@ -111,10 +120,10 @@ function toEntry(obj = {}, fallbackMessage = "", source = "") {
     for (const v of cand) {
       if (v == null) continue;
       if (Array.isArray(v)) {
-        const s = v.map((x) => x == null ? "" : String(x)).join("\n");
+        const s = v.map((x) => safeString(x)).join("\n");
         if (s.trim()) return s;
       } else {
-        const s = String(v ?? "");
+        const s = safeString(v);
         if (s.trim()) return s;
       }
     }
@@ -444,14 +453,14 @@ function newSessionId() {
   return `pit_${Date.now().toString(36)}_${rnd}`;
 }
 function normalizeBase(url) {
-  return String(url || "").replace(/\/$/, "");
+  return safeString(url).replace(/\/$/, "");
 }
 function toIsoIfDate(v) {
   if (v == null) return void 0;
   try {
     if (v instanceof Date) return v.toISOString();
     if (typeof v === "number") return new Date(v).toISOString();
-    const s = String(v || "").trim();
+    const s = safeString(v).trim();
     if (!s) return void 0;
     if (/^\d+$/.test(s)) return new Date(parseInt(s, 10)).toISOString();
     const d = new Date(s);
@@ -498,7 +507,7 @@ function buildElasticSearchBody(opts) {
     });
   }
   const addField = (field, value) => {
-    const v = String(value || "").trim();
+    const v = safeString(value).trim();
     if (!v) return;
     must.push({ match_phrase: { [field]: { query: v } } });
   };
@@ -506,19 +515,21 @@ function buildElasticSearchBody(opts) {
   addField("level", opts.level);
   addField("message", opts.message);
   const range = {};
-  const fmt = String(opts.dateFormat || "").trim();
-  if (opts.duration && String(opts.duration).trim()) {
+  const dateFormat = opts.dateFormat;
+  const fmt = safeString(dateFormat).trim();
+  const duration = opts.duration;
+  if (duration && safeString(duration).trim()) {
     range.gte = `now-${opts.duration}`;
     range.lte = "now";
   } else {
     if (fmt) {
-      const fromStr = opts.from != null ? String(opts.from) : "";
-      const toStr = opts.to != null ? String(opts.to) : "";
+      const fromStr = opts.from != null ? safeString(opts.from) : "";
+      const toStr = opts.to != null ? safeString(opts.to) : "";
       if (fromStr) range.gte = fromStr;
       if (toStr) range.lte = toStr;
       if (fromStr || toStr) range.format = fmt;
     } else {
-      const num = (x) => typeof x === "number" ? x : /^\d+$/.test(String(x || "")) ? Number(x) : null;
+      const num = (x) => typeof x === "number" ? x : /^\d+$/.test(safeString(x)) ? Number(x) : null;
       const fromNum = num(opts.from);
       const toNum = num(opts.to);
       if (fromNum != null || toNum != null) {
@@ -537,7 +548,7 @@ function buildElasticSearchBody(opts) {
     must.push({ range: { "@timestamp": range } });
   }
   const lv = opts.levelValueGte;
-  if (lv != null && String(lv).trim() !== "") {
+  if (lv != null && safeString(lv).trim() !== "") {
     must.push({ range: { level_value: { gte: lv } } });
   }
   const body = {

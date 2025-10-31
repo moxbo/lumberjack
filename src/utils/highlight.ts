@@ -2,9 +2,8 @@
 function toStringSafe(v: unknown): string {
   if (v == null) return '';
   const t = typeof v;
-  if (t === 'string' || t === 'number' || t === 'boolean') {
-    return String(v);
-  }
+  if (t === 'string') return v as string;
+  if (t === 'number' || t === 'boolean') return String(v);
   return '';
 }
 
