@@ -56,6 +56,39 @@ const iconPlay: NativeImage | null = null;
 const iconStop: NativeImage | null = null;
 const windows = new Set<BrowserWindow>();
 
+// Quit-Bestätigung
+let quitConfirmed = false;
+let quitPromptInProgress = false;
+async function confirmQuit(target?: BrowserWindow | null): Promise<boolean> {
+  if (quitConfirmed) return true;
+  if (quitPromptInProgress) return false;
+  quitPromptInProgress = true;
+  try {
+    const win = target && !target.isDestroyed() ? target : BrowserWindow.getFocusedWindow?.();
+    const options: Electron.MessageBoxOptions = {
+      type: 'question',
+      buttons: ['Abbrechen', 'Beenden'],
+      defaultId: 0,
+      cancelId: 0,
+      title: 'Anwendung beenden',
+      message: 'Möchtest du Lumberjack wirklich beenden?',
+      noLink: true,
+      normalizeAccessKeys: true,
+    };
+    const res = win
+      ? await dialog.showMessageBox(win, options)
+      : await dialog.showMessageBox(options);
+    const ok = res.response === 1; // 'Beenden'
+    if (ok) quitConfirmed = true;
+    return ok;
+  } catch (e) {
+    log.warn('Quit-Dialog fehlgeschlagen:', e instanceof Error ? e.message : String(e));
+    return false;
+  } finally {
+    quitPromptInProgress = false;
+  }
+}
+
 type WindowMeta = {
   baseTitle?: string | null;
   canTcpControl?: boolean;
@@ -768,6 +801,29 @@ function createWindow(opts: { makePrimary?: boolean } = {}): BrowserWindow {
     backgroundColor: '#0f1113',
   });
 
+  // Abfangen des Schließens des letzten Fensters (Win/Linux) → Beenden bestätigen
+  win.on('close', async (e) => {
+    try {
+      if (process.platform === 'darwin') return; // Auf macOS beendet das Schließen nicht die App
+      // Ist dies das letzte Fenster?
+      const others = BrowserWindow.getAllWindows().filter((w) => w.id !== win.id);
+      const isLast = others.length === 0;
+      if (!isLast) return; // Nur beim letzten Fenster nachfragen
+      if (quitConfirmed) return;
+      e.preventDefault();
+      const ok = await confirmQuit(win);
+      if (ok) {
+        // Fenster wirklich schließen und Quit fortsetzen
+        // Markiere als bestätigt, dann zerstören → before-quit wird nicht erneut blockieren
+        quitConfirmed = true;
+        // destroy() um weitere close-Hooks zu umgehen
+        win.destroy();
+      }
+    } catch (err) {
+      log.warn('close-confirm failed:', err instanceof Error ? err.message : String(err));
+    }
+  });
+
   windowMeta.set(win.id, { canTcpControl: true, baseTitle: null });
   if (settings.isMaximized) win.maximize();
 
@@ -1085,6 +1141,23 @@ void app.whenReady().then(() => {
 
   if (process.argv.some((a) => a === '--new-window')) {
     createWindow({ makePrimary: false });
+  }
+});
+
+// Bestätigung bei Cmd+Q / Beenden-Menü (plattformübergreifend)
+app.on('before-quit', async (e) => {
+  try {
+    if (quitConfirmed) return;
+    e.preventDefault();
+    const focused = BrowserWindow.getFocusedWindow?.() || mainWindow || null;
+    const ok = await confirmQuit(focused || undefined);
+    if (ok) {
+      quitConfirmed = true;
+      // Erneut quit anstoßen; before-quit greift jetzt nicht mehr
+      app.quit();
+    }
+  } catch (err) {
+    log.warn('before-quit confirm failed:', err instanceof Error ? err.message : String(err));
   }
 });
 

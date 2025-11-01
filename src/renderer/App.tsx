@@ -1547,6 +1547,13 @@ export default function App() {
       : Math.round((esLoaded / esTarget) * 100) || 0;
 
   function clearLogs() {
+    // Sicherheitsabfrage, nur wenn etwas zu löschen ist
+    if (entries && entries.length > 0) {
+      const confirmed = window.confirm(
+        'Möchtest du wirklich alle Einträge löschen? Dieser Vorgang kann nicht rückgängig gemacht werden.'
+      );
+      if (!confirmed) return;
+    }
     setEntries([]);
     setSelected(new Set());
     setNextId(1);
