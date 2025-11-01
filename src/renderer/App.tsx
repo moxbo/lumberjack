@@ -2660,7 +2660,7 @@ export default function App() {
             />
             <button
               type="button"
-              title={showLoggerHist ? 'Historie ausblenden' : 'Historie anzeigen'}
+              title={showLoggerHist ? t('toolbar.searchHistoryHide') : t('toolbar.searchHistoryShow')}
               onClick={() => setShowLoggerHist((v) => !v)}
               disabled={!stdFiltersEnabled}
               style={{
@@ -2716,7 +2716,7 @@ export default function App() {
               </div>,
               document.body
             )}
-          <label>Thread</label>
+          <label>{t('toolbar.thread')}</label>
           <div
             ref={threadHistRef as any}
             style={{
@@ -2745,13 +2745,13 @@ export default function App() {
               }}
               onFocus={() => setShowThreadHist(true)}
               onBlur={(e) => addFilterHistory('thread', e.currentTarget.value)}
-              placeholder="Thread enthält…"
+              placeholder={t('toolbar.threadPlaceholder')}
               disabled={!stdFiltersEnabled}
               style={{ minWidth: '160px', paddingRight: '26px' }}
             />
             <button
               type="button"
-              title={showThreadHist ? 'Historie ausblenden' : 'Historie anzeigen'}
+              title={showThreadHist ? t('toolbar.searchHistoryHide') : t('toolbar.searchHistoryShow')}
               onClick={() => setShowThreadHist((v) => !v)}
               disabled={!stdFiltersEnabled}
               style={{
@@ -2807,7 +2807,7 @@ export default function App() {
               </div>,
               document.body
             )}
-          <label>Message</label>
+          <label>{t('toolbar.message')}</label>
           <div
             ref={messageHistRef as any}
             style={{
@@ -2836,13 +2836,13 @@ export default function App() {
               }}
               onFocus={() => setShowMessageHist(true)}
               onBlur={(e) => addFilterHistory('message', e.currentTarget.value)}
-              placeholder="Message-Filter: & = UND, | = ODER, ! = NICHT"
+              placeholder={t('toolbar.messagePlaceholder')}
               disabled={!stdFiltersEnabled}
               style={{ minWidth: '240px', paddingRight: '26px' }}
             />
             <button
               type="button"
-              title={showMessageHist ? 'Historie ausblenden' : 'Historie anzeigen'}
+              title={showMessageHist ? t('toolbar.searchHistoryHide') : t('toolbar.searchHistoryShow')}
               onClick={() => setShowMessageHist((v) => !v)}
               disabled={!stdFiltersEnabled}
               style={{
@@ -2919,12 +2919,12 @@ export default function App() {
               }
             }}
           >
-            Filter leeren
+            {t('toolbar.clearFilters')}
           </button>
         </div>
         <div className="section">
-          <button onClick={() => setShowDcDialog(true)} title="Diagnostic Context Filter öffnen">
-            DC-Filter…
+          <button onClick={() => setShowDcDialog(true)} title={t('toolbar.dcFilterTooltip')}>
+            {t('toolbar.dcFilter')}
           </button>
           {(() => {
             const entries = DiagnosticContextFilter.getDcEntries();
@@ -2935,25 +2935,25 @@ export default function App() {
             return (
               <span
                 className="status"
-                title={enabled ? 'DC-Filter aktiv' : 'DC-Filter gesetzt, aber deaktiviert'}
+                title={enabled ? t('toolbar.dcFilterActive', { count: String(active) }) : t('toolbar.dcFilterInactive', { count: String(total) })}
                 style={{ marginLeft: '6px' }}
               >
-                {enabled ? `DC ${active} aktiv` : `DC ${total} aus`}
+                {enabled ? t('toolbar.dcFilterActive', { count: String(active) }) : t('toolbar.dcFilterInactive', { count: String(total) })}
               </span>
             );
           })()}
         </div>
         <div className="section">
-          <button disabled={esBusy} onClick={openTimeFilterDialog} title="Elastic-Search öffnen">
-            Elastic-Search…
+          <button disabled={esBusy} onClick={openTimeFilterDialog} title={t('toolbar.elasticSearchTooltip')}>
+            {t('toolbar.elasticSearch')}
           </button>
           {(() => {
             try {
               const s = TimeFilter.getState();
               if (!s.enabled) return null;
               return (
-                <span className="status" style={{ marginLeft: '6px' }} title="Elastic-Search aktiv">
-                  Elastic aktiv
+                <span className="status" style={{ marginLeft: '6px' }} title={t('toolbar.elasticActive')}>
+                  {t('toolbar.elasticActive')}
                 </span>
               );
             } catch {
@@ -2962,7 +2962,7 @@ export default function App() {
           })()}
           {esBusy && (
             <span className="status" title="Ladefortschritt Elasticsearch">
-              Lädt … {esLoaded}/{esTarget} ({Math.max(0, Math.min(100, esPct))}%)
+              {t('toolbar.elasticLoading', { loaded: String(esLoaded), target: String(esTarget), percent: String(Math.max(0, Math.min(100, esPct))) })}
             </span>
           )}
           {!esBusy && esHasMore && (
@@ -3065,23 +3065,23 @@ export default function App() {
           ref={parentRef as any}
           tabIndex={0}
           role="listbox"
-          aria-label="Logeinträge"
+          aria-label={t('list.ariaLabel')}
           onKeyDown={onListKeyDown as any}
         >
           <div className="list-header">
             <div className="cell">
-              Zeitstempel
+              {t('list.header.timestamp')}
               <div className="resizer" onMouseDown={(e) => onColMouseDown('ts', e)} />
             </div>
             <div className="cell" style={{ textAlign: 'center' }}>
-              Level
+              {t('list.header.level')}
               <div className="resizer" onMouseDown={(e) => onColMouseDown('lvl', e)} />
             </div>
             <div className="cell">
-              Logger
+              {t('list.header.logger')}
               <div className="resizer" onMouseDown={(e) => onColMouseDown('logger', e)} />
             </div>
-            <div className="cell">Message</div>
+            <div className="cell">{t('list.header.message')}</div>
           </div>
           {/* Virtualized rows */}
           <div style={{ height: totalHeight + 'px', position: 'relative' }}>
@@ -3139,7 +3139,7 @@ export default function App() {
               );
             })}
             {countFiltered === 0 && (
-              <div style={{ padding: '10px', color: '#777' }}>Keine Einträge</div>
+              <div style={{ padding: '10px', color: '#777' }}>{t('list.noEntries')}</div>
             )}
           </div>
         </div>
@@ -3158,24 +3158,24 @@ export default function App() {
             }}
           >
             {!selectedEntry && (
-              <div style={{ color: 'var(--color-text-secondary)' }}>Keine Auswahl</div>
+              <div style={{ color: 'var(--color-text-secondary)' }}>{t('details.noSelection')}</div>
             )}
             {selectedEntry && (
               <Fragment>
                 <div className="meta-grid">
                   <div>
                     <div className="kv">
-                      <span>Zeit</span>
+                      <span>{t('details.time')}</span>
                       <div>{fmtTimestamp(selectedEntry.timestamp)}</div>
                     </div>
                     <div className="kv">
-                      <span>Logger</span>
+                      <span>{t('details.logger')}</span>
                       <div>{fmt(selectedEntry.logger)}</div>
                     </div>
                   </div>
                   <div>
                     <div className="kv">
-                      <span>Level</span>
+                      <span>{t('details.level')}</span>
                       <div>
                         <span className={levelClass(selectedEntry.level)}>
                           {fmt(selectedEntry.level)}
@@ -3183,14 +3183,14 @@ export default function App() {
                       </div>
                     </div>
                     <div className="kv">
-                      <span>Thread</span>
+                      <span>{t('details.thread')}</span>
                       <div>{fmt(selectedEntry.thread)}</div>
                     </div>
                   </div>
                 </div>
                 <div className="section-sep" />
                 <div className="kv full">
-                  <span>Message</span>
+                  <span>{t('details.message')}</span>
                   <pre
                     id="dMessage"
                     dangerouslySetInnerHTML={{
@@ -3200,7 +3200,7 @@ export default function App() {
                 </div>
                 {(selectedEntry.stack_trace || selectedEntry.stackTrace) && (
                   <div className="kv full">
-                    <span>Stacktrace</span>
+                    <span>{t('details.stacktrace')}</span>
                     <pre className="stack-trace">
                       {String(selectedEntry.stack_trace || selectedEntry.stackTrace || '')}
                     </pre>
@@ -3210,7 +3210,7 @@ export default function App() {
                   <Fragment>
                     <div className="section-sep" />
                     <div style={{ fontSize: '12px', color: '#666', marginBottom: '6px' }}>
-                      Diagnostic Context
+                      {t('details.diagnosticContext')}
                     </div>
                     <div className="mdc-grid">
                       {mdcPairs.map(([k, v]) => (
@@ -3225,7 +3225,7 @@ export default function App() {
                           >
                             <button
                               onClick={() => addMdcToFilter(k, v)}
-                              title="Zum MDC-Filter hinzufügen"
+                              title={t('details.addToFilter')}
                             >
                               +
                             </button>
@@ -3249,7 +3249,7 @@ export default function App() {
           style={{ left: ctxMenu.x + 'px', top: ctxMenu.y + 'px' }}
         >
           <div className="item" onClick={() => applyMarkColor(undefined)}>
-            Markierung löschen
+            {t('contextMenu.removeMark')}
           </div>
           <div className="colors">
             {palette.map((c, i) => (
@@ -3271,29 +3271,29 @@ export default function App() {
               gap: '8px',
             }}
           >
-            <span>Farbe</span>
+            <span>{t('contextMenu.color')}</span>
             <input
               type="color"
               className="swatch"
               value={pickerColor}
               onInput={(e) => setPickerColor(e.currentTarget.value)}
             />
-            <button onClick={() => applyMarkColor(pickerColor)} title="Ausgewählte Farbe anwenden">
-              Anwenden
+            <button onClick={() => applyMarkColor(pickerColor)} title={t('contextMenu.applyColorTooltip')}>
+              {t('contextMenu.apply')}
             </button>
             <button
               onClick={() => addCustomColor(pickerColor)}
-              title="Farbe zur Palette hinzufügen (nur temporär)"
+              title={t('contextMenu.addColorTooltip')}
             >
-              Hinzufügen
+              {t('contextMenu.add')}
             </button>
           </div>
           <div className="sep" />
           <div className="item" onClick={adoptTraceIds}>
-            TraceID in MDC-Filter übernehmen
+            {t('contextMenu.adoptTraceIds')}
           </div>
           <div className="item" onClick={copyTsMsg}>
-            Kopieren: Zeit und Message
+            {t('contextMenu.copyTsMsg')}
           </div>
         </div>
       )}
