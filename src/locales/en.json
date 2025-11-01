@@ -1,0 +1,177 @@
+{
+  "app": {
+    "title": "Lumberjack"
+  },
+  "toolbar": {
+    "total": "total",
+    "filtered": "filtered",
+    "selected": "selected",
+    "clearLogs": "Clear Logs",
+    "follow": "Follow",
+    "followSmooth": "Smooth",
+    "followTooltip": "Always select & display the last entry",
+    "followSmoothTooltip": "Smooth scrolling when Follow is active",
+    "gotoStart": "Start",
+    "gotoEnd": "End",
+    "gotoStartTooltip": "Jump to start",
+    "gotoEndTooltip": "Jump to end",
+    "prevMark": "Mark",
+    "nextMark": "Mark",
+    "prevMarkTooltip": "Previous mark",
+    "nextMarkTooltip": "Next mark",
+    "toggleMarked": "Marked only",
+    "toggleMarkedOn": "Hide marked only",
+    "toggleMarkedOff": "Show marked only",
+    "toggleMarkedDisabled": "No marked entries available",
+    "toggleMarkedTooltip": "Toggle display of marked entries only",
+    "search": "Search",
+    "searchPlaceholder": "Full text in message… (supports &, |, !)",
+    "searchHistoryShow": "Show history",
+    "searchHistoryHide": "Hide history",
+    "prevMatch": "Previous match",
+    "nextMatch": "Next match",
+    "filterActive": "Standard filters active",
+    "level": "Level",
+    "levelAll": "All",
+    "logger": "Logger",
+    "loggerPlaceholder": "Logger contains…",
+    "thread": "Thread",
+    "threadPlaceholder": "Thread contains…",
+    "message": "Message",
+    "messagePlaceholder": "Message filter: & = AND, | = OR, ! = NOT",
+    "clearFilters": "Clear Filters",
+    "dcFilter": "DC Filter…",
+    "dcFilterTooltip": "Open Diagnostic Context Filter",
+    "dcFilterActive": "DC {{count}} active",
+    "dcFilterInactive": "DC {{count}} off",
+    "elasticSearch": "Elastic Search…",
+    "elasticSearchTooltip": "Open Elastic Search",
+    "elasticActive": "Elastic active",
+    "elasticLoading": "Loading … {{loaded}}/{{target}} ({{percent}}%)",
+    "elasticLoadMore": "Load More",
+    "elasticLoaded": "Loaded: {{loaded}} of {{total}}",
+    "busy": "Loading…",
+    "nextPollIn": "Next poll in"
+  },
+  "list": {
+    "header": {
+      "timestamp": "Timestamp",
+      "level": "Level",
+      "logger": "Logger",
+      "message": "Message"
+    },
+    "noEntries": "No entries",
+    "ariaLabel": "Log entries"
+  },
+  "details": {
+    "noSelection": "No selection",
+    "time": "Time",
+    "logger": "Logger",
+    "level": "Level",
+    "thread": "Thread",
+    "message": "Message",
+    "stacktrace": "Stacktrace",
+    "diagnosticContext": "Diagnostic Context",
+    "addToFilter": "Add to MDC filter"
+  },
+  "contextMenu": {
+    "removeMark": "Remove mark",
+    "color": "Color",
+    "apply": "Apply",
+    "add": "Add",
+    "applyColorTooltip": "Apply selected color",
+    "addColorTooltip": "Add color to palette (temporary only)",
+    "adoptTraceIds": "Adopt TraceID to MDC filter",
+    "copyTsMsg": "Copy: Time and Message"
+  },
+  "settings": {
+    "title": "Settings",
+    "tabs": {
+      "tcp": "TCP",
+      "http": "HTTP",
+      "elastic": "Elasticsearch",
+      "logging": "Logging",
+      "appearance": "Appearance",
+      "language": "Language"
+    },
+    "tcp": {
+      "port": "TCP Port",
+      "windowControl": "This window may start/stop TCP"
+    },
+    "http": {
+      "url": "HTTP URL",
+      "interval": "Interval (ms)"
+    },
+    "elastic": {
+      "url": "Elasticsearch URL",
+      "size": "Result set size",
+      "maxParallel": "Max. parallel pages",
+      "user": "User",
+      "password": "Password",
+      "passwordPlaceholder": "enter new password",
+      "passwordSet": "(set) enter new password",
+      "passwordDelete": "Delete saved password",
+      "passwordCurrentSet": "Current: set",
+      "passwordCurrentNotSet": "Current: not set"
+    },
+    "logging": {
+      "toFile": "Write to file",
+      "file": "File",
+      "filePlaceholder": "(default path)",
+      "choose": "Choose…",
+      "maxSize": "Max. size (MB)",
+      "maxBackups": "Max. backups"
+    },
+    "appearance": {
+      "theme": "Theme",
+      "themeSystem": "System",
+      "themeLight": "Light",
+      "themeDark": "Dark",
+      "accent": "Accent",
+      "accentInfo": "Accent color can be customized in styles.css via --accent / --accent-2."
+    },
+    "language": {
+      "label": "Language",
+      "german": "Deutsch",
+      "english": "English"
+    },
+    "cancel": "Cancel",
+    "save": "Save"
+  },
+  "dialogs": {
+    "httpLoad": {
+      "title": "Load HTTP once",
+      "url": "HTTP URL",
+      "urlPlaceholder": "https://…/logs.json",
+      "cancel": "Cancel",
+      "load": "Load",
+      "invalidUrl": "Please enter a valid URL"
+    },
+    "httpPoll": {
+      "title": "Start HTTP polling",
+      "url": "HTTP URL",
+      "urlPlaceholder": "https://…/logs.json",
+      "interval": "Interval (ms)",
+      "cancel": "Cancel",
+      "start": "Start",
+      "invalidUrl": "Please enter a valid URL",
+      "stopFirst": "Please stop current polling first"
+    },
+    "windowTitle": {
+      "title": "Set window title",
+      "label": "Title",
+      "placeholder": "Lumberjack",
+      "cancel": "Cancel",
+      "apply": "Apply",
+      "required": "Please enter a window title"
+    }
+  },
+  "errors": {
+    "saveFailed": "Save failed: {{error}}",
+    "elasticError": "Elastic error: {{error}}",
+    "httpError": "Error: {{error}}",
+    "unknown": "Unknown error",
+    "copyFailed": "Failed to copy to clipboard. See logs for details.",
+    "settingsSaveFailed": "Failed to save settings. See logs for details."
+  }
+}

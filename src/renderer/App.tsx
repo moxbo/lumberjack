@@ -7,6 +7,7 @@ import { highlightAll } from '../utils/highlight';
 import { msgMatches } from '../utils/msgFilter';
 import logger from '../utils/logger';
 import { rendererPerf } from '../utils/rendererPerf';
+import { useI18n } from '../utils/i18n';
 // Dynamic import for DCFilterDialog (code splitting)
 // Preact supports dynamic imports directly
 import { LoggingStore } from '../store/loggingStore';
@@ -17,6 +18,7 @@ import { TimeFilter } from '../store/timeFilter';
 import { lazy, Suspense, createPortal } from 'preact/compat';
 import type { ElasticSearchOptions } from '../types/ipc';
 import { MDCListener } from '../store/mdcListener';
+import LanguageSelector from './LanguageSelector';
 
 // Feste Basisfarben für Markierungen
 const BASE_MARK_COLORS = [
@@ -95,6 +97,9 @@ function computeTint(color: string | null | undefined, alpha = 0.4): string {
 export default function App() {
   // Track component initialization
   rendererPerf.mark('app-component-init');
+  
+  // i18n hook
+  const { t } = useI18n();
 
   const [entries, setEntries] = useState<any[]>([]);
   const [nextId, setNextId] = useState<number>(1);
@@ -2390,16 +2395,17 @@ export default function App() {
       <header className="toolbar">
         <div className="section">
           <span className="counts">
-            <span id="countTotal">{countTotal}</span> gesamt,{' '}
-            <span id="countFiltered">{countFiltered}</span> gefiltert,{' '}
-            <span id="countSelected">{countSelected}</span> selektiert
+            <span id="countTotal">{countTotal}</span> {t('toolbar.total')},{' '}
+            <span id="countFiltered">{countFiltered}</span> {t('toolbar.filtered')},{' '}
+            <span id="countSelected">{countSelected}</span> {t('toolbar.selected')}
           </span>
           <button onClick={clearLogs} disabled={entries.length === 0}>
-            Logs leeren
+            {t('toolbar.clearLogs')}
           </button>
+          <LanguageSelector />
           <label
             style={{ marginLeft: '10px', display: 'inline-flex', alignItems: 'center', gap: '6px' }}
-            title="Immer den letzten Eintrag auswählen & anzeigen"
+            title={t('toolbar.followTooltip')}
           >
             <input
               type="checkbox"
@@ -2415,11 +2421,11 @@ export default function App() {
                 }
               }}
             />
-            <span>Follow</span>
+            <span>{t('toolbar.follow')}</span>
           </label>
           <label
             style={{ marginLeft: '8px', display: 'inline-flex', alignItems: 'center', gap: '6px' }}
-            title="Sanftes Scrollen, wenn Follow aktiv ist"
+            title={t('toolbar.followSmoothTooltip')}
           >
             <input
               type="checkbox"
@@ -2436,35 +2442,35 @@ export default function App() {
               }}
               disabled={!follow}
             />
-            <span>Smooth</span>
+            <span>{t('toolbar.followSmooth')}</span>
           </label>
         </div>
         <div className="section">
           <button
-            title="Zum Anfang springen"
+            title={t('toolbar.gotoStartTooltip')}
             onClick={gotoListStart}
             disabled={countFiltered === 0}
           >
-            ⬆ Anfang
+            ⬆ {t('toolbar.gotoStart')}
           </button>
-          <button title="Zum Ende springen" onClick={gotoListEnd} disabled={countFiltered === 0}>
-            Ende ⬇
+          <button title={t('toolbar.gotoEndTooltip')} onClick={gotoListEnd} disabled={countFiltered === 0}>
+            {t('toolbar.gotoEnd')} ⬇
           </button>
         </div>
         <div className="section">
           <button
-            title="Vorherige Markierung"
+            title={t('toolbar.prevMarkTooltip')}
             onClick={() => gotoMarked(-1)}
             disabled={markedIdx.length === 0}
           >
-            ◀ Markierung
+            ◀ {t('toolbar.prevMark')}
           </button>
           <button
-            title="Nächste Markierung"
+            title={t('toolbar.nextMarkTooltip')}
             onClick={() => gotoMarked(1)}
             disabled={markedIdx.length === 0}
           >
-            Markierung ▶
+            {t('toolbar.nextMark')} ▶
           </button>
           <button
             onClick={() =>
@@ -2481,15 +2487,15 @@ export default function App() {
             disabled={!onlyMarked && markedIdx.length === 0}
             title={
               !onlyMarked && markedIdx.length === 0
-                ? 'Keine markierten Einträge vorhanden'
-                : 'Nur markierte anzeigen umschalten'
+                ? t('toolbar.toggleMarkedDisabled')
+                : t('toolbar.toggleMarkedTooltip')
             }
           >
-            {onlyMarked ? 'Nur markierte aus' : 'Nur markierte an'}
+            {onlyMarked ? t('toolbar.toggleMarkedOn') : t('toolbar.toggleMarkedOff')}
           </button>
         </div>
         <div className="section">
-          <label>Suche</label>
+          <label>{t('toolbar.search')}</label>
           <div
             ref={searchHistRef as any}
             style={{
@@ -2518,12 +2524,12 @@ export default function App() {
               }}
               onFocus={() => setShowSearchHist(true)}
               onBlur={(e) => addFilterHistory('search', e.currentTarget.value)}
-              placeholder="Volltext in message… (unterstützt &, |, !)"
+              placeholder={t('toolbar.searchPlaceholder')}
               style={{ minWidth: '260px', paddingRight: '26px' }}
             />
             <button
               type="button"
-              title={showSearchHist ? 'Historie ausblenden' : 'Historie anzeigen'}
+              title={showSearchHist ? t('toolbar.searchHistoryHide') : t('toolbar.searchHistoryShow')}
               onClick={() => setShowSearchHist((v) => !v)}
               style={{
                 position: 'absolute',
@@ -2580,7 +2586,7 @@ export default function App() {
             )}
           <button
             id="btnPrevMatch"
-            title="Vorheriger Treffer"
+            title={t('toolbar.prevMatch')}
             disabled={!search.trim() || searchMatchIdx.length === 0}
             onClick={() => gotoSearchMatch(-1)}
           >
@@ -2588,7 +2594,7 @@ export default function App() {
           </button>
           <button
             id="btnNextMatch"
-            title="Nächster Treffer"
+            title={t('toolbar.nextMatch')}
             disabled={!search.trim() || searchMatchIdx.length === 0}
             onClick={() => gotoSearchMatch(1)}
           >
@@ -2603,23 +2609,23 @@ export default function App() {
               checked={stdFiltersEnabled}
               onChange={(e) => setStdFiltersEnabled(e.currentTarget.checked)}
             />{' '}
-            Standard-Filter aktiv
+            {t('toolbar.filterActive')}
           </label>
-          <label>Level</label>
+          <label>{t('toolbar.level')}</label>
           <select
             id="filterLevel"
             value={filter.level}
             onChange={(e) => setFilter({ ...filter, level: e.currentTarget.value })}
             disabled={!stdFiltersEnabled}
           >
-            <option value="">Alle</option>
+            <option value="">{t('toolbar.levelAll')}</option>
             {['TRACE', 'DEBUG', 'INFO', 'WARN', 'ERROR', 'FATAL'].map((l) => (
               <option key={l} value={l}>
                 {l}
               </option>
             ))}
           </select>
-          <label>Logger</label>
+          <label>{t('toolbar.logger')}</label>
           <div
             ref={loggerHistRef as any}
             style={{
@@ -2648,7 +2654,7 @@ export default function App() {
               }}
               onFocus={() => setShowLoggerHist(true)}
               onBlur={(e) => addFilterHistory('logger', e.currentTarget.value)}
-              placeholder="Logger enthält…"
+              placeholder={t('toolbar.loggerPlaceholder')}
               disabled={!stdFiltersEnabled}
               style={{ minWidth: '180px', paddingRight: '26px' }}
             />

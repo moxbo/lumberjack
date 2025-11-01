@@ -1,5 +1,6 @@
 import { render } from 'preact';
 import App from '../../renderer/App';
+import { I18nProvider } from '../../utils/i18n';
 import '../styles.css';
 import logger from '../../utils/logger';
 import { rendererPerf } from '../../utils/rendererPerf';
@@ -38,7 +39,12 @@ rendererPerf.mark('pre-render');
 
 const root = document.getElementById('app');
 if (root) {
-  render(<App />, root);
+  render(
+    <I18nProvider>
+      <App />
+    </I18nProvider>,
+    root
+  );
   rendererPerf.mark('post-render');
 
   // Signal that the renderer is ready for first paint

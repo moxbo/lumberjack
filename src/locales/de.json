@@ -1,0 +1,177 @@
+{
+  "app": {
+    "title": "Lumberjack"
+  },
+  "toolbar": {
+    "total": "gesamt",
+    "filtered": "gefiltert",
+    "selected": "selektiert",
+    "clearLogs": "Logs leeren",
+    "follow": "Follow",
+    "followSmooth": "Smooth",
+    "followTooltip": "Immer den letzten Eintrag auswählen & anzeigen",
+    "followSmoothTooltip": "Sanftes Scrollen, wenn Follow aktiv ist",
+    "gotoStart": "Anfang",
+    "gotoEnd": "Ende",
+    "gotoStartTooltip": "Zum Anfang springen",
+    "gotoEndTooltip": "Zum Ende springen",
+    "prevMark": "Markierung",
+    "nextMark": "Markierung",
+    "prevMarkTooltip": "Vorherige Markierung",
+    "nextMarkTooltip": "Nächste Markierung",
+    "toggleMarked": "Nur markierte",
+    "toggleMarkedOn": "Nur markierte aus",
+    "toggleMarkedOff": "Nur markierte an",
+    "toggleMarkedDisabled": "Keine markierten Einträge vorhanden",
+    "toggleMarkedTooltip": "Nur markierte anzeigen umschalten",
+    "search": "Suche",
+    "searchPlaceholder": "Volltext in message… (unterstützt &, |, !)",
+    "searchHistoryShow": "Historie anzeigen",
+    "searchHistoryHide": "Historie ausblenden",
+    "prevMatch": "Vorheriger Treffer",
+    "nextMatch": "Nächster Treffer",
+    "filterActive": "Standard-Filter aktiv",
+    "level": "Level",
+    "levelAll": "Alle",
+    "logger": "Logger",
+    "loggerPlaceholder": "Logger enthält…",
+    "thread": "Thread",
+    "threadPlaceholder": "Thread enthält…",
+    "message": "Message",
+    "messagePlaceholder": "Message-Filter: & = UND, | = ODER, ! = NICHT",
+    "clearFilters": "Filter leeren",
+    "dcFilter": "DC-Filter…",
+    "dcFilterTooltip": "Diagnostic Context Filter öffnen",
+    "dcFilterActive": "DC {{count}} aktiv",
+    "dcFilterInactive": "DC {{count}} aus",
+    "elasticSearch": "Elastic-Search…",
+    "elasticSearchTooltip": "Elastic-Search öffnen",
+    "elasticActive": "Elastic aktiv",
+    "elasticLoading": "Lädt … {{loaded}}/{{target}} ({{percent}}%)",
+    "elasticLoadMore": "Weitere laden",
+    "elasticLoaded": "Geladen: {{loaded}} von {{total}}",
+    "busy": "Lädt…",
+    "nextPollIn": "Nächster Poll in"
+  },
+  "list": {
+    "header": {
+      "timestamp": "Zeitstempel",
+      "level": "Level",
+      "logger": "Logger",
+      "message": "Message"
+    },
+    "noEntries": "Keine Einträge",
+    "ariaLabel": "Logeinträge"
+  },
+  "details": {
+    "noSelection": "Keine Auswahl",
+    "time": "Zeit",
+    "logger": "Logger",
+    "level": "Level",
+    "thread": "Thread",
+    "message": "Message",
+    "stacktrace": "Stacktrace",
+    "diagnosticContext": "Diagnostic Context",
+    "addToFilter": "Zum MDC-Filter hinzufügen"
+  },
+  "contextMenu": {
+    "removeMark": "Markierung löschen",
+    "color": "Farbe",
+    "apply": "Anwenden",
+    "add": "Hinzufügen",
+    "applyColorTooltip": "Ausgewählte Farbe anwenden",
+    "addColorTooltip": "Farbe zur Palette hinzufügen (nur temporär)",
+    "adoptTraceIds": "TraceID in MDC-Filter übernehmen",
+    "copyTsMsg": "Kopieren: Zeit und Message"
+  },
+  "settings": {
+    "title": "Einstellungen",
+    "tabs": {
+      "tcp": "TCP",
+      "http": "HTTP",
+      "elastic": "Elasticsearch",
+      "logging": "Logging",
+      "appearance": "Darstellung",
+      "language": "Sprache"
+    },
+    "tcp": {
+      "port": "TCP Port",
+      "windowControl": "Dieses Fenster darf TCP starten/stoppen"
+    },
+    "http": {
+      "url": "HTTP URL",
+      "interval": "Intervall (ms)"
+    },
+    "elastic": {
+      "url": "Elasticsearch URL",
+      "size": "Ergebnismenge (size)",
+      "maxParallel": "Max. parallele Seiten",
+      "user": "Benutzer",
+      "password": "Passwort",
+      "passwordPlaceholder": "neues Passwort eingeben",
+      "passwordSet": "(gesetzt) neues Passwort eingeben",
+      "passwordDelete": "Gespeichertes Passwort löschen",
+      "passwordCurrentSet": "Aktuell: gesetzt",
+      "passwordCurrentNotSet": "Aktuell: nicht gesetzt"
+    },
+    "logging": {
+      "toFile": "In Datei schreiben",
+      "file": "Datei",
+      "filePlaceholder": "(Standardpfad)",
+      "choose": "Wählen…",
+      "maxSize": "Max. Größe (MB)",
+      "maxBackups": "Max. Backups"
+    },
+    "appearance": {
+      "theme": "Theme",
+      "themeSystem": "System",
+      "themeLight": "Hell",
+      "themeDark": "Dunkel",
+      "accent": "Akzent",
+      "accentInfo": "Akzentfarbe kann in styles.css über --accent / --accent-2 angepasst werden."
+    },
+    "language": {
+      "label": "Sprache",
+      "german": "Deutsch",
+      "english": "English"
+    },
+    "cancel": "Abbrechen",
+    "save": "Speichern"
+  },
+  "dialogs": {
+    "httpLoad": {
+      "title": "HTTP einmal laden",
+      "url": "HTTP URL",
+      "urlPlaceholder": "https://…/logs.json",
+      "cancel": "Abbrechen",
+      "load": "Laden",
+      "invalidUrl": "Bitte eine gültige URL eingeben"
+    },
+    "httpPoll": {
+      "title": "HTTP Poll starten",
+      "url": "HTTP URL",
+      "urlPlaceholder": "https://…/logs.json",
+      "interval": "Intervall (ms)",
+      "cancel": "Abbrechen",
+      "start": "Starten",
+      "invalidUrl": "Bitte eine gültige URL eingeben",
+      "stopFirst": "Bitte laufendes Polling zuerst stoppen"
+    },
+    "windowTitle": {
+      "title": "Fenster-Titel setzen",
+      "label": "Titel",
+      "placeholder": "Lumberjack",
+      "cancel": "Abbrechen",
+      "apply": "Übernehmen",
+      "required": "Bitte einen Fenstertitel eingeben"
+    }
+  },
+  "errors": {
+    "saveFailed": "Speichern fehlgeschlagen: {{error}}",
+    "elasticError": "Elastic-Fehler: {{error}}",
+    "httpError": "Fehler: {{error}}",
+    "unknown": "Unbekannter Fehler",
+    "copyFailed": "Failed to copy to clipboard. See logs for details.",
+    "settingsSaveFailed": "Failed to save settings. See logs for details."
+  }
+}
