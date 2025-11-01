@@ -3,7 +3,7 @@
  * Entry point for the Electron application with modern standards
  */
 
-import { app, BrowserWindow, Menu, nativeImage, type NativeImage } from 'electron';
+import { app, BrowserWindow, dialog, Menu, nativeImage, type NativeImage } from 'electron';
 import * as path from 'path';
 import * as fs from 'fs';
 import log from 'electron-log/main';
@@ -12,6 +12,7 @@ import { SettingsService } from '../services/SettingsService';
 import { NetworkService } from '../services/NetworkService';
 import { PerformanceService } from '../services/PerformanceService';
 import { registerIpcHandlers } from './ipcHandlers';
+import os from 'node:os';
 
 // Environment
 const isDev = process.env.NODE_ENV === 'development' || Boolean(process.env.VITE_DEV_SERVER_URL);
@@ -510,6 +511,95 @@ function resolveMacIconPath(): string | null {
   return null;
 }
 
+// About/Help Dialoge
+function showAboutDialog(): void {
+  try {
+    const win = BrowserWindow.getFocusedWindow();
+    const name = app.getName();
+    const version = app.getVersion();
+    const env = isDev ? 'Development' : 'Production';
+    const electron = process.versions.electron;
+    const chrome = process.versions.chrome;
+    const node = process.versions.node;
+    const v8 = process.versions.v8;
+    const osInfo = `${process.platform} ${process.arch} ${os.release()}`;
+    const detail = [
+      `Version: ${version}`,
+      `Umgebung: ${env}`,
+      `Electron: ${electron}`,
+      `Chromium: ${chrome}`,
+      `Node.js: ${node}`,
+      `V8: ${v8}`,
+      `OS: ${osInfo}`,
+    ].join('\n');
+
+    const options: Electron.MessageBoxOptions = {
+      type: 'info',
+      title: `Über ${name}`,
+      message: name,
+      detail,
+      buttons: ['OK'],
+      noLink: true,
+      normalizeAccessKeys: true,
+    };
+    if (win) void dialog.showMessageBox(win, options);
+    else void dialog.showMessageBox(options);
+  } catch (e) {
+    log.warn('About-Dialog fehlgeschlagen:', e instanceof Error ? e.message : String(e));
+  }
+}
+
+function showHelpDialog(): void {
+  try {
+    const win = BrowserWindow.getFocusedWindow();
+    const lines: string[] = [];
+    lines.push('Lumberjack ist ein Log-Viewer mit Fokus auf große Datenmengen und Live-Quellen.');
+    lines.push('');
+    lines.push('Funktionen:');
+    lines.push(
+      ' • Dateien öffnen (Menü "Datei → Öffnen…"), Drag & Drop von .log/.json/.jsonl/.txt und .zip'
+    );
+    lines.push(' • ZIPs werden entpackt und geeignete Dateien automatisch geparst');
+    lines.push(' • TCP-Log-Server: Start/Stopp, eingehende Zeilen werden live angezeigt');
+    lines.push(' • HTTP: Einmal laden oder periodisches Polling mit Deduplizierung');
+    lines.push(' • Elasticsearch: Logs anhand von URL/Query abrufen');
+    lines.push(' • Filter: Zeitfilter, MDC/DiagnosticContext-Filter, Volltextsuche');
+    lines.push(' • Markieren/Färben einzelner Einträge, Kontextmenü pro Zeile');
+    lines.push(' • Protokollierung in Datei (rotierend) optional aktivierbar');
+    lines.push('');
+    lines.push('Filter-Syntax (Volltextsuche in Nachrichten):');
+    lines.push(' • ODER: Verwende | um Alternativen zu trennen, z. B. foo|bar');
+    lines.push(' • UND: Verwende & um Bedingungen zu verknüpfen, z. B. foo&bar');
+    lines.push(' • NICHT: Setze ! vor einen Begriff für Negation, z. B. foo&!bar');
+    lines.push(' • Mehrfache ! toggeln die Negation (z. B. !!foo entspricht foo)');
+    lines.push(' • Groß-/Kleinschreibung wird ignoriert, es wird nach Teilstrings gesucht');
+    lines.push(' • Beispiele:');
+    lines.push('    – QcStatus&!CB23  → enthält "QcStatus" und NICHT "CB23"');
+    lines.push('    – error|warn      → enthält "error" ODER "warn"');
+    lines.push('    – foo&bar         → enthält sowohl "foo" als auch "bar" (Reihenfolge egal)');
+    lines.push('');
+    lines.push('Tipps:');
+    lines.push(' • Menü "Netzwerk" für HTTP/TCP Aktionen und Konfiguration');
+    lines.push(
+      ' • Einstellungen enthalten Pfade, Limits und Anmeldedaten (verschlüsselt gespeichert)'
+    );
+
+    const options: Electron.MessageBoxOptions = {
+      type: 'info',
+      title: 'Hilfe / Anleitung',
+      message: 'Hilfe & Funktionen',
+      detail: lines.join('\n'),
+      buttons: ['OK'],
+      noLink: true,
+      normalizeAccessKeys: true,
+    };
+    if (win) void dialog.showMessageBox(win, options);
+    else void dialog.showMessageBox(options);
+  } catch (e) {
+    log.warn('Hilfe-Dialog fehlgeschlagen:', e instanceof Error ? e.message : String(e));
+  }
+}
+
 // Menu
 function buildMenu(): void {
   const isMac = process.platform === 'darwin';
@@ -631,6 +721,13 @@ function buildMenu(): void {
         { role: 'zoomOut' as const },
         { type: 'separator' as const },
         { role: 'togglefullscreen' as const },
+      ],
+    },
+    {
+      label: 'Hilfe',
+      submenu: [
+        { label: 'Über Lumberjack…', click: () => showAboutDialog() },
+        { label: 'Hilfe / Anleitung…', click: () => showHelpDialog() },
       ],
     },
   ];

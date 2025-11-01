@@ -137,8 +137,8 @@ export class PerformanceService {
     for (let i = 1; i < this.metrics.length; i++) {
       const prev = this.metrics[i - 1];
       const curr = this.metrics[i];
-      const delta = (curr.duration ?? 0) - (prev.duration ?? 0);
-      log.info(`  ${prev.name} → ${curr.name}: ${delta}ms`);
+      const delta = (curr?.duration ?? 0) - (prev?.duration ?? 0);
+      log.info(`  ${prev?.name} → ${curr?.name}: ${delta}ms`);
     }
     log.info('==============================');
   }
