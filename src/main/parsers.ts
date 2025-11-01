@@ -368,7 +368,7 @@ async function httpJsonRequest(
         // Determine decompression stream based on content-encoding
         const encoding = (res.headers['content-encoding'] || '').toLowerCase();
         let stream: NodeJS.ReadableStream = res;
-        
+
         try {
           if (encoding === 'gzip') {
             stream = res.pipe(zlib.createGunzip());

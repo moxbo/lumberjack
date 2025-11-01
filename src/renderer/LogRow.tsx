@@ -4,7 +4,7 @@ import { memo } from 'preact/compat';
 interface LogRowProps {
   index: number;
   globalIdx: number;
-  entry: any;
+  entry: Record<string, unknown>;
   isSelected: boolean;
   rowHeight: number;
   yOffset: number;
@@ -32,7 +32,11 @@ function levelClass(level: string | null | undefined): string {
 }
 
 function fmt(v: unknown): string {
-  return v == null ? '' : String(v);
+  if (v == null) return '';
+  if (typeof v === 'string' || typeof v === 'number' || typeof v === 'boolean') {
+    return String(v);
+  }
+  return '';
 }
 
 function fmtTimestamp(ts: string | number | Date | null | undefined): string {
@@ -48,7 +52,7 @@ function fmtTimestamp(ts: string | number | Date | null | undefined): string {
     const seconds = String(d.getSeconds()).padStart(2, '0');
     const ms = String(d.getMilliseconds()).padStart(3, '0');
     return `${year}-${month}-${day} ${hours}:${minutes}:${seconds}.${ms}`;
-  } catch (e) {
+  } catch {
     return String(ts);
   }
 }
@@ -86,9 +90,8 @@ const LogRowComponent = ({
   onSelect,
   onContextMenu,
   highlightFn,
-  t,
   compact = false,
-}: LogRowProps) => {
+}: LogRowProps): JSX.Element => {
   const rowCls = 'row' + (isSelected ? ' sel' : '');
   const style = {
     position: 'absolute' as const,
@@ -111,13 +114,14 @@ const LogRowComponent = ({
       role="option"
       aria-selected={isSelected}
       onClick={(ev) => {
+        const mouseEvent = ev as MouseEvent;
         onSelect(
           globalIdx,
-          (ev as any).shiftKey,
-          (ev as any).ctrlKey || (ev as any).metaKey
+          mouseEvent.shiftKey,
+          mouseEvent.ctrlKey || mouseEvent.metaKey
         );
       }}
-      onContextMenu={(ev) => onContextMenu(ev as any, globalIdx)}
+      onContextMenu={(ev) => onContextMenu(ev as MouseEvent, globalIdx)}
       title={String(entry.message || '')}
       data-marked={markColor ? '1' : '0'}
     >
@@ -135,19 +139,16 @@ const LogRowComponent = ({
 };
 
 // Memoize the component to avoid re-renders when props don't change
-export const LogRow = memo(
-  LogRowComponent,
-  (prevProps, nextProps) => {
-    // Custom comparison to optimize re-renders
-    return (
-      prevProps.globalIdx === nextProps.globalIdx &&
-      prevProps.isSelected === nextProps.isSelected &&
-      prevProps.search === nextProps.search &&
-      prevProps.markColor === nextProps.markColor &&
-      prevProps.yOffset === nextProps.yOffset &&
-      prevProps.compact === nextProps.compact &&
-      // Only re-render if the actual entry object changed
-      prevProps.entry === nextProps.entry
-    );
-  }
-);
+export const LogRow = memo(LogRowComponent, (prevProps, nextProps) => {
+  // Custom comparison to optimize re-renders
+  return (
+    prevProps.globalIdx === nextProps.globalIdx &&
+    prevProps.isSelected === nextProps.isSelected &&
+    prevProps.search === nextProps.search &&
+    prevProps.markColor === nextProps.markColor &&
+    prevProps.yOffset === nextProps.yOffset &&
+    prevProps.compact === nextProps.compact &&
+    // Only re-render if the actual entry object changed
+    prevProps.entry === nextProps.entry
+  );
+});

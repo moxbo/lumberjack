@@ -1,9 +1,8 @@
 // Detail panel with progressive disclosure for stack traces and MDC
 import { useState } from 'preact/hooks';
-import { Fragment } from 'preact';
 
 interface DetailPanelProps {
-  entry: any | null;
+  entry: Record<string, unknown> | null;
   search: string;
   highlightFn: (text: string, search: string) => string;
   t: (key: string) => string;
@@ -25,7 +24,11 @@ function levelClass(level: string | null | undefined): string {
 }
 
 function fmt(v: unknown): string {
-  return v == null ? '' : String(v);
+  if (v == null) return '';
+  if (typeof v === 'string' || typeof v === 'number' || typeof v === 'boolean') {
+    return String(v);
+  }
+  return '';
 }
 
 function fmtTimestamp(ts: string | number | Date | null | undefined): string {
@@ -41,7 +44,7 @@ function fmtTimestamp(ts: string | number | Date | null | undefined): string {
     const seconds = String(d.getSeconds()).padStart(2, '0');
     const ms = String(d.getMilliseconds()).padStart(3, '0');
     return `${year}-${month}-${day} ${hours}:${minutes}:${seconds}.${ms}`;
-  } catch (e) {
+  } catch {
     return String(ts);
   }
 }
@@ -67,16 +70,12 @@ function computeTint(color: string | null | undefined, alpha = 0.4): string {
   return c;
 }
 
-export function DetailPanel({ entry, search, highlightFn, t, markColor }: DetailPanelProps) {
+export function DetailPanel({ entry, search, highlightFn, t, markColor }: DetailPanelProps): JSX.Element {
   const [stackExpanded, setStackExpanded] = useState(false);
   const [mdcExpanded, setMdcExpanded] = useState(false);
 
   if (!entry) {
-    return (
-      <div style={{ color: 'var(--color-text-secondary)' }}>
-        {t('details.noSelection')}
-      </div>
-    );
+    return <div style={{ color: 'var(--color-text-secondary)' }}>{t('details.noSelection')}</div>;
   }
 
   const hasStackTrace = !!(entry.stack_trace || entry.stackTrace);
@@ -86,6 +85,7 @@ export function DetailPanel({ entry, search, highlightFn, t, markColor }: Detail
     <div
       data-tinted={markColor ? '1' : '0'}
       style={{
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
         ['--details-tint' as any]: computeTint(markColor, 0.22),
       }}
     >
@@ -104,9 +104,7 @@ export function DetailPanel({ entry, search, highlightFn, t, markColor }: Detail
           <div className="kv">
             <span>{t('details.level')}</span>
             <div>
-              <span className={levelClass(entry.level)}>
-                {fmt(entry.level)}
-              </span>
+              <span className={levelClass(entry.level)}>{fmt(entry.level)}</span>
             </div>
           </div>
           <div className="kv">
@@ -115,9 +113,9 @@ export function DetailPanel({ entry, search, highlightFn, t, markColor }: Detail
           </div>
         </div>
       </div>
-      
+
       <div className="section-sep" />
-      
+
       <div className="kv full">
         <span>{t('details.message')}</span>
         <pre
@@ -131,7 +129,7 @@ export function DetailPanel({ entry, search, highlightFn, t, markColor }: Detail
       {/* Progressive disclosure for stack trace */}
       {hasStackTrace && (
         <div className="kv full">
-          <span 
+          <span
             onClick={() => setStackExpanded(!stackExpanded)}
             style={{ cursor: 'pointer', userSelect: 'none' }}
           >
@@ -139,7 +137,11 @@ export function DetailPanel({ entry, search, highlightFn, t, markColor }: Detail
           </span>
           {stackExpanded && (
             <pre className="stack-trace">
-              {String(entry.stack_trace || entry.stackTrace || '')}
+              {String(
+                (entry.stack_trace as string | undefined) ||
+                  (entry.stackTrace as string | undefined) ||
+                  ''
+              )}
             </pre>
           )}
         </div>
@@ -148,7 +150,7 @@ export function DetailPanel({ entry, search, highlightFn, t, markColor }: Detail
       {/* Progressive disclosure for MDC */}
       {hasMdc && (
         <div className="kv full">
-          <span 
+          <span
             onClick={() => setMdcExpanded(!mdcExpanded)}
             style={{ cursor: 'pointer', userSelect: 'none' }}
           >
@@ -173,7 +175,7 @@ export function DetailPanel({ entry, search, highlightFn, t, markColor }: Detail
           <div>{fmt(entry.traceId)}</div>
         </div>
       )}
-      
+
       {entry.service && (
         <div className="kv full">
           <span>{t('details.service') || 'Service'}</span>
