@@ -11,6 +11,7 @@ Ein schneller, schlanker Electron-basierter Log-Viewer mit leistungsfähigen Fil
 - Icon erzeugen (Multi-Size ICO)
 - Troubleshooting: Wenn trotzdem das Standard-Icon erscheint
 - Performance
+- Copilot-Agent Leitfaden (siehe docs/COPILOT_AGENT.md)
 
 ## Überblick & Features
 
