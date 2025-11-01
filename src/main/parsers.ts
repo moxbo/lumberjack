@@ -7,6 +7,7 @@ import { createRequire } from 'module';
 import https from 'https';
 import http from 'http';
 import log from 'electron-log/main';
+import zlib from 'zlib';
 
 // Keep-Alive Agents für HTTP/HTTPS (inkl. unsicherem TLS)
 const HTTP_KEEPALIVE_AGENT = new http.Agent({ keepAlive: true, maxSockets: 8 });
@@ -342,6 +343,7 @@ async function httpJsonRequest(
         headers: {
           ...(headers || {}),
           'content-type': 'application/json',
+          'accept-encoding': 'gzip, deflate, br',
           Connection: 'keep-alive',
         },
         agent: isHttps
@@ -365,9 +367,28 @@ async function httpJsonRequest(
         res.on('data', (c: Buffer) => chunks.push(c));
         res.on('end', () => {
           if (timer) clearTimeout(timer);
-          const text = Buffer.concat(chunks).toString('utf8');
+          const enc = String(res.headers['content-encoding'] || '').toLowerCase();
+          const raw = Buffer.concat(chunks);
+          let buf: Buffer = raw;
+          try {
+            if (enc.includes('gzip')) {
+              buf = zlib.gunzipSync(raw);
+            } else if (enc.includes('deflate')) {
+              buf = zlib.inflateSync(raw);
+            } else if (enc.includes('br') && typeof zlib.brotliDecompressSync === 'function') {
+              buf = zlib.brotliDecompressSync(raw);
+            }
+          } catch (e) {
+            // Wenn Dekomprimierung fehlschlägt, verwende Rohdaten
+            log.warn(
+              'httpJsonRequest: Dekomprimierung fehlgeschlagen:',
+              e instanceof Error ? e.message : String(e)
+            );
+            buf = raw;
+          }
+          const text = buf.toString('utf8');
           const status = Number(res.statusCode || 0);
-          let json: unknown = null;
+          let json: unknown;
           try {
             json = text ? JSON.parse(text) : {};
           } catch {
@@ -725,7 +746,7 @@ function buildElasticSearchBody(opts: ElasticsearchOptions): AnyMap {
     must.push({ range: { level_value: { gte: lv } } } as AnyMap);
   }
 
-  const body: AnyMap = {
+  return {
     version: true,
     size: opts.size ?? 1000,
     sort: [{ '@timestamp': { order: opts.sort ?? 'desc', unmapped_type: 'boolean' } }],
@@ -740,7 +761,6 @@ function buildElasticSearchBody(opts: ElasticsearchOptions): AnyMap {
     _source: { excludes: [] },
     timeout: '30s',
   };
-  return body;
 }
 
 function buildQueryBodyWithPit(opts: ElasticsearchPitOptions, pitId: string): AnyMap {
@@ -819,7 +839,7 @@ function getOrCreateSessionSyncState(opts: ElasticsearchPitOptions): PitSession 
 async function ensurePitOpened(sess: PitSession): Promise<void> {
   if (sess.pitId) return;
   try {
-    const id = await tryOpenPitEs(
+    sess.pitId = await tryOpenPitEs(
       sess.baseUrl,
       sess.index,
       sess.keepAlive,
@@ -829,18 +849,17 @@ async function ensurePitOpened(sess: PitSession): Promise<void> {
       sess.maxRetries,
       sess.backoffBaseMs
     );
-    sess.pitId = id;
     sess.dialect = 'es';
     return;
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
     if (
-      /unrecognized parameter|unknown url|_pit\]|\[\/\/_pit|unknown|not found|illegal_argument/i.test(
+      /unrecognized parameter|unknown url|_pit]|\[\/\/_pit|unknown|not found|illegal_argument/i.test(
         msg
       )
     ) {
       try {
-        const id = await tryOpenPitOs(
+        sess.pitId = await tryOpenPitOs(
           sess.baseUrl,
           sess.index,
           sess.keepAlive,
@@ -850,7 +869,6 @@ async function ensurePitOpened(sess: PitSession): Promise<void> {
           sess.maxRetries,
           sess.backoffBaseMs
         );
-        sess.pitId = id;
         sess.dialect = 'opensearch';
         return;
       } catch (e2) {
@@ -1019,7 +1037,7 @@ export async function fetchElasticPitPage(opts: ElasticsearchPitOptions): Promis
   const sess = getOrCreateSessionSyncState(opts);
   await ensurePitOpened(sess);
   if (sess.dialect === 'scroll') {
-    let entries: Entry[] = [];
+    let entries: Entry[];
     let total: number | null = null;
     if (!sess.pitId) {
       const first = await openScroll(
