@@ -6,6 +6,9 @@ import path from 'path';
 import { createRequire } from 'module';
 import https from 'https';
 import http from 'http';
+import zlib from 'zlib';
+import { pipeline } from 'stream/promises';
+import { PassThrough } from 'stream';
 import log from 'electron-log/main';
 
 // Keep-Alive Agents für HTTP/HTTPS (inkl. unsicherem TLS)
@@ -320,7 +323,7 @@ interface PitSession {
 }
 const pitSessions = new Map<string, PitSession>();
 
-// HTTP JSON request with timeout + keep-alive
+// HTTP JSON request with timeout + keep-alive + streaming decompression
 async function httpJsonRequest(
   method: 'POST' | 'DELETE',
   urlStr: string,
@@ -342,6 +345,7 @@ async function httpJsonRequest(
         headers: {
           ...(headers || {}),
           'content-type': 'application/json',
+          'accept-encoding': 'gzip, deflate, br',
           Connection: 'keep-alive',
         },
         agent: isHttps
@@ -361,9 +365,26 @@ async function httpJsonRequest(
             }, timeoutMs)
           : null;
       const req = mod.request(opts, (res: http.IncomingMessage) => {
+        // Determine decompression stream based on content-encoding
+        const encoding = (res.headers['content-encoding'] || '').toLowerCase();
+        let stream: NodeJS.ReadableStream = res;
+        
+        try {
+          if (encoding === 'gzip') {
+            stream = res.pipe(zlib.createGunzip());
+          } else if (encoding === 'deflate') {
+            stream = res.pipe(zlib.createInflate());
+          } else if (encoding === 'br') {
+            stream = res.pipe(zlib.createBrotliDecompress());
+          }
+        } catch (e) {
+          log.warn('httpJsonRequest: decompression stream creation failed, using raw stream:', e);
+          stream = res;
+        }
+
         const chunks: Buffer[] = [];
-        res.on('data', (c: Buffer) => chunks.push(c));
-        res.on('end', () => {
+        stream.on('data', (c: Buffer) => chunks.push(c));
+        stream.on('end', () => {
           if (timer) clearTimeout(timer);
           const text = Buffer.concat(chunks).toString('utf8');
           const status = Number(res.statusCode || 0);
@@ -374,6 +395,10 @@ async function httpJsonRequest(
             json = null;
           }
           resolve({ status, text, json });
+        });
+        stream.on('error', (err: Error) => {
+          if (timer) clearTimeout(timer);
+          reject(err);
         });
       });
       req.on('error', (err: Error) => {

@@ -42,6 +42,7 @@ var import_path = __toESM(require("path"), 1);
 var import_module = require("module");
 var import_https = __toESM(require("https"), 1);
 var import_http = __toESM(require("http"), 1);
+var import_zlib = __toESM(require("zlib"), 1);
 var import_main = __toESM(require("electron-log/main"), 1);
 const HTTP_KEEPALIVE_AGENT = new import_http.default.Agent({ keepAlive: true, maxSockets: 8 });
 const HTTPS_KEEPALIVE_AGENT = new import_https.default.Agent({ keepAlive: true });
@@ -252,6 +253,7 @@ async function httpJsonRequest(method, urlStr, body, headers, allowInsecureTLS, 
         headers: {
           ...headers || {},
           "content-type": "application/json",
+          "accept-encoding": "gzip, deflate, br",
           Connection: "keep-alive"
         },
         agent: isHttps ? allowInsecureTLS ? HTTPS_INSECURE_KEEPALIVE_AGENT : HTTPS_KEEPALIVE_AGENT : HTTP_KEEPALIVE_AGENT
@@ -264,9 +266,23 @@ async function httpJsonRequest(method, urlStr, body, headers, allowInsecureTLS, 
         }
       }, timeoutMs) : null;
       const req = mod.request(opts, (res) => {
+        const encoding = (res.headers["content-encoding"] || "").toLowerCase();
+        let stream = res;
+        try {
+          if (encoding === "gzip") {
+            stream = res.pipe(import_zlib.default.createGunzip());
+          } else if (encoding === "deflate") {
+            stream = res.pipe(import_zlib.default.createInflate());
+          } else if (encoding === "br") {
+            stream = res.pipe(import_zlib.default.createBrotliDecompress());
+          }
+        } catch (e) {
+          import_main.default.warn("httpJsonRequest: decompression stream creation failed, using raw stream:", e);
+          stream = res;
+        }
         const chunks = [];
-        res.on("data", (c) => chunks.push(c));
-        res.on("end", () => {
+        stream.on("data", (c) => chunks.push(c));
+        stream.on("end", () => {
           if (timer) clearTimeout(timer);
           const text = Buffer.concat(chunks).toString("utf8");
           const status = Number(res.statusCode || 0);
@@ -277,6 +293,10 @@ async function httpJsonRequest(method, urlStr, body, headers, allowInsecureTLS, 
             json = null;
           }
           resolve({ status, text, json });
+        });
+        stream.on("error", (err) => {
+          if (timer) clearTimeout(timer);
+          reject(err);
         });
       });
       req.on("error", (err) => {
