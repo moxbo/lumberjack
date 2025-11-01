@@ -7,6 +7,7 @@ Referenz: Praktische Tipps von GitHub: https://gh.io/copilot-coding-agent-tips
 ---
 
 ## Projektüberblick (Stack & Struktur)
+
 - Plattform: Electron + Vite + TypeScript
 - Haupt-Einstiegspunkte
   - Main: `src/main/main.ts`
@@ -24,12 +25,13 @@ Referenz: Praktische Tipps von GitHub: https://gh.io/copilot-coding-agent-tips
 ---
 
 ## Befehle (macOS/zsh)
+
 - Setup
   - `npm install`
 - Entwicklung (Vite + Electron Dev)
   - `npm run dev`
 - Produktionsnah lokal starten (ohne Dev-Server)
-  - `npm run start`  (führt Prebuild + Renderer-Build aus und startet Electron)
+  - `npm run start` (führt Prebuild + Renderer-Build aus und startet Electron)
 - Typecheck
   - `npx tsc -p tsconfig.json --noEmit`
 - Lint
@@ -47,6 +49,7 @@ Hinweis: Viele Befehle triggern zunächst `prebuild`, das Parser/Settings nach C
 ---
 
 ## Arbeitsleitplanken für Agents
+
 - Änderungsumfang
   - Erlaubt: `src/**`, `preload.ts`, `scripts/**`, kleine Ergänzungen in `package.json` (nur wenn notwendig und begründet), `docs/**`.
   - Tabu: `dist/**`, `dist-main/**`, `release/**`, Build-Artefakte, generierte Dateien.
@@ -65,17 +68,22 @@ Hinweis: Viele Befehle triggern zunächst `prebuild`, das Parser/Settings nach C
 ---
 
 ## Qualitäts-Tore (müssen grün sein)
-1) Build/Typecheck
+
+1. Build/Typecheck
+
 - `npx tsc -p tsconfig.json --noEmit`
 - `npm run prebuild` und `npm run build:renderer`
 
-2) Lint
+2. Lint
+
 - `npm run lint` (optional `npm run lint:fix`)
 
-3) Tests
+3. Tests
+
 - `npm test`
 
-4) Smoke-Test (manuell, kurz)
+4. Smoke-Test (manuell, kurz)
+
 - Dev: `npm run dev` – es öffnet sich ein Fenster, `index.html` lädt ohne „did-fail-load“. Keine uncaught errors im Main-Log.
 - Start: `npm run start` – Fenster lädt `dist/index.html`, Menü funktioniert, keine Renderer-Fehler.
 
@@ -84,6 +92,7 @@ Abschluss: Kurzer Delta-Report (Welche Dateien? Warum? Ergebnis) + Mapping Anfor
 ---
 
 ## Typische Edit-Punkte (Wegweiser)
+
 - IPC hinzufügen/ändern
   - Typen: `src/types/ipc.ts`
   - Main-Handler: `src/main/ipcHandlers.ts` (Registrierung über `registerIpcHandlers` in `main.ts`)
@@ -100,6 +109,7 @@ Abschluss: Kurzer Delta-Report (Welche Dateien? Warum? Ergebnis) + Mapping Anfor
 ---
 
 ## Edge Cases, die Agents beachten sollten
+
 - Renderer noch nicht bereit → Puffer/Flush-Mechanismen (keine direkten Sends ohne Guard).
 - TCP-Logs nur an das Owner-Window routen; sonst in main übernehmen (bestehendes Verhalten).
 - Icon-Auflösung (Windows/macOS): Nur Pfade außerhalb von `app.asar` funktionieren zur Laufzeit verlässlich.
@@ -108,6 +118,7 @@ Abschluss: Kurzer Delta-Report (Welche Dateien? Warum? Ergebnis) + Mapping Anfor
 ---
 
 ## Do/Don’t (Kurz)
+
 - Do
   - Kleine, gezielte Diffs; nach jedem Edit: Build/Typecheck + (kurzer) Testlauf.
   - Bestehende Patterns (Logging, Guards, Services) übernehmen.
@@ -119,39 +130,46 @@ Abschluss: Kurzer Delta-Report (Welche Dateien? Warum? Ergebnis) + Mapping Anfor
 ---
 
 ## Agent‑Workflow (empfohlener Ablauf)
-1) Plan (2–4 Schritte), Erfolgskriterien und Scope notieren.
-2) Kontext laden: `package.json`, `src/main/main.ts`, `src/main/ipcHandlers.ts`, relevante Renderer‑Dateien, `src/types/ipc.ts`, Services.
-3) Umsetzung mit minimalen Diffs. Nur betroffene Dateien anfassen.
-4) Validierung
+
+1. Plan (2–4 Schritte), Erfolgskriterien und Scope notieren.
+2. Kontext laden: `package.json`, `src/main/main.ts`, `src/main/ipcHandlers.ts`, relevante Renderer‑Dateien, `src/types/ipc.ts`, Services.
+3. Umsetzung mit minimalen Diffs. Nur betroffene Dateien anfassen.
+4. Validierung
    - `npx tsc -p tsconfig.json --noEmit`
    - `npm run lint`
    - `npm test`
    - `npm run start` oder `npm run dev` (Smoke)
-5) Ergebnisbericht (kurz, präzise) + Next Steps (falls sinnvoll).
+5. Ergebnisbericht (kurz, präzise) + Next Steps (falls sinnvoll).
 
 ---
 
 ## Prompt‑Template (zum Kopieren & Anpassen)
 
 System/Repo-Briefing
+
 - Projekt: Electron + Vite + TypeScript. Main unter `src/main/main.ts`, Renderer unter `src/renderer/**`, Preload aus `preload.ts` → `preload.cjs`.
 - Nutze nur vorhandene Skripte. Keine Netzwerkaufrufe. Keine dist/release‑Edits.
 
 Ziel(e)
+
 - [konkret beschreiben]
 
 Erfolgskriterien
+
 - Typecheck grün, Lint grün, `npm test` grün.
 - App startet (`npm run start` oder `npm run dev`), `index.html` lädt ohne Fehler, Menü/IPC wie spezifiziert.
 
 Leitplanken
+
 - Kleine, gezielte Diffs; Stil/Imports beibehalten; keine Reformatierung großer Blöcke.
 - Erlaube Änderungen in: `src/**`, `preload.ts`, `scripts/**`, `docs/**`.
 
 Edge Cases
+
 - Renderer-Readiness berücksichtigen, Quit‑Flow respektieren, TCP‑Owner‑Routing nicht brechen.
 
 Kommandos
+
 ```bash
 npm install
 npx tsc -p tsconfig.json --noEmit
@@ -161,6 +179,7 @@ npm run start   # oder: npm run dev
 ```
 
 Reporting (am Ende ausgeben)
+
 - Geänderte Dateien + kurze Begründung.
 - Qualitäts-Tore: Build/Typecheck, Lint, Tests, Smoke → PASS/FAIL mit kurzer Notiz.
 - Mapping: Anforderung → Done/Deferred (mit Grund).
@@ -168,8 +187,8 @@ Reporting (am Ende ausgeben)
 ---
 
 ## Nützliche Referenzen
+
 - Copilot Agent Tipps: https://gh.io/copilot-coding-agent-tips
 - Electron: https://www.electronjs.org/docs/latest
 - Vite: https://vitejs.dev/guide/
 - esbuild: https://esbuild.github.io/
-

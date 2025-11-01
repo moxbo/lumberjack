@@ -13,32 +13,55 @@ import {
   type FilterOptions,
 } from '../store/logDataStore';
 
-export function useLogDataStore() {
+export function useLogDataStore(): {
+  store: LogDataStore;
+  entries: LogEntry[];
+  size: number;
+  version: number;
+  addEntry: (entry: LogEntry) => void;
+  addEntries: (entries: LogEntry[]) => void;
+  clear: () => void;
+  getEntry: (index: number) => LogEntry | null;
+  filter: (options: FilterOptions) => number[];
+  sort: (key: 'timestamp' | 'level', direction?: 'asc' | 'desc') => number[];
+} {
   const [store] = useState<LogDataStore>(() => createLogDataStore());
   const [version, setVersion] = useState(0);
 
-  const addEntry = useCallback((entry: LogEntry) => {
-    addLogEntry(store, entry);
-    setVersion((v) => v + 1);
-  }, [store]);
+  const addEntry = useCallback(
+    (entry: LogEntry) => {
+      addLogEntry(store, entry);
+      setVersion((v) => v + 1);
+    },
+    [store]
+  );
 
-  const addEntries = useCallback((entries: LogEntry[]) => {
-    addLogEntries(store, entries);
-    setVersion((v) => v + 1);
-  }, [store]);
+  const addEntries = useCallback(
+    (entries: LogEntry[]) => {
+      addLogEntries(store, entries);
+      setVersion((v) => v + 1);
+    },
+    [store]
+  );
 
   const clear = useCallback(() => {
     clearLogDataStore(store);
     setVersion((v) => v + 1);
   }, [store]);
 
-  const getEntry = useCallback((index: number) => {
-    return getLogEntry(store, index);
-  }, [store]);
+  const getEntry = useCallback(
+    (index: number) => {
+      return getLogEntry(store, index);
+    },
+    [store]
+  );
 
-  const filter = useCallback((options: FilterOptions): number[] => {
-    return filterLogEntries(store, options);
-  }, [store]);
+  const filter = useCallback(
+    (options: FilterOptions): number[] => {
+      return filterLogEntries(store, options);
+    },
+    [store]
+  );
 
   const sort = useCallback(
     (key: 'timestamp' | 'level', direction: 'asc' | 'desc' = 'desc'): number[] => {

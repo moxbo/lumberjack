@@ -42,19 +42,19 @@ class HighlightService {
 
   private ensureWorker(): void {
     if (this.worker) return;
-    
+
     try {
       // Create worker using inline worker pattern for Vite/esbuild compatibility
       const workerUrl = new URL('../workers/highlight.worker.ts', import.meta.url);
       this.worker = new Worker(workerUrl, { type: 'module' });
-      
+
       this.worker.onmessage = (e: MessageEvent<HighlightResponse>) => {
         const { id, formattedMessage, formattedStackTrace, error } = e.data;
         const pending = this.pendingRequests.get(id);
-        
+
         if (pending) {
           this.pendingRequests.delete(id);
-          
+
           if (error) {
             pending.reject(new Error(error));
           } else {
@@ -95,7 +95,7 @@ class HighlightService {
 
     return new Promise((resolve, reject) => {
       const id = `req_${++this.requestCounter}`;
-      
+
       this.pendingRequests.set(id, { resolve, reject });
 
       const request: HighlightRequest = {
@@ -124,12 +124,13 @@ class HighlightService {
     stackTrace?: string | null
   ): { formattedMessage: string; formattedStackTrace?: string } {
     // Simple escaping for safety
-    const escape = (str: string) => 
-      str.replace(/&/g, '&amp;')
-         .replace(/</g, '&lt;')
-         .replace(/>/g, '&gt;')
-         .replace(/"/g, '&quot;')
-         .replace(/'/g, '&#039;');
+    const escape = (str: string) =>
+      str
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#039;');
 
     return {
       formattedMessage: escape(message),

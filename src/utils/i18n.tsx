@@ -101,9 +101,5 @@ export function I18nProvider({ children, defaultLocale = 'de' }: I18nProviderPro
     return value;
   };
 
-  return (
-    <I18nContext.Provider value={{ locale, setLocale, t }}>
-      {children}
-    </I18nContext.Provider>
-  );
+  return <I18nContext.Provider value={{ locale, setLocale, t }}>{children}</I18nContext.Provider>;
 }
