@@ -19,15 +19,17 @@ interface HighlightResponse {
 const formatCache = new Map<string, { formattedMessage: string; formattedStackTrace?: string }>();
 const MAX_CACHE_SIZE = 10000;
 
-// Simple hash function for cache keys
+// Simple hash function for cache keys (djb2)
 function hashString(str: string): string {
-  let hash = 0;
-  for (let i = 0; i < str.length; i++) {
+  let hash = 5381;
+  // Limit to first 1000 characters for performance on very long messages
+  const maxLen = Math.min(str.length, 1000);
+  for (let i = 0; i < maxLen; i++) {
     const char = str.charCodeAt(i);
-    hash = (hash << 5) - hash + char;
-    hash = hash & hash; // Convert to 32-bit integer
+    hash = (hash << 5) + hash + char; // hash * 33 + char
   }
-  return hash.toString(36);
+  // Convert to positive 32-bit integer and then to base36
+  return (hash >>> 0).toString(36);
 }
 
 // Format message with syntax highlighting
@@ -110,10 +112,10 @@ self.onmessage = (e: MessageEvent<HighlightRequest>) => {
       // Add to cache
       formatCache.set(cacheKey, result);
 
-      // Limit cache size
+      // Limit cache size - remove 10% when exceeded to avoid spikes
       if (formatCache.size > MAX_CACHE_SIZE) {
-        // Remove oldest entries (first 1000)
-        const keysToDelete = Array.from(formatCache.keys()).slice(0, 1000);
+        const removeCount = Math.floor(MAX_CACHE_SIZE * 0.1);
+        const keysToDelete = Array.from(formatCache.keys()).slice(0, removeCount);
         keysToDelete.forEach((key) => formatCache.delete(key));
       }
     }

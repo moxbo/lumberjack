@@ -62,11 +62,10 @@ function computeTint(color: string | null | undefined, alpha = 0.4): string {
   const c = String(color).trim();
   const hexRaw = c.startsWith('#') ? c.slice(1) : '';
   const hex = String(hexRaw);
-  if (hex.length === 3) {
-    const [h0, h1, h2] = hex as unknown as [string, string, string];
-    const r = parseInt(h0 + h0, 16);
-    const g = parseInt(h1 + h1, 16);
-    const b = parseInt(h2 + h2, 16);
+  if (hex.length === 3 && hex.length >= 3) {
+    const r = parseInt(hex[0]! + hex[0]!, 16);
+    const g = parseInt(hex[1]! + hex[1]!, 16);
+    const b = parseInt(hex[2]! + hex[2]!, 16);
     return `rgba(${r}, ${g}, ${b}, ${alpha})`;
   }
   if (hex.length === 6) {
@@ -115,11 +114,7 @@ const LogRowComponent = ({
       aria-selected={isSelected}
       onClick={(ev) => {
         const mouseEvent = ev as MouseEvent;
-        onSelect(
-          globalIdx,
-          mouseEvent.shiftKey,
-          mouseEvent.ctrlKey || mouseEvent.metaKey
-        );
+        onSelect(globalIdx, mouseEvent.shiftKey, mouseEvent.ctrlKey || mouseEvent.metaKey);
       }}
       onContextMenu={(ev) => onContextMenu(ev as MouseEvent, globalIdx)}
       title={String(entry.message || '')}

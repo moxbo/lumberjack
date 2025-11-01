@@ -223,11 +223,15 @@ export function sortLogEntries(
       DEBUG: 4,
       TRACE: 5,
     };
+    // Pre-compute level order for each index to avoid repeated toUpperCase calls
+    const levelOrders = new Map<number, number>();
+    for (let i = 0; i < store.size; i++) {
+      const level = (store.levels[i] || '').toUpperCase();
+      levelOrders.set(i, levelOrder[level] ?? 999);
+    }
     indices.sort((a, b) => {
-      const levelA = (store.levels[a] || '').toUpperCase();
-      const levelB = (store.levels[b] || '').toUpperCase();
-      const orderA = levelOrder[levelA] ?? 999;
-      const orderB = levelOrder[levelB] ?? 999;
+      const orderA = levelOrders.get(a) ?? 999;
+      const orderB = levelOrders.get(b) ?? 999;
       const cmp = orderA - orderB;
       return direction === 'asc' ? cmp : -cmp;
     });
