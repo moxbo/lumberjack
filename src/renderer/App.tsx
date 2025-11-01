@@ -18,7 +18,6 @@ import { TimeFilter } from '../store/timeFilter';
 import { lazy, Suspense, createPortal } from 'preact/compat';
 import type { ElasticSearchOptions } from '../types/ipc';
 import { MDCListener } from '../store/mdcListener';
-import LanguageSelector from './LanguageSelector';
 
 // Feste Basisfarben für Markierungen
 const BASE_MARK_COLORS = [
@@ -97,9 +96,9 @@ function computeTint(color: string | null | undefined, alpha = 0.4): string {
 export default function App() {
   // Track component initialization
   rendererPerf.mark('app-component-init');
-  
+
   // i18n hook
-  const { t } = useI18n();
+  const { t, locale, setLocale } = useI18n();
 
   const [entries, setEntries] = useState<any[]>([]);
   const [nextId, setNextId] = useState<number>(1);
@@ -795,7 +794,7 @@ export default function App() {
     const globalIdx = filteredIdx[targetVi]!;
     setSelected(new Set([globalIdx]));
     lastClicked.current = globalIdx;
-    // In den sichtbaren Bereich (zwischen Header und Detail-Overlay) zentrieren
+    // In den sichtbaren Bereich (zwischen Header und Detail-Overlays) zentrieren
     scrollToIndexCenter(targetVi);
     try {
       (parentRef.current as any)?.focus?.();
@@ -807,7 +806,7 @@ export default function App() {
     const globalIdx = filteredIdx[targetVi]!;
     setSelected(new Set([globalIdx]));
     lastClicked.current = globalIdx;
-    // In den sichtbaren Bereich (zwischen Header und Detail-Overlay) zentrieren
+    // In den sichtbaren Bereich (zwischen Header und Detail-Overlays) zentrieren
     scrollToIndexCenter(targetVi);
     try {
       (parentRef.current as any)?.focus?.();
@@ -2086,7 +2085,7 @@ export default function App() {
           }}
         >
           <div className="modal modal-settings" onClick={(e) => e.stopPropagation()}>
-            <h3>Einstellungen</h3>
+            <h3>{t('settings.title')}</h3>
             <div className="tabs">
               <div className="tablist" role="tablist" aria-label="Einstellungen Tabs">
                 <button
@@ -2127,14 +2126,14 @@ export default function App() {
                   aria-selected={settingsTab === 'appearance'}
                   onClick={() => setSettingsTab('appearance')}
                 >
-                  Darstellung
+                  {t('settings.tabs.appearance')}
                 </button>
               </div>
               <div className="tabpanels">
                 {settingsTab === 'tcp' && (
                   <div className="tabpanel" role="tabpanel">
                     <div className="kv">
-                      <span>TCP Port</span>
+                      <span>{t('settings.tcp.port')}</span>
                       <input
                         type="number"
                         min="1"
@@ -2161,7 +2160,7 @@ export default function App() {
                             }
                           }}
                         />
-                        <span>Dieses Fenster darf TCP starten/stoppen</span>
+                        <span>{t('settings.tcp.windowControl')}</span>
                       </label>
                     </div>
                   </div>
@@ -2169,7 +2168,7 @@ export default function App() {
                 {settingsTab === 'http' && (
                   <div className="tabpanel" role="tabpanel">
                     <div className="kv">
-                      <span>HTTP URL</span>
+                      <span>{t('settings.http.url')}</span>
                       <input
                         type="text"
                         value={form.httpUrl}
@@ -2179,7 +2178,7 @@ export default function App() {
                       />
                     </div>
                     <div className="kv">
-                      <span>Intervall (ms)</span>
+                      <span>{t('settings.http.interval')}</span>
                       <input
                         type="number"
                         min="500"
@@ -2195,7 +2194,7 @@ export default function App() {
                 {settingsTab === 'elastic' && (
                   <div className="tabpanel" role="tabpanel">
                     <div className="kv">
-                      <span>Elasticsearch URL</span>
+                      <span>{t('settings.elastic.url')}</span>
                       <input
                         type="text"
                         value={form.elasticUrl}
@@ -2205,7 +2204,7 @@ export default function App() {
                       />
                     </div>
                     <div className="kv">
-                      <span>Ergebnismenge (size)</span>
+                      <span>{t('settings.elastic.size')}</span>
                       <input
                         type="number"
                         min="1"
@@ -2220,7 +2219,7 @@ export default function App() {
                       />
                     </div>
                     <div className="kv">
-                      <span>Max. parallele Seiten</span>
+                      <span>{t('settings.elastic.maxParallel')}</span>
                       <input
                         type="number"
                         min="1"
@@ -2235,7 +2234,7 @@ export default function App() {
                       />
                     </div>
                     <div className="kv">
-                      <span>Benutzer</span>
+                      <span>{t('settings.elastic.user')}</span>
                       <input
                         type="text"
                         value={form.elasticUser}
@@ -2244,7 +2243,7 @@ export default function App() {
                       />
                     </div>
                     <div className="kv">
-                      <span>Passwort</span>
+                      <span>{t('settings.elastic.password')}</span>
                       <div style={{ display: 'grid', gridTemplateColumns: '1fr auto', gap: '6px' }}>
                         <input
                           type="password"
@@ -2258,8 +2257,8 @@ export default function App() {
                           }
                           placeholder={
                             elasticHasPass
-                              ? '(gesetzt) neues Passwort eingeben'
-                              : 'neues Passwort eingeben'
+                              ? t('settings.elastic.passwordSet')
+                              : t('settings.elastic.passwordPlaceholder')
                           }
                         />
                         <button
@@ -2267,15 +2266,15 @@ export default function App() {
                           onClick={() =>
                             setForm({ ...form, elasticPassNew: '', elasticPassClear: true })
                           }
-                          title="Gespeichertes Passwort löschen"
+                          title={t('settings.elastic.passwordDelete')}
                         >
-                          Löschen
+                          {t('settings.elastic.passwordDeleteButton')}
                         </button>
                       </div>
                       <small style={{ color: '#6b7280' }}>
                         {elasticHasPass && !form.elasticPassClear
-                          ? 'Aktuell: gesetzt'
-                          : 'Aktuell: nicht gesetzt'}
+                          ? t('settings.elastic.passwordCurrentSet')
+                          : t('settings.elastic.passwordCurrentNotSet')}
                       </small>
                     </div>
                   </div>
@@ -2290,17 +2289,17 @@ export default function App() {
                           checked={form.logToFile}
                           onChange={(e) => setForm({ ...form, logToFile: e.currentTarget.checked })}
                         />
-                        <span>In Datei schreiben</span>
+                        <span>{t('settings.logging.toFile')}</span>
                       </label>
                     </div>
                     <div className="kv">
-                      <span>Datei</span>
+                      <span>{t('settings.logging.file')}</span>
                       <div style={{ display: 'grid', gridTemplateColumns: '1fr auto', gap: '6px' }}>
                         <input
                           type="text"
                           value={form.logFilePath}
                           onInput={(e) => setForm({ ...form, logFilePath: e.currentTarget.value })}
-                          placeholder="(Standardpfad)"
+                          placeholder={t('settings.logging.filePlaceholder')}
                           disabled={!form.logToFile}
                         />
                         <button
@@ -2314,12 +2313,12 @@ export default function App() {
                           }}
                           disabled={!form.logToFile}
                         >
-                          Wählen…
+                          {t('settings.logging.choose')}
                         </button>
                       </div>
                     </div>
                     <div className="kv">
-                      <span>Max. Größe (MB)</span>
+                      <span>{t('settings.logging.maxSize')}</span>
                       <input
                         type="number"
                         min="1"
@@ -2332,7 +2331,7 @@ export default function App() {
                       />
                     </div>
                     <div className="kv">
-                      <span>Max. Backups</span>
+                      <span>{t('settings.logging.maxBackups')}</span>
                       <input
                         type="number"
                         min="0"
@@ -2349,7 +2348,7 @@ export default function App() {
                 {settingsTab === 'appearance' && (
                   <div className="tabpanel" role="tabpanel">
                     <div className="kv">
-                      <span>Theme</span>
+                      <span>{t('settings.appearance.theme')}</span>
                       <select
                         value={form.themeMode}
                         onChange={(e) => {
@@ -2364,11 +2363,25 @@ export default function App() {
                       </select>
                     </div>
                     <div className="kv">
-                      <span>Akzent</span>
+                      <span>{t('settings.language.label')}</span>
+                      <select
+                        value={locale}
+                        onChange={(e) => {
+                          const v = e.currentTarget.value as any;
+                          try {
+                            setLocale(v);
+                          } catch {}
+                        }}
+                      >
+                        <option value="de">{t('settings.language.german')}</option>
+                        <option value="en">{t('settings.language.english')}</option>
+                      </select>
+                    </div>
+                    <div className="kv">
+                      <span>{t('settings.appearance.accent')}</span>
                       <div>
                         <small style={{ color: '#6b7280' }}>
-                          Akzentfarbe kann in styles.css über --accent / --accent-2 angepasst
-                          werden.
+                          {t('settings.appearance.accentInfo')}
                         </small>
                       </div>
                     </div>
@@ -2383,9 +2396,9 @@ export default function App() {
                   setShowSettings(false);
                 }}
               >
-                Abbrechen
+                {t('settings.cancel')}
               </button>
-              <button onClick={saveSettingsModal}>Speichern</button>
+              <button onClick={saveSettingsModal}>{t('settings.save')}</button>
             </div>
           </div>
         </div>
@@ -2402,7 +2415,6 @@ export default function App() {
           <button onClick={clearLogs} disabled={entries.length === 0}>
             {t('toolbar.clearLogs')}
           </button>
-          <LanguageSelector />
           <label
             style={{ marginLeft: '10px', display: 'inline-flex', alignItems: 'center', gap: '6px' }}
             title={t('toolbar.followTooltip')}
@@ -2453,7 +2465,11 @@ export default function App() {
           >
             ⬆ {t('toolbar.gotoStart')}
           </button>
-          <button title={t('toolbar.gotoEndTooltip')} onClick={gotoListEnd} disabled={countFiltered === 0}>
+          <button
+            title={t('toolbar.gotoEndTooltip')}
+            onClick={gotoListEnd}
+            disabled={countFiltered === 0}
+          >
             {t('toolbar.gotoEnd')} ⬇
           </button>
         </div>
@@ -2529,7 +2545,9 @@ export default function App() {
             />
             <button
               type="button"
-              title={showSearchHist ? t('toolbar.searchHistoryHide') : t('toolbar.searchHistoryShow')}
+              title={
+                showSearchHist ? t('toolbar.searchHistoryHide') : t('toolbar.searchHistoryShow')
+              }
               onClick={() => setShowSearchHist((v) => !v)}
               style={{
                 position: 'absolute',
@@ -2660,7 +2678,9 @@ export default function App() {
             />
             <button
               type="button"
-              title={showLoggerHist ? t('toolbar.searchHistoryHide') : t('toolbar.searchHistoryShow')}
+              title={
+                showLoggerHist ? t('toolbar.searchHistoryHide') : t('toolbar.searchHistoryShow')
+              }
               onClick={() => setShowLoggerHist((v) => !v)}
               disabled={!stdFiltersEnabled}
               style={{
@@ -2751,7 +2771,9 @@ export default function App() {
             />
             <button
               type="button"
-              title={showThreadHist ? t('toolbar.searchHistoryHide') : t('toolbar.searchHistoryShow')}
+              title={
+                showThreadHist ? t('toolbar.searchHistoryHide') : t('toolbar.searchHistoryShow')
+              }
               onClick={() => setShowThreadHist((v) => !v)}
               disabled={!stdFiltersEnabled}
               style={{
@@ -2842,7 +2864,9 @@ export default function App() {
             />
             <button
               type="button"
-              title={showMessageHist ? t('toolbar.searchHistoryHide') : t('toolbar.searchHistoryShow')}
+              title={
+                showMessageHist ? t('toolbar.searchHistoryHide') : t('toolbar.searchHistoryShow')
+              }
               onClick={() => setShowMessageHist((v) => !v)}
               disabled={!stdFiltersEnabled}
               style={{
@@ -2935,16 +2959,26 @@ export default function App() {
             return (
               <span
                 className="status"
-                title={enabled ? t('toolbar.dcFilterActive', { count: String(active) }) : t('toolbar.dcFilterInactive', { count: String(total) })}
+                title={
+                  enabled
+                    ? t('toolbar.dcFilterActive', { count: String(active) })
+                    : t('toolbar.dcFilterInactive', { count: String(total) })
+                }
                 style={{ marginLeft: '6px' }}
               >
-                {enabled ? t('toolbar.dcFilterActive', { count: String(active) }) : t('toolbar.dcFilterInactive', { count: String(total) })}
+                {enabled
+                  ? t('toolbar.dcFilterActive', { count: String(active) })
+                  : t('toolbar.dcFilterInactive', { count: String(total) })}
               </span>
             );
           })()}
         </div>
         <div className="section">
-          <button disabled={esBusy} onClick={openTimeFilterDialog} title={t('toolbar.elasticSearchTooltip')}>
+          <button
+            disabled={esBusy}
+            onClick={openTimeFilterDialog}
+            title={t('toolbar.elasticSearchTooltip')}
+          >
             {t('toolbar.elasticSearch')}
           </button>
           {(() => {
@@ -2952,7 +2986,11 @@ export default function App() {
               const s = TimeFilter.getState();
               if (!s.enabled) return null;
               return (
-                <span className="status" style={{ marginLeft: '6px' }} title={t('toolbar.elasticActive')}>
+                <span
+                  className="status"
+                  style={{ marginLeft: '6px' }}
+                  title={t('toolbar.elasticActive')}
+                >
                   {t('toolbar.elasticActive')}
                 </span>
               );
@@ -2962,7 +3000,11 @@ export default function App() {
           })()}
           {esBusy && (
             <span className="status" title="Ladefortschritt Elasticsearch">
-              {t('toolbar.elasticLoading', { loaded: String(esLoaded), target: String(esTarget), percent: String(Math.max(0, Math.min(100, esPct))) })}
+              {t('toolbar.elasticLoading', {
+                loaded: String(esLoaded),
+                target: String(esTarget),
+                percent: String(Math.max(0, Math.min(100, esPct))),
+              })}
             </span>
           )}
           {!esBusy && esHasMore && (
@@ -3278,7 +3320,10 @@ export default function App() {
               value={pickerColor}
               onInput={(e) => setPickerColor(e.currentTarget.value)}
             />
-            <button onClick={() => applyMarkColor(pickerColor)} title={t('contextMenu.applyColorTooltip')}>
+            <button
+              onClick={() => applyMarkColor(pickerColor)}
+              title={t('contextMenu.applyColorTooltip')}
+            >
               {t('contextMenu.apply')}
             </button>
             <button

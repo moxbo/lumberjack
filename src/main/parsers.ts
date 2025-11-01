@@ -684,7 +684,7 @@ function buildElasticSearchBody(opts: ElasticsearchOptions): AnyMap {
 
   // Zeitbereich – unterstütze explizites Format
   const range: AnyMap = {};
-  const dateFormat = (opts as AnyMap).dateFormat;
+  const dateFormat = (opts as unknown as AnyMap).dateFormat;
   const fmt = safeString(dateFormat).trim();
   const duration = opts.duration;
   if (duration && safeString(duration).trim()) {
@@ -720,7 +720,7 @@ function buildElasticSearchBody(opts: ElasticsearchOptions): AnyMap {
   }
 
   // Optional: level_value Mindestwert
-  const lv = (opts as AnyMap).levelValueGte;
+  const lv = (opts as unknown as AnyMap).levelValueGte;
   if (lv != null && safeString(lv).trim() !== '') {
     must.push({ range: { level_value: { gte: lv } } } as AnyMap);
   }

@@ -112,7 +112,8 @@
       "passwordSet": "(set) enter new password",
       "passwordDelete": "Delete saved password",
       "passwordCurrentSet": "Current: set",
-      "passwordCurrentNotSet": "Current: not set"
+      "passwordCurrentNotSet": "Current: not set",
+      "passwordDeleteButton": "Delete"
     },
     "logging": {
       "toFile": "Write to file",

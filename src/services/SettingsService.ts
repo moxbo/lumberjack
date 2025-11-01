@@ -29,6 +29,8 @@ const DEFAULT_SETTINGS: Settings = {
   elasticPassEnc: '',
   elasticSize: 10000,
   themeMode: 'system',
+  // NEW: default UI language
+  locale: 'de',
   histLogger: [],
   // NEW histories for ElasticSearch dialog
   histAppName: [],

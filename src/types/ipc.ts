@@ -48,6 +48,8 @@ export interface Settings {
 
   // Appearance
   themeMode?: 'system' | 'light' | 'dark';
+  // NEW: UI language (moved LanguageSelector into Settings > Appearance)
+  locale?: 'de' | 'en';
 
   // Histories
   histLogger?: string[];

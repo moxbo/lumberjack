@@ -112,7 +112,8 @@
       "passwordSet": "(gesetzt) neues Passwort eingeben",
       "passwordDelete": "Gespeichertes Passwort löschen",
       "passwordCurrentSet": "Aktuell: gesetzt",
-      "passwordCurrentNotSet": "Aktuell: nicht gesetzt"
+      "passwordCurrentNotSet": "Aktuell: nicht gesetzt",
+      "passwordDeleteButton": "Löschen"
     },
     "logging": {
       "toFile": "In Datei schreiben",
