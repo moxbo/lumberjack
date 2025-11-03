@@ -42,8 +42,8 @@ var import_path = __toESM(require("path"), 1);
 var import_module = require("module");
 var import_https = __toESM(require("https"), 1);
 var import_http = __toESM(require("http"), 1);
-var import_zlib = __toESM(require("zlib"), 1);
 var import_main = __toESM(require("electron-log/main"), 1);
+var import_zlib = __toESM(require("zlib"), 1);
 const HTTP_KEEPALIVE_AGENT = new import_http.default.Agent({ keepAlive: true, maxSockets: 8 });
 const HTTPS_KEEPALIVE_AGENT = new import_https.default.Agent({ keepAlive: true });
 const HTTPS_INSECURE_KEEPALIVE_AGENT = new import_https.default.Agent({
@@ -284,9 +284,27 @@ async function httpJsonRequest(method, urlStr, body, headers, allowInsecureTLS, 
         stream.on("data", (c) => chunks.push(c));
         stream.on("end", () => {
           if (timer) clearTimeout(timer);
-          const text = Buffer.concat(chunks).toString("utf8");
+          const enc = String(res.headers["content-encoding"] || "").toLowerCase();
+          const raw = Buffer.concat(chunks);
+          let buf = raw;
+          try {
+            if (enc.includes("gzip")) {
+              buf = import_zlib.default.gunzipSync(raw);
+            } else if (enc.includes("deflate")) {
+              buf = import_zlib.default.inflateSync(raw);
+            } else if (enc.includes("br") && typeof import_zlib.default.brotliDecompressSync === "function") {
+              buf = import_zlib.default.brotliDecompressSync(raw);
+            }
+          } catch (e) {
+            import_main.default.warn(
+              "httpJsonRequest: Dekomprimierung fehlgeschlagen:",
+              e instanceof Error ? e.message : String(e)
+            );
+            buf = raw;
+          }
+          const text = buf.toString("utf8");
           const status = Number(res.statusCode || 0);
-          let json = null;
+          let json;
           try {
             json = text ? JSON.parse(text) : {};
           } catch {
@@ -571,7 +589,7 @@ function buildElasticSearchBody(opts) {
   if (lv != null && safeString(lv).trim() !== "") {
     must.push({ range: { level_value: { gte: lv } } });
   }
-  const body = {
+  return {
     version: true,
     size: opts.size ?? 1e3,
     sort: [{ "@timestamp": { order: opts.sort ?? "desc", unmapped_type: "boolean" } }],
@@ -586,7 +604,6 @@ function buildElasticSearchBody(opts) {
     _source: { excludes: [] },
     timeout: "30s"
   };
-  return body;
 }
 function buildQueryBodyWithPit(opts, pitId) {
   const baseBody = buildElasticSearchBody({ ...opts, searchAfter: opts.searchAfter });
@@ -654,7 +671,7 @@ function getOrCreateSessionSyncState(opts) {
 async function ensurePitOpened(sess) {
   if (sess.pitId) return;
   try {
-    const id = await tryOpenPitEs(
+    sess.pitId = await tryOpenPitEs(
       sess.baseUrl,
       sess.index,
       sess.keepAlive,
@@ -664,16 +681,15 @@ async function ensurePitOpened(sess) {
       sess.maxRetries,
       sess.backoffBaseMs
     );
-    sess.pitId = id;
     sess.dialect = "es";
     return;
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
-    if (/unrecognized parameter|unknown url|_pit\]|\[\/\/_pit|unknown|not found|illegal_argument/i.test(
+    if (/unrecognized parameter|unknown url|_pit]|\[\/\/_pit|unknown|not found|illegal_argument/i.test(
       msg
     )) {
       try {
-        const id = await tryOpenPitOs(
+        sess.pitId = await tryOpenPitOs(
           sess.baseUrl,
           sess.index,
           sess.keepAlive,
@@ -683,7 +699,6 @@ async function ensurePitOpened(sess) {
           sess.maxRetries,
           sess.backoffBaseMs
         );
-        sess.pitId = id;
         sess.dialect = "opensearch";
         return;
       } catch (e2) {
@@ -796,7 +811,7 @@ async function fetchElasticPitPage(opts) {
   const sess = getOrCreateSessionSyncState(opts);
   await ensurePitOpened(sess);
   if (sess.dialect === "scroll") {
-    let entries2 = [];
+    let entries2;
     let total2 = null;
     if (!sess.pitId) {
       const first = await openScroll(

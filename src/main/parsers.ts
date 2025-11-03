@@ -6,9 +6,6 @@ import path from 'path';
 import { createRequire } from 'module';
 import https from 'https';
 import http from 'http';
-import zlib from 'zlib';
-import { pipeline } from 'stream/promises';
-import { PassThrough } from 'stream';
 import log from 'electron-log/main';
 import zlib from 'zlib';
 
