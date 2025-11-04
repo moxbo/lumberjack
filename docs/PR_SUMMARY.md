@@ -83,7 +83,7 @@ Complete refactoring of Lumberjack to modern TypeScript and Electron standards, 
 
 ```javascript
 // Direct Node.js access in renderer
-const fs = require('fs');
+const fs = require("fs");
 ```
 
 **After:**
@@ -101,7 +101,7 @@ const result = await window.api.settingsGet();
 // Modules loaded on-demand
 let AdmZip: unknown = null;
 function getAdmZip() {
-  if (!AdmZip) AdmZip = require('adm-zip');
+  if (!AdmZip) AdmZip = require("adm-zip");
   return AdmZip;
 }
 ```
@@ -110,14 +110,14 @@ function getAdmZip() {
 
 ```typescript
 // Non-blocking operations
-await fs.promises.readFile(path, 'utf8');
+await fs.promises.readFile(path, "utf8");
 ```
 
 **Performance Tracking:**
 
 ```typescript
-perfService.mark('app-start');
-perfService.mark('window-created');
+perfService.mark("app-start");
+perfService.mark("window-created");
 perfService.checkStartupPerformance(5000);
 ```
 

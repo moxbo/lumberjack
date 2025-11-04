@@ -1,16 +1,16 @@
 /*
  * Idempotentes Elasticsearch-Indexing mit deterministischem _id, 409/Retry-Handling und Bulk-Support.
  */
-import crypto from 'node:crypto';
+import crypto from "node:crypto";
 
 export type AuthConfig =
-  | { type: 'basic'; username: string; password: string }
-  | { type: 'apiKey' | 'bearer'; token: string };
+  | { type: "basic"; username: string; password: string }
+  | { type: "apiKey" | "bearer"; token: string };
 
 export interface FingerprintOptions {
   fields: string[]; // Felder in Reihenfolge
   normalizers?: Partial<Record<string, (v: unknown) => string>>; // optionale Feld-Normalisierer
-  hash?: 'sha1' | 'sha256';
+  hash?: "sha1" | "sha256";
 }
 
 export interface IndexerOptions {
@@ -55,22 +55,30 @@ interface BulkResponse {
 }
 
 // Helper to safely convert values to strings
-function safeString(v: unknown, fallback = ''): string {
+function safeString(v: unknown, fallback = ""): string {
   if (v == null) return fallback;
-  if (typeof v === 'string' || typeof v === 'number' || typeof v === 'boolean') {
+  if (
+    typeof v === "string" ||
+    typeof v === "number" ||
+    typeof v === "boolean"
+  ) {
     return String(v);
   }
   return fallback;
 }
 
 function toIsoMs(ts: unknown): string {
-  if (ts == null) return '';
-  if (typeof ts !== 'string' && typeof ts !== 'number' && !(ts instanceof Date)) {
+  if (ts == null) return "";
+  if (
+    typeof ts !== "string" &&
+    typeof ts !== "number" &&
+    !(ts instanceof Date)
+  ) {
     return safeString(ts);
   }
   const d = new Date(ts);
   if (isNaN(d.getTime())) return safeString(ts);
-  const pad = (n: number, w: number): string => String(n).padStart(w, '0');
+  const pad = (n: number, w: number): string => String(n).padStart(w, "0");
   return (
     `${d.getUTCFullYear()}-` +
     `${pad(d.getUTCMonth() + 1, 2)}-` +
@@ -84,14 +92,14 @@ function toIsoMs(ts: unknown): string {
 
 export function defaultFingerprint(
   event: Record<string, unknown>,
-  fp?: FingerprintOptions
+  fp?: FingerprintOptions,
 ): string {
   const cfg: FingerprintOptions = fp ?? {
-    fields: ['@timestamp', 'logger', 'thread', 'message', 'traceId'],
-    hash: 'sha1',
+    fields: ["@timestamp", "logger", "thread", "message", "traceId"],
+    hash: "sha1",
   };
   const normalizers: Partial<Record<string, (v: unknown) => string>> = {
-    '@timestamp': toIsoMs,
+    "@timestamp": toIsoMs,
     message: (v) => safeString(v),
     logger: (v) => safeString(v),
     thread: (v) => safeString(v),
@@ -105,15 +113,20 @@ export function defaultFingerprint(
     const norm = normalizer ? normalizer(raw) : safeString(raw);
     parts.push(`${f}=${norm}`);
   }
-  const data = parts.join('|');
-  const algo = cfg.hash || 'sha1';
-  const h = crypto.createHash(algo).update(data).digest('hex');
+  const data = parts.join("|");
+  const algo = cfg.hash || "sha1";
+  const h = crypto.createHash(algo).update(data).digest("hex");
   return h; // hex lower-case
 }
 
 export class ElasticIndexer {
   private opts: IndexerOptions;
-  private metrics: IndexMetrics = { created: 0, duplicates409: 0, failed: 0, retries: 0 };
+  private metrics: IndexMetrics = {
+    created: 0,
+    duplicates409: 0,
+    failed: 0,
+    retries: 0,
+  };
 
   constructor(opts: IndexerOptions) {
     this.opts = {
@@ -134,32 +147,43 @@ export class ElasticIndexer {
     return defaultFingerprint(event, this.opts.fingerprint);
   }
 
-  private async doFetch(path: string, init: RequestInit & { method: string }): Promise<Response> {
-    const base = this.opts.baseUrl.replace(/\/$/, '');
+  private async doFetch(
+    path: string,
+    init: RequestInit & { method: string },
+  ): Promise<Response> {
+    const base = this.opts.baseUrl.replace(/\/$/, "");
     const url = `${base}${path}`;
     const initHeaders = (init.headers as Record<string, string>) || {};
     const headers: Record<string, string> = {
-      'content-type': 'application/json',
+      "content-type": "application/json",
       ...initHeaders,
     };
     // Auth
     const auth = this.opts.auth;
     if (auth) {
-      if (auth.type === 'basic') {
-        const token = Buffer.from(`${auth.username}:${auth.password}`).toString('base64');
-        headers['authorization'] = `Basic ${token}`;
-      } else if (auth.type === 'apiKey') {
-        headers['authorization'] = `ApiKey ${auth.token}`;
-      } else if (auth.type === 'bearer') {
-        headers['authorization'] = `Bearer ${auth.token}`;
+      if (auth.type === "basic") {
+        const token = Buffer.from(`${auth.username}:${auth.password}`).toString(
+          "base64",
+        );
+        headers["authorization"] = `Basic ${token}`;
+      } else if (auth.type === "apiKey") {
+        headers["authorization"] = `ApiKey ${auth.token}`;
+      } else if (auth.type === "bearer") {
+        headers["authorization"] = `Bearer ${auth.token}`;
       }
     }
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), this.opts.timeoutMs);
-    const transport = this.opts.transport ?? (globalThis as { fetch?: typeof fetch }).fetch;
-    if (!transport) throw new Error('No fetch available. Provide options.transport');
+    const transport =
+      this.opts.transport ?? (globalThis as { fetch?: typeof fetch }).fetch;
+    if (!transport)
+      throw new Error("No fetch available. Provide options.transport");
     try {
-      return await transport(url, { ...init, headers, signal: controller.signal });
+      return await transport(url, {
+        ...init,
+        headers,
+        signal: controller.signal,
+      });
     } finally {
       clearTimeout(timeout);
     }
@@ -168,11 +192,11 @@ export class ElasticIndexer {
   async indexOne(event: Record<string, unknown>): Promise<IndexResult> {
     const id = this.computeId(event);
     const qp = new URLSearchParams();
-    if (this.opts.pipeline) qp.set('pipeline', this.opts.pipeline);
-    if (this.opts.useCreate) qp.set('op_type', 'create');
+    if (this.opts.pipeline) qp.set("pipeline", this.opts.pipeline);
+    if (this.opts.useCreate) qp.set("op_type", "create");
     const res = await this.doFetch(
       `/${encodeURIComponent(this.opts.index)}/_doc/${encodeURIComponent(id)}?${qp.toString()}`,
-      { method: 'PUT', body: JSON.stringify(event) }
+      { method: "PUT", body: JSON.stringify(event) },
     );
     if (res.status === 201 || res.status === 200) {
       this.metrics.created++;
@@ -195,17 +219,24 @@ export class ElasticIndexer {
       let retryItems = batch.map((e) => ({ e, id: this.computeId(e) }));
       for (let attempt = 0; attempt <= (this.opts.maxRetries ?? 0); attempt++) {
         const ndjson = retryItems
-          .map(({ e, id }) => actionAndSource(this.opts.index, id, this.opts.pipeline, e))
-          .join('');
-        const res = await this.doFetch('/_bulk', {
-          method: 'POST',
-          headers: { 'content-type': 'application/x-ndjson' },
+          .map(({ e, id }) =>
+            actionAndSource(this.opts.index, id, this.opts.pipeline, e),
+          )
+          .join("");
+        const res = await this.doFetch("/_bulk", {
+          method: "POST",
+          headers: { "content-type": "application/x-ndjson" },
           body: ndjson,
         });
         if (res.status >= 200 && res.status < 300) {
-          const body = (await res.json().catch(() => null)) as BulkResponse | null;
-          const items: BulkResponseItem[] = Array.isArray(body?.items) ? body.items : [];
-          const nextRetry: Array<{ e: Record<string, unknown>; id: string }> = [];
+          const body = (await res
+            .json()
+            .catch(() => null)) as BulkResponse | null;
+          const items: BulkResponseItem[] = Array.isArray(body?.items)
+            ? body.items
+            : [];
+          const nextRetry: Array<{ e: Record<string, unknown>; id: string }> =
+            [];
           for (let i = 0; i < items.length; i++) {
             const it = items[i];
             const r = it?.create || it?.index || it?.update || it?.delete;
@@ -232,7 +263,10 @@ export class ElasticIndexer {
           // Entire bulk should not return 409; treat as duplicates
           this.metrics.duplicates409 += retryItems.length;
           break;
-        } else if (res.status === 429 || (res.status >= 500 && res.status < 600)) {
+        } else if (
+          res.status === 429 ||
+          (res.status >= 500 && res.status < 600)
+        ) {
           if (attempt === (this.opts.maxRetries ?? 0)) {
             this.metrics.failed += retryItems.length;
             const text = await safeText(res);
@@ -258,12 +292,15 @@ function actionAndSource(
   index: string,
   id: string,
   pipeline: string | undefined,
-  src: Record<string, unknown>
+  src: Record<string, unknown>,
 ): string {
-  const meta: { _index: string; _id: string; pipeline?: string } = { _index: index, _id: id };
+  const meta: { _index: string; _id: string; pipeline?: string } = {
+    _index: index,
+    _id: id,
+  };
   if (pipeline) meta.pipeline = pipeline;
   const action = { create: meta };
-  return JSON.stringify(action) + '\n' + JSON.stringify(src) + '\n';
+  return JSON.stringify(action) + "\n" + JSON.stringify(src) + "\n";
 }
 
 function chunk<T>(arr: T[], size: number): T[][] {
@@ -282,6 +319,6 @@ async function safeText(res: Response): Promise<string> {
     const t = await res.text();
     return t.slice(0, 5000);
   } catch {
-    return '';
+    return "";
   }
 }

@@ -1,5 +1,5 @@
 // Minimal ambient module declaration to satisfy TypeScript for adm-zip
-declare module 'adm-zip' {
+declare module "adm-zip" {
   class AdmZip {
     constructor(filePath?: string);
     getEntries(): Array<{

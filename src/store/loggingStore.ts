@@ -15,39 +15,46 @@ type Listener = {
 };
 
 const RESERVED_STD_FIELDS = new Set([
-  'remarks',
-  'color',
-  'stack_trace',
-  'stackTrace',
-  'stacktrace',
-  'error',
-  'err',
-  'exception',
-  'cause',
-  'throwable',
-  'exception.stacktrace',
-  'error.stacktrace',
-  'level',
-  'thread_name',
-  'logger_name',
-  'message',
-  '@timestamp',
-  '@version',
+  "remarks",
+  "color",
+  "stack_trace",
+  "stackTrace",
+  "stacktrace",
+  "error",
+  "err",
+  "exception",
+  "cause",
+  "throwable",
+  "exception.stacktrace",
+  "error.stacktrace",
+  "level",
+  "thread_name",
+  "logger_name",
+  "message",
+  "@timestamp",
+  "@version",
   // additional common standard keys to avoid duplication in MDC
-  'timestamp',
-  'time',
-  'logger',
-  'thread',
+  "timestamp",
+  "time",
+  "logger",
+  "thread",
   // trace id variants intentionally NOT excluded to show in MDC only
 ]);
 
 function isString(v: unknown): v is string {
-  return typeof v === 'string';
+  return typeof v === "string";
 }
 
 function findExternalId(raw: Record<string, unknown>): string | null {
-  if (!raw || typeof raw !== 'object') return null;
-  const candidates = ['externalId', 'external_id', 'external.id', 'extId', 'traceparent', 'id'];
+  if (!raw || typeof raw !== "object") return null;
+  const candidates = [
+    "externalId",
+    "external_id",
+    "external.id",
+    "extId",
+    "traceparent",
+    "id",
+  ];
   for (const k of candidates) {
     const v = raw[k];
     if (isString(v) && v.trim()) return v.trim();
@@ -56,39 +63,39 @@ function findExternalId(raw: Record<string, unknown>): string | null {
 }
 
 function findTraceId(raw: Record<string, unknown>): string | null {
-  if (!raw || typeof raw !== 'object') return null;
-  const candidates = ['traceId', 'trace_id', 'trace', 'trace.id', 'TraceID'];
+  if (!raw || typeof raw !== "object") return null;
+  const candidates = ["traceId", "trace_id", "trace", "trace.id", "TraceID"];
   for (const k of candidates) {
     const v = raw[k];
-    if (typeof v === 'string' && v.trim()) return v.trim();
+    if (typeof v === "string" && v.trim()) return v.trim();
   }
   return null;
 }
 export { findTraceId };
 
 export function computeMdcFromRaw(
-  raw: { [s: string]: unknown } | ArrayLike<unknown>
+  raw: { [s: string]: unknown } | ArrayLike<unknown>,
 ): Record<string, string> {
   const mdc: Record<string, string> = {};
-  if (!raw || typeof raw !== 'object') return mdc;
+  if (!raw || typeof raw !== "object") return mdc;
   // Zuerst TraceID extrahieren
   const tid = findTraceId(raw as Record<string, unknown>);
   // Übernahme aller string-basierten Felder außer reservierten und Trace-Varianten
   const TRACE_VARIANTS = new Set([
-    'TraceID',
-    'traceId',
-    'trace_id',
-    'trace.id',
-    'trace-id',
-    'x-trace-id',
-    'x_trace_id',
-    'x.trace.id',
-    'trace',
+    "TraceID",
+    "traceId",
+    "trace_id",
+    "trace.id",
+    "trace-id",
+    "x-trace-id",
+    "x_trace_id",
+    "x.trace.id",
+    "trace",
   ]);
   for (const [k, v] of Object.entries(raw as Record<string, unknown>)) {
     if (RESERVED_STD_FIELDS.has(k)) continue;
     if (TRACE_VARIANTS.has(k)) continue;
-    if (typeof v !== 'string') continue;
+    if (typeof v !== "string") continue;
     const key = String(k);
     const val = String(v);
     if (!key.trim()) continue;
@@ -105,7 +112,7 @@ class LoggingStoreImpl {
   private _listeners = new Set<Listener>();
   private _events: LogEvent[] = [];
   addLoggingStoreListener(listener: Listener) {
-    if (listener && typeof listener === 'object') {
+    if (listener && typeof listener === "object") {
       this._listeners.add(listener);
       return () => this._listeners.delete(listener);
     }
@@ -120,12 +127,12 @@ class LoggingStoreImpl {
       try {
         // Attach MDC derived from raw JSON object
         const rawObj: Record<string, unknown> =
-          e && e.raw && typeof e.raw === 'object'
+          e && e.raw && typeof e.raw === "object"
             ? (e.raw as Record<string, unknown>)
             : (e as Record<string, unknown>);
         e.mdc = computeMdcFromRaw(rawObj);
       } catch (err) {
-        console.warn('computeMdcFromRaw failed:', err);
+        console.warn("computeMdcFromRaw failed:", err);
       }
     }
     this._events.push(...events);
@@ -133,7 +140,7 @@ class LoggingStoreImpl {
       try {
         l.loggingEventsAdded?.(events);
       } catch (err) {
-        console.warn('loggingEventsAdded listener failed:', err);
+        console.warn("loggingEventsAdded listener failed:", err);
       }
     }
   }
@@ -143,13 +150,13 @@ class LoggingStoreImpl {
       try {
         l.loggingStoreReset?.();
       } catch (err) {
-        console.warn('loggingStoreReset listener failed:', err);
+        console.warn("loggingStoreReset listener failed:", err);
       }
     }
   }
 }
 
-import { lazyInstance } from './_lazy';
+import { lazyInstance } from "./_lazy";
 
 // Export the singleton lazily to avoid temporal-dead-zone issues when modules
 // import each other during initialization (bundlers can reorder/rename symbols).

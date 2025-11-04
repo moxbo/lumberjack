@@ -74,7 +74,7 @@ class MockMDCListener {
     for (const e of events || []) {
       const mdc = (e && e.mdc) || {};
       for (const [k, v] of Object.entries(mdc)) {
-        if (!k || typeof v !== 'string') continue;
+        if (!k || typeof v !== "string") continue;
         if (!this.keys.has(k)) {
           this.keys.set(k, new Set());
           changed = true;
@@ -145,60 +145,84 @@ class MockDCFilter {
   }
   getDcEntries() {
     return Array.from(this._map.values()).sort(
-      (a, b) => a.key.localeCompare(b.key) || a.val.localeCompare(b.val)
+      (a, b) => a.key.localeCompare(b.key) || a.val.localeCompare(b.val),
     );
   }
 }
 
 // Tests
-test('MDCListener extracts keys and values from log events', () => {
+test("MDCListener extracts keys and values from log events", () => {
   const store = new MockLoggingStore();
   const listener = new MockMDCListener(store);
 
   const events = [
-    { message: 'test1', mdc: { userId: 'user1', sessionId: 'session1' } },
-    { message: 'test2', mdc: { userId: 'user2', sessionId: 'session1' } },
-    { message: 'test3', mdc: { userId: 'user1', requestId: 'req1' } },
+    { message: "test1", mdc: { userId: "user1", sessionId: "session1" } },
+    { message: "test2", mdc: { userId: "user2", sessionId: "session1" } },
+    { message: "test3", mdc: { userId: "user1", requestId: "req1" } },
   ];
 
   store.addEvents(events);
 
   const keys = listener.getSortedKeys();
-  assertEqual(keys, ['requestId', 'sessionId', 'userId'], 'Should extract all unique keys');
+  assertEqual(
+    keys,
+    ["requestId", "sessionId", "userId"],
+    "Should extract all unique keys",
+  );
 
-  const userIdValues = listener.getSortedValues('userId');
-  assertEqual(userIdValues, ['user1', 'user2'], 'Should extract unique values for userId');
+  const userIdValues = listener.getSortedValues("userId");
+  assertEqual(
+    userIdValues,
+    ["user1", "user2"],
+    "Should extract unique values for userId",
+  );
 
-  const sessionIdValues = listener.getSortedValues('sessionId');
-  assertEqual(sessionIdValues, ['session1'], 'Should extract unique values for sessionId');
+  const sessionIdValues = listener.getSortedValues("sessionId");
+  assertEqual(
+    sessionIdValues,
+    ["session1"],
+    "Should extract unique values for sessionId",
+  );
 
-  const requestIdValues = listener.getSortedValues('requestId');
-  assertEqual(requestIdValues, ['req1'], 'Should extract unique values for requestId');
+  const requestIdValues = listener.getSortedValues("requestId");
+  assertEqual(
+    requestIdValues,
+    ["req1"],
+    "Should extract unique values for requestId",
+  );
 });
 
-test('MDCListener updates suggestions incrementally', () => {
+test("MDCListener updates suggestions incrementally", () => {
   const store = new MockLoggingStore();
   const listener = new MockMDCListener(store);
 
   // First batch
-  store.addEvents([{ message: 'test1', mdc: { userId: 'user1' } }]);
-  assertEqual(listener.getSortedKeys(), ['userId'], 'Should have userId after first batch');
-
-  // Second batch with new key
-  store.addEvents([{ message: 'test2', mdc: { sessionId: 'session1' } }]);
+  store.addEvents([{ message: "test1", mdc: { userId: "user1" } }]);
   assertEqual(
     listener.getSortedKeys(),
-    ['sessionId', 'userId'],
-    'Should have both keys after second batch'
+    ["userId"],
+    "Should have userId after first batch",
+  );
+
+  // Second batch with new key
+  store.addEvents([{ message: "test2", mdc: { sessionId: "session1" } }]);
+  assertEqual(
+    listener.getSortedKeys(),
+    ["sessionId", "userId"],
+    "Should have both keys after second batch",
   );
 
   // Third batch with new value for existing key
-  store.addEvents([{ message: 'test3', mdc: { userId: 'user2' } }]);
-  const userIdValues = listener.getSortedValues('userId');
-  assertEqual(userIdValues, ['user1', 'user2'], 'Should have both userId values');
+  store.addEvents([{ message: "test3", mdc: { userId: "user2" } }]);
+  const userIdValues = listener.getSortedValues("userId");
+  assertEqual(
+    userIdValues,
+    ["user1", "user2"],
+    "Should have both userId values",
+  );
 });
 
-test('MDCListener change event fires only when keys/values change', () => {
+test("MDCListener change event fires only when keys/values change", () => {
   const store = new MockLoggingStore();
   const listener = new MockMDCListener(store);
 
@@ -206,93 +230,121 @@ test('MDCListener change event fires only when keys/values change', () => {
   listener.onChange(() => changeCount++);
 
   // First event should trigger change
-  store.addEvents([{ message: 'test1', mdc: { userId: 'user1' } }]);
-  assertEqual(changeCount, 1, 'Should fire change event for new key');
+  store.addEvents([{ message: "test1", mdc: { userId: "user1" } }]);
+  assertEqual(changeCount, 1, "Should fire change event for new key");
 
   // Same MDC should not trigger change
-  store.addEvents([{ message: 'test2', mdc: { userId: 'user1' } }]);
-  assertEqual(changeCount, 1, 'Should not fire change event for duplicate key/value');
+  store.addEvents([{ message: "test2", mdc: { userId: "user1" } }]);
+  assertEqual(
+    changeCount,
+    1,
+    "Should not fire change event for duplicate key/value",
+  );
 
   // New value should trigger change
-  store.addEvents([{ message: 'test3', mdc: { userId: 'user2' } }]);
-  assertEqual(changeCount, 2, 'Should fire change event for new value');
+  store.addEvents([{ message: "test3", mdc: { userId: "user2" } }]);
+  assertEqual(changeCount, 2, "Should fire change event for new value");
 });
 
-test('DCFilter manages filter entries independently of log events', () => {
+test("DCFilter manages filter entries independently of log events", () => {
   const filter = new MockDCFilter();
 
   let changeCount = 0;
   filter.onChange(() => changeCount++);
 
   // Add entry
-  filter.addMdcEntry('userId', 'user1');
-  assertEqual(changeCount, 1, 'Should fire change event when adding entry');
-  assertEqual(filter.getDcEntries().length, 1, 'Should have one entry');
+  filter.addMdcEntry("userId", "user1");
+  assertEqual(changeCount, 1, "Should fire change event when adding entry");
+  assertEqual(filter.getDcEntries().length, 1, "Should have one entry");
 
   // Add duplicate (should not change)
-  filter.addMdcEntry('userId', 'user1');
-  assertEqual(changeCount, 1, 'Should not fire change event for duplicate entry');
+  filter.addMdcEntry("userId", "user1");
+  assertEqual(
+    changeCount,
+    1,
+    "Should not fire change event for duplicate entry",
+  );
 
   // Add different value
-  filter.addMdcEntry('userId', 'user2');
-  assertEqual(changeCount, 2, 'Should fire change event for new entry');
-  assertEqual(filter.getDcEntries().length, 2, 'Should have two entries');
+  filter.addMdcEntry("userId", "user2");
+  assertEqual(changeCount, 2, "Should fire change event for new entry");
+  assertEqual(filter.getDcEntries().length, 2, "Should have two entries");
 });
 
-test('DCFilter activate/deactivate operations', () => {
+test("DCFilter activate/deactivate operations", () => {
   const filter = new MockDCFilter();
 
   let changeCount = 0;
   filter.onChange(() => changeCount++);
 
-  filter.addMdcEntry('userId', 'user1');
+  filter.addMdcEntry("userId", "user1");
   const entries1 = filter.getDcEntries();
-  assertEqual(entries1[0].active, true, 'New entry should be active by default');
+  assertEqual(
+    entries1[0].active,
+    true,
+    "New entry should be active by default",
+  );
 
-  filter.deactivateMdcEntry('userId', 'user1');
-  assertEqual(changeCount, 2, 'Should fire change event when deactivating');
+  filter.deactivateMdcEntry("userId", "user1");
+  assertEqual(changeCount, 2, "Should fire change event when deactivating");
   const entries2 = filter.getDcEntries();
-  assertEqual(entries2[0].active, false, 'Entry should be deactivated');
+  assertEqual(entries2[0].active, false, "Entry should be deactivated");
 
-  filter.activateMdcEntry('userId', 'user1');
-  assertEqual(changeCount, 3, 'Should fire change event when activating');
+  filter.activateMdcEntry("userId", "user1");
+  assertEqual(changeCount, 3, "Should fire change event when activating");
   const entries3 = filter.getDcEntries();
-  assertEqual(entries3[0].active, true, 'Entry should be activated');
+  assertEqual(entries3[0].active, true, "Entry should be activated");
 });
 
-test('DCFilter reset clears all entries', () => {
+test("DCFilter reset clears all entries", () => {
   const filter = new MockDCFilter();
 
   let changeCount = 0;
   filter.onChange(() => changeCount++);
 
-  filter.addMdcEntry('userId', 'user1');
-  filter.addMdcEntry('sessionId', 'session1');
-  assertEqual(filter.getDcEntries().length, 2, 'Should have two entries');
+  filter.addMdcEntry("userId", "user1");
+  filter.addMdcEntry("sessionId", "session1");
+  assertEqual(filter.getDcEntries().length, 2, "Should have two entries");
 
   filter.reset();
-  assertEqual(changeCount, 3, 'Should fire change event when resetting');
-  assertEqual(filter.getDcEntries().length, 0, 'Should have no entries after reset');
+  assertEqual(changeCount, 3, "Should fire change event when resetting");
+  assertEqual(
+    filter.getDcEntries().length,
+    0,
+    "Should have no entries after reset",
+  );
 });
 
-test('LoggingStore reset clears MDC suggestions', () => {
+test("LoggingStore reset clears MDC suggestions", () => {
   const store = new MockLoggingStore();
   const listener = new MockMDCListener(store);
 
   store.addEvents([
-    { message: 'test1', mdc: { userId: 'user1' } },
-    { message: 'test2', mdc: { sessionId: 'session1' } },
+    { message: "test1", mdc: { userId: "user1" } },
+    { message: "test2", mdc: { sessionId: "session1" } },
   ]);
 
-  assertEqual(listener.getSortedKeys().length, 2, 'Should have two keys before reset');
+  assertEqual(
+    listener.getSortedKeys().length,
+    2,
+    "Should have two keys before reset",
+  );
 
   store.reset();
 
-  assertEqual(listener.getSortedKeys().length, 0, 'Should have no keys after reset');
-  assertEqual(listener.getSortedValues('userId').length, 0, 'Should have no values after reset');
+  assertEqual(
+    listener.getSortedKeys().length,
+    0,
+    "Should have no keys after reset",
+  );
+  assertEqual(
+    listener.getSortedValues("userId").length,
+    0,
+    "Should have no values after reset",
+  );
 });
 
-test('Integration: Log events update suggestions but not filter table', () => {
+test("Integration: Log events update suggestions but not filter table", () => {
   const store = new MockLoggingStore();
   const listener = new MockMDCListener(store);
   const filter = new MockDCFilter();
@@ -304,28 +356,52 @@ test('Integration: Log events update suggestions but not filter table', () => {
   filter.onChange(() => filterChanges++);
 
   // Add log events - should update suggestions only
-  store.addEvents([{ message: 'test1', mdc: { userId: 'user1' } }]);
-  assertEqual(suggestionChanges, 1, 'Should update suggestions when logs arrive');
-  assertEqual(filterChanges, 0, 'Should not update filter when logs arrive');
-  assertEqual(listener.getSortedKeys().length, 1, 'Suggestions should have userId key');
-  assertEqual(filter.getDcEntries().length, 0, 'Filter table should be empty');
+  store.addEvents([{ message: "test1", mdc: { userId: "user1" } }]);
+  assertEqual(
+    suggestionChanges,
+    1,
+    "Should update suggestions when logs arrive",
+  );
+  assertEqual(filterChanges, 0, "Should not update filter when logs arrive");
+  assertEqual(
+    listener.getSortedKeys().length,
+    1,
+    "Suggestions should have userId key",
+  );
+  assertEqual(filter.getDcEntries().length, 0, "Filter table should be empty");
 
   // Add filter entry - should update filter only
-  filter.addMdcEntry('userId', 'user1');
-  assertEqual(suggestionChanges, 1, 'Should not update suggestions when filter changes');
-  assertEqual(filterChanges, 1, 'Should update filter when entry added');
-  assertEqual(filter.getDcEntries().length, 1, 'Filter table should have one entry');
+  filter.addMdcEntry("userId", "user1");
+  assertEqual(
+    suggestionChanges,
+    1,
+    "Should not update suggestions when filter changes",
+  );
+  assertEqual(filterChanges, 1, "Should update filter when entry added");
+  assertEqual(
+    filter.getDcEntries().length,
+    1,
+    "Filter table should have one entry",
+  );
 
   // Add more log events with new key - should update suggestions only
-  store.addEvents([{ message: 'test2', mdc: { sessionId: 'session1' } }]);
-  assertEqual(suggestionChanges, 2, 'Should update suggestions for new key');
-  assertEqual(filterChanges, 1, 'Should not update filter for new log events');
-  assertEqual(listener.getSortedKeys().length, 2, 'Suggestions should have two keys');
-  assertEqual(filter.getDcEntries().length, 1, 'Filter table should still have one entry');
+  store.addEvents([{ message: "test2", mdc: { sessionId: "session1" } }]);
+  assertEqual(suggestionChanges, 2, "Should update suggestions for new key");
+  assertEqual(filterChanges, 1, "Should not update filter for new log events");
+  assertEqual(
+    listener.getSortedKeys().length,
+    2,
+    "Suggestions should have two keys",
+  );
+  assertEqual(
+    filter.getDcEntries().length,
+    1,
+    "Filter table should still have one entry",
+  );
 });
 
 // Run tests
-console.log('Running MDC filter flow verification tests...\n');
+console.log("Running MDC filter flow verification tests...\n");
 
 let passed = 0;
 let failed = 0;
@@ -343,7 +419,7 @@ for (const { name, fn } of tests) {
 }
 
 console.log(
-  `\n${tests.length} tests: ${passed} passed, ${failed} failed${failed > 0 ? ' ❌' : ' ✅'}`
+  `\n${tests.length} tests: ${passed} passed, ${failed} failed${failed > 0 ? " ❌" : " ✅"}`,
 );
 
 process.exit(failed > 0 ? 1 : 0);

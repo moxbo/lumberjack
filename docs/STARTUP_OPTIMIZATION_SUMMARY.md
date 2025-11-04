@@ -19,12 +19,12 @@ Through detailed code analysis, I identified the critical bottleneck:
 ```javascript
 // BEFORE (BAD - BLOCKING)
 void app.whenReady().then(async () => {
-  perfService.mark('app-ready');
+  perfService.mark("app-ready");
 
   // ❌ THIS BLOCKS EVERYTHING
-  perfService.mark('settings-load-start');
+  perfService.mark("settings-load-start");
   await settingsService.load(); // <-- Can take 9+ seconds!
-  perfService.mark('settings-loaded');
+  perfService.mark("settings-loaded");
 
   // Window creation waits until settings finish loading
   createWindow({ makePrimary: true });
@@ -48,12 +48,12 @@ The fix was surprisingly simple but highly effective:
 ```javascript
 // AFTER (GOOD - NON-BLOCKING)
 void app.whenReady().then(async () => {
-  perfService.mark('app-ready');
+  perfService.mark("app-ready");
 
   // ✅ Create window IMMEDIATELY
-  perfService.mark('create-window-start');
+  perfService.mark("create-window-start");
   createWindow({ makePrimary: true });
-  perfService.mark('create-window-initiated');
+  perfService.mark("create-window-initiated");
 
   // Settings load in background (non-blocking)
   // This happens AFTER window is already showing
@@ -61,9 +61,9 @@ void app.whenReady().then(async () => {
 
 // Inside createWindow(), AFTER window is created:
 setImmediate(async () => {
-  perfService.mark('settings-load-start');
+  perfService.mark("settings-load-start");
   await settingsService.load(); // <-- Still might take time, but doesn't block window!
-  perfService.mark('settings-loaded-deferred');
+  perfService.mark("settings-loaded-deferred");
 
   // Update menu with loaded settings
   updateMenu();

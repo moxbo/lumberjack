@@ -1,5 +1,5 @@
 /* eslint-disable */
-import { useEffect, useState } from 'preact/hooks';
+import { useEffect, useState } from "preact/hooks";
 
 export default function ElasticSearchDialog(props: any) {
   const {
@@ -19,22 +19,22 @@ export default function ElasticSearchDialog(props: any) {
   const [form, setForm] = useState(
     initial || {
       enabled: true,
-      mode: 'relative',
-      duration: '15m',
-      from: '',
-      to: '',
-      application_name: '',
-      logger: '',
-      level: '',
-      environment: '',
+      mode: "relative",
+      duration: "15m",
+      from: "",
+      to: "",
+      application_name: "",
+      logger: "",
+      level: "",
+      environment: "",
       // NEW: environment case handling
-      environmentCase: 'original', // 'original' | 'lower' | 'upper' | 'case-sensitive'
-      loadMode: 'replace',
+      environmentCase: "original", // 'original' | 'lower' | 'upper' | 'case-sensitive'
+      loadMode: "replace",
       // new fields
-      index: '',
-      sort: 'asc',
+      index: "",
+      sort: "asc",
       allowInsecureTLS: false,
-    }
+    },
   );
 
   // Dropdown-Flags für vollständige Listen
@@ -48,28 +48,28 @@ export default function ElasticSearchDialog(props: any) {
       setShowAppList(false);
       setShowEnvList(false);
     }
-    document.addEventListener('click', onDocClick);
-    return () => document.removeEventListener('click', onDocClick);
+    document.addEventListener("click", onDocClick);
+    return () => document.removeEventListener("click", onDocClick);
   }, []);
 
   useEffect(() => {
     if (open) {
       const base = initial || {};
-      const envCase = (base as any).environmentCase || 'original';
+      const envCase = (base as any).environmentCase || "original";
       setForm({
         enabled: true,
-        mode: (base as any).mode || 'relative',
-        duration: (base as any).duration || '15m',
-        from: (base as any).from || '',
-        to: (base as any).to || '',
-        application_name: (base as any).application_name || '',
-        logger: (base as any).logger || '',
-        level: (base as any).level || '',
-        environment: (base as any).environment || '',
+        mode: (base as any).mode || "relative",
+        duration: (base as any).duration || "15m",
+        from: (base as any).from || "",
+        to: (base as any).to || "",
+        application_name: (base as any).application_name || "",
+        logger: (base as any).logger || "",
+        level: (base as any).level || "",
+        environment: (base as any).environment || "",
         environmentCase: envCase,
-        loadMode: (base as any).loadMode || 'replace',
-        index: (base as any).index || '',
-        sort: (base as any).sort || 'asc',
+        loadMode: (base as any).loadMode || "replace",
+        index: (base as any).index || "",
+        sort: (base as any).sort || "asc",
         allowInsecureTLS: !!(base as any).allowInsecureTLS,
       });
     }
@@ -82,7 +82,7 @@ export default function ElasticSearchDialog(props: any) {
       if (v == null) return null;
       let d: any = null;
       if (v instanceof Date) d = v;
-      else if (typeof v === 'number') d = new Date(v);
+      else if (typeof v === "number") d = new Date(v);
       else {
         const s = String(v).trim();
         if (!s) return null;
@@ -98,8 +98,8 @@ export default function ElasticSearchDialog(props: any) {
 
   function fmtInputDatetimeLocal(v: any) {
     const d = parseDateLike(v);
-    if (!d) return '';
-    const pad = (n: any) => String(n).padStart(2, '0');
+    if (!d) return "";
+    const pad = (n: any) => String(n).padStart(2, "0");
     const yyyy = d.getFullYear();
     const mm = pad(d.getMonth() + 1);
     const dd = pad(d.getDate());
@@ -110,45 +110,51 @@ export default function ElasticSearchDialog(props: any) {
 
   function setOlderRange() {
     const toStr = fmtInputDatetimeLocal(firstTs);
-    setForm((f: any) => ({ ...f, mode: 'absolute', to: toStr, from: '' }));
+    setForm((f: any) => ({ ...f, mode: "absolute", to: toStr, from: "" }));
   }
   function setNewerRange() {
     const fromStr = fmtInputDatetimeLocal(lastTs);
-    setForm((f: any) => ({ ...f, mode: 'absolute', from: fromStr, to: '' }));
+    setForm((f: any) => ({ ...f, mode: "absolute", from: fromStr, to: "" }));
   }
 
-  const isRel = form.mode === 'relative';
-  const isAbs = form.mode === 'absolute';
+  const isRel = form.mode === "relative";
+  const isAbs = form.mode === "absolute";
 
   function fmtHm(v: any) {
     const d = parseDateLike(v);
-    if (!d) return '—';
-    const pad = (n: any) => String(n).padStart(2, '0');
+    if (!d) return "—";
+    const pad = (n: any) => String(n).padStart(2, "0");
     return `${pad(d.getHours())}:${pad(d.getMinutes())}`;
   }
 
   // Hilfsrenderer für einfache Dropdown-Liste
-  function HistoryList(props: { items: any[]; onPick: (v: string) => void; style?: any }) {
+  function HistoryList(props: {
+    items: any[];
+    onPick: (v: string) => void;
+    style?: any;
+  }) {
     const items = Array.isArray(props.items) ? props.items : [];
     return (
       <div
         className="history-dropdown"
         onClick={(e) => e.stopPropagation()}
         style={{
-          marginTop: '4px',
-          maxHeight: '180px',
-          overflow: 'auto',
-          border: '1px solid var(--color-border, #ddd)',
-          borderRadius: '4px',
-          background: 'var(--color-bg, #fff)',
-          boxShadow: '0 2px 8px rgba(0,0,0,0.12)',
-          padding: '4px',
+          marginTop: "4px",
+          maxHeight: "180px",
+          overflow: "auto",
+          border: "1px solid var(--color-border, #ddd)",
+          borderRadius: "4px",
+          background: "var(--color-bg, #fff)",
+          boxShadow: "0 2px 8px rgba(0,0,0,0.12)",
+          padding: "4px",
           zIndex: 30,
           ...(props.style || {}),
         }}
       >
         {items.length === 0 && (
-          <div style={{ padding: '6px 8px', color: '#888' }}>Keine Einträge</div>
+          <div style={{ padding: "6px 8px", color: "#888" }}>
+            Keine Einträge
+          </div>
         )}
         {items.map((v: any, i: number) => (
           <div
@@ -157,18 +163,20 @@ export default function ElasticSearchDialog(props: any) {
             tabIndex={0}
             onClick={() => props.onPick(String(v))}
             onKeyDown={(e) => {
-              if (e.key === 'Enter' || e.key === ' ') props.onPick(String(v));
+              if (e.key === "Enter" || e.key === " ") props.onPick(String(v));
             }}
             style={{
-              padding: '6px 8px',
-              cursor: 'pointer',
-              borderRadius: '4px',
+              padding: "6px 8px",
+              cursor: "pointer",
+              borderRadius: "4px",
             }}
             onMouseOver={(e) =>
-              ((e.currentTarget as HTMLDivElement).style.backgroundColor = 'rgba(0,0,0,0.06)')
+              ((e.currentTarget as HTMLDivElement).style.backgroundColor =
+                "rgba(0,0,0,0.06)")
             }
             onMouseOut={(e) =>
-              ((e.currentTarget as HTMLDivElement).style.backgroundColor = 'transparent')
+              ((e.currentTarget as HTMLDivElement).style.backgroundColor =
+                "transparent")
             }
             title={String(v)}
           >
@@ -186,13 +194,16 @@ export default function ElasticSearchDialog(props: any) {
 
         {/* Laden: Anhängen oder Ersetzen */}
         <div className="kv">
-          <label style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+          <label style={{ display: "flex", alignItems: "center", gap: "8px" }}>
             <input
               type="checkbox"
               className="native-checkbox"
-              checked={(form.loadMode || 'append') === 'append'}
+              checked={(form.loadMode || "append") === "append"}
               onChange={(e) =>
-                setForm({ ...form, loadMode: e.currentTarget.checked ? 'append' : 'replace' })
+                setForm({
+                  ...form,
+                  loadMode: e.currentTarget.checked ? "append" : "replace",
+                })
               }
             />
             <span>Anhängen (deaktiviert = Ersetzen)</span>
@@ -202,24 +213,36 @@ export default function ElasticSearchDialog(props: any) {
         {/* Modus-Auswahl */}
         <div className="kv">
           <span>Modus</span>
-          <div style={{ display: 'flex', gap: '12px', alignItems: 'center' }}>
-            <label style={{ display: 'inline-flex', alignItems: 'center', gap: '6px' }}>
+          <div style={{ display: "flex", gap: "12px", alignItems: "center" }}>
+            <label
+              style={{
+                display: "inline-flex",
+                alignItems: "center",
+                gap: "6px",
+              }}
+            >
               <input
                 type="radio"
                 name="esMode"
                 value="relative"
                 checked={isRel}
-                onChange={() => setForm({ ...form, mode: 'relative' })}
+                onChange={() => setForm({ ...form, mode: "relative" })}
               />
               <span>Relativ</span>
             </label>
-            <label style={{ display: 'inline-flex', alignItems: 'center', gap: '6px' }}>
+            <label
+              style={{
+                display: "inline-flex",
+                alignItems: "center",
+                gap: "6px",
+              }}
+            >
               <input
                 type="radio"
                 name="esMode"
                 value="absolute"
                 checked={isAbs}
-                onChange={() => setForm({ ...form, mode: 'absolute' })}
+                onChange={() => setForm({ ...form, mode: "absolute" })}
               />
               <span>Absolut</span>
             </label>
@@ -227,42 +250,52 @@ export default function ElasticSearchDialog(props: any) {
         </div>
 
         {/* Dauer (relativ) */}
-        <div className="kv" aria-disabled={!isRel} style={isRel ? undefined : { opacity: 0.5 }}>
+        <div
+          className="kv"
+          aria-disabled={!isRel}
+          style={isRel ? undefined : { opacity: 0.5 }}
+        >
           <span>Dauer (relativ)</span>
           <div
-            style={{ display: 'grid', gridTemplateColumns: '1fr auto auto auto auto', gap: '6px' }}
+            style={{
+              display: "grid",
+              gridTemplateColumns: "1fr auto auto auto auto",
+              gap: "6px",
+            }}
           >
             <input
               type="text"
               value={form.duration}
-              onInput={(e) => setForm({ ...form, duration: e.currentTarget.value })}
+              onInput={(e) =>
+                setForm({ ...form, duration: e.currentTarget.value })
+              }
               placeholder="z. B. 5m, 15m, 1h, 24h"
               disabled={!isRel}
             />
             <button
               type="button"
-              onClick={() => setForm({ ...form, duration: '5m' })}
+              onClick={() => setForm({ ...form, duration: "5m" })}
               disabled={!isRel}
             >
               5m
             </button>
             <button
               type="button"
-              onClick={() => setForm({ ...form, duration: '15m' })}
+              onClick={() => setForm({ ...form, duration: "15m" })}
               disabled={!isRel}
             >
               15m
             </button>
             <button
               type="button"
-              onClick={() => setForm({ ...form, duration: '1h' })}
+              onClick={() => setForm({ ...form, duration: "1h" })}
               disabled={!isRel}
             >
               1h
             </button>
             <button
               type="button"
-              onClick={() => setForm({ ...form, duration: '24h' })}
+              onClick={() => setForm({ ...form, duration: "24h" })}
               disabled={!isRel}
             >
               24h
@@ -271,7 +304,11 @@ export default function ElasticSearchDialog(props: any) {
         </div>
 
         {/* Absolute Zeitfenster */}
-        <div className="kv" aria-disabled={!isAbs} style={isAbs ? undefined : { opacity: 0.5 }}>
+        <div
+          className="kv"
+          aria-disabled={!isAbs}
+          style={isAbs ? undefined : { opacity: 0.5 }}
+        >
           <span>Von (absolut)</span>
           <input
             type="datetime-local"
@@ -280,7 +317,11 @@ export default function ElasticSearchDialog(props: any) {
             disabled={!isAbs}
           />
         </div>
-        <div className="kv" aria-disabled={!isAbs} style={isAbs ? undefined : { opacity: 0.5 }}>
+        <div
+          className="kv"
+          aria-disabled={!isAbs}
+          style={isAbs ? undefined : { opacity: 0.5 }}
+        >
           <span>Bis (absolut)</span>
           <input
             type="datetime-local"
@@ -291,9 +332,20 @@ export default function ElasticSearchDialog(props: any) {
         </div>
 
         {/* Nachladen Buttons */}
-        <div className="kv" aria-disabled={!isAbs} style={isAbs ? undefined : { opacity: 0.5 }}>
+        <div
+          className="kv"
+          aria-disabled={!isAbs}
+          style={isAbs ? undefined : { opacity: 0.5 }}
+        >
           <span>Nachladen</span>
-          <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', alignItems: 'center' }}>
+          <div
+            style={{
+              display: "flex",
+              gap: "8px",
+              flexWrap: "wrap",
+              alignItems: "center",
+            }}
+          >
             <button
               type="button"
               onClick={setOlderRange}
@@ -302,7 +354,9 @@ export default function ElasticSearchDialog(props: any) {
             >
               Ältere nachladen
             </button>
-            <small style={{ color: 'var(--color-text-secondary)' }}>(bis {fmtHm(firstTs)})</small>
+            <small style={{ color: "var(--color-text-secondary)" }}>
+              (bis {fmtHm(firstTs)})
+            </small>
             <button
               type="button"
               onClick={setNewerRange}
@@ -311,20 +365,30 @@ export default function ElasticSearchDialog(props: any) {
             >
               Neuere nachladen
             </button>
-            <small style={{ color: 'var(--color-text-secondary)' }}>(ab {fmtHm(lastTs)})</small>
+            <small style={{ color: "var(--color-text-secondary)" }}>
+              (ab {fmtHm(lastTs)})
+            </small>
           </div>
         </div>
 
         {/* Suchfelder */}
         <div className="kv">
           <span>Index</span>
-          <div style={{ position: 'relative' }}>
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr auto', gap: '6px' }}>
+          <div style={{ position: "relative" }}>
+            <div
+              style={{
+                display: "grid",
+                gridTemplateColumns: "1fr auto",
+                gap: "6px",
+              }}
+            >
               <input
                 list="esIndexHistory"
                 type="text"
                 value={form.index}
-                onInput={(e) => setForm({ ...form, index: e.currentTarget.value })}
+                onInput={(e) =>
+                  setForm({ ...form, index: e.currentTarget.value })
+                }
                 placeholder="z. B. logs-*, filebeat-* (leer = _all)"
                 onClick={(e) => e.stopPropagation()}
               />
@@ -350,8 +414,8 @@ export default function ElasticSearchDialog(props: any) {
                   setShowIdxList(false);
                 }}
                 style={{
-                  position: 'absolute',
-                  top: 'calc(100% + 4px)',
+                  position: "absolute",
+                  top: "calc(100% + 4px)",
                   left: 0,
                   right: 0,
                   marginTop: 0,
@@ -366,12 +430,14 @@ export default function ElasticSearchDialog(props: any) {
         </div>
 
         <div className="kv">
-          <label style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+          <label style={{ display: "flex", alignItems: "center", gap: "8px" }}>
             <input
               type="checkbox"
               className="native-checkbox"
               checked={!!form.allowInsecureTLS}
-              onChange={(e) => setForm({ ...form, allowInsecureTLS: e.currentTarget.checked })}
+              onChange={(e) =>
+                setForm({ ...form, allowInsecureTLS: e.currentTarget.checked })
+              }
             />
             <span>Unsicheres TLS erlauben (selbstsigniert)</span>
           </label>
@@ -379,13 +445,21 @@ export default function ElasticSearchDialog(props: any) {
 
         <div className="kv">
           <span>Application Name</span>
-          <div style={{ position: 'relative' }}>
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr auto', gap: '6px' }}>
+          <div style={{ position: "relative" }}>
+            <div
+              style={{
+                display: "grid",
+                gridTemplateColumns: "1fr auto",
+                gap: "6px",
+              }}
+            >
               <input
                 list="esAppNameHistory"
                 type="text"
                 value={form.application_name}
-                onInput={(e) => setForm({ ...form, application_name: e.currentTarget.value })}
+                onInput={(e) =>
+                  setForm({ ...form, application_name: e.currentTarget.value })
+                }
                 placeholder="z. B. my-service"
                 onClick={(e) => e.stopPropagation()}
               />
@@ -397,7 +471,9 @@ export default function ElasticSearchDialog(props: any) {
                   setShowIdxList(false);
                   setShowEnvList(false);
                 }}
-                disabled={!Array.isArray(histAppName) || histAppName.length === 0}
+                disabled={
+                  !Array.isArray(histAppName) || histAppName.length === 0
+                }
                 title="Alle gespeicherten Application Names anzeigen"
               >
                 ▼
@@ -411,8 +487,8 @@ export default function ElasticSearchDialog(props: any) {
                   setShowAppList(false);
                 }}
                 style={{
-                  position: 'absolute',
-                  top: 'calc(100% + 4px)',
+                  position: "absolute",
+                  top: "calc(100% + 4px)",
                   left: 0,
                   right: 0,
                   marginTop: 0,
@@ -443,7 +519,7 @@ export default function ElasticSearchDialog(props: any) {
             onChange={(e) => setForm({ ...form, level: e.currentTarget.value })}
           >
             <option value="">Alle</option>
-            {['TRACE', 'DEBUG', 'INFO', 'WARN', 'ERROR', 'FATAL'].map((l) => (
+            {["TRACE", "DEBUG", "INFO", "WARN", "ERROR", "FATAL"].map((l) => (
               <option key={l} value={l}>
                 {l}
               </option>
@@ -453,13 +529,21 @@ export default function ElasticSearchDialog(props: any) {
 
         <div className="kv">
           <span>Environment</span>
-          <div style={{ position: 'relative' }}>
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr auto', gap: '6px' }}>
+          <div style={{ position: "relative" }}>
+            <div
+              style={{
+                display: "grid",
+                gridTemplateColumns: "1fr auto",
+                gap: "6px",
+              }}
+            >
               <input
                 list="esEnvHistory"
                 type="text"
                 value={form.environment}
-                onInput={(e) => setForm({ ...form, environment: e.currentTarget.value })}
+                onInput={(e) =>
+                  setForm({ ...form, environment: e.currentTarget.value })
+                }
                 placeholder="z. B. prod, stage"
                 onClick={(e) => e.stopPropagation()}
               />
@@ -471,7 +555,10 @@ export default function ElasticSearchDialog(props: any) {
                   setShowIdxList(false);
                   setShowAppList(false);
                 }}
-                disabled={!Array.isArray(histEnvironment) || histEnvironment.length === 0}
+                disabled={
+                  !Array.isArray(histEnvironment) ||
+                  histEnvironment.length === 0
+                }
                 title="Alle gespeicherten Environment-Werte anzeigen"
               >
                 ▼
@@ -485,8 +572,8 @@ export default function ElasticSearchDialog(props: any) {
                   setShowEnvList(false);
                 }}
                 style={{
-                  position: 'absolute',
-                  top: 'calc(100% + 4px)',
+                  position: "absolute",
+                  top: "calc(100% + 4px)",
                   left: 0,
                   right: 0,
                   marginTop: 0,
@@ -496,7 +583,9 @@ export default function ElasticSearchDialog(props: any) {
           </div>
           <datalist id="esEnvHistory">
             {Array.isArray(histEnvironment) &&
-              histEnvironment.map((v: any, i: any) => <option key={i} value={v} />)}
+              histEnvironment.map((v: any, i: any) => (
+                <option key={i} value={v} />
+              ))}
           </datalist>
         </div>
 
@@ -505,7 +594,9 @@ export default function ElasticSearchDialog(props: any) {
           <span>Environment-Case</span>
           <select
             value={form.environmentCase}
-            onChange={(e) => setForm({ ...form, environmentCase: e.currentTarget.value })}
+            onChange={(e) =>
+              setForm({ ...form, environmentCase: e.currentTarget.value })
+            }
           >
             <option value="original">Original</option>
             <option value="lower">nach lowercase konvertieren</option>
@@ -519,7 +610,9 @@ export default function ElasticSearchDialog(props: any) {
             Leeren
           </button>
           <button onClick={onClose}>Abbrechen</button>
-          <button onClick={() => onApply({ ...form, enabled: true })}>Suchen</button>
+          <button onClick={() => onApply({ ...form, enabled: true })}>
+            Suchen
+          </button>
         </div>
       </div>
     </div>

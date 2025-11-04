@@ -5,16 +5,17 @@ function extractFractionBeyondMs(ts: unknown): number {
   // Extract digits after the decimal point in the seconds field, beyond the first 3 (milliseconds)
   // Example: 2025-10-23T15:46:12.0493117+02:00 -> fracAll=0493117 -> beyondMs=3117 -> normalized to 6 digits
   try {
-    if (ts == null || (typeof ts !== 'string' && typeof ts !== 'number')) return 0;
+    if (ts == null || (typeof ts !== "string" && typeof ts !== "number"))
+      return 0;
     const s = String(ts);
     const m = s.match(/T\d{2}:\d{2}:\d{2}\.(\d+)/);
     if (!m) return 0;
-    const frac = m[1] || '';
+    const frac = m[1] || "";
     if (!frac) return 0;
-    const beyond = frac.length > 3 ? frac.slice(3) : '';
+    const beyond = frac.length > 3 ? frac.slice(3) : "";
     if (!beyond) return 0;
     // Normalize to 6 digits (microseconds part beyond ms) for comparable precision without BigInt
-    const norm = (beyond + '000000').slice(0, 6); // padEnd to 6, then cut to 6
+    const norm = (beyond + "000000").slice(0, 6); // padEnd to 6, then cut to 6
     const num = Number(norm);
     return Number.isFinite(num) ? num : 0;
   } catch {
@@ -22,7 +23,11 @@ function extractFractionBeyondMs(ts: unknown): number {
   }
 }
 
-function toMillisEx(ts: unknown): { valid: boolean; ms: number; extra: number } {
+function toMillisEx(ts: unknown): {
+  valid: boolean;
+  ms: number;
+  extra: number;
+} {
   if (ts == null) return { valid: false, ms: NaN, extra: 0 };
   try {
     const d = new Date(ts);
@@ -37,7 +42,7 @@ function toMillisEx(ts: unknown): { valid: boolean; ms: number; extra: number } 
 
 export function compareByTimestampId(
   a: { timestamp?: unknown; _id?: number; message?: string },
-  b: { timestamp?: unknown; _id?: number; message?: string }
+  b: { timestamp?: unknown; _id?: number; message?: string },
 ): number {
   const A = toMillisEx(a?.timestamp);
   const B = toMillisEx(b?.timestamp);
@@ -55,7 +60,7 @@ export function compareByTimestampId(
   const bi = b?._id ?? 0;
   if (ai !== bi) return ai - bi;
   // final tie-breaker: by message to keep deterministic order
-  const am = String(a?.message ?? '');
-  const bm = String(b?.message ?? '');
+  const am = String(a?.message ?? "");
+  const bm = String(b?.message ?? "");
   return am.localeCompare(bm);
 }

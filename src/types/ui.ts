@@ -2,7 +2,7 @@
  * Common types used across renderer components
  */
 
-import type { LogEntry } from './ipc';
+import type { LogEntry } from "./ipc";
 
 /**
  * Extended log entry with UI-specific fields
@@ -16,12 +16,12 @@ export interface UILogEntry extends LogEntry {
 /**
  * Settings dialog tab
  */
-export type SettingsTab = 'general' | 'tcp' | 'http' | 'elastic' | 'file-log';
+export type SettingsTab = "general" | "tcp" | "http" | "elastic" | "file-log";
 
 /**
  * Theme mode
  */
-export type ThemeMode = 'system' | 'light' | 'dark';
+export type ThemeMode = "system" | "light" | "dark";
 
 /**
  * Filter state for log entries

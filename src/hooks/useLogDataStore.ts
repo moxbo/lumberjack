@@ -1,5 +1,5 @@
 // Hook for managing log data with SoA store
-import { useState, useCallback, useMemo } from 'preact/hooks';
+import { useState, useCallback, useMemo } from "preact/hooks";
 import {
   createLogDataStore,
   addLogEntry,
@@ -11,7 +11,7 @@ import {
   type LogDataStore,
   type LogEntry,
   type FilterOptions,
-} from '../store/logDataStore';
+} from "../store/logDataStore";
 
 export function useLogDataStore(): {
   store: LogDataStore;
@@ -23,7 +23,7 @@ export function useLogDataStore(): {
   clear: () => void;
   getEntry: (index: number) => LogEntry | null;
   filter: (options: FilterOptions) => number[];
-  sort: (key: 'timestamp' | 'level', direction?: 'asc' | 'desc') => number[];
+  sort: (key: "timestamp" | "level", direction?: "asc" | "desc") => number[];
 } {
   const [store] = useState<LogDataStore>(() => createLogDataStore());
   const [version, setVersion] = useState(0);
@@ -33,7 +33,7 @@ export function useLogDataStore(): {
       addLogEntry(store, entry);
       setVersion((v) => v + 1);
     },
-    [store]
+    [store],
   );
 
   const addEntries = useCallback(
@@ -41,7 +41,7 @@ export function useLogDataStore(): {
       addLogEntries(store, entries);
       setVersion((v) => v + 1);
     },
-    [store]
+    [store],
   );
 
   const clear = useCallback(() => {
@@ -53,21 +53,24 @@ export function useLogDataStore(): {
     (index: number) => {
       return getLogEntry(store, index);
     },
-    [store]
+    [store],
   );
 
   const filter = useCallback(
     (options: FilterOptions): number[] => {
       return filterLogEntries(store, options);
     },
-    [store]
+    [store],
   );
 
   const sort = useCallback(
-    (key: 'timestamp' | 'level', direction: 'asc' | 'desc' = 'desc'): number[] => {
+    (
+      key: "timestamp" | "level",
+      direction: "asc" | "desc" = "desc",
+    ): number[] => {
       return sortLogEntries(store, key, direction);
     },
-    [store]
+    [store],
   );
 
   // Get all entries as array (for compatibility with existing code)

@@ -16,7 +16,10 @@ interface HighlightResponse {
 }
 
 interface PendingRequest {
-  resolve: (result: { formattedMessage: string; formattedStackTrace?: string }) => void;
+  resolve: (result: {
+    formattedMessage: string;
+    formattedStackTrace?: string;
+  }) => void;
   reject: (error: Error) => void;
 }
 
@@ -35,7 +38,7 @@ class HighlightService {
       // Worker will be initialized when first used
       // This avoids issues with worker initialization during module load
     } catch (error) {
-      console.error('Failed to initialize highlight worker:', error);
+      console.error("Failed to initialize highlight worker:", error);
       this.enabled = false;
     }
   }
@@ -45,8 +48,11 @@ class HighlightService {
 
     try {
       // Create worker using inline worker pattern for Vite/esbuild compatibility
-      const workerUrl = new URL('../workers/highlight.worker.ts', import.meta.url);
-      this.worker = new Worker(workerUrl, { type: 'module' });
+      const workerUrl = new URL(
+        "../workers/highlight.worker.ts",
+        import.meta.url,
+      );
+      this.worker = new Worker(workerUrl, { type: "module" });
 
       this.worker.onmessage = (e: MessageEvent<HighlightResponse>) => {
         const { id, formattedMessage, formattedStackTrace, error } = e.data;
@@ -64,15 +70,15 @@ class HighlightService {
       };
 
       this.worker.onerror = (error) => {
-        console.error('Highlight worker error:', error);
+        console.error("Highlight worker error:", error);
         // Reject all pending requests
         this.pendingRequests.forEach((pending) => {
-          pending.reject(new Error('Worker error'));
+          pending.reject(new Error("Worker error"));
         });
         this.pendingRequests.clear();
       };
     } catch (error) {
-      console.error('Failed to create highlight worker:', error);
+      console.error("Failed to create highlight worker:", error);
       this.enabled = false;
     }
   }
@@ -80,7 +86,7 @@ class HighlightService {
   async formatLog(
     message: string,
     level?: string | null,
-    stackTrace?: string | null
+    stackTrace?: string | null,
   ): Promise<{ formattedMessage: string; formattedStackTrace?: string }> {
     // Fallback to synchronous formatting if worker is not available
     if (!this.enabled) {
@@ -111,7 +117,7 @@ class HighlightService {
       setTimeout(() => {
         if (this.pendingRequests.has(id)) {
           this.pendingRequests.delete(id);
-          reject(new Error('Highlight timeout'));
+          reject(new Error("Highlight timeout"));
         }
       }, 5000);
     });
@@ -121,16 +127,16 @@ class HighlightService {
   private formatLogSync(
     message: string,
     level?: string | null,
-    stackTrace?: string | null
+    stackTrace?: string | null,
   ): { formattedMessage: string; formattedStackTrace?: string } {
     // Simple escaping for safety
     const escape = (str: string) =>
       str
-        .replace(/&/g, '&amp;')
-        .replace(/</g, '&lt;')
-        .replace(/>/g, '&gt;')
-        .replace(/"/g, '&quot;')
-        .replace(/'/g, '&#039;');
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;")
+        .replace(/'/g, "&#039;");
 
     return {
       formattedMessage: escape(message),

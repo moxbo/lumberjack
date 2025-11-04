@@ -34,6 +34,12 @@
     "noEmit": true,
     "types": ["node", "electron"]
   },
-  "include": ["src/**/*", "preload.ts", "main.ts", "scripts/**/*", "vite.config.mjs"],
+  "include": [
+    "src/**/*",
+    "preload.ts",
+    "main.ts",
+    "scripts/**/*",
+    "vite.config.mjs"
+  ],
   "exclude": ["node_modules", "dist", "release"]
 }

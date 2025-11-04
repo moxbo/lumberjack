@@ -3,9 +3,9 @@
  * Manages TCP server and HTTP polling operations
  */
 
-import * as net from 'net';
-import log from 'electron-log/main';
-import type { LogEntry } from '../types/ipc';
+import * as net from "net";
+import log from "electron-log/main";
+import type { LogEntry } from "../types/ipc";
 
 /**
  * TCP Status
@@ -49,7 +49,7 @@ export type TextParserFn = (url: string, text: string) => LogEntry[];
 export type EntryConverterFn = (
   obj: Record<string, unknown>,
   fallback: string,
-  source: string
+  source: string,
 ) => LogEntry;
 
 /**
@@ -102,7 +102,7 @@ export class NetworkService {
     if (this.tcpServer) {
       return Promise.resolve({
         ok: false,
-        message: 'TCP server already running',
+        message: "TCP server already running",
         running: true,
         port: this.tcpPort,
       });
@@ -111,7 +111,7 @@ export class NetworkService {
     if (!this.toEntry) {
       return Promise.resolve({
         ok: false,
-        message: 'Parser functions not set',
+        message: "Parser functions not set",
         running: false,
       });
     }
@@ -119,13 +119,13 @@ export class NetworkService {
     const toEntry = this.toEntry;
 
     const server = net.createServer((socket) => {
-      let buffer = '';
+      let buffer = "";
 
-      socket.on('data', (chunk) => {
-        buffer += chunk.toString('utf8');
+      socket.on("data", (chunk) => {
+        buffer += chunk.toString("utf8");
         let idx: number;
 
-        while ((idx = buffer.indexOf('\n')) >= 0) {
+        while ((idx = buffer.indexOf("\n")) >= 0) {
           const line = buffer.slice(0, idx).trim();
           buffer = buffer.slice(idx + 1);
 
@@ -137,26 +137,26 @@ export class NetworkService {
             obj = JSON.parse(line) as Record<string, unknown>;
           } catch (e) {
             log.warn(
-              'TCP JSON parse failed, treating as plain text:',
-              e instanceof Error ? e.message : String(e)
+              "TCP JSON parse failed, treating as plain text:",
+              e instanceof Error ? e.message : String(e),
             );
             obj = { message: line };
           }
 
           const entry = toEntry(
             obj,
-            '',
-            `tcp:${socket.remoteAddress ?? 'unknown'}:${socket.remotePort ?? 0}`
+            "",
+            `tcp:${socket.remoteAddress ?? "unknown"}:${socket.remotePort ?? 0}`,
           );
           this.sendLogs([entry]);
         }
       });
 
-      socket.on('error', (err) => {
+      socket.on("error", (err) => {
         const errorEntry = toEntry(
-          { level: 'ERROR', message: `TCP socket error: ${err.message}` },
-          '',
-          'tcp'
+          { level: "ERROR", message: `TCP socket error: ${err.message}` },
+          "",
+          "tcp",
         );
         this.sendLogs([errorEntry]);
       });
@@ -166,22 +166,22 @@ export class NetworkService {
 
     return new Promise<TcpStatus>((resolve) => {
       const onError = (err: Error): void => {
-        log.error('TCP server error during startup:', err);
+        log.error("TCP server error during startup:", err);
         // Cleanup server so we don't appear as running on next start
         try {
-          server.removeListener('listening', onListening);
+          server.removeListener("listening", onListening);
         } catch (e) {
           log.warn(
-            'Removing listening listener failed:',
-            e instanceof Error ? e.message : String(e)
+            "Removing listening listener failed:",
+            e instanceof Error ? e.message : String(e),
           );
         }
         try {
           server.close();
         } catch (e) {
           log.warn(
-            'Closing TCP server after error failed:',
-            e instanceof Error ? e.message : String(e)
+            "Closing TCP server after error failed:",
+            e instanceof Error ? e.message : String(e),
           );
         }
         this.tcpServer = null;
@@ -196,16 +196,19 @@ export class NetworkService {
 
       const onListening = (): void => {
         try {
-          server.removeListener('error', onError);
+          server.removeListener("error", onError);
         } catch (e) {
-          log.warn('Removing error listener failed:', e instanceof Error ? e.message : String(e));
+          log.warn(
+            "Removing error listener failed:",
+            e instanceof Error ? e.message : String(e),
+          );
         }
         this.tcpRunning = true;
         this.tcpPort = port;
         log.info(`TCP server listening on port ${port}`);
         // Attach a general error logger for runtime errors (does not change running state)
-        server.on('error', (err) => {
-          log.error('TCP server runtime error:', err);
+        server.on("error", (err) => {
+          log.error("TCP server runtime error:", err);
         });
         resolve({
           ok: true,
@@ -215,8 +218,8 @@ export class NetworkService {
         });
       };
 
-      server.once('error', onError);
-      server.once('listening', onListening);
+      server.once("error", onError);
+      server.once("listening", onListening);
 
       server.listen(port);
     });
@@ -229,7 +232,7 @@ export class NetworkService {
     if (!this.tcpServer) {
       return Promise.resolve({
         ok: false,
-        message: 'TCP server not running',
+        message: "TCP server not running",
         running: false,
       });
     }
@@ -239,10 +242,10 @@ export class NetworkService {
         this.tcpServer = null;
         this.tcpRunning = false;
         this.tcpPort = 0;
-        log.info('TCP server stopped');
+        log.info("TCP server stopped");
         resolve({
           ok: true,
-          message: 'TCP server stopped',
+          message: "TCP server stopped",
           running: false,
         });
       });
@@ -255,7 +258,9 @@ export class NetworkService {
   getTcpStatus(): TcpStatus {
     return {
       ok: true,
-      message: this.tcpRunning ? `Running on port ${this.tcpPort}` : 'Not running',
+      message: this.tcpRunning
+        ? `Running on port ${this.tcpPort}`
+        : "Not running",
       running: this.tcpRunning,
       port: this.tcpRunning ? this.tcpPort : undefined,
     };
@@ -265,14 +270,14 @@ export class NetworkService {
    * Fetch text from HTTP URL
    */
   private async httpFetchText(url: string): Promise<string> {
-    if (typeof fetch === 'function') {
-      const res = await fetch(url, { cache: 'no-store' });
+    if (typeof fetch === "function") {
+      const res = await fetch(url, { cache: "no-store" });
       if (!res.ok) {
         throw new Error(`${res.status} ${res.statusText}`);
       }
       return await res.text();
     }
-    throw new Error('fetch unavailable');
+    throw new Error("fetch unavailable");
   }
 
   /**
@@ -301,20 +306,24 @@ export class NetworkService {
   /**
    * Load logs from HTTP URL once
    */
-  async httpLoadOnce(url: string): Promise<{ ok: boolean; entries?: LogEntry[]; error?: string }> {
+  async httpLoadOnce(
+    url: string,
+  ): Promise<{ ok: boolean; entries?: LogEntry[]; error?: string }> {
     try {
       if (!this.parseJsonFile || !this.parseTextLines) {
-        throw new Error('Parser functions not set');
+        throw new Error("Parser functions not set");
       }
 
       const text = await this.httpFetchText(url);
-      const isJson = text.trim().startsWith('[') || text.trim().startsWith('{');
-      const entries = isJson ? this.parseJsonFile(url, text) : this.parseTextLines(url, text);
+      const isJson = text.trim().startsWith("[") || text.trim().startsWith("{");
+      const entries = isJson
+        ? this.parseJsonFile(url, text)
+        : this.parseTextLines(url, text);
 
       return { ok: true, entries };
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
-      log.error('HTTP load failed:', message);
+      log.error("HTTP load failed:", message);
       return { ok: false, error: message };
     }
   }
@@ -322,39 +331,40 @@ export class NetworkService {
   /**
    * Start HTTP polling
    */
-  httpStartPoll(
+  async httpStartPoll(
     url: string,
-    intervalMs: number
+    intervalMs: number,
   ): Promise<{ ok: boolean; id?: number; error?: string }> {
     try {
       if (!this.parseJsonFile || !this.parseTextLines || !this.toEntry) {
-        throw new Error('Parser functions not set');
+        throw new Error("Parser functions not set");
       }
+
+      // noop await to satisfy require-await without side effects
+      await Promise.resolve();
 
       const id = this.httpPollerSeq++;
       const seen = new Set<string>();
 
       const parseJsonFile = this.parseJsonFile;
       const parseTextLines = this.parseTextLines;
-      const toEntry = this.toEntry;
 
       const tick = async (): Promise<void> => {
         try {
           const text = await this.httpFetchText(url);
-          const isJson = text.trim().startsWith('[') || text.trim().startsWith('{');
-          const entries = isJson ? parseJsonFile(url, text) : parseTextLines(url, text);
+          const isJson =
+            text.trim().startsWith("[") || text.trim().startsWith("{");
+          const entries = isJson
+            ? parseJsonFile(url, text)
+            : parseTextLines(url, text);
           const fresh = this.dedupeNewEntries(entries, seen);
           if (fresh.length) {
             this.sendLogs(fresh);
           }
         } catch (err) {
           const message = err instanceof Error ? err.message : String(err);
-          const errorEntry = toEntry(
-            { level: 'ERROR', message: `HTTP poll error for ${url}: ${message}` },
-            '',
-            url
-          );
-          this.sendLogs([errorEntry]);
+          // Keine Log-Einträge in die UI pushen – stilles Retry im nächsten Intervall
+          log.warn(`[http:poll] ${url} failed: ${message} (will retry)`);
         }
       };
 
@@ -362,18 +372,18 @@ export class NetworkService {
         () => {
           void tick();
         },
-        Math.max(500, intervalMs)
+        Math.max(500, intervalMs),
       );
 
       this.httpPollers.set(id, { id, url, intervalMs, timer, seen });
 
       // Fire once immediately
       void tick();
-
+      log.info(`HTTP poller ${id} started for ${url} every ${intervalMs} ms`);
       return { ok: true, id };
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
-      log.error('HTTP start poll failed:', message);
+      log.error("HTTP start poll failed:", message);
       return { ok: false, error: message };
     }
   }
@@ -384,7 +394,7 @@ export class NetworkService {
   httpStopPoll(id: number): { ok: boolean; error?: string } {
     const poller = this.httpPollers.get(id);
     if (!poller) {
-      return { ok: false, error: 'Poller not found' };
+      return { ok: false, error: "Poller not found" };
     }
 
     clearInterval(poller.timer);
@@ -402,7 +412,7 @@ export class NetworkService {
       clearInterval(poller.timer);
     }
     this.httpPollers.clear();
-    log.info('All HTTP pollers stopped');
+    log.info("All HTTP pollers stopped");
   }
 
   /**

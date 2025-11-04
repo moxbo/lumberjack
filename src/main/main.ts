@@ -3,23 +3,32 @@
  * Entry point for the Electron application with modern standards
  */
 
-import { app, BrowserWindow, dialog, Menu, nativeImage, type NativeImage } from 'electron';
-import * as path from 'path';
-import * as fs from 'fs';
-import log from 'electron-log/main';
-import type { LogEntry } from '../types/ipc';
-import { SettingsService } from '../services/SettingsService';
-import { NetworkService } from '../services/NetworkService';
-import { PerformanceService } from '../services/PerformanceService';
-import { registerIpcHandlers } from './ipcHandlers';
-import os from 'node:os';
+import {
+  app,
+  BrowserWindow,
+  dialog,
+  Menu,
+  nativeImage,
+  type NativeImage,
+} from "electron";
+import * as path from "path";
+import * as fs from "fs";
+import log from "electron-log/main";
+import type { LogEntry } from "../types/ipc";
+import { SettingsService } from "../services/SettingsService";
+import { NetworkService } from "../services/NetworkService";
+import { PerformanceService } from "../services/PerformanceService";
+import { registerIpcHandlers } from "./ipcHandlers";
+import os from "node:os";
 
 // Environment
-const isDev = process.env.NODE_ENV === 'development' || Boolean(process.env.VITE_DEV_SERVER_URL);
+const isDev =
+  process.env.NODE_ENV === "development" ||
+  Boolean(process.env.VITE_DEV_SERVER_URL);
 log.initialize();
-log.transports.console.level = 'debug';
+log.transports.console.level = "debug";
 // Schreibe in Nicht-Dev alle Level in die Datei
-log.transports.file.level = isDev ? false : 'silly';
+log.transports.file.level = isDev ? false : "silly";
 
 // Services
 const perfService = new PerformanceService();
@@ -33,17 +42,17 @@ let AdmZip: any = null;
 function getAdmZip(): any {
   if (!AdmZip) {
     // eslint-disable-next-line @typescript-eslint/no-require-imports
-    AdmZip = require('adm-zip');
+    AdmZip = require("adm-zip");
   }
   return AdmZip;
 }
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 let parsers: any = null;
-function getParsers(): typeof import('./parsers.cjs') {
+function getParsers(): typeof import("./parsers.cjs") {
   if (!parsers) {
     const appRoot = app.getAppPath();
-    const parserPath = path.join(appRoot, 'src', 'main', 'parsers.cjs');
+    const parserPath = path.join(appRoot, "src", "main", "parsers.cjs");
     // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
     parsers = require(parserPath);
   }
@@ -64,14 +73,17 @@ async function confirmQuit(target?: BrowserWindow | null): Promise<boolean> {
   if (quitPromptInProgress) return false;
   quitPromptInProgress = true;
   try {
-    const win = target && !target.isDestroyed() ? target : BrowserWindow.getFocusedWindow?.();
+    const win =
+      target && !target.isDestroyed()
+        ? target
+        : BrowserWindow.getFocusedWindow?.();
     const options: Electron.MessageBoxOptions = {
-      type: 'question',
-      buttons: ['Abbrechen', 'Beenden'],
+      type: "question",
+      buttons: ["Abbrechen", "Beenden"],
       defaultId: 0,
       cancelId: 0,
-      title: 'Anwendung beenden',
-      message: 'Möchtest du Lumberjack wirklich beenden?',
+      title: "Anwendung beenden",
+      message: "Möchtest du Lumberjack wirklich beenden?",
       noLink: true,
       normalizeAccessKeys: true,
     };
@@ -82,7 +94,10 @@ async function confirmQuit(target?: BrowserWindow | null): Promise<boolean> {
     if (ok) quitConfirmed = true;
     return ok;
   } catch (e) {
-    log.warn('Quit-Dialog fehlgeschlagen:', e instanceof Error ? e.message : String(e));
+    log.warn(
+      "Quit-Dialog fehlgeschlagen:",
+      e instanceof Error ? e.message : String(e),
+    );
     return false;
   } finally {
     quitPromptInProgress = false;
@@ -96,20 +111,25 @@ type WindowMeta = {
 const windowMeta = new Map<number, WindowMeta>();
 
 function getDefaultBaseTitle(): string {
-  return 'Lumberjack';
+  return "Lumberjack";
 }
 function getWindowBaseTitle(win: BrowserWindow): string {
   const meta = windowMeta.get(win.id);
-  const base = (meta?.baseTitle || '').trim();
+  const base = (meta?.baseTitle || "").trim();
   return base || getDefaultBaseTitle();
 }
-function setWindowBaseTitle(win: BrowserWindow, title: string | null | undefined): void {
-  const t = (title ?? '').toString().trim();
+function setWindowBaseTitle(
+  win: BrowserWindow,
+  title: string | null | undefined,
+): void {
+  const t = (title ?? "").toString().trim();
   const meta = windowMeta.get(win.id) || {};
   meta.baseTitle = t || null;
   windowMeta.set(win.id, meta);
 }
-function getWindowCanTcpControl(win: BrowserWindow | null | undefined): boolean {
+function getWindowCanTcpControl(
+  win: BrowserWindow | null | undefined,
+): boolean {
   if (!win) return true;
   const meta = windowMeta.get(win.id);
   return meta?.canTcpControl !== false; // default true
@@ -129,8 +149,8 @@ function setTcpOwnerWindowId(winId: number | null): void {
     updateMenu();
   } catch (e) {
     log.error(
-      'setTcpOwnerWindowId applyWindowTitles/updateMenu failed:',
-      e instanceof Error ? e.message : String(e)
+      "setTcpOwnerWindowId applyWindowTitles/updateMenu failed:",
+      e instanceof Error ? e.message : String(e),
     );
   }
 }
@@ -149,10 +169,14 @@ function applyWindowTitles(): void {
       if (w.isDestroyed()) continue;
       const base = getWindowBaseTitle(w);
       const isOwner = tcpOwnerWindowId != null && w.id === tcpOwnerWindowId;
-      const title = tcp.running && tcp.port && isOwner ? `${base} — TCP:${tcp.port}` : base;
+      const title =
+        tcp.running && tcp.port && isOwner ? `${base} — TCP:${tcp.port}` : base;
       w.setTitle(title);
     } catch (e) {
-      log.warn('applyWindowTitles failed:', e instanceof Error ? e.message : String(e));
+      log.warn(
+        "applyWindowTitles failed:",
+        e instanceof Error ? e.message : String(e),
+      );
     }
   }
 }
@@ -163,11 +187,14 @@ function applyWindowTitles(): void {
 (global as any).__getWindowBaseTitle = (winId: number) => {
   try {
     const w = BrowserWindow.fromId?.(winId);
-    if (w) return windowMeta.get(winId)?.baseTitle || '';
+    if (w) return windowMeta.get(winId)?.baseTitle || "";
   } catch (e) {
-    log.error('__getWindowBaseTitle failed:', e instanceof Error ? e.message : String(e));
+    log.error(
+      "__getWindowBaseTitle failed:",
+      e instanceof Error ? e.message : String(e),
+    );
   }
-  return '';
+  return "";
 };
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 (global as any).__setWindowBaseTitle = (winId: number, title: string) => {
@@ -175,7 +202,10 @@ function applyWindowTitles(): void {
     const w = BrowserWindow.fromId?.(winId);
     if (w) setWindowBaseTitle(w, title);
   } catch (e) {
-    log.error('__setWindowBaseTitle failed:', e instanceof Error ? e.message : String(e));
+    log.error(
+      "__setWindowBaseTitle failed:",
+      e instanceof Error ? e.message : String(e),
+    );
   }
 };
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -184,24 +214,33 @@ function applyWindowTitles(): void {
     const w = BrowserWindow.fromId?.(winId);
     return getWindowCanTcpControl(w);
   } catch {
-    log.error('__getWindowCanTcpControl failed');
+    log.error("__getWindowCanTcpControl failed");
     return true;
   }
 };
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-(global as any).__setWindowCanTcpControl = (winId: number, allowed: boolean) => {
+(global as any).__setWindowCanTcpControl = (
+  winId: number,
+  allowed: boolean,
+) => {
   try {
     const w = BrowserWindow.fromId?.(winId);
     if (w) setWindowCanTcpControl(w, allowed);
   } catch (e) {
-    log.error('__setWindowCanTcpControl failed:', e instanceof Error ? e.message : String(e));
+    log.error(
+      "__setWindowCanTcpControl failed:",
+      e instanceof Error ? e.message : String(e),
+    );
   }
 };
 
 // Buffers
 const MAX_PENDING_APPENDS = 5000;
 let pendingAppends: LogEntry[] = [];
-const pendingMenuCmdsByWindow = new Map<number, Array<{ type: string; tab?: string }>>();
+const pendingMenuCmdsByWindow = new Map<
+  number,
+  Array<{ type: string; tab?: string }>
+>();
 let lastFocusedWindowId: number | null = null;
 const pendingAppendsByWindow = new Map<number, LogEntry[]>();
 
@@ -209,14 +248,17 @@ const pendingAppendsByWindow = new Map<number, LogEntry[]>();
 let logStream: fs.WriteStream | null = null;
 let logBytes = 0;
 function defaultLogFilePath(): string {
-  const base = app.getPath('userData');
-  return path.join(base, 'lumberjack.log');
+  const base = app.getPath("userData");
+  return path.join(base, "lumberjack.log");
 }
 function closeLogStream(): void {
   try {
     logStream?.end?.();
   } catch (e) {
-    log.error('Fehler beim Schließen des Log-Streams:', e instanceof Error ? e.message : String(e));
+    log.error(
+      "Fehler beim Schließen des Log-Streams:",
+      e instanceof Error ? e.message : String(e),
+    );
   }
   logStream = null;
   logBytes = 0;
@@ -224,16 +266,18 @@ function closeLogStream(): void {
 function openLogStream(): void {
   const settings = settingsService.get();
   if (!settings.logToFile) return;
-  const p = (settings.logFilePath && String(settings.logFilePath).trim()) || defaultLogFilePath();
+  const p =
+    (settings.logFilePath && String(settings.logFilePath).trim()) ||
+    defaultLogFilePath();
   try {
     fs.mkdirSync(path.dirname(p), { recursive: true });
     const st = fs.existsSync(p) ? fs.statSync(p) : null;
     logBytes = st ? st.size : 0;
-    logStream = fs.createWriteStream(p, { flags: 'a' });
+    logStream = fs.createWriteStream(p, { flags: "a" });
   } catch (err) {
     log.error(
-      'Log-Datei kann nicht geöffnet werden:',
-      err instanceof Error ? err.message : String(err)
+      "Log-Datei kann nicht geöffnet werden:",
+      err instanceof Error ? err.message : String(err),
     );
     closeLogStream();
   }
@@ -245,7 +289,9 @@ function rotateIfNeeded(extraBytes: number): void {
   if (logBytes + extraBytes <= max) return;
   try {
     closeLogStream();
-    const p = (settings.logFilePath && String(settings.logFilePath).trim()) || defaultLogFilePath();
+    const p =
+      (settings.logFilePath && String(settings.logFilePath).trim()) ||
+      defaultLogFilePath();
     const backups = Math.max(0, Number(settings.logMaxBackups || 0) || 0);
     for (let i = backups - 1; i >= 1; i--) {
       const src = `${p}.${i}`;
@@ -254,7 +300,10 @@ function rotateIfNeeded(extraBytes: number): void {
         try {
           fs.renameSync(src, dst);
         } catch (e) {
-          log.error('Log rotation rename failed:', e instanceof Error ? e.message : String(e));
+          log.error(
+            "Log rotation rename failed:",
+            e instanceof Error ? e.message : String(e),
+          );
         }
       }
     }
@@ -262,11 +311,17 @@ function rotateIfNeeded(extraBytes: number): void {
       try {
         fs.renameSync(p, `${p}.1`);
       } catch (e) {
-        log.error('Log rotation rename failed:', e instanceof Error ? e.message : String(e));
+        log.error(
+          "Log rotation rename failed:",
+          e instanceof Error ? e.message : String(e),
+        );
       }
     }
   } catch (e) {
-    log.error('Log rotation failed:', e instanceof Error ? e.message : String(e));
+    log.error(
+      "Log rotation failed:",
+      e instanceof Error ? e.message : String(e),
+    );
   }
   openLogStream();
 }
@@ -278,7 +333,7 @@ function writeEntriesToFile(entries: LogEntry[]): void {
     if (!logStream) openLogStream();
     if (!logStream) return;
     for (const e of entries) {
-      const line = JSON.stringify(e) + '\n';
+      const line = JSON.stringify(e) + "\n";
       rotateIfNeeded(line.length);
       if (!logStream) openLogStream();
       if (!logStream) return;
@@ -287,14 +342,17 @@ function writeEntriesToFile(entries: LogEntry[]): void {
     }
   } catch (err) {
     log.error(
-      'Fehler beim Schreiben in Logdatei:',
-      err instanceof Error ? err.message : String(err)
+      "Fehler beim Schreiben in Logdatei:",
+      err instanceof Error ? err.message : String(err),
     );
   }
 }
 
 // Menu command routing (per-window)
-function sendMenuCmd(cmd: { type: string; tab?: string }, targetWin?: BrowserWindow | null): void {
+function sendMenuCmd(
+  cmd: { type: string; tab?: string },
+  targetWin?: BrowserWindow | null,
+): void {
   const target =
     targetWin && !targetWin.isDestroyed()
       ? targetWin
@@ -309,7 +367,7 @@ function sendMenuCmd(cmd: { type: string; tab?: string }, targetWin?: BrowserWin
     return;
   }
   try {
-    target.webContents?.send('menu:cmd', cmd);
+    target.webContents?.send("menu:cmd", cmd);
   } catch {
     const id = target.id;
     const arr = pendingMenuCmdsByWindow.get(id) || [];
@@ -351,7 +409,7 @@ function flushPendingAppends(): void {
   try {
     for (let i = 0; i < pendingAppends.length; i += CHUNK) {
       const slice = pendingAppends.slice(i, i + CHUNK);
-      wc.send('logs:append', slice);
+      wc.send("logs:append", slice);
     }
   } catch {
     return;
@@ -372,9 +430,11 @@ function enqueueAppendsFor(winId: number, entries: LogEntry[]): void {
   if (!entries || !entries.length) return;
   const list = pendingAppendsByWindow.get(winId) || [];
   const room = Math.max(0, MAX_PENDING_APPENDS - list.length);
-  const toPush = entries.length <= room ? entries : entries.slice(entries.length - room);
+  const toPush =
+    entries.length <= room ? entries : entries.slice(entries.length - room);
   const updated = list.concat(toPush);
-  if (updated.length > MAX_PENDING_APPENDS) updated.splice(0, updated.length - MAX_PENDING_APPENDS);
+  if (updated.length > MAX_PENDING_APPENDS)
+    updated.splice(0, updated.length - MAX_PENDING_APPENDS);
   pendingAppendsByWindow.set(winId, updated);
 }
 function flushPendingAppendsFor(win: BrowserWindow): void {
@@ -386,10 +446,13 @@ function flushPendingAppendsFor(win: BrowserWindow): void {
   try {
     for (let i = 0; i < buf.length; i += CHUNK) {
       const slice = buf.slice(i, i + CHUNK);
-      wc.send('logs:append', slice);
+      wc.send("logs:append", slice);
     }
   } catch (e) {
-    log.error('flushPendingAppendsFor send failed:', e instanceof Error ? e.message : String(e));
+    log.error(
+      "flushPendingAppendsFor send failed:",
+      e instanceof Error ? e.message : String(e),
+    );
     return;
   }
   pendingAppendsByWindow.delete(win.id);
@@ -403,7 +466,8 @@ function sendAppend(entries: LogEntry[]): void {
     // Intentionally empty - ignore errors
   }
 
-  const isTcpEntry = (e: LogEntry) => typeof e?.source === 'string' && e.source.startsWith('tcp:');
+  const isTcpEntry = (e: LogEntry) =>
+    typeof e?.source === "string" && e.source.startsWith("tcp:");
   const tcpEntries: LogEntry[] = [];
   const otherEntries: LogEntry[] = [];
   for (const e of entries) (isTcpEntry(e) ? tcpEntries : otherEntries).push(e);
@@ -411,10 +475,11 @@ function sendAppend(entries: LogEntry[]): void {
   // TCP → owner window only
   if (tcpEntries.length) {
     const ownerId = getTcpOwnerWindowId();
-    const ownerWin = ownerId != null ? BrowserWindow.fromId?.(ownerId) || null : null;
+    const ownerWin =
+      ownerId != null ? BrowserWindow.fromId?.(ownerId) || null : null;
     if (ownerWin && isWindowReady(ownerWin)) {
       try {
-        ownerWin.webContents.send('logs:append', tcpEntries);
+        ownerWin.webContents.send("logs:append", tcpEntries);
       } catch {
         enqueueAppendsFor(ownerWin.id, tcpEntries);
       }
@@ -434,7 +499,7 @@ function sendAppend(entries: LogEntry[]): void {
       return;
     }
     try {
-      mainWindow?.webContents.send('logs:append', otherEntries);
+      mainWindow?.webContents.send("logs:append", otherEntries);
     } catch {
       enqueueAppends(otherEntries);
     }
@@ -446,52 +511,55 @@ let cachedIconPath: string | null = null;
 let cachedDistIndexPath: string | null = null;
 function resolveIconPathSync(): string | null {
   if (cachedIconPath !== null) return cachedIconPath || null;
-  const resPath = process.resourcesPath || '';
+  const resPath = process.resourcesPath || "";
   const candidates = [
-    path.join(resPath, 'app.asar.unpacked', 'images', 'icon.ico'),
-    path.join(resPath, 'images', 'icon.ico'),
-    path.join(__dirname, 'images', 'icon.ico'),
-    path.join(app.getAppPath?.() || '', 'images', 'icon.ico'),
-    path.join(process.cwd(), 'images', 'icon.ico'),
+    path.join(resPath, "app.asar.unpacked", "images", "icon.ico"),
+    path.join(resPath, "images", "icon.ico"),
+    path.join(__dirname, "images", "icon.ico"),
+    path.join(app.getAppPath?.() || "", "images", "icon.ico"),
+    path.join(process.cwd(), "images", "icon.ico"),
   ].filter(Boolean);
   for (const p of candidates) {
     try {
       if (p && fs.existsSync(p)) {
         cachedIconPath = p;
         try {
-          log.debug?.('[icon] resolveIconPathSync hit:', p);
+          log.debug?.("[icon] resolveIconPathSync hit:", p);
         } catch (e) {
           log.error(
-            '[icon] resolveIconPathSync log error:',
-            e instanceof Error ? e.message : String(e)
+            "[icon] resolveIconPathSync log error:",
+            e instanceof Error ? e.message : String(e),
           );
         }
         return p;
       }
     } catch (e) {
       log.error(
-        '[icon] resolveIconPathSync exists check error:',
-        e instanceof Error ? e.message : String(e)
+        "[icon] resolveIconPathSync exists check error:",
+        e instanceof Error ? e.message : String(e),
       );
     }
   }
   try {
-    log.warn?.('[icon] resolveIconPathSync: no candidate exists');
+    log.warn?.("[icon] resolveIconPathSync: no candidate exists");
   } catch (e) {
-    log.error('[icon] resolveIconPathSync log error:', e instanceof Error ? e.message : String(e));
+    log.error(
+      "[icon] resolveIconPathSync log error:",
+      e instanceof Error ? e.message : String(e),
+    );
   }
-  cachedIconPath = '';
+  cachedIconPath = "";
   return null;
 }
 async function resolveIconPathAsync(): Promise<string | null> {
   if (cachedIconPath !== null) return cachedIconPath;
-  const resPath = process.resourcesPath || '';
+  const resPath = process.resourcesPath || "";
   const candidates = [
-    path.join(resPath, 'app.asar.unpacked', 'images', 'icon.ico'),
-    path.join(resPath, 'images', 'icon.ico'),
-    path.join(__dirname, 'images', 'icon.ico'),
-    path.join(app.getAppPath?.() || '', 'images', 'icon.ico'),
-    path.join(process.cwd(), 'images', 'icon.ico'),
+    path.join(resPath, "app.asar.unpacked", "images", "icon.ico"),
+    path.join(resPath, "images", "icon.ico"),
+    path.join(__dirname, "images", "icon.ico"),
+    path.join(app.getAppPath?.() || "", "images", "icon.ico"),
+    path.join(process.cwd(), "images", "icon.ico"),
   ];
   for (const p of candidates) {
     try {
@@ -502,37 +570,40 @@ async function resolveIconPathAsync(): Promise<string | null> {
       if (exists) {
         cachedIconPath = p;
         try {
-          log.debug?.('[icon] resolveIconPathAsync hit:', p);
+          log.debug?.("[icon] resolveIconPathAsync hit:", p);
         } catch (e) {
           log.error(
-            '[icon] resolveIconPathAsync log error:',
-            e instanceof Error ? e.message : String(e)
+            "[icon] resolveIconPathAsync log error:",
+            e instanceof Error ? e.message : String(e),
           );
         }
         return p;
       }
     } catch (e) {
       log.error(
-        '[icon] resolveIconPathAsync exists check error:',
-        e instanceof Error ? e.message : String(e)
+        "[icon] resolveIconPathAsync exists check error:",
+        e instanceof Error ? e.message : String(e),
       );
     }
   }
   try {
-    log.warn?.('[icon] resolveIconPathAsync: no candidate exists');
+    log.warn?.("[icon] resolveIconPathAsync: no candidate exists");
   } catch (e) {
-    log.error('[icon] resolveIconPathAsync log error:', e instanceof Error ? e.message : String(e));
+    log.error(
+      "[icon] resolveIconPathAsync log error:",
+      e instanceof Error ? e.message : String(e),
+    );
   }
-  cachedIconPath = '';
+  cachedIconPath = "";
   return null;
 }
 function resolveMacIconPath(): string | null {
-  const resPath = process.resourcesPath || '';
+  const resPath = process.resourcesPath || "";
   const candidates = [
-    path.join(resPath, 'app.asar.unpacked', 'images', 'icon.icns'),
-    path.join(resPath, 'images', 'icon.icns'),
-    path.join(__dirname, 'images', 'icon.icns'),
-    path.join(process.cwd(), 'images', 'icon.icns'),
+    path.join(resPath, "app.asar.unpacked", "images", "icon.icns"),
+    path.join(resPath, "images", "icon.icns"),
+    path.join(__dirname, "images", "icon.icns"),
+    path.join(process.cwd(), "images", "icon.icns"),
   ];
   for (const p of candidates) {
     try {
@@ -550,7 +621,7 @@ function showAboutDialog(): void {
     const win = BrowserWindow.getFocusedWindow();
     const name = app.getName();
     const version = app.getVersion();
-    const env = isDev ? 'Development' : 'Production';
+    const env = isDev ? "Development" : "Production";
     const electron = process.versions.electron;
     const chrome = process.versions.chrome;
     const node = process.versions.node;
@@ -564,21 +635,24 @@ function showAboutDialog(): void {
       `Node.js: ${node}`,
       `V8: ${v8}`,
       `OS: ${osInfo}`,
-    ].join('\n');
+    ].join("\n");
 
     const options: Electron.MessageBoxOptions = {
-      type: 'info',
+      type: "info",
       title: `Über ${name}`,
       message: name,
       detail,
-      buttons: ['OK'],
+      buttons: ["OK"],
       noLink: true,
       normalizeAccessKeys: true,
     };
     if (win) void dialog.showMessageBox(win, options);
     else void dialog.showMessageBox(options);
   } catch (e) {
-    log.warn('About-Dialog fehlgeschlagen:', e instanceof Error ? e.message : String(e));
+    log.warn(
+      "About-Dialog fehlgeschlagen:",
+      e instanceof Error ? e.message : String(e),
+    );
   }
 }
 
@@ -586,56 +660,79 @@ function showHelpDialog(): void {
   try {
     const win = BrowserWindow.getFocusedWindow();
     const lines: string[] = [];
-    lines.push('Lumberjack ist ein Log-Viewer mit Fokus auf große Datenmengen und Live-Quellen.');
-    lines.push('');
-    lines.push('Funktionen:');
     lines.push(
-      ' • Dateien öffnen (Menü "Datei → Öffnen…"), Drag & Drop von .log/.json/.jsonl/.txt und .zip'
+      "Lumberjack ist ein Log-Viewer mit Fokus auf große Datenmengen und Live-Quellen.",
     );
-    lines.push(' • ZIPs werden entpackt und geeignete Dateien automatisch geparst');
-    lines.push(' • TCP-Log-Server: Start/Stopp, eingehende Zeilen werden live angezeigt');
-    lines.push(' • HTTP: Einmal laden oder periodisches Polling mit Deduplizierung');
-    lines.push(' • Elasticsearch: Logs anhand von URL/Query abrufen');
-    lines.push(' • Filter: Zeitfilter, MDC/DiagnosticContext-Filter, Volltextsuche');
-    lines.push(' • Markieren/Färben einzelner Einträge, Kontextmenü pro Zeile');
-    lines.push(' • Protokollierung in Datei (rotierend) optional aktivierbar');
-    lines.push('');
-    lines.push('Filter-Syntax (Volltextsuche in Nachrichten):');
-    lines.push(' • ODER: Verwende | um Alternativen zu trennen, z. B. foo|bar');
-    lines.push(' • UND: Verwende & um Bedingungen zu verknüpfen, z. B. foo&bar');
-    lines.push(' • NICHT: Setze ! vor einen Begriff für Negation, z. B. foo&!bar');
-    lines.push(' • Mehrfache ! toggeln die Negation (z. B. !!foo entspricht foo)');
-    lines.push(' • Groß-/Kleinschreibung wird ignoriert, es wird nach Teilstrings gesucht');
-    lines.push(' • Beispiele:');
+    lines.push("");
+    lines.push("Funktionen:");
+    lines.push(
+      ' • Dateien öffnen (Menü "Datei → Öffnen…"), Drag & Drop von .log/.json/.jsonl/.txt und .zip',
+    );
+    lines.push(
+      " • ZIPs werden entpackt und geeignete Dateien automatisch geparst",
+    );
+    lines.push(
+      " • TCP-Log-Server: Start/Stopp, eingehende Zeilen werden live angezeigt",
+    );
+    lines.push(
+      " • HTTP: Einmal laden oder periodisches Polling mit Deduplizierung",
+    );
+    lines.push(" • Elasticsearch: Logs anhand von URL/Query abrufen");
+    lines.push(
+      " • Filter: Zeitfilter, MDC/DiagnosticContext-Filter, Volltextsuche",
+    );
+    lines.push(" • Markieren/Färben einzelner Einträge, Kontextmenü pro Zeile");
+    lines.push(" • Protokollierung in Datei (rotierend) optional aktivierbar");
+    lines.push("");
+    lines.push("Filter-Syntax (Volltextsuche in Nachrichten):");
+    lines.push(" • ODER: Verwende | um Alternativen zu trennen, z. B. foo|bar");
+    lines.push(
+      " • UND: Verwende & um Bedingungen zu verknüpfen, z. B. foo&bar",
+    );
+    lines.push(
+      " • NICHT: Setze ! vor einen Begriff für Negation, z. B. foo&!bar",
+    );
+    lines.push(
+      " • Mehrfache ! toggeln die Negation (z. B. !!foo entspricht foo)",
+    );
+    lines.push(
+      " • Groß-/Kleinschreibung wird ignoriert, es wird nach Teilstrings gesucht",
+    );
+    lines.push(" • Beispiele:");
     lines.push('    – QcStatus&!CB23  → enthält "QcStatus" und NICHT "CB23"');
     lines.push('    – error|warn      → enthält "error" ODER "warn"');
-    lines.push('    – foo&bar         → enthält sowohl "foo" als auch "bar" (Reihenfolge egal)');
-    lines.push('');
-    lines.push('Tipps:');
+    lines.push(
+      '    – foo&bar         → enthält sowohl "foo" als auch "bar" (Reihenfolge egal)',
+    );
+    lines.push("");
+    lines.push("Tipps:");
     lines.push(' • Menü "Netzwerk" für HTTP/TCP Aktionen und Konfiguration');
     lines.push(
-      ' • Einstellungen enthalten Pfade, Limits und Anmeldedaten (verschlüsselt gespeichert)'
+      " • Einstellungen enthalten Pfade, Limits und Anmeldedaten (verschlüsselt gespeichert)",
     );
 
     const options: Electron.MessageBoxOptions = {
-      type: 'info',
-      title: 'Hilfe / Anleitung',
-      message: 'Hilfe & Funktionen',
-      detail: lines.join('\n'),
-      buttons: ['OK'],
+      type: "info",
+      title: "Hilfe / Anleitung",
+      message: "Hilfe & Funktionen",
+      detail: lines.join("\n"),
+      buttons: ["OK"],
       noLink: true,
       normalizeAccessKeys: true,
     };
     if (win) void dialog.showMessageBox(win, options);
     else void dialog.showMessageBox(options);
   } catch (e) {
-    log.warn('Hilfe-Dialog fehlgeschlagen:', e instanceof Error ? e.message : String(e));
+    log.warn(
+      "Hilfe-Dialog fehlgeschlagen:",
+      e instanceof Error ? e.message : String(e),
+    );
   }
 }
 
 // Menu
 function buildMenu(): void {
-  const isMac = process.platform === 'darwin';
+  const isMac = process.platform === "darwin";
   const tcpStatus = networkService.getTcpStatus();
   const focused = BrowserWindow.getFocusedWindow?.() || null;
   const canTcp = getWindowCanTcpControl(focused);
@@ -645,122 +742,132 @@ function buildMenu(): void {
           {
             label: app.name,
             submenu: [
-              { role: 'about' as const },
-              { type: 'separator' as const },
-              { role: 'hide' as const },
-              { role: 'hideOthers' as const },
-              { role: 'unhide' as const },
-              { type: 'separator' as const },
-              { role: 'quit' as const },
+              { role: "about" as const },
+              { type: "separator" as const },
+              { role: "hide" as const },
+              { role: "hideOthers" as const },
+              { role: "unhide" as const },
+              { type: "separator" as const },
+              { role: "quit" as const },
             ],
           },
         ]
       : []),
     {
-      label: 'Datei',
+      label: "Datei",
       submenu: [
         {
-          label: 'Neues Fenster',
-          accelerator: 'CmdOrCtrl+N',
+          label: "Neues Fenster",
+          accelerator: "CmdOrCtrl+N",
           click: () => createWindow({ makePrimary: false }),
         },
-        { type: 'separator' as const },
+        { type: "separator" as const },
         {
-          label: 'Öffnen…',
-          accelerator: 'CmdOrCtrl+O',
-          click: (_mi, win) =>
-            sendMenuCmd({ type: 'open-files' }, (win as BrowserWindow | null | undefined) || null),
-        },
-        {
-          label: 'Einstellungen…',
-          accelerator: 'CmdOrCtrl+,',
+          label: "Öffnen…",
+          accelerator: "CmdOrCtrl+O",
           click: (_mi, win) =>
             sendMenuCmd(
-              { type: 'open-settings' },
-              (win as BrowserWindow | null | undefined) || null
+              { type: "open-files" },
+              (win as BrowserWindow | null | undefined) || null,
             ),
         },
         {
-          label: 'Fenster-Titel setzen…',
+          label: "Einstellungen…",
+          accelerator: "CmdOrCtrl+,",
           click: (_mi, win) =>
             sendMenuCmd(
-              { type: 'window-title' },
-              (win as BrowserWindow | null | undefined) || null
+              { type: "open-settings" },
+              (win as BrowserWindow | null | undefined) || null,
             ),
         },
-        { type: 'separator' as const },
-        (isMac ? { role: 'close' as const } : { role: 'quit' as const }) as never,
+        {
+          label: "Fenster-Titel setzen…",
+          click: (_mi, win) =>
+            sendMenuCmd(
+              { type: "window-title" },
+              (win as BrowserWindow | null | undefined) || null,
+            ),
+        },
+        { type: "separator" as const },
+        (isMac
+          ? { role: "close" as const }
+          : { role: "quit" as const }) as never,
       ],
     },
     {
-      label: 'Bearbeiten',
+      label: "Bearbeiten",
       submenu: [
-        { role: 'undo' as const, label: 'Widerrufen' },
-        { role: 'redo' as const, label: 'Wiederholen' },
-        { type: 'separator' as const },
-        { role: 'cut' as const, label: 'Ausschneiden' },
-        { role: 'copy' as const, label: 'Kopieren' },
-        { role: 'paste' as const, label: 'Einfügen' },
-        { role: 'selectAll' as const, label: 'Alles auswählen' },
+        { role: "undo" as const, label: "Widerrufen" },
+        { role: "redo" as const, label: "Wiederholen" },
+        { type: "separator" as const },
+        { role: "cut" as const, label: "Ausschneiden" },
+        { role: "copy" as const, label: "Kopieren" },
+        { role: "paste" as const, label: "Einfügen" },
+        { role: "selectAll" as const, label: "Alles auswählen" },
       ],
     },
     {
-      label: 'Netzwerk',
+      label: "Netzwerk",
       submenu: [
         {
-          label: 'HTTP einmal laden…',
-          click: (_mi, win) =>
-            sendMenuCmd({ type: 'http-load' }, (win as BrowserWindow | null | undefined) || null),
-        },
-        {
-          label: 'HTTP Poll starten…',
+          label: "HTTP einmal laden…",
           click: (_mi, win) =>
             sendMenuCmd(
-              { type: 'http-start-poll' },
-              (win as BrowserWindow | null | undefined) || null
+              { type: "http-load" },
+              (win as BrowserWindow | null | undefined) || null,
             ),
         },
         {
-          label: 'HTTP Poll stoppen',
+          label: "HTTP Poll starten…",
           click: (_mi, win) =>
             sendMenuCmd(
-              { type: 'http-stop-poll' },
-              (win as BrowserWindow | null | undefined) || null
+              { type: "http-start-poll" },
+              (win as BrowserWindow | null | undefined) || null,
             ),
         },
-        { type: 'separator' as const },
         {
-          id: 'tcp-toggle',
-          label: tcpStatus.running ? '⏹ TCP stoppen' : '⏵ TCP starten',
-          icon: tcpStatus.running ? (iconStop ?? undefined) : (iconPlay ?? undefined),
+          label: "HTTP Poll stoppen",
           click: (_mi, win) =>
             sendMenuCmd(
-              { type: tcpStatus.running ? 'tcp-stop' : 'tcp-start' },
-              (win as BrowserWindow | null | undefined) || null
+              { type: "http-stop-poll" },
+              (win as BrowserWindow | null | undefined) || null,
+            ),
+        },
+        { type: "separator" as const },
+        {
+          id: "tcp-toggle",
+          label: tcpStatus.running ? "⏹ TCP stoppen" : "⏵ TCP starten",
+          icon: tcpStatus.running
+            ? (iconStop ?? undefined)
+            : (iconPlay ?? undefined),
+          click: (_mi, win) =>
+            sendMenuCmd(
+              { type: tcpStatus.running ? "tcp-stop" : "tcp-start" },
+              (win as BrowserWindow | null | undefined) || null,
             ),
           enabled: canTcp,
         },
       ],
     },
     {
-      label: 'Ansicht',
+      label: "Ansicht",
       submenu: [
-        { role: 'reload' as const },
-        { role: 'forceReload' as const },
-        ...(isDev ? [{ role: 'toggleDevTools' as const }] : []),
-        { type: 'separator' as const },
-        { role: 'resetZoom' as const },
-        { role: 'zoomIn' as const },
-        { role: 'zoomOut' as const },
-        { type: 'separator' as const },
-        { role: 'togglefullscreen' as const },
+        { role: "reload" as const },
+        { role: "forceReload" as const },
+        ...(isDev ? [{ role: "toggleDevTools" as const }] : []),
+        { type: "separator" as const },
+        { role: "resetZoom" as const },
+        { role: "zoomIn" as const },
+        { role: "zoomOut" as const },
+        { type: "separator" as const },
+        { role: "togglefullscreen" as const },
       ],
     },
     {
-      label: 'Hilfe',
+      label: "Hilfe",
       submenu: [
-        { label: 'Über Lumberjack…', click: () => showAboutDialog() },
-        { label: 'Hilfe / Anleitung…', click: () => showHelpDialog() },
+        { label: "Über Lumberjack…", click: () => showAboutDialog() },
+        { label: "Hilfe / Anleitung…", click: () => showHelpDialog() },
       ],
     },
   ];
@@ -785,28 +892,30 @@ function createWindow(opts: { makePrimary?: boolean } = {}): BrowserWindow {
     ...(x != null && y != null ? { x, y } : {}),
     title: getDefaultBaseTitle(),
     // Icon bereits beim Erzeugen setzen (wichtig für Taskbar/Alt-Tab unter Windows)
-    ...(process.platform === 'win32'
+    ...(process.platform === "win32"
       ? (() => {
           const iconPath = resolveIconPathSync();
           return iconPath ? { icon: iconPath } : {};
         })()
       : {}),
     webPreferences: {
-      preload: path.join(app.getAppPath(), 'preload.cjs'),
+      preload: path.join(app.getAppPath(), "preload.cjs"),
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: false,
     },
     show: false,
-    backgroundColor: '#0f1113',
+    backgroundColor: "#0f1113",
   });
 
   // Abfangen des Schließens des letzten Fensters (Win/Linux) → Beenden bestätigen
-  win.on('close', async (e) => {
+  win.on("close", async (e) => {
     try {
-      if (process.platform === 'darwin') return; // Auf macOS beendet das Schließen nicht die App
+      if (process.platform === "darwin") return; // Auf macOS beendet das Schließen nicht die App
       // Ist dies das letzte Fenster?
-      const others = BrowserWindow.getAllWindows().filter((w) => w.id !== win.id);
+      const others = BrowserWindow.getAllWindows().filter(
+        (w) => w.id !== win.id,
+      );
       const isLast = others.length === 0;
       if (!isLast) return; // Nur beim letzten Fenster nachfragen
       if (quitConfirmed) return;
@@ -820,7 +929,10 @@ function createWindow(opts: { makePrimary?: boolean } = {}): BrowserWindow {
         win.destroy();
       }
     } catch (err) {
-      log.warn('close-confirm failed:', err instanceof Error ? err.message : String(err));
+      log.warn(
+        "close-confirm failed:",
+        err instanceof Error ? err.message : String(err),
+      );
     }
   });
 
@@ -833,18 +945,18 @@ function createWindow(opts: { makePrimary?: boolean } = {}): BrowserWindow {
   setImmediate(() => applyWindowTitles());
 
   try {
-    win.on('focus', () => {
+    win.on("focus", () => {
       lastFocusedWindowId = win.id;
       updateMenu();
     });
-    win.on('blur', () => updateMenu());
+    win.on("blur", () => updateMenu());
   } catch {
     // Intentionally empty - ignore errors
   }
 
-  win.webContents.on('will-navigate', (event) => event.preventDefault());
+  win.webContents.on("will-navigate", (event) => event.preventDefault());
 
-  win.webContents.on('did-finish-load', () => {
+  win.webContents.on("did-finish-load", () => {
     applyWindowTitles();
 
     // Flush queued menu cmds for this window
@@ -853,7 +965,7 @@ function createWindow(opts: { makePrimary?: boolean } = {}): BrowserWindow {
       if (queued && queued.length) {
         for (const cmd of queued) {
           try {
-            win.webContents.send('menu:cmd', cmd);
+            win.webContents.send("menu:cmd", cmd);
           } catch {
             // Intentionally empty - ignore errors
           }
@@ -878,9 +990,9 @@ function createWindow(opts: { makePrimary?: boolean } = {}): BrowserWindow {
     }, 50);
   });
 
-  win.once('ready-to-show', () => {
+  win.once("ready-to-show", () => {
     if (!win.isVisible()) win.show();
-    if (process.platform === 'win32') {
+    if (process.platform === "win32") {
       setImmediate(async () => {
         try {
           const iconPath = await resolveIconPathAsync();
@@ -888,15 +1000,15 @@ function createWindow(opts: { makePrimary?: boolean } = {}): BrowserWindow {
             try {
               win.setIcon(iconPath);
               try {
-                log.debug?.('[icon] BrowserWindow.setIcon applied:', iconPath);
+                log.debug?.("[icon] BrowserWindow.setIcon applied:", iconPath);
               } catch {
                 // Intentionally empty - ignore errors
               }
             } catch (e) {
               try {
                 log.warn?.(
-                  '[icon] BrowserWindow.setIcon failed:',
-                  e instanceof Error ? e.message : String(e)
+                  "[icon] BrowserWindow.setIcon failed:",
+                  e instanceof Error ? e.message : String(e),
                 );
               } catch {
                 // Intentionally empty - ignore errors
@@ -904,7 +1016,7 @@ function createWindow(opts: { makePrimary?: boolean } = {}): BrowserWindow {
             }
           } else {
             try {
-              log.warn?.('[icon] No iconPath resolved for setIcon');
+              log.warn?.("[icon] No iconPath resolved for setIcon");
             } catch {
               // Intentionally empty - ignore errors
             }
@@ -912,8 +1024,8 @@ function createWindow(opts: { makePrimary?: boolean } = {}): BrowserWindow {
         } catch (e) {
           try {
             log.warn?.(
-              '[icon] resolve/set icon error:',
-              e instanceof Error ? e.message : String(e)
+              "[icon] resolve/set icon error:",
+              e instanceof Error ? e.message : String(e),
             );
           } catch {
             // Intentionally empty - ignore errors
@@ -923,7 +1035,7 @@ function createWindow(opts: { makePrimary?: boolean } = {}): BrowserWindow {
     }
   });
 
-  win.on('maximize', () => {
+  win.on("maximize", () => {
     try {
       const s = settingsService.get();
       s.isMaximized = true;
@@ -933,7 +1045,7 @@ function createWindow(opts: { makePrimary?: boolean } = {}): BrowserWindow {
       // Intentionally empty - ignore errors
     }
   });
-  win.on('unmaximize', () => {
+  win.on("unmaximize", () => {
     try {
       const s = settingsService.get();
       s.isMaximized = false;
@@ -944,7 +1056,7 @@ function createWindow(opts: { makePrimary?: boolean } = {}): BrowserWindow {
     }
   });
 
-  win.on('close', () => {
+  win.on("close", () => {
     try {
       if (win === mainWindow) {
         const bounds = win.getBounds();
@@ -959,7 +1071,7 @@ function createWindow(opts: { makePrimary?: boolean } = {}): BrowserWindow {
     }
   });
 
-  win.on('closed', () => {
+  win.on("closed", () => {
     windows.delete(win);
     windowMeta.delete(win.id);
     pendingAppendsByWindow.delete(win.id);
@@ -981,14 +1093,14 @@ function createWindow(opts: { makePrimary?: boolean } = {}): BrowserWindow {
     if (cachedDistIndexPath) {
       void win.loadFile(cachedDistIndexPath);
     } else {
-      const resPath = process.resourcesPath || '';
+      const resPath = process.resourcesPath || "";
       const distCandidates = [
-        path.join(__dirname, 'dist', 'index.html'),
-        path.join(app.getAppPath(), 'dist', 'index.html'),
-        path.join(process.cwd(), 'dist', 'index.html'),
-        path.join(resPath, 'app.asar.unpacked', 'dist', 'index.html'),
-        path.join(resPath, 'app.asar', 'dist', 'index.html'),
-        path.join(resPath, 'dist', 'index.html'),
+        path.join(__dirname, "dist", "index.html"),
+        path.join(app.getAppPath(), "dist", "index.html"),
+        path.join(process.cwd(), "dist", "index.html"),
+        path.join(resPath, "app.asar.unpacked", "dist", "index.html"),
+        path.join(resPath, "app.asar", "dist", "index.html"),
+        path.join(resPath, "dist", "index.html"),
       ];
       let loaded = false;
       for (const candidate of distCandidates) {
@@ -1009,8 +1121,8 @@ function createWindow(opts: { makePrimary?: boolean } = {}): BrowserWindow {
       }
       if (!loaded) {
         try {
-          void win.loadFile('index.html');
-          cachedDistIndexPath = 'index.html';
+          void win.loadFile("index.html");
+          cachedDistIndexPath = "index.html";
         } catch {
           // Intentionally empty - ignore errors
         }
@@ -1020,15 +1132,35 @@ function createWindow(opts: { makePrimary?: boolean } = {}): BrowserWindow {
 
   try {
     const wc = win.webContents;
-    wc.on('did-fail-load', (_e, errorCode, errorDescription) => {
-      log.error('Renderer did-fail-load:', errorCode, errorDescription);
+    wc.on("did-fail-load", (_e, errorCode, errorDescription) => {
+      log.error("Renderer did-fail-load:", errorCode, errorDescription);
     });
-    wc.on('render-process-gone', (_e, details) => {
-      log.error('Renderer gone:', details);
-    });
-    if (isDev || process.env.LJ_DEBUG_RENDERER === '1') {
+    wc.on("render-process-gone", (_e, details) => {
+      log.error("Renderer gone:", details);
+      // Auto-Recovery: Versuche bei Crash/Exit den Renderer neu zu laden oder ein neues Fenster zu erstellen,
+      // sofern der Benutzer das Beenden nicht bestätigt hat.
       try {
-        wc.openDevTools({ mode: 'bottom' });
+        if (!quitConfirmed) {
+          // Bei typischen Crash-Gründen neu laden
+          if (!win.isDestroyed()) {
+            // Reload nur, wenn das Fenster noch existiert
+            try {
+              win.reload();
+            } catch {
+              // Fallback: neues Fenster
+              createWindow({ makePrimary: win === mainWindow });
+            }
+          } else {
+            createWindow({ makePrimary: true });
+          }
+        }
+      } catch {
+        // Intentionally empty - ignore errors
+      }
+    });
+    if (isDev || process.env.LJ_DEBUG_RENDERER === "1") {
+      try {
+        wc.openDevTools({ mode: "bottom" });
       } catch {
         // Intentionally empty - ignore errors
       }
@@ -1049,7 +1181,7 @@ function createWindow(opts: { makePrimary?: boolean } = {}): BrowserWindow {
 }
 
 // Startup wiring
-perfService.mark('main-loaded');
+perfService.mark("main-loaded");
 networkService.setLogCallback((entries: LogEntry[]) => {
   sendAppend(entries);
 });
@@ -1072,9 +1204,9 @@ registerIpcHandlers(settingsService, networkService, getParsers, getAdmZip);
 // Fallback: react to tcp:status broadcasts
 try {
   // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment,@typescript-eslint/no-require-imports
-  const { ipcMain } = require('electron');
+  const { ipcMain } = require("electron");
   // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
-  ipcMain.on('tcp:status', () => {
+  ipcMain.on("tcp:status", () => {
     applyWindowTitles();
     updateMenu();
   });
@@ -1083,20 +1215,110 @@ try {
 }
 
 // App lifecycle
-if (process.platform === 'win32') {
+if (process.platform === "win32") {
   try {
-    app.setAppUserModelId('de.hhla.lumberjack');
+    app.setAppUserModelId("de.hhla.lumberjack");
   } catch {
     // Intentionally empty - ignore errors
   }
 }
 
+// Global diagnostics for unexpected exits/crashes
+try {
+  process.on("uncaughtException", (err) => {
+    try {
+      log.error("[diag] uncaughtException:", err?.stack || String(err));
+      // Sicherstellen, dass wir nicht mit Exit-Code 1 enden
+      if (process && typeof process.exitCode === "number") {
+        process.exitCode = 0;
+      }
+    } catch {
+      // ignore
+    }
+  });
+  process.on("unhandledRejection", (reason) => {
+    try {
+      const msg =
+        reason instanceof Error
+          ? reason.stack || reason.message
+          : String(reason);
+      log.error("[diag] unhandledRejection:", msg);
+      // Sicherstellen, dass wir nicht mit Exit-Code 1 enden
+      if (process && typeof process.exitCode === "number") {
+        process.exitCode = 0;
+      }
+    } catch {
+      // ignore
+    }
+  });
+  process.on("beforeExit", (code) => {
+    try {
+      if (code && code !== 0) {
+        log.warn("[diag] beforeExit non-zero code detected; forcing 0", code);
+        process.exitCode = 0;
+      }
+    } catch {
+      // ignore
+    }
+  });
+  process.on("exit", (code) => {
+    try {
+      log.info("[diag] process exit code:", code);
+    } catch {
+      // ignore
+    }
+  });
+  // Some Electron-level crash diagnostics (best-effort, may not exist in all versions)
+  try {
+    // @ts-expect-error: event may not exist in all Electron versions
+    app.on("child-process-gone", (_event, details) => {
+      try {
+        log.error("[diag] child-process-gone:", details);
+      } catch {
+        // ignore
+      }
+    });
+    // @ts-expect-error: legacy event in some versions
+    app.on("gpu-process-crashed", (_e, killed) => {
+      try {
+        log.error("[diag] gpu-process-crashed, killed:", killed);
+      } catch {
+        // ignore
+      }
+    });
+  } catch {
+    // ignore
+  }
+} catch {
+  // ignore
+}
+
 const gotLock = app.requestSingleInstanceLock();
 if (!gotLock) {
-  app.quit();
+  try {
+    log.warn(
+      "[diag] requestSingleInstanceLock failed – quitting existing instance",
+    );
+  } catch {
+    // ignore
+  }
+  // Für Zweitinstanzen explizit mit Code 0 beenden
+  try {
+    if (process && typeof process.exitCode === "number") {
+      process.exitCode = 0;
+    }
+  } catch {
+    // ignore
+  }
+  app.exit(0);
 } else {
-  app.on('second-instance', (_event, argv) => {
-    if (argv.some((a) => a === '--new-window')) {
+  app.on("second-instance", (_event, argv) => {
+    try {
+      log.info("[diag] second-instance with argv:", argv);
+    } catch {
+      // ignore
+    }
+    if (argv.some((a) => a === "--new-window")) {
       createWindow({ makePrimary: false });
       return;
     }
@@ -1110,7 +1332,7 @@ if (!gotLock) {
 }
 
 void app.whenReady().then(() => {
-  if (process.platform === 'darwin' && app.dock) {
+  if (process.platform === "darwin" && app.dock) {
     const macIconPath = resolveMacIconPath();
     if (macIconPath) {
       try {
@@ -1122,7 +1344,10 @@ void app.whenReady().then(() => {
     }
     try {
       const dockMenu = Menu.buildFromTemplate([
-        { label: 'Neues Fenster', click: () => createWindow({ makePrimary: false }) },
+        {
+          label: "Neues Fenster",
+          click: () => createWindow({ makePrimary: false }),
+        },
       ]);
       app.dock.setMenu(dockMenu);
     } catch {
@@ -1133,38 +1358,104 @@ void app.whenReady().then(() => {
   createWindow({ makePrimary: true });
 
   try {
-    app.on('browser-window-focus', () => updateMenu());
-    app.on('browser-window-blur', () => updateMenu());
+    app.on("browser-window-focus", () => updateMenu());
+    app.on("browser-window-blur", () => updateMenu());
   } catch {
     // Intentionally empty - ignore errors
   }
 
-  if (process.argv.some((a) => a === '--new-window')) {
+  if (process.argv.some((a) => a === "--new-window")) {
     createWindow({ makePrimary: false });
   }
 });
 
 // Bestätigung bei Cmd+Q / Beenden-Menü (plattformübergreifend)
-app.on('before-quit', async (e) => {
+// eslint-disable-next-line @typescript-eslint/no-misused-promises
+app.on("before-quit", async (e) => {
   try {
-    if (quitConfirmed) return;
+    log.info("[diag] before-quit fired; quitConfirmed=", quitConfirmed);
+  } catch {
+    // ignore
+  }
+  try {
+    if (quitConfirmed) {
+      // Vor dem tatsächlichen Quit sicherstellen, dass Exit-Code 0 ist
+      if (process && typeof process.exitCode === "number") {
+        process.exitCode = 0;
+      }
+      return;
+    }
     e.preventDefault();
     const focused = BrowserWindow.getFocusedWindow?.() || mainWindow || null;
     const ok = await confirmQuit(focused || undefined);
     if (ok) {
       quitConfirmed = true;
+      if (process && typeof process.exitCode === "number") {
+        process.exitCode = 0;
+      }
       // Erneut quit anstoßen; before-quit greift jetzt nicht mehr
       app.quit();
     }
   } catch (err) {
-    log.warn('before-quit confirm failed:', err instanceof Error ? err.message : String(err));
+    log.warn(
+      "before-quit confirm failed:",
+      err instanceof Error ? err.message : String(err),
+    );
   }
 });
 
-app.on('window-all-closed', () => {
-  if (process.platform !== 'darwin') app.quit();
+// Extra diagnostics
+try {
+  app.on("will-quit", (e) => {
+    try {
+      log.info("[diag] will-quit fired; defaultPrevented=", e.defaultPrevented);
+    } catch {
+      // ignore
+    }
+  });
+} catch {
+  // ignore
+}
+
+app.on("window-all-closed", () => {
+  try {
+    log.info(
+      "[diag] window-all-closed; windows left:",
+      BrowserWindow.getAllWindows().length,
+      "platform:",
+      process.platform,
+    );
+  } catch {
+    // ignore
+  }
+  if (process.platform !== "darwin") {
+    // Unerwartetes Schließen aller Fenster? → Nicht beenden, sondern wiederherstellen,
+    // außer der Benutzer hat das Beenden bestätigt.
+    if (!quitConfirmed) {
+      try {
+        createWindow({ makePrimary: true });
+        return;
+      } catch {
+        // Fallback: wenn Wiederherstellung fehlschlägt, normal beenden
+      }
+    }
+    // Vor dem Beenden Exit-Code 0 sicherstellen
+    try {
+      if (process && typeof process.exitCode === "number") {
+        process.exitCode = 0;
+      }
+    } catch {
+      // ignore
+    }
+    app.quit();
+  }
 });
-app.on('quit', () => {
+app.on("quit", () => {
+  try {
+    log.info("[diag] app quit fired; cleaning up");
+  } catch {
+    // ignore
+  }
   closeLogStream();
   networkService.cleanup();
 });

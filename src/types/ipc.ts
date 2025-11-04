@@ -47,9 +47,9 @@ export interface Settings {
   elasticSize?: number;
 
   // Appearance
-  themeMode?: 'system' | 'light' | 'dark';
+  themeMode?: "system" | "light" | "dark";
   // NEW: UI language (moved LanguageSelector into Settings > Appearance)
-  locale?: 'de' | 'en';
+  locale?: "de" | "en";
 
   // Histories
   histLogger?: string[];
@@ -60,7 +60,7 @@ export interface Settings {
   // NEW: Index history (analog application_name)
   histIndex?: string[];
   // NEW: persist last chosen Environment-Case across sessions
-  lastEnvironmentCase?: 'original' | 'lower' | 'upper' | 'case-sensitive';
+  lastEnvironmentCase?: "original" | "lower" | "upper" | "case-sensitive";
 
   // HTTP
   httpUrl?: string;
@@ -144,8 +144,8 @@ export interface TcpStatus {
  * Elasticsearch auth options
  */
 export type ElasticAuth =
-  | { type: 'basic'; username: string; password: string }
-  | { type: 'apiKey' | 'bearer'; token: string };
+  | { type: "basic"; username: string; password: string }
+  | { type: "apiKey" | "bearer"; token: string };
 
 /**
  * Elasticsearch search options
@@ -155,7 +155,7 @@ export interface ElasticSearchOptions {
   url?: string; // base URL, e.g., https://es:9200
   index?: string; // e.g., logs-*
   size?: number; // default 1000
-  sort?: 'asc' | 'desc'; // default desc
+  sort?: "asc" | "desc"; // default desc
 
   // time window
   from?: string | Date; // ISO string or Date
@@ -169,7 +169,7 @@ export interface ElasticSearchOptions {
   application_name?: string;
   environment?: string;
   // NEW: case handling for environment
-  environmentCase?: 'original' | 'lower' | 'upper' | 'case-sensitive';
+  environmentCase?: "original" | "lower" | "upper" | "case-sensitive";
 
   // auth and TLS
   auth?: ElasticAuth;
@@ -202,15 +202,15 @@ export interface HttpPollResult {
  * Menu command types
  */
 export type MenuCommand =
-  | { type: 'open-files' }
-  | { type: 'open-settings'; tab?: string }
-  | { type: 'http-load' }
-  | { type: 'http-start-poll' }
-  | { type: 'http-stop-poll' }
-  | { type: 'tcp-configure' }
-  | { type: 'tcp-start' }
-  | { type: 'tcp-stop' }
-  | { type: 'window-title' };
+  | { type: "open-files" }
+  | { type: "open-settings"; tab?: string }
+  | { type: "http-load" }
+  | { type: "http-start-poll" }
+  | { type: "http-stop-poll" }
+  | { type: "tcp-configure" }
+  | { type: "tcp-start" }
+  | { type: "tcp-stop" }
+  | { type: "window-title" };
 
 /**
  * Dropped file structure from renderer
@@ -251,7 +251,10 @@ export interface ElectronAPI {
 
   // HTTP operations
   httpLoadOnce: (url: string) => Promise<ParseResult>;
-  httpStartPoll: (options: { url: string; intervalMs: number }) => Promise<HttpPollResult>;
+  httpStartPoll: (options: {
+    url: string;
+    intervalMs: number;
+  }) => Promise<HttpPollResult>;
   httpStopPoll: (id: number) => Promise<Result<void>>;
 
   // Elasticsearch

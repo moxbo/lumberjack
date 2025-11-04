@@ -34,8 +34,8 @@ export interface LogDataStore {
 
   // Sort state
   sortedIndices: number[] | null;
-  sortKey: 'timestamp' | 'level' | null;
-  sortDirection: 'asc' | 'desc';
+  sortKey: "timestamp" | "level" | null;
+  sortDirection: "asc" | "desc";
 
   // Size tracking
   size: number;
@@ -54,7 +54,7 @@ export function createLogDataStore(): LogDataStore {
     traceIdIndex: new Map(),
     sortedIndices: null,
     sortKey: null,
-    sortDirection: 'desc',
+    sortDirection: "desc",
     size: 0,
   };
 }
@@ -104,12 +104,19 @@ export function addLogEntries(store: LogDataStore, entries: LogEntry[]): void {
   }
 }
 
-export function getLogEntry(store: LogDataStore, index: number): LogEntry | null {
+export function getLogEntry(
+  store: LogDataStore,
+  index: number,
+): LogEntry | null {
   if (index < 0 || index >= store.size) return null;
   return store.entries[index];
 }
 
-export function getLogEntrySlice(store: LogDataStore, start: number, end: number): LogEntry[] {
+export function getLogEntrySlice(
+  store: LogDataStore,
+  start: number,
+  end: number,
+): LogEntry[] {
   if (start < 0 || start >= store.size) return [];
   const actualEnd = Math.min(end, store.size);
   return store.entries.slice(start, actualEnd);
@@ -117,7 +124,8 @@ export function getLogEntrySlice(store: LogDataStore, start: number, end: number
 
 // Fast filtering by level
 export function filterByLevel(store: LogDataStore, levels: string[]): number[] {
-  if (levels.length === 0) return Array.from({ length: store.size }, (_, i) => i);
+  if (levels.length === 0)
+    return Array.from({ length: store.size }, (_, i) => i);
 
   const result = new Set<number>();
   for (const level of levels) {
@@ -132,8 +140,12 @@ export function filterByLevel(store: LogDataStore, levels: string[]): number[] {
 }
 
 // Fast filtering by logger
-export function filterByLogger(store: LogDataStore, loggers: string[]): number[] {
-  if (loggers.length === 0) return Array.from({ length: store.size }, (_, i) => i);
+export function filterByLogger(
+  store: LogDataStore,
+  loggers: string[],
+): number[] {
+  if (loggers.length === 0)
+    return Array.from({ length: store.size }, (_, i) => i);
 
   const result = new Set<number>();
   for (const logger of loggers) {
@@ -147,7 +159,10 @@ export function filterByLogger(store: LogDataStore, loggers: string[]): number[]
 }
 
 // Fast filtering by traceId
-export function filterByTraceId(store: LogDataStore, traceId: string): number[] {
+export function filterByTraceId(
+  store: LogDataStore,
+  traceId: string,
+): number[] {
   const indices = store.traceIdIndex.get(traceId);
   if (!indices) return [];
   return Array.from(indices).sort((a, b) => a - b);
@@ -161,7 +176,10 @@ export interface FilterOptions {
   messageContains?: string;
 }
 
-export function filterLogEntries(store: LogDataStore, options: FilterOptions): number[] {
+export function filterLogEntries(
+  store: LogDataStore,
+  options: FilterOptions,
+): number[] {
   let indices = Array.from({ length: store.size }, (_, i) => i);
 
   // Apply level filter
@@ -185,7 +203,9 @@ export function filterLogEntries(store: LogDataStore, options: FilterOptions): n
   // Apply message filter (less efficient, but necessary)
   if (options.messageContains) {
     const searchLower = options.messageContains.toLowerCase();
-    indices = indices.filter((i) => store.messages[i]?.toLowerCase().includes(searchLower));
+    indices = indices.filter((i) =>
+      store.messages[i]?.toLowerCase().includes(searchLower),
+    );
   }
 
   return indices;
@@ -194,17 +214,21 @@ export function filterLogEntries(store: LogDataStore, options: FilterOptions): n
 // Efficient sorting with caching
 export function sortLogEntries(
   store: LogDataStore,
-  key: 'timestamp' | 'level',
-  direction: 'asc' | 'desc' = 'desc'
+  key: "timestamp" | "level",
+  direction: "asc" | "desc" = "desc",
 ): number[] {
   // Return cached sort if parameters match
-  if (store.sortedIndices && store.sortKey === key && store.sortDirection === direction) {
+  if (
+    store.sortedIndices &&
+    store.sortKey === key &&
+    store.sortDirection === direction
+  ) {
     return store.sortedIndices;
   }
 
   const indices = Array.from({ length: store.size }, (_, i) => i);
 
-  if (key === 'timestamp') {
+  if (key === "timestamp") {
     indices.sort((a, b) => {
       const tsA = store.timestamps[a];
       const tsB = store.timestamps[b];
@@ -212,9 +236,9 @@ export function sortLogEntries(
       if (!tsA) return 1;
       if (!tsB) return -1;
       const cmp = tsA.localeCompare(tsB);
-      return direction === 'asc' ? cmp : -cmp;
+      return direction === "asc" ? cmp : -cmp;
     });
-  } else if (key === 'level') {
+  } else if (key === "level") {
     const levelOrder: Record<string, number> = {
       FATAL: 0,
       ERROR: 1,
@@ -226,14 +250,14 @@ export function sortLogEntries(
     // Pre-compute level order for each index to avoid repeated toUpperCase calls
     const levelOrders = new Map<number, number>();
     for (let i = 0; i < store.size; i++) {
-      const level = (store.levels[i] || '').toUpperCase();
+      const level = (store.levels[i] || "").toUpperCase();
       levelOrders.set(i, levelOrder[level] ?? 999);
     }
     indices.sort((a, b) => {
       const orderA = levelOrders.get(a) ?? 999;
       const orderB = levelOrders.get(b) ?? 999;
       const cmp = orderA - orderB;
-      return direction === 'asc' ? cmp : -cmp;
+      return direction === "asc" ? cmp : -cmp;
     });
   }
 

@@ -1,13 +1,13 @@
 // Lightweight log parser utilities for main process and tests
 // Supports: .log (text or JSONL), .json (array or JSONL), .zip (containing .log/.json)
 
-import fs from 'fs';
-import path from 'path';
-import { createRequire } from 'module';
-import https from 'https';
-import http from 'http';
-import log from 'electron-log/main';
-import zlib from 'zlib';
+import fs from "fs";
+import path from "path";
+import { createRequire } from "module";
+import https from "https";
+import http from "http";
+import log from "electron-log/main";
+import zlib from "zlib";
 
 // Keep-Alive Agents für HTTP/HTTPS (inkl. unsicherem TLS)
 const HTTP_KEEPALIVE_AGENT = new http.Agent({ keepAlive: true, maxSockets: 8 });
@@ -50,19 +50,23 @@ function getAdmZip(): AdmZipConstructor {
   if (!AdmZip) {
     try {
       // eslint-disable-next-line @typescript-eslint/no-require-imports
-      AdmZip = require('adm-zip') as AdmZipConstructor;
-    } catch (e) {
-      const req = createRequire(path.join(process.cwd(), 'package.json'));
-      AdmZip = req('adm-zip') as AdmZipConstructor;
+      AdmZip = require("adm-zip") as AdmZipConstructor;
+    } catch {
+      const req = createRequire(path.join(process.cwd(), "package.json"));
+      AdmZip = req("adm-zip") as AdmZipConstructor;
     }
   }
   return AdmZip;
 }
 
 // Safe string helpers
-function safeString(v: unknown, fallback = ''): string {
+function safeString(v: unknown, fallback = ""): string {
   if (v == null) return fallback;
-  if (typeof v === 'string' || typeof v === 'number' || typeof v === 'boolean') {
+  if (
+    typeof v === "string" ||
+    typeof v === "number" ||
+    typeof v === "boolean"
+  ) {
     return String(v);
   }
   return fallback;
@@ -70,9 +74,9 @@ function safeString(v: unknown, fallback = ''): string {
 
 function toOptionalString(v: unknown): string | null {
   if (v == null) return null;
-  if (typeof v === 'string') return v;
+  if (typeof v === "string") return v;
   try {
-    if (typeof v === 'number' || typeof v === 'boolean') {
+    if (typeof v === "number" || typeof v === "boolean") {
       return String(v);
     }
     return null;
@@ -86,14 +90,16 @@ function toStringOr(v: unknown, def: string): string {
 }
 
 // Normalize one entry into a standard object
-function toEntry(obj: AnyMap = {}, fallbackMessage = '', source = ''): Entry {
+function toEntry(obj: AnyMap = {}, fallbackMessage = "", source = ""): Entry {
   // Normalisiere Stacktrace aus gängigen Feldern
   function normalizeStack(o: unknown): string | null {
-    if (!o || typeof o !== 'object') return null;
+    if (!o || typeof o !== "object") return null;
     const cand: unknown[] = [];
     try {
       const direct =
-        (o as AnyMap).stack_trace || (o as AnyMap).stackTrace || (o as AnyMap).stacktrace;
+        (o as AnyMap).stack_trace ||
+        (o as AnyMap).stackTrace ||
+        (o as AnyMap).stacktrace;
       if (direct != null) cand.push(direct);
     } catch {
       // Intentionally empty - ignore errors
@@ -103,32 +109,37 @@ function toEntry(obj: AnyMap = {}, fallbackMessage = '', source = ''): Entry {
       if (err) {
         if ((err as AnyMap).stack != null) cand.push((err as AnyMap).stack);
         if ((err as AnyMap).trace != null) cand.push((err as AnyMap).trace);
-        if (typeof err === 'string') cand.push(err);
+        if (typeof err === "string") cand.push(err);
       }
     } catch {
       // Intentionally empty - ignore errors
     }
     try {
-      const ex = (o as AnyMap).exception || (o as AnyMap).cause || (o as AnyMap).throwable;
+      const ex =
+        (o as AnyMap).exception ||
+        (o as AnyMap).cause ||
+        (o as AnyMap).throwable;
       if (ex) {
         if ((ex as AnyMap).stack != null) cand.push((ex as AnyMap).stack);
-        if ((ex as AnyMap).stackTrace != null) cand.push((ex as AnyMap).stackTrace);
-        if (typeof ex === 'string') cand.push(ex);
+        if ((ex as AnyMap).stackTrace != null)
+          cand.push((ex as AnyMap).stackTrace);
+        if (typeof ex === "string") cand.push(ex);
       }
     } catch {
       // Intentionally empty - ignore errors
     }
     try {
-      if ((o as AnyMap)['exception.stacktrace'] != null)
-        cand.push((o as AnyMap)['exception.stacktrace']);
-      if ((o as AnyMap)['error.stacktrace'] != null) cand.push((o as AnyMap)['error.stacktrace']);
+      if ((o as AnyMap)["exception.stacktrace"] != null)
+        cand.push((o as AnyMap)["exception.stacktrace"]);
+      if ((o as AnyMap)["error.stacktrace"] != null)
+        cand.push((o as AnyMap)["error.stacktrace"]);
     } catch {
       // Intentionally empty - ignore errors
     }
     for (const v of cand) {
       if (v == null) continue;
       if (Array.isArray(v)) {
-        const s = v.map((x) => safeString(x)).join('\n');
+        const s = v.map((x) => safeString(x)).join("\n");
         if (s.trim()) return s;
       } else {
         const s = safeString(v);
@@ -139,19 +150,20 @@ function toEntry(obj: AnyMap = {}, fallbackMessage = '', source = ''): Entry {
   }
 
   const stackTrace = normalizeStack(obj);
-  const tsVal = obj.timestamp ?? obj['@timestamp'] ?? obj.time;
+  const tsVal = obj.timestamp ?? obj["@timestamp"] ?? obj.time;
   const lvlVal = obj.level ?? obj.severity ?? obj.loglevel;
   const loggerVal = obj.logger ?? obj.logger_name ?? obj.category;
   const threadVal = obj.thread ?? obj.thread_name;
-  const msgVal = obj.message ?? obj.msg ?? obj.log ?? fallbackMessage ?? '';
-  const traceVal = obj.traceId ?? obj.trace_id ?? obj.trace ?? obj['trace.id'] ?? obj.TraceID;
+  const msgVal = obj.message ?? obj.msg ?? obj.log ?? fallbackMessage ?? "";
+  const traceVal =
+    obj.traceId ?? obj.trace_id ?? obj.trace ?? obj["trace.id"] ?? obj.TraceID;
 
   return {
     timestamp: toOptionalString(tsVal),
     level: toOptionalString(lvlVal),
     logger: toOptionalString(loggerVal),
     thread: toOptionalString(threadVal),
-    message: toStringOr(msgVal, ''),
+    message: toStringOr(msgVal, ""),
     traceId: toOptionalString(traceVal),
     stackTrace: stackTrace || null,
     raw: obj,
@@ -162,6 +174,66 @@ function toEntry(obj: AnyMap = {}, fallbackMessage = '', source = ''): Entry {
 function tryParseJson(line: string): AnyMap | null {
   try {
     return JSON.parse(line) as AnyMap;
+  } catch {
+    return null;
+  }
+}
+
+// Tolerant KV extractor for malformed JSON-like lines
+function tryParseJsonLoose(line: string): AnyMap | null {
+  try {
+    // Quick check: must look like an object
+    const braceStart = line.indexOf("{");
+    const braceEnd = line.lastIndexOf("}");
+    if (braceStart === -1 || braceEnd === -1 || braceEnd - braceStart < 2)
+      return null;
+    const slice = line.slice(braceStart, braceEnd + 1);
+    const obj: AnyMap = {};
+    // Match simple "key":value pairs where value is a JSON string/number/bool/null
+    const re =
+      /"([^"\\]+)"\s*:\s*("(?:[^"\\]|\\.)*"|true|false|null|-?\d+(?:\.\d+)?)/g;
+    let m: RegExpExecArray | null;
+    let found = 0;
+    while ((m = re.exec(slice)) != null) {
+      const key: string = m[1] != null ? String(m[1]) : "";
+      const rawValStr: string = m[2] != null ? String(m[2]) : "";
+      if (!key) continue;
+      let val: unknown = null;
+      try {
+        if (rawValStr.startsWith('"')) {
+          // Safely unescape by JSON.parse on the string literal
+          val = JSON.parse(rawValStr);
+        } else if (rawValStr === "true" || rawValStr === "false") {
+          val = rawValStr === "true";
+        } else if (rawValStr === "null") {
+          val = null;
+        } else {
+          const n = Number(rawValStr);
+          val = Number.isNaN(n) ? rawValStr : n;
+        }
+      } catch {
+        val = rawValStr;
+      }
+      // Only keep first occurrence to avoid bogus duplicates overriding valid ones
+      if ((obj as Record<string, unknown>)[key] === undefined) {
+        (obj as Record<string, unknown>)[key] = val;
+        found++;
+      }
+    }
+    // Heuristic: require at least some meaningful fields or multiple pairs
+    const meaningful = [
+      "@timestamp",
+      "timestamp",
+      "level",
+      "logger",
+      "logger_name",
+      "thread",
+      "thread_name",
+      "TraceID",
+      "message",
+    ].some((k) => Object.prototype.hasOwnProperty.call(obj, k));
+    if (found >= 3 || meaningful) return obj;
+    return null;
   } catch {
     return null;
   }
@@ -178,14 +250,18 @@ function parseTextLines(filename: string, text: string): Entry[] {
       const match = line.match(/{[\s\S]*}$/);
       if (match) obj = tryParseJson(match[0]);
     }
+    if (!obj) {
+      // last resort: tolerant KV scan to salvage structured fields
+      obj = tryParseJsonLoose(line.trim()) || null;
+    }
     if (obj) {
-      entries.push(toEntry(obj, '', filename));
+      entries.push(toEntry(obj, "", filename));
     } else {
       // fallback: plain text line
       // try to parse timestamp like ISO 8601 at the beginning
       let ts: string | null = null;
       const isoMatch = line.match(
-        /\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.[\d]+)?(?:Z|[+-]\d{2}:?\d{2})?/
+        /\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.[\d]+)?(?:Z|[+-]\d{2}:?\d{2})?/,
       );
       if (isoMatch) ts = isoMatch[0];
       entries.push(toEntry({}, line, filename));
@@ -199,17 +275,21 @@ function parseJsonFile(filename: string, text: string): Entry[] {
   // supports JSON array or NDJSON
   const trimmed = text.trim();
   if (!trimmed) return [];
-  if (trimmed.startsWith('[')) {
+  if (trimmed.startsWith("[")) {
     try {
       const arr: unknown = JSON.parse(trimmed);
       if (Array.isArray(arr))
         return arr.map((o) =>
-          toEntry(o && typeof o === 'object' ? (o as AnyMap) : {}, '', filename)
+          toEntry(
+            o && typeof o === "object" ? (o as AnyMap) : {},
+            "",
+            filename,
+          ),
         );
     } catch (e) {
       log.warn(
-        'parseJsonFile: JSON array parse failed:',
-        e instanceof Error ? e.message : String(e)
+        "parseJsonFile: JSON array parse failed:",
+        e instanceof Error ? e.message : String(e),
       );
     }
   }
@@ -226,10 +306,13 @@ function parseZipFile(zipPath: string): Entry[] {
     const ext = path.extname(name).toLowerCase();
     if (
       !zEntry.isDirectory &&
-      (ext === '.log' || ext === '.json' || ext === '.jsonl' || ext === '.txt')
+      (ext === ".log" || ext === ".json" || ext === ".jsonl" || ext === ".txt")
     ) {
-      const text = zEntry.getData().toString('utf8');
-      const parsed = ext === '.json' ? parseJsonFile(name, text) : parseTextLines(name, text);
+      const text = zEntry.getData().toString("utf8");
+      const parsed =
+        ext === ".json"
+          ? parseJsonFile(name, text)
+          : parseTextLines(name, text);
       parsed.forEach((e) => (e.source = `${zipPath}::${name}`));
       entries.push(...parsed);
     }
@@ -241,11 +324,12 @@ function parsePath(p: string): Entry[] {
   const stat = fs.statSync(p);
   if (stat.isDirectory()) return [];
   const ext = path.extname(p).toLowerCase();
-  const text = ext === '.zip' ? null : fs.readFileSync(p, 'utf8');
-  if (ext === '.zip') return parseZipFile(p);
-  if (ext === '.json') return parseJsonFile(p, text as string);
-  if (ext === '.jsonl' || ext === '.txt') return parseTextLines(p, text as string);
-  if (ext === '.log' || !ext) return parseTextLines(p, text as string);
+  const text = ext === ".zip" ? null : fs.readFileSync(p, "utf8");
+  if (ext === ".zip") return parseZipFile(p);
+  if (ext === ".json") return parseJsonFile(p, text as string);
+  if (ext === ".jsonl" || ext === ".txt")
+    return parseTextLines(p, text as string);
+  if (ext === ".log" || !ext) return parseTextLines(p, text as string);
   return [];
 }
 
@@ -257,7 +341,13 @@ function parsePaths(paths: string[]): Entry[] {
     } catch (err) {
       // include error as a special entry
       const msg = err instanceof Error ? err.message : String(err);
-      all.push(toEntry({ level: 'ERROR', message: `Failed to parse ${p}: ${msg}` }, '', p));
+      all.push(
+        toEntry(
+          { level: "ERROR", message: `Failed to parse ${p}: ${msg}` },
+          "",
+          p,
+        ),
+      );
     }
   }
   return all;
@@ -265,7 +355,7 @@ function parsePaths(paths: string[]): Entry[] {
 
 // Elasticsearch types
 export interface ElasticsearchAuth {
-  type: 'basic' | 'apiKey' | 'bearer';
+  type: "basic" | "apiKey" | "bearer";
   username?: string;
   password?: string;
   token?: string;
@@ -282,9 +372,9 @@ export interface ElasticsearchOptions {
   application_name?: string;
   environment?: string;
   // NEW: case handling for environment
-  environmentCase?: 'original' | 'lower' | 'upper' | 'case-sensitive';
+  environmentCase?: "original" | "lower" | "upper" | "case-sensitive";
   size?: number;
-  sort?: 'asc' | 'desc';
+  sort?: "asc" | "desc";
   auth?: ElasticsearchAuth;
   allowInsecureTLS?: boolean;
   // Pagination: ES search_after token from previous page
@@ -317,23 +407,23 @@ interface PitSession {
   timeoutMs: number;
   maxRetries: number;
   backoffBaseMs: number;
-  dialect?: 'es' | 'opensearch' | 'scroll';
+  dialect?: "es" | "opensearch" | "scroll";
 }
 const pitSessions = new Map<string, PitSession>();
 
 // HTTP JSON request with timeout + keep-alive + streaming decompression
 async function httpJsonRequest(
-  method: 'POST' | 'DELETE',
+  method: "POST" | "DELETE",
   urlStr: string,
   body: unknown,
   headers: Record<string, string>,
   allowInsecureTLS?: boolean,
-  timeoutMs?: number
+  timeoutMs?: number,
 ): Promise<{ status: number; text: string; json: unknown }> {
   return new Promise((resolve, reject) => {
     try {
       const u = new URL(urlStr);
-      const isHttps = u.protocol === 'https:';
+      const isHttps = u.protocol === "https:";
       const mod = isHttps ? https : http;
       const opts: http.RequestOptions = {
         method,
@@ -342,9 +432,9 @@ async function httpJsonRequest(
         path: `${u.pathname}${u.search}`,
         headers: {
           ...(headers || {}),
-          'content-type': 'application/json',
-          'accept-encoding': 'gzip, deflate, br',
-          Connection: 'keep-alive',
+          "content-type": "application/json",
+          "accept-encoding": "gzip, deflate, br",
+          Connection: "keep-alive",
         },
         agent: isHttps
           ? allowInsecureTLS
@@ -353,57 +443,65 @@ async function httpJsonRequest(
           : HTTP_KEEPALIVE_AGENT,
       };
       const timer =
-        typeof timeoutMs === 'number' && timeoutMs > 0
+        typeof timeoutMs === "number" && timeoutMs > 0
           ? setTimeout(() => {
               try {
-                req.destroy(new Error('timeout'));
+                req.destroy(new Error("timeout"));
               } catch (e) {
-                log.error('httpJsonRequest: timeout destroy error:', e);
+                log.error("httpJsonRequest: timeout destroy error:", e);
               }
             }, timeoutMs)
           : null;
       const req = mod.request(opts, (res: http.IncomingMessage) => {
         // Determine decompression stream based on content-encoding
-        const encoding = (res.headers['content-encoding'] || '').toLowerCase();
+        const encoding = (res.headers["content-encoding"] || "").toLowerCase();
         let stream: NodeJS.ReadableStream = res;
 
         try {
-          if (encoding === 'gzip') {
+          if (encoding === "gzip") {
             stream = res.pipe(zlib.createGunzip());
-          } else if (encoding === 'deflate') {
+          } else if (encoding === "deflate") {
             stream = res.pipe(zlib.createInflate());
-          } else if (encoding === 'br') {
+          } else if (encoding === "br") {
             stream = res.pipe(zlib.createBrotliDecompress());
           }
         } catch (e) {
-          log.warn('httpJsonRequest: decompression stream creation failed, using raw stream:', e);
+          log.warn(
+            "httpJsonRequest: decompression stream creation failed, using raw stream:",
+            e,
+          );
           stream = res;
         }
 
         const chunks: Buffer[] = [];
-        stream.on('data', (c: Buffer) => chunks.push(c));
-        stream.on('end', () => {
+        stream.on("data", (c: Buffer) => chunks.push(c));
+        stream.on("end", () => {
           if (timer) clearTimeout(timer);
-          const enc = String(res.headers['content-encoding'] || '').toLowerCase();
+          const enc = String(
+            res.headers["content-encoding"] || "",
+          ).toLowerCase();
           const raw = Buffer.concat(chunks);
           let buf: Buffer = raw;
           try {
-            if (enc.includes('gzip')) {
+            if (enc.includes("gzip")) {
               buf = zlib.gunzipSync(raw);
-            } else if (enc.includes('deflate')) {
+            } else if (enc.includes("deflate")) {
               buf = zlib.inflateSync(raw);
-            } else if (enc.includes('br') && typeof zlib.brotliDecompressSync === 'function') {
+            } else if (
+              enc.includes("br") &&
+              typeof zlib.brotliDecompressSync === "function"
+            ) {
               buf = zlib.brotliDecompressSync(raw);
             }
           } catch (e) {
             // Wenn Dekomprimierung fehlschlägt, verwende Rohdaten
             log.warn(
-              'httpJsonRequest: Dekomprimierung fehlgeschlagen:',
-              e instanceof Error ? e.message : String(e)
+              "httpJsonRequest: Dekomprimierung fehlgeschlagen:",
+              e instanceof Error ? e.message : String(e),
             );
             buf = raw;
           }
-          const text = buf.toString('utf8');
+          const text = buf.toString("utf8");
           const status = Number(res.statusCode || 0);
           let json: unknown;
           try {
@@ -413,27 +511,27 @@ async function httpJsonRequest(
           }
           resolve({ status, text, json });
         });
-        stream.on('error', (err: Error) => {
+        stream.on("error", (err: Error) => {
           if (timer) clearTimeout(timer);
           reject(err);
         });
       });
-      req.on('error', (err: Error) => {
+      req.on("error", (err: Error) => {
         if (timer) clearTimeout(timer);
-        reject(err);
+        reject(err instanceof Error ? err : new Error(String(err)));
       });
-      const payload = body ? JSON.stringify(body) : '';
+      const payload = body ? JSON.stringify(body) : "";
       if (payload) req.write(payload);
       req.end();
     } catch (err) {
-      reject(err);
+      reject(err instanceof Error ? err : new Error(String(err)));
     }
   });
 }
 
 async function requestWithRetry(
   exec: () => Promise<{ status: number; text: string; json: unknown }>,
-  opts: { maxRetries: number; backoffBaseMs: number }
+  opts: { maxRetries: number; backoffBaseMs: number },
 ): Promise<{ status: number; text: string; json: unknown }> {
   let attempt = 0;
   while (true) {
@@ -455,21 +553,23 @@ async function requestWithRetry(
   }
 }
 
-function buildHeadersWithAuth(auth?: ElasticsearchAuth): Record<string, string> {
+function buildHeadersWithAuth(
+  auth?: ElasticsearchAuth,
+): Record<string, string> {
   const headers: Record<string, string> = {
-    Accept: 'application/json',
-    'User-Agent': 'Lumberjack/1.0 (+https://hhla.de)',
+    Accept: "application/json",
+    "User-Agent": "Lumberjack/1.0 (+https://hhla.de)",
   };
   if (!auth) return headers;
   try {
-    if (auth.type === 'basic') {
-      const u = String(auth.username || '');
-      const p = String(auth.password || '');
-      headers.Authorization = `Basic ${Buffer.from(`${u}:${p}`).toString('base64')}`;
-    } else if (auth.type === 'apiKey') {
-      headers.Authorization = `ApiKey ${String(auth.token || '')}`;
-    } else if (auth.type === 'bearer') {
-      headers.Authorization = `Bearer ${String(auth.token || '')}`;
+    if (auth.type === "basic") {
+      const u = String(auth.username || "");
+      const p = String(auth.password || "");
+      headers.Authorization = `Basic ${Buffer.from(`${u}:${p}`).toString("base64")}`;
+    } else if (auth.type === "apiKey") {
+      headers.Authorization = `ApiKey ${String(auth.token || "")}`;
+    } else if (auth.type === "bearer") {
+      headers.Authorization = `Bearer ${String(auth.token || "")}`;
     }
   } catch {
     // Intentionally empty - ignore errors
@@ -477,9 +577,12 @@ function buildHeadersWithAuth(auth?: ElasticsearchAuth): Record<string, string> 
   return headers;
 }
 
-function buildSortArray(order: 'asc' | 'desc' | undefined): AnyMap[] {
-  const ord = order ?? 'desc';
-  return [{ '@timestamp': { order: ord, unmapped_type: 'boolean' } }, { _id: { order: ord } }];
+function buildSortArray(order: "asc" | "desc" | undefined): AnyMap[] {
+  const ord = order ?? "desc";
+  return [
+    { "@timestamp": { order: ord, unmapped_type: "boolean" } },
+    { _id: { order: ord } },
+  ];
 }
 
 async function tryOpenPitEs(
@@ -490,18 +593,21 @@ async function tryOpenPitEs(
   allowInsecureTLS: boolean | undefined,
   timeoutMs: number,
   maxRetries: number,
-  backoffBaseMs: number
+  backoffBaseMs: number,
 ): Promise<string> {
-  const idx = index && index.trim() ? index.trim() : '_all';
+  const idx = index && index.trim() ? index.trim() : "_all";
   const url = `${baseUrl}/${encodeURIComponent(idx)}/_pit?keep_alive=${encodeURIComponent(keepAlive)}&ignore_unavailable=true&allow_no_indices=true&expand_wildcards=open`;
-  const exec = () => httpJsonRequest('POST', url, {}, headers, allowInsecureTLS, timeoutMs);
+  const exec = () =>
+    httpJsonRequest("POST", url, {}, headers, allowInsecureTLS, timeoutMs);
   const res = await requestWithRetry(exec, { maxRetries, backoffBaseMs });
   if (res.status >= 200 && res.status < 300) {
     const id = (res.json as AnyMap | null)?.id;
-    if (typeof id === 'string' && id) return id;
-    throw new Error('PIT open: Keine id im Response');
+    if (typeof id === "string" && id) return id;
+    throw new Error("PIT open: Keine id im Response");
   }
-  throw new Error(`ES PIT open failed ${res.status}: ${res.text.slice(0, 800)}`);
+  throw new Error(
+    `ES PIT open failed ${res.status}: ${res.text.slice(0, 800)}`,
+  );
 }
 
 async function tryOpenPitOs(
@@ -512,25 +618,29 @@ async function tryOpenPitOs(
   allowInsecureTLS: boolean | undefined,
   timeoutMs: number,
   maxRetries: number,
-  backoffBaseMs: number
+  backoffBaseMs: number,
 ): Promise<string> {
-  const idx = index && index.trim() ? index.trim() : '_all';
+  const idx = index && index.trim() ? index.trim() : "_all";
   const url = `${baseUrl}/_search/point_in_time`;
   const body = {
     index: idx,
     keep_alive: keepAlive,
-    expand_wildcards: 'open',
+    expand_wildcards: "open",
     ignore_unavailable: true,
     allow_no_indices: true,
   } as AnyMap;
-  const exec = () => httpJsonRequest('POST', url, body, headers, allowInsecureTLS, timeoutMs);
+  const exec = () =>
+    httpJsonRequest("POST", url, body, headers, allowInsecureTLS, timeoutMs);
   const res = await requestWithRetry(exec, { maxRetries, backoffBaseMs });
   if (res.status >= 200 && res.status < 300) {
-    const id = (res.json as AnyMap | null)?.pit_id || (res.json as AnyMap | null)?.id;
-    if (typeof id === 'string' && id) return id;
-    throw new Error('OpenSearch PIT open: Keine pit_id/id im Response');
+    const id =
+      (res.json as AnyMap | null)?.pit_id || (res.json as AnyMap | null)?.id;
+    if (typeof id === "string" && id) return id;
+    throw new Error("OpenSearch PIT open: Keine pit_id/id im Response");
   }
-  throw new Error(`OS PIT open failed ${res.status}: ${res.text.slice(0, 800)}`);
+  throw new Error(
+    `OS PIT open failed ${res.status}: ${res.text.slice(0, 800)}`,
+  );
 }
 
 async function closePitEs(
@@ -540,14 +650,17 @@ async function closePitEs(
   allowInsecureTLS: boolean | undefined,
   timeoutMs: number,
   maxRetries: number,
-  backoffBaseMs: number
+  backoffBaseMs: number,
 ): Promise<void> {
   const url = `${baseUrl}/_pit/close`;
   const body = { id: pitId };
-  const exec = () => httpJsonRequest('POST', url, body, headers, allowInsecureTLS, timeoutMs);
+  const exec = () =>
+    httpJsonRequest("POST", url, body, headers, allowInsecureTLS, timeoutMs);
   const res = await requestWithRetry(exec, { maxRetries, backoffBaseMs });
   if (!(res.status >= 200 && res.status < 300))
-    throw new Error(`ES PIT close failed ${res.status}: ${res.text.slice(0, 800)}`);
+    throw new Error(
+      `ES PIT close failed ${res.status}: ${res.text.slice(0, 800)}`,
+    );
 }
 
 async function closePitOs(
@@ -557,14 +670,17 @@ async function closePitOs(
   allowInsecureTLS: boolean | undefined,
   timeoutMs: number,
   maxRetries: number,
-  backoffBaseMs: number
+  backoffBaseMs: number,
 ): Promise<void> {
   const url = `${baseUrl}/_search/point_in_time`;
   const body = { pit_id: pitId };
-  const exec = () => httpJsonRequest('DELETE', url, body, headers, allowInsecureTLS, timeoutMs);
+  const exec = () =>
+    httpJsonRequest("DELETE", url, body, headers, allowInsecureTLS, timeoutMs);
   const res = await requestWithRetry(exec, { maxRetries, backoffBaseMs });
   if (!(res.status >= 200 && res.status < 300))
-    throw new Error(`OS PIT close failed ${res.status}: ${res.text.slice(0, 800)}`);
+    throw new Error(
+      `OS PIT close failed ${res.status}: ${res.text.slice(0, 800)}`,
+    );
 }
 
 async function closePit(
@@ -575,9 +691,9 @@ async function closePit(
   timeoutMs: number,
   maxRetries: number,
   backoffBaseMs: number,
-  dialect?: 'es' | 'opensearch'
+  dialect?: "es" | "opensearch",
 ): Promise<void> {
-  if (dialect === 'es') {
+  if (dialect === "es") {
     try {
       await closePitEs(
         baseUrl,
@@ -586,7 +702,7 @@ async function closePit(
         allowInsecureTLS,
         timeoutMs,
         maxRetries,
-        backoffBaseMs
+        backoffBaseMs,
       );
       return;
     } catch {
@@ -599,11 +715,11 @@ async function closePit(
       allowInsecureTLS,
       timeoutMs,
       maxRetries,
-      backoffBaseMs
+      backoffBaseMs,
     );
     return;
   }
-  if (dialect === 'opensearch') {
+  if (dialect === "opensearch") {
     try {
       await closePitOs(
         baseUrl,
@@ -612,7 +728,7 @@ async function closePit(
         allowInsecureTLS,
         timeoutMs,
         maxRetries,
-        backoffBaseMs
+        backoffBaseMs,
       );
       return;
     } catch {
@@ -625,7 +741,7 @@ async function closePit(
       allowInsecureTLS,
       timeoutMs,
       maxRetries,
-      backoffBaseMs
+      backoffBaseMs,
     );
     return;
   }
@@ -637,13 +753,21 @@ async function closePit(
       allowInsecureTLS,
       timeoutMs,
       maxRetries,
-      backoffBaseMs
+      backoffBaseMs,
     );
     return;
   } catch {
     // Intentionally empty - ignore errors
   }
-  await closePitOs(baseUrl, pitId, headers, allowInsecureTLS, timeoutMs, maxRetries, backoffBaseMs);
+  await closePitOs(
+    baseUrl,
+    pitId,
+    headers,
+    allowInsecureTLS,
+    timeoutMs,
+    maxRetries,
+    backoffBaseMs,
+  );
 }
 
 function newSessionId(): string {
@@ -651,13 +775,13 @@ function newSessionId(): string {
   return `pit_${Date.now().toString(36)}_${rnd}`;
 }
 function normalizeBase(url: string): string {
-  return safeString(url).replace(/\/$/, '');
+  return safeString(url).replace(/\/$/, "");
 }
 function toIsoIfDate(v: unknown): string | undefined {
   if (v == null) return undefined;
   try {
     if (v instanceof Date) return v.toISOString();
-    if (typeof v === 'number') return new Date(v).toISOString();
+    if (typeof v === "number") return new Date(v).toISOString();
     const s = safeString(v).trim();
     if (!s) return undefined;
     if (/^\d+$/.test(s)) return new Date(parseInt(s, 10)).toISOString();
@@ -677,34 +801,40 @@ function buildElasticSearchBody(opts: ElasticsearchOptions): AnyMap {
   must.push({ match_all: {} } as AnyMap);
 
   // environment je nach Case-Option
-  const rawEnv = String(opts.environment || '').trim();
+  const rawEnv = String(opts.environment || "").trim();
   if (rawEnv) {
-    const mode = opts.environmentCase || 'original';
-    if (mode === 'case-sensitive') {
+    const mode = opts.environmentCase || "original";
+    if (mode === "case-sensitive") {
       // Versuche exakten, nicht-analysierten Abgleich: sowohl environment als auch environment.keyword berücksichtigen
       must.push({
         bool: {
           should: [
             { term: { environment: rawEnv } } as AnyMap,
-            { term: { 'environment.keyword': rawEnv } } as AnyMap,
+            { term: { "environment.keyword": rawEnv } } as AnyMap,
           ],
           minimum_should_match: 1,
         },
       } as AnyMap);
-    } else if (mode === 'lower') {
-      must.push({ match_phrase: { environment: { query: rawEnv.toLowerCase() } } } as AnyMap);
-    } else if (mode === 'upper') {
-      must.push({ match_phrase: { environment: { query: rawEnv.toUpperCase() } } } as AnyMap);
+    } else if (mode === "lower") {
+      must.push({
+        match_phrase: { environment: { query: rawEnv.toLowerCase() } },
+      } as AnyMap);
+    } else if (mode === "upper") {
+      must.push({
+        match_phrase: { environment: { query: rawEnv.toUpperCase() } },
+      } as AnyMap);
     } else {
       must.push({ match_phrase: { environment: { query: rawEnv } } } as AnyMap);
     }
   }
 
   // application_name als query_string (analyze_wildcard/allow_leading_wildcard)
-  const app = String(opts.application_name || '').trim();
+  const app = String(opts.application_name || "").trim();
   if (app) {
     const q =
-      app.includes(' ') || /["*?:\\/()\[\]{}]/.test(app) ? `"${app.replace(/"/g, '\\"')}"` : app;
+      app.includes(" ") || /[\["*?:\/()\]{}]/.test(app)
+        ? `"${app.replace(/"/g, '\\"')}"`
+        : app;
     must.push({
       query_string: {
         query: `application_name:${q}`,
@@ -720,9 +850,9 @@ function buildElasticSearchBody(opts: ElasticsearchOptions): AnyMap {
     if (!v) return;
     must.push({ match_phrase: { [field]: { query: v } } } as AnyMap);
   };
-  addField('logger', opts.logger);
-  addField('level', opts.level);
-  addField('message', opts.message);
+  addField("logger", opts.logger);
+  addField("level", opts.level);
+  addField("message", opts.message);
 
   // Zeitbereich – unterstütze explizites Format
   const range: AnyMap = {};
@@ -731,24 +861,28 @@ function buildElasticSearchBody(opts: ElasticsearchOptions): AnyMap {
   const duration = opts.duration;
   if (duration && safeString(duration).trim()) {
     range.gte = `now-${opts.duration}`;
-    range.lte = 'now';
+    range.lte = "now";
   } else {
     if (fmt) {
-      const fromStr = opts.from != null ? safeString(opts.from) : '';
-      const toStr = opts.to != null ? safeString(opts.to) : '';
+      const fromStr = opts.from != null ? safeString(opts.from) : "";
+      const toStr = opts.to != null ? safeString(opts.to) : "";
       if (fromStr) range.gte = fromStr;
       if (toStr) range.lte = toStr;
       if (fromStr || toStr) range.format = fmt;
     } else {
       // epoch millis oder ISO
       const num = (x: unknown): number | null =>
-        typeof x === 'number' ? x : /^\d+$/.test(safeString(x)) ? Number(x) : null;
+        typeof x === "number"
+          ? x
+          : /^\d+$/.test(safeString(x))
+            ? Number(x)
+            : null;
       const fromNum = num(opts.from as unknown);
       const toNum = num(opts.to as unknown);
       if (fromNum != null || toNum != null) {
         if (fromNum != null) range.gte = fromNum;
         if (toNum != null) range.lte = toNum;
-        range.format = 'epoch_millis';
+        range.format = "epoch_millis";
       } else {
         const from = toIsoIfDate(opts.from as unknown);
         const to = toIsoIfDate(opts.to as unknown);
@@ -758,19 +892,23 @@ function buildElasticSearchBody(opts: ElasticsearchOptions): AnyMap {
     }
   }
   if (Object.keys(range).length > 0) {
-    must.push({ range: { '@timestamp': range } } as AnyMap);
+    must.push({ range: { "@timestamp": range } } as AnyMap);
   }
 
   // Optional: level_value Mindestwert
   const lv = (opts as unknown as AnyMap).levelValueGte;
-  if (lv != null && safeString(lv).trim() !== '') {
+  if (lv != null && safeString(lv).trim() !== "") {
     must.push({ range: { level_value: { gte: lv } } } as AnyMap);
   }
 
   return {
     version: true,
     size: opts.size ?? 1000,
-    sort: [{ '@timestamp': { order: opts.sort ?? 'desc', unmapped_type: 'boolean' } }],
+    sort: [
+      {
+        "@timestamp": { order: opts.sort ?? "desc", unmapped_type: "boolean" },
+      },
+    ],
     query: {
       bool: {
         must,
@@ -780,23 +918,34 @@ function buildElasticSearchBody(opts: ElasticsearchOptions): AnyMap {
       },
     },
     _source: { excludes: [] },
-    timeout: '30s',
+    timeout: "30s",
   };
 }
 
-function buildQueryBodyWithPit(opts: ElasticsearchPitOptions, pitId: string): AnyMap {
-  const baseBody = buildElasticSearchBody({ ...opts, searchAfter: opts.searchAfter });
+function buildQueryBodyWithPit(
+  opts: ElasticsearchPitOptions,
+  pitId: string,
+): AnyMap {
+  const baseBody = buildElasticSearchBody({
+    ...opts,
+    searchAfter: opts.searchAfter,
+  });
   baseBody.size = opts.size ?? 1000;
   baseBody.sort = buildSortArray(opts.sort);
-  baseBody.pit = { id: pitId, keep_alive: opts.keepAlive ?? '1m' } as AnyMap;
-  const inc = Array.isArray(opts.sourceIncludes) ? opts.sourceIncludes : undefined;
-  const exc = Array.isArray(opts.sourceExcludes) ? opts.sourceExcludes : undefined;
+  baseBody.pit = { id: pitId, keep_alive: opts.keepAlive ?? "1m" } as AnyMap;
+  const inc = Array.isArray(opts.sourceIncludes)
+    ? opts.sourceIncludes
+    : undefined;
+  const exc = Array.isArray(opts.sourceExcludes)
+    ? opts.sourceExcludes
+    : undefined;
   if (inc || exc)
     baseBody._source = {
       ...(inc ? { includes: inc } : {}),
       ...(exc ? { excludes: exc } : {}),
     } as AnyMap;
-  baseBody.track_total_hits = opts.trackTotalHits != null ? opts.trackTotalHits : false;
+  baseBody.track_total_hits =
+    opts.trackTotalHits != null ? opts.trackTotalHits : false;
   if (Array.isArray(opts.searchAfter) && opts.searchAfter.length)
     baseBody.search_after = opts.searchAfter;
   return baseBody;
@@ -804,24 +953,38 @@ function buildQueryBodyWithPit(opts: ElasticsearchPitOptions, pitId: string): An
 
 async function searchWithPit(
   sess: PitSession,
-  body: AnyMap
+  body: AnyMap,
 ): Promise<{ status: number; text: string; json: AnyMap | null }> {
   const url = `${sess.baseUrl}/_search?filter_path=hits.hits._source,hits.hits.sort,hits.total`;
   const exec = () =>
-    httpJsonRequest('POST', url, body, sess.headers, !!sess.allowInsecureTLS, sess.timeoutMs);
+    httpJsonRequest(
+      "POST",
+      url,
+      body,
+      sess.headers,
+      !!sess.allowInsecureTLS,
+      sess.timeoutMs,
+    );
   const res = await requestWithRetry(exec, {
     maxRetries: sess.maxRetries,
     backoffBaseMs: sess.backoffBaseMs,
   });
-  return { status: res.status, text: res.text, json: (res.json as AnyMap) || null };
+  return {
+    status: res.status,
+    text: res.text,
+    json: (res.json as AnyMap) || null,
+  };
 }
 
-function getOrCreateSessionSyncState(opts: ElasticsearchPitOptions): PitSession {
-  const baseUrl = normalizeBase(opts.url || '');
-  if (!baseUrl) throw new Error('Elasticsearch URL (opts.url) ist erforderlich');
-  const indexRaw = String(opts.index ?? '').trim();
-  const index = indexRaw ? indexRaw : '_all';
-  const keepAlive = String(opts.keepAlive || '1m');
+function getOrCreateSessionSyncState(
+  opts: ElasticsearchPitOptions,
+): PitSession {
+  const baseUrl = normalizeBase(opts.url || "");
+  if (!baseUrl)
+    throw new Error("Elasticsearch URL (opts.url) ist erforderlich");
+  const indexRaw = String(opts.index ?? "").trim();
+  const index = indexRaw ? indexRaw : "_all";
+  const keepAlive = String(opts.keepAlive || "1m");
   const timeoutMs = Math.max(1000, Number(opts.timeoutMs ?? 45000));
   const maxRetries = Math.max(0, Number(opts.maxRetries ?? 4));
   const backoffBaseMs = Math.max(50, Number(opts.backoffBaseMs ?? 300));
@@ -842,7 +1005,7 @@ function getOrCreateSessionSyncState(opts: ElasticsearchPitOptions): PitSession 
       : newSessionId();
   const sess: PitSession = {
     sessionId,
-    pitId: '',
+    pitId: "",
     baseUrl,
     index,
     headers,
@@ -868,15 +1031,15 @@ async function ensurePitOpened(sess: PitSession): Promise<void> {
       sess.allowInsecureTLS,
       sess.timeoutMs,
       sess.maxRetries,
-      sess.backoffBaseMs
+      sess.backoffBaseMs,
     );
-    sess.dialect = 'es';
+    sess.dialect = "es";
     return;
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
     if (
       /unrecognized parameter|unknown url|_pit]|\[\/\/_pit|unknown|not found|illegal_argument/i.test(
-        msg
+        msg,
       )
     ) {
       try {
@@ -888,34 +1051,34 @@ async function ensurePitOpened(sess: PitSession): Promise<void> {
           sess.allowInsecureTLS,
           sess.timeoutMs,
           sess.maxRetries,
-          sess.backoffBaseMs
+          sess.backoffBaseMs,
         );
-        sess.dialect = 'opensearch';
+        sess.dialect = "opensearch";
         return;
       } catch (e2) {
         const m2 = e2 instanceof Error ? e2.message : String(e2);
         if (/security_exception|unauthorized|forbidden|403/.test(m2)) {
-          sess.dialect = 'scroll';
+          sess.dialect = "scroll";
           return;
         }
         // Generischer Fallback: ältere ES-Versionen (z. B. 6.x) -> Scroll verwenden
-        sess.dialect = 'scroll';
+        sess.dialect = "scroll";
         return;
       }
     }
     if (/security_exception|unauthorized|forbidden|403/.test(msg)) {
-      sess.dialect = 'scroll';
+      sess.dialect = "scroll";
       return;
     }
     // Letzte Rettung: Auch hier auf Scroll wechseln, um Suche dennoch zu ermöglichen
-    sess.dialect = 'scroll';
+    sess.dialect = "scroll";
     return;
   }
 }
 
 function parseHitsResponse(
   data: AnyMap | null,
-  size: number
+  size: number,
 ): {
   entries: Entry[];
   total: number | null;
@@ -926,28 +1089,33 @@ function parseHitsResponse(
   const totalVal = (() => {
     const t = hitsContainer && hitsContainer.total;
     if (!t) return null;
-    if (typeof t === 'number') return t;
-    if (typeof t === 'object' && typeof (t as AnyMap).value === 'number')
+    if (typeof t === "number") return t;
+    if (typeof t === "object" && typeof (t as AnyMap).value === "number")
       return Number((t as AnyMap).value) || 0;
     return null;
   })();
   const hitsArray =
-    hitsContainer && Array.isArray(hitsContainer.hits) ? (hitsContainer.hits as unknown[]) : [];
+    hitsContainer && Array.isArray(hitsContainer.hits)
+      ? (hitsContainer.hits as unknown[])
+      : [];
   const out: Entry[] = [];
   for (const h of hitsArray) {
-    const hObj = h && typeof h === 'object' ? (h as AnyMap) : {};
+    const hObj = h && typeof h === "object" ? (h as AnyMap) : {};
     const src = hObj._source ?? hObj.fields ?? {};
-    const srcObj = src && typeof src === 'object' ? (src as AnyMap) : {};
+    const srcObj = src && typeof src === "object" ? (src as AnyMap) : {};
     const index = hObj._index;
     const id = hObj._id;
-    const indexStr = typeof index === 'string' ? index : '';
-    const idStr = typeof id === 'string' ? id : '';
-    const e = toEntry(srcObj, '', `elastic://${indexStr}/${idStr}`);
+    const indexStr = typeof index === "string" ? index : "";
+    const idStr = typeof id === "string" ? id : "";
+    const e = toEntry(srcObj, "", `elastic://${indexStr}/${idStr}`);
     out.push(e);
   }
-  const lastHit = hitsArray.length > 0 ? (hitsArray[hitsArray.length - 1] as AnyMap) : null;
+  const lastHit =
+    hitsArray.length > 0 ? (hitsArray[hitsArray.length - 1] as AnyMap) : null;
   const sortVals =
-    lastHit && Array.isArray(lastHit.sort) ? (lastHit.sort as Array<string | number>) : null;
+    lastHit && Array.isArray(lastHit.sort)
+      ? (lastHit.sort as Array<string | number>)
+      : null;
   const hasMore = hitsArray.length >= (size || 0);
   return {
     entries: out,
@@ -962,15 +1130,15 @@ async function openScroll(
   index: string,
   keepAlive: string,
   size: number,
-  sortOrder: 'asc' | 'desc' | undefined,
+  sortOrder: "asc" | "desc" | undefined,
   headers: Record<string, string>,
   allowInsecureTLS: boolean | undefined,
   timeoutMs: number,
   maxRetries: number,
   backoffBaseMs: number,
-  queryOpts?: ElasticsearchOptions
+  queryOpts?: ElasticsearchOptions,
 ): Promise<{ scrollId: string; entries: Entry[]; total: number | null }> {
-  const idx = index && index.trim() ? index.trim() : '_all';
+  const idx = index && index.trim() ? index.trim() : "_all";
   const url = `${baseUrl}/${encodeURIComponent(idx)}/_search?scroll=${encodeURIComponent(keepAlive)}&ignore_unavailable=true&allow_no_indices=true&expand_wildcards=open&filter_path=hits.hits._source,hits.hits.sort,hits.total,_scroll_id`;
   const body = buildElasticSearchBody({
     ...(queryOpts || {}),
@@ -978,16 +1146,20 @@ async function openScroll(
     size,
     sort: sortOrder,
   } as ElasticsearchOptions);
-  const exec = () => httpJsonRequest('POST', url, body, headers, allowInsecureTLS, timeoutMs);
+  const exec = () =>
+    httpJsonRequest("POST", url, body, headers, allowInsecureTLS, timeoutMs);
   const res = await requestWithRetry(exec, { maxRetries, backoffBaseMs });
   if (!(res.status >= 200 && res.status < 300))
-    throw new Error(`Scroll open failed ${res.status}: ${res.text.slice(0, 800)}`);
+    throw new Error(
+      `Scroll open failed ${res.status}: ${res.text.slice(0, 800)}`,
+    );
   const j = (res.json as AnyMap) || {};
-  const scrollId = (j._scroll_id as string) || (j.scroll_id as string) || '';
+  const scrollId = (j._scroll_id as string) || (j.scroll_id as string) || "";
   const { entries, total } = parseHitsResponse(j, size);
   if (!scrollId) {
-    if (entries.length === 0) return { scrollId: '', entries: [], total: total ?? 0 };
-    throw new Error('Scroll open: Keine _scroll_id im Response');
+    if (entries.length === 0)
+      return { scrollId: "", entries: [], total: total ?? 0 };
+    throw new Error("Scroll open: Keine _scroll_id im Response");
   }
   return { scrollId, entries, total };
 }
@@ -1000,19 +1172,24 @@ async function scrollNext(
   allowInsecureTLS: boolean | undefined,
   timeoutMs: number,
   maxRetries: number,
-  backoffBaseMs: number
+  backoffBaseMs: number,
 ): Promise<{ scrollId: string; entries: Entry[] }> {
   const url = `${baseUrl}/_search/scroll?filter_path=hits.hits._source,hits.hits.sort,_scroll_id`;
   const body = { scroll: keepAlive, scroll_id: scrollId } as AnyMap;
-  const exec = () => httpJsonRequest('POST', url, body, headers, allowInsecureTLS, timeoutMs);
+  const exec = () =>
+    httpJsonRequest("POST", url, body, headers, allowInsecureTLS, timeoutMs);
   const res = await requestWithRetry(exec, { maxRetries, backoffBaseMs });
   if (!(res.status >= 200 && res.status < 300))
-    throw new Error(`Scroll next failed ${res.status}: ${res.text.slice(0, 800)}`);
+    throw new Error(
+      `Scroll next failed ${res.status}: ${res.text.slice(0, 800)}`,
+    );
   const j = (res.json as AnyMap) || {};
-  const newScrollId = (j._scroll_id as string) || (j.scroll_id as string) || '';
+  const newScrollId = (j._scroll_id as string) || (j.scroll_id as string) || "";
   const entries = parseHitsResponse(j, Number.MAX_SAFE_INTEGER).entries;
-  if (!newScrollId && entries.length === 0) return { scrollId: '', entries: [] };
-  if (!newScrollId) throw new Error('Scroll next: Keine _scroll_id im Response');
+  if (!newScrollId && entries.length === 0)
+    return { scrollId: "", entries: [] };
+  if (!newScrollId)
+    throw new Error("Scroll next: Keine _scroll_id im Response");
   return { scrollId: newScrollId, entries };
 }
 
@@ -1023,18 +1200,34 @@ async function closeScroll(
   allowInsecureTLS: boolean | undefined,
   timeoutMs: number,
   maxRetries: number,
-  backoffBaseMs: number
+  backoffBaseMs: number,
 ): Promise<void> {
   if (!scrollId) return;
   const url = `${baseUrl}/_search/scroll`;
   const execPost = async (payload: AnyMap) => {
-    const exec = () => httpJsonRequest('POST', url, payload, headers, allowInsecureTLS, timeoutMs);
+    const exec = () =>
+      httpJsonRequest(
+        "POST",
+        url,
+        payload,
+        headers,
+        allowInsecureTLS,
+        timeoutMs,
+      );
     const res = await requestWithRetry(exec, { maxRetries, backoffBaseMs });
     return res.status >= 200 && res.status < 300;
   };
   const tryDeletePath = async () => {
     const delUrl = `${baseUrl}/_search/scroll/${encodeURIComponent(scrollId)}`;
-    const exec = () => httpJsonRequest('DELETE', delUrl, {}, headers, allowInsecureTLS, timeoutMs);
+    const exec = () =>
+      httpJsonRequest(
+        "DELETE",
+        delUrl,
+        {},
+        headers,
+        allowInsecureTLS,
+        timeoutMs,
+      );
     const res = await requestWithRetry(exec, { maxRetries, backoffBaseMs });
     return res.status >= 200 && res.status < 300;
   };
@@ -1043,12 +1236,14 @@ async function closeScroll(
     (await execPost({ scroll_id: [scrollId] } as AnyMap)) ||
     (await tryDeletePath());
   if (!ok) {
-    log.warn('closeScroll: failed to clear scroll_id');
+    log.warn("closeScroll: failed to clear scroll_id");
   }
 }
 
 // Öffentliche API: Hole eine Seite via PIT+search_after und verwalte Session
-export async function fetchElasticPitPage(opts: ElasticsearchPitOptions): Promise<{
+export async function fetchElasticPitPage(
+  opts: ElasticsearchPitOptions,
+): Promise<{
   entries: Entry[];
   total: number | null;
   hasMore: boolean;
@@ -1057,7 +1252,7 @@ export async function fetchElasticPitPage(opts: ElasticsearchPitOptions): Promis
 }> {
   const sess = getOrCreateSessionSyncState(opts);
   await ensurePitOpened(sess);
-  if (sess.dialect === 'scroll') {
+  if (sess.dialect === "scroll") {
     let entries: Entry[];
     let total: number | null = null;
     if (!sess.pitId) {
@@ -1072,7 +1267,7 @@ export async function fetchElasticPitPage(opts: ElasticsearchPitOptions): Promis
         sess.timeoutMs,
         sess.maxRetries,
         sess.backoffBaseMs,
-        opts
+        opts,
       );
       sess.pitId = first.scrollId;
       entries = first.entries;
@@ -1086,7 +1281,7 @@ export async function fetchElasticPitPage(opts: ElasticsearchPitOptions): Promis
         sess.allowInsecureTLS,
         sess.timeoutMs,
         sess.maxRetries,
-        sess.backoffBaseMs
+        sess.backoffBaseMs,
       );
       sess.pitId = next.scrollId;
       entries = next.entries;
@@ -1103,27 +1298,38 @@ export async function fetchElasticPitPage(opts: ElasticsearchPitOptions): Promis
             sess.allowInsecureTLS,
             sess.timeoutMs,
             sess.maxRetries,
-            sess.backoffBaseMs
+            sess.backoffBaseMs,
           );
       } catch (e) {
         log.warn(
-          'Scroll close after completion failed:',
-          e instanceof Error ? e.message : String(e)
+          "Scroll close after completion failed:",
+          e instanceof Error ? e.message : String(e),
         );
       } finally {
         pitSessions.delete(sess.sessionId);
       }
     }
-    return { entries, total, hasMore, nextSearchAfter: null, pitSessionId: sess.sessionId };
+    return {
+      entries,
+      total,
+      hasMore,
+      nextSearchAfter: null,
+      pitSessionId: sess.sessionId,
+    };
   }
   // Query Body bauen und Keep-Alive verlängern
-  const body = buildQueryBodyWithPit({ ...opts, keepAlive: sess.keepAlive }, sess.pitId);
+  const body = buildQueryBodyWithPit(
+    { ...opts, keepAlive: sess.keepAlive },
+    sess.pitId,
+  );
   const res = await searchWithPit(sess, body);
   if (!(res.status >= 200 && res.status < 300))
-    throw new Error(`Elasticsearch-Fehler ${res.status}: ${res.text.slice(0, 1200)}`);
+    throw new Error(
+      `Elasticsearch-Fehler ${res.status}: ${res.text.slice(0, 1200)}`,
+    );
   const { entries, total, hasMore, nextSearchAfter } = parseHitsResponse(
     (res.json as AnyMap) || null,
-    opts.size ?? 1000
+    opts.size ?? 1000,
   );
   sess.lastUsed = Date.now();
   // Wenn keine weiteren Treffer: Session hier schließen (sauberes Lifecycle)
@@ -1137,15 +1343,24 @@ export async function fetchElasticPitPage(opts: ElasticsearchPitOptions): Promis
         sess.timeoutMs,
         sess.maxRetries,
         sess.backoffBaseMs,
-        sess.dialect
+        sess.dialect,
       );
     } catch (e) {
-      log.warn('PIT close after completion failed:', e instanceof Error ? e.message : String(e));
+      log.warn(
+        "PIT close after completion failed:",
+        e instanceof Error ? e.message : String(e),
+      );
     } finally {
       pitSessions.delete(sess.sessionId);
     }
   }
-  return { entries, total, hasMore, nextSearchAfter, pitSessionId: sess.sessionId };
+  return {
+    entries,
+    total,
+    hasMore,
+    nextSearchAfter,
+    pitSessionId: sess.sessionId,
+  };
 }
 
 // Öffentliche API: Session explizit schließen
@@ -1156,7 +1371,7 @@ export async function closeElasticPitSession(sessionId: string): Promise<void> {
     if (!sess) return;
     if (sess.pitId) {
       try {
-        if (sess.dialect === 'scroll') {
+        if (sess.dialect === "scroll") {
           await closeScroll(
             sess.baseUrl,
             sess.pitId,
@@ -1164,7 +1379,7 @@ export async function closeElasticPitSession(sessionId: string): Promise<void> {
             sess.allowInsecureTLS,
             sess.timeoutMs,
             sess.maxRetries,
-            sess.backoffBaseMs
+            sess.backoffBaseMs,
           );
         } else {
           await closePit(
@@ -1175,11 +1390,14 @@ export async function closeElasticPitSession(sessionId: string): Promise<void> {
             sess.timeoutMs,
             sess.maxRetries,
             sess.backoffBaseMs,
-            sess.dialect
+            sess.dialect,
           );
         }
       } catch (e) {
-        log.warn('PIT/Scroll close failed:', e instanceof Error ? e.message : String(e));
+        log.warn(
+          "PIT/Scroll close failed:",
+          e instanceof Error ? e.message : String(e),
+        );
       }
     }
   } finally {

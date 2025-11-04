@@ -38,7 +38,7 @@ This document summarizes the optimizations made to improve Windows startup perfo
 ```javascript
 // Icon resolution happened during BrowserWindow creation
 let winIconOpt = {};
-if (process.platform === 'win32') {
+if (process.platform === "win32") {
   const iconPath = resolveIconPath(); // Synchronous file operations
   if (iconPath) {
     winIconOpt = { icon: iconPath };
@@ -56,11 +56,11 @@ mainWindow = new BrowserWindow({
   // No icon set initially - faster creation
 });
 
-mainWindow.once('ready-to-show', () => {
+mainWindow.once("ready-to-show", () => {
   mainWindow.show();
 
   // Set icon asynchronously after window is visible
-  if (process.platform === 'win32') {
+  if (process.platform === "win32") {
     setImmediate(() => {
       const iconPath = resolveIconPath();
       if (iconPath) {
@@ -113,7 +113,7 @@ const {
   parseSettingsJSON,
   stringifySettingsJSON,
   mergeSettings,
-} = require('./settings');
+} = require("./settings");
 
 let settings = getDefaultSettings(); // Loaded immediately at startup
 ```
@@ -125,7 +125,7 @@ let settings = getDefaultSettings(); // Loaded immediately at startup
 let settingsUtils = null;
 function getSettingsUtils() {
   if (!settingsUtils) {
-    settingsUtils = require('./src/utils/settings');
+    settingsUtils = require("./src/utils/settings");
   }
   return settingsUtils;
 }
@@ -185,7 +185,7 @@ setImmediate(async () => {
 ```javascript
 const startTime = Date.now();
 
-mainWindow.once('ready-to-show', () => {
+mainWindow.once("ready-to-show", () => {
   const readyTime = Date.now() - startTime;
   console.log(`Window ready in ${readyTime}ms`);
   mainWindow.show();
@@ -255,8 +255,8 @@ The following Windows-specific configurations are properly set:
 ### AppUserModelId (main.js)
 
 ```javascript
-if (process.platform === 'win32') {
-  app.setAppUserModelId('de.hhla.lumberjack');
+if (process.platform === "win32") {
+  app.setAppUserModelId("de.hhla.lumberjack");
 }
 ```
 

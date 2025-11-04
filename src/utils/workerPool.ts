@@ -2,7 +2,7 @@
  * Worker Pool Manager for Parser Workers
  * Manages a pool of web workers for parallel parsing
  */
-import logger from './logger';
+import logger from "./logger";
 
 type PoolTask = {
   id: number;
@@ -41,26 +41,32 @@ class WorkerPool {
       try {
         // Use provided path relative to this module so bundlers (Vite) can locate the worker at build time
         const worker = new Worker(new URL(this.workerPath, import.meta.url), {
-          type: 'module',
+          type: "module",
         }) as PWorker;
         worker.onmessage = (e: MessageEvent) => this.handleWorkerMessage(e);
         worker.onerror = (err: ErrorEvent) => this.handleWorkerError(err);
         worker.busy = false;
         this.workers.push(worker);
       } catch (err) {
-        logger.warn('[WorkerPool] Failed to create worker:', err);
+        logger.warn("[WorkerPool] Failed to create worker:", err);
       }
     }
 
     // Fallback: if no workers available, mark pool as unavailable
     if (this.workers.length === 0) {
-      logger.warn('[WorkerPool] No workers available, falling back to main thread');
+      logger.warn(
+        "[WorkerPool] No workers available, falling back to main thread",
+      );
       this.unavailable = true;
     }
   }
 
   private handleWorkerMessage(e: MessageEvent): void {
-    const messageData = e.data as { id?: number; result?: unknown; error?: string };
+    const messageData = e.data as {
+      id?: number;
+      result?: unknown;
+      error?: string;
+    };
     const { id, result, error } = messageData || {};
 
     // Find the worker that sent this message
@@ -85,7 +91,7 @@ class WorkerPool {
   }
 
   private handleWorkerError(err: ErrorEvent): void {
-    logger.error('[WorkerPool] Worker error:', err);
+    logger.error("[WorkerPool] Worker error:", err);
     // Find the worker that errored
     const worker = err.target as PWorker | null;
     if (worker) worker.busy = false;
@@ -115,7 +121,7 @@ class WorkerPool {
   private execute(type: string, data: unknown): Promise<unknown> {
     // If workers unavailable, return rejected promise
     if (this.unavailable) {
-      return Promise.reject(new Error('Workers unavailable'));
+      return Promise.reject(new Error("Workers unavailable"));
     }
 
     return new Promise<unknown>((resolve, reject) => {
@@ -150,21 +156,21 @@ class WorkerPool {
    * Parse text lines using worker
    */
   parseLines(lines: string[], filename: string): Promise<unknown> {
-    return this.execute('parseLines', { lines, filename });
+    return this.execute("parseLines", { lines, filename });
   }
 
   /**
    * Parse JSON using worker
    */
   parseJSON(text: string, filename: string): Promise<unknown> {
-    return this.execute('parseJSON', { text, filename });
+    return this.execute("parseJSON", { text, filename });
   }
 
   /**
    * Parse zip entries using worker
    */
   parseZipEntries(entries: unknown[], zipName: string): Promise<unknown> {
-    return this.execute('parseZipEntries', { entries, zipName });
+    return this.execute("parseZipEntries", { entries, zipName });
   }
 
   /**
@@ -181,18 +187,19 @@ class WorkerPool {
 }
 
 // Singleton helpers stored on globalThis to avoid module resolution quirks
-const _WP_KEY = '__ljWorkerPool__';
+const _WP_KEY = "__ljWorkerPool__";
 
 export function getWorkerPool(): WorkerPool | null {
-  const existing = (globalThis as { __ljWorkerPool__?: WorkerPool }).__ljWorkerPool__;
+  const existing = (globalThis as { __ljWorkerPool__?: WorkerPool })
+    .__ljWorkerPool__;
   if (existing) return existing;
   try {
     // Use 2 workers by default for balance between parallelism and memory
-    const wp = new WorkerPool('../workers/parser.worker.js', 2);
+    const wp = new WorkerPool("../workers/parser.worker.js", 2);
     (globalThis as { __ljWorkerPool__?: WorkerPool }).__ljWorkerPool__ = wp;
     return wp;
   } catch (err) {
-    logger.warn('[WorkerPool] Failed to initialize:', err);
+    logger.warn("[WorkerPool] Failed to initialize:", err);
     return null;
   }
 }
@@ -201,6 +208,7 @@ export function terminateWorkerPool(): void {
   const wp = (globalThis as { __ljWorkerPool__?: WorkerPool }).__ljWorkerPool__;
   if (wp) {
     wp.terminate();
-    (globalThis as { __ljWorkerPool__?: WorkerPool | null }).__ljWorkerPool__ = null;
+    (globalThis as { __ljWorkerPool__?: WorkerPool | null }).__ljWorkerPool__ =
+      null;
   }
 }

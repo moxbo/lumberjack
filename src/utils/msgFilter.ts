@@ -11,13 +11,13 @@
 //  - !bar: message enthält NICHT bar
 //  - xml&(CB|AGV): message enthält xml UND (CB ODER AGV)
 export function msgMatches(message: string, expr: string): boolean {
-  const m = String(message || '').toLowerCase();
-  const q = String(expr || '')
+  const m = String(message || "").toLowerCase();
+  const q = String(expr || "")
     .toLowerCase()
     .trim();
   if (!q) return true;
 
-  type TokType = 'AND' | 'OR' | 'NOT' | 'LPAREN' | 'RPAREN' | 'WORD';
+  type TokType = "AND" | "OR" | "NOT" | "LPAREN" | "RPAREN" | "WORD";
   type Token = { t: TokType; v?: string };
 
   // Tokenizer: zerlegt in Operatoren und Wörter; ignoriert Whitespace
@@ -26,19 +26,19 @@ export function msgMatches(message: string, expr: string): boolean {
     let i = 0;
     const N = s.length;
     const isOp = (ch: string): boolean =>
-      ch === '&' || ch === '|' || ch === '!' || ch === '(' || ch === ')';
+      ch === "&" || ch === "|" || ch === "!" || ch === "(" || ch === ")";
     while (i < N) {
       const ch = s[i]!;
-      if (ch <= ' ') {
+      if (ch <= " ") {
         i++;
         continue;
       }
       if (isOp(ch)) {
-        if (ch === '&') toks.push({ t: 'AND' });
-        else if (ch === '|') toks.push({ t: 'OR' });
-        else if (ch === '!') toks.push({ t: 'NOT' });
-        else if (ch === '(') toks.push({ t: 'LPAREN' });
-        else if (ch === ')') toks.push({ t: 'RPAREN' });
+        if (ch === "&") toks.push({ t: "AND" });
+        else if (ch === "|") toks.push({ t: "OR" });
+        else if (ch === "!") toks.push({ t: "NOT" });
+        else if (ch === "(") toks.push({ t: "LPAREN" });
+        else if (ch === ")") toks.push({ t: "RPAREN" });
         i++;
         continue;
       }
@@ -46,11 +46,11 @@ export function msgMatches(message: string, expr: string): boolean {
       let j = i;
       while (j < N) {
         const c = s[j]!;
-        if (c <= ' ' || isOp(c)) break;
+        if (c <= " " || isOp(c)) break;
         j++;
       }
       const word = s.slice(i, j).trim();
-      if (word) toks.push({ t: 'WORD', v: word });
+      if (word) toks.push({ t: "WORD", v: word });
       i = j;
     }
     return toks;
@@ -68,14 +68,14 @@ export function msgMatches(message: string, expr: string): boolean {
   function evalPrimary(): boolean {
     const tk = peek();
     if (!tk) return true; // leere Stelle als true behandeln
-    if (tk.t === 'WORD') {
+    if (tk.t === "WORD") {
       take();
       return m.includes(tk.v!);
     }
-    if (tk.t === 'LPAREN') {
+    if (tk.t === "LPAREN") {
       take(); // '('
       const val = evalOr();
-      if (peek()?.t === 'RPAREN') take(); // ')', falls vorhanden
+      if (peek()?.t === "RPAREN") take(); // ')', falls vorhanden
       return val;
     }
     // Unerwartet: behandle als true, damit fehlerhafte Zeichen nicht alles ausschalten
@@ -86,7 +86,7 @@ export function msgMatches(message: string, expr: string): boolean {
   // not := ('NOT')* primary
   function evalNot(): boolean {
     let neg = false;
-    while (peek()?.t === 'NOT') {
+    while (peek()?.t === "NOT") {
       take();
       neg = !neg;
     }
@@ -97,13 +97,13 @@ export function msgMatches(message: string, expr: string): boolean {
   // and := not ('AND' not)*
   function evalAnd(): boolean {
     let left = evalNot();
-    while (peek()?.t === 'AND') {
+    while (peek()?.t === "AND") {
       take();
       const right = evalNot();
       left = left && right;
       if (!left) {
         // Kurzschluss: weitere AND-Komponenten konsumieren und ignorieren
-        while (peek()?.t === 'AND') {
+        while (peek()?.t === "AND") {
           take();
           // Konsumiere die nächste not-Komponente dennoch vollständig
           void evalNot();
@@ -117,13 +117,13 @@ export function msgMatches(message: string, expr: string): boolean {
   // or := and ('OR' and)*
   function evalOr(): boolean {
     let left = evalAnd();
-    while (peek()?.t === 'OR') {
+    while (peek()?.t === "OR") {
       take();
       const right = evalAnd();
       left = left || right;
       if (left) {
         // Kurzschluss: weitere OR-Komponenten konsumieren und ignorieren
-        while (peek()?.t === 'OR') {
+        while (peek()?.t === "OR") {
           take();
           // Konsumiere die nächste and-Komponente dennoch vollständig
           void evalAnd();

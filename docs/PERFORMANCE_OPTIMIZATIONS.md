@@ -31,7 +31,7 @@ The `ready-to-show` event in Electron's BrowserWindow fires when Chromium believ
 
 ```typescript
 // In createWindow function (main.ts)
-win.webContents.on('did-finish-load', () => {
+win.webContents.on("did-finish-load", () => {
   // ... existing code ...
 
   // Show window shortly after load completes
@@ -346,7 +346,7 @@ npm test
 ### Using LogDataStore
 
 ```typescript
-import { useLogDataStore } from '../hooks/useLogDataStore';
+import { useLogDataStore } from "../hooks/useLogDataStore";
 
 function MyComponent() {
   const { entries, addEntry, filter, sort } = useLogDataStore();
@@ -355,10 +355,10 @@ function MyComponent() {
   addEntry(logEntry);
 
   // Fast filtering
-  const errorIndices = filter({ levels: ['ERROR', 'FATAL'] });
+  const errorIndices = filter({ levels: ["ERROR", "FATAL"] });
 
   // Cached sorting
-  const sorted = sort('timestamp', 'desc');
+  const sorted = sort("timestamp", "desc");
 }
 ```
 

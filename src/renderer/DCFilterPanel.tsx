@@ -1,12 +1,12 @@
-import { useEffect, useRef, useState } from 'preact/hooks';
-import { MDCListener } from '../store/mdcListener';
-import { DiagnosticContextFilter, dcEntryId } from '../store/dcFilter';
-import { LoggingStore } from '../store/loggingStore';
+import { useEffect, useRef, useState } from "preact/hooks";
+import { MDCListener } from "../store/mdcListener";
+import { DiagnosticContextFilter, dcEntryId } from "../store/dcFilter";
+import { LoggingStore } from "../store/loggingStore";
 
 export default function DCFilterPanel() {
   const [keys, setKeys] = useState([]);
-  const [selectedKey, setSelectedKey] = useState('');
-  const [val, setVal] = useState('');
+  const [selectedKey, setSelectedKey] = useState("");
+  const [val, setVal] = useState("");
   const [rows, setRows] = useState(DiagnosticContextFilter.getDcEntries());
   const [sel, setSel] = useState([]); // selected ids
   const [enabled, setEnabled] = useState(DiagnosticContextFilter.isEnabled());
@@ -18,22 +18,34 @@ export default function DCFilterPanel() {
     function onDocClick(e) {
       if (!ctx.open) return;
       const el = ctxRef.current;
-      const path = typeof e.composedPath === 'function' ? e.composedPath() : [];
-      if (el && (el === e.target || el.contains(e.target) || (path && path.includes(el)))) return;
+      const path = typeof e.composedPath === "function" ? e.composedPath() : [];
+      if (
+        el &&
+        (el === e.target ||
+          el.contains(e.target) ||
+          (path && path.includes(el)))
+      )
+        return;
       setCtx({ open: false, x: 0, y: 0 });
     }
-    window.addEventListener('mousedown', onDocClick, { capture: true, passive: true });
-    return () => window.removeEventListener('mousedown', onDocClick, { capture: true });
+    window.addEventListener("mousedown", onDocClick, {
+      capture: true,
+      passive: true,
+    });
+    return () =>
+      window.removeEventListener("mousedown", onDocClick, { capture: true });
   }, [ctx.open]);
 
   // sync keys from MDCListener; clear on store reset
   useEffect(() => {
-    const off1 = MDCListener.onChange(() => setKeys(MDCListener.getSortedKeys()));
+    const off1 = MDCListener.onChange(() =>
+      setKeys(MDCListener.getSortedKeys()),
+    );
     const off2 = LoggingStore.addLoggingStoreListener({
       loggingEventsAdded: () => setKeys(MDCListener.getSortedKeys()),
       loggingStoreReset: () => {
         setKeys([]);
-        setSelectedKey('');
+        setSelectedKey("");
       },
     });
     setKeys(MDCListener.getSortedKeys());
@@ -55,20 +67,20 @@ export default function DCFilterPanel() {
   }, []);
 
   function onAdd() {
-    const key = String(selectedKey || '').trim();
+    const key = String(selectedKey || "").trim();
     if (!key) return;
-    const raw = String(val ?? '');
+    const raw = String(val ?? "");
     const parts = raw
-      .split('|')
+      .split("|")
       .map((s) => s.trim())
       .filter((s) => s.length > 0);
     if (parts.length === 0) {
       // Wildcard: nur Key muss vorhanden sein
-      DiagnosticContextFilter.addMdcEntry(key, '');
+      DiagnosticContextFilter.addMdcEntry(key, "");
     } else {
       for (const p of parts) DiagnosticContextFilter.addMdcEntry(key, p);
     }
-    setVal('');
+    setVal("");
   }
   function onRemoveSelected() {
     const cur = DiagnosticContextFilter.getDcEntries();
@@ -136,9 +148,9 @@ export default function DCFilterPanel() {
   const [values, setValues] = useState([]);
   const valueInputRef = useRef(null);
   function onValueKeyDown(e) {
-    if (e.key === 'F2') {
+    if (e.key === "F2") {
       e.preventDefault();
-      const k = String(selectedKey || '').trim();
+      const k = String(selectedKey || "").trim();
       if (!k) return;
       const vals = MDCListener.getSortedValues(k);
       setValues(vals);
@@ -146,7 +158,7 @@ export default function DCFilterPanel() {
     }
   }
   function openValuePicker() {
-    const k = String(selectedKey || '').trim();
+    const k = String(selectedKey || "").trim();
     const vals = k ? MDCListener.getSortedValues(k) : [];
     setValues(vals);
     setShowValues(true);
@@ -157,7 +169,7 @@ export default function DCFilterPanel() {
     setTimeout(() => onAdd(), 0);
   }
 
-  const addDisabled = !String(selectedKey || '').trim();
+  const addDisabled = !String(selectedKey || "").trim();
 
   return (
     <div class="dc-panel" style="border-top:1px solid #ddd; padding:8px 12px;">
@@ -190,7 +202,10 @@ export default function DCFilterPanel() {
                 title="Mehrere Werte mit | trennen. F2 oder Button öffnet Vorschläge. Leer = alle Werte dieses Keys."
                 placeholder="Wert(e) oder leer für alle…"
               />
-              <button title="Vorschläge anzeigen (F2)" onClick={openValuePicker}>
+              <button
+                title="Vorschläge anzeigen (F2)"
+                onClick={openValuePicker}
+              >
                 Werte…
               </button>
             </div>
@@ -212,14 +227,18 @@ export default function DCFilterPanel() {
             type="checkbox"
             class="native-checkbox"
             checked={enabled}
-            onChange={(e) => DiagnosticContextFilter.setEnabled(e.currentTarget.checked)}
+            onChange={(e) =>
+              DiagnosticContextFilter.setEnabled(e.currentTarget.checked)
+            }
           />
           <span style="font-size:12px; color:#333;">MDC-Filter aktiv</span>
         </label>
       </div>
 
       <div style="margin-top:8px;">
-        <div style="font-size:12px; color:#666; margin-bottom:4px;">Diagnostic Context Filter</div>
+        <div style="font-size:12px; color:#666; margin-bottom:4px;">
+          Diagnostic Context Filter
+        </div>
         <div class="table-wrap">
           <table class="data-table">
             <thead>
@@ -233,12 +252,15 @@ export default function DCFilterPanel() {
               {rows.map((e) => {
                 const id = dcEntryId(e);
                 const isSel = sel.includes(id);
-                const rowCls = `${isSel ? 'selected ' : ''}${!e.active ? 'inactive' : ''}`.trim();
+                const rowCls =
+                  `${isSel ? "selected " : ""}${!e.active ? "inactive" : ""}`.trim();
                 return (
                   <tr
                     key={id}
                     class={rowCls}
-                    onClick={(ev) => toggleRow(id, ev.shiftKey, ev.ctrlKey || ev.metaKey)}
+                    onClick={(ev) =>
+                      toggleRow(id, ev.shiftKey, ev.ctrlKey || ev.metaKey)
+                    }
                     onContextMenu={(ev) => openCtx(ev, id)}
                     style="cursor: default;"
                   >
@@ -250,15 +272,17 @@ export default function DCFilterPanel() {
                           type="checkbox"
                           class="native-checkbox"
                           checked={!!e.active}
-                          onChange={(ev) => toggleActive(e, ev.currentTarget.checked)}
+                          onChange={(ev) =>
+                            toggleActive(e, ev.currentTarget.checked)
+                          }
                           onClick={(ev) => ev.stopPropagation()}
                           onMouseDown={(ev) => ev.stopPropagation()}
                           onContextMenu={(ev) => ev.stopPropagation()}
-                          aria-label={e.active ? 'aktiv' : 'aus'}
-                          title={e.active ? 'aktiv' : 'aus'}
+                          aria-label={e.active ? "aktiv" : "aus"}
+                          title={e.active ? "aktiv" : "aus"}
                         />
-                        <span class={`badge ${e.active ? 'on' : 'off'}`}>
-                          {e.active ? 'Aktiv' : 'Aus'}
+                        <span class={`badge ${e.active ? "on" : "off"}`}>
+                          {e.active ? "Aktiv" : "Aus"}
                         </span>
                       </div>
                     </td>
@@ -281,7 +305,7 @@ export default function DCFilterPanel() {
         <div
           ref={ctxRef}
           class="context-menu"
-          style={{ position: 'fixed', left: ctx.x + 'px', top: ctx.y + 'px' }}
+          style={{ position: "fixed", left: ctx.x + "px", top: ctx.y + "px" }}
         >
           <div class="item" onClick={() => activateSelected(true)}>
             Aktivieren
@@ -307,7 +331,9 @@ export default function DCFilterPanel() {
             <h3>Bekannte Werte</h3>
             <div style="max-height:260px; overflow:auto; border:1px solid #eee;">
               {values.length === 0 && (
-                <div style="padding:8px; color:#777;">Keine bekannten Werte</div>
+                <div style="padding:8px; color:#777;">
+                  Keine bekannten Werte
+                </div>
               )}
               {values.map((v) => (
                 <div

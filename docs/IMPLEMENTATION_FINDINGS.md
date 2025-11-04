@@ -194,7 +194,7 @@ Empty value creates a wildcard entry (matches any value for that key):
 
 ```javascript
 if (parts.length === 0) {
-  DiagnosticContextFilter.addMdcEntry(key, ''); // Wildcard
+  DiagnosticContextFilter.addMdcEntry(key, ""); // Wildcard
 }
 ```
 

@@ -3,12 +3,12 @@
  * Manages application settings with validation, persistence, and encryption
  */
 
-import type { Settings } from '../types/ipc';
-import * as fs from 'fs';
-import * as path from 'path';
-import * as crypto from 'crypto';
-import { app, safeStorage } from 'electron';
-import log from 'electron-log/main';
+import type { Settings } from "../types/ipc";
+import * as fs from "fs";
+import * as path from "path";
+import * as crypto from "crypto";
+import { app, safeStorage } from "electron";
+import log from "electron-log/main";
 
 /**
  * Default settings values
@@ -21,16 +21,16 @@ const DEFAULT_SETTINGS: Settings = {
   isMaximized: false,
   tcpPort: 4445,
   logToFile: false,
-  logFilePath: '',
+  logFilePath: "",
   logMaxBytes: 10 * 1024 * 1024, // 10 MB
   logMaxBackups: 3,
-  elasticUrl: '',
-  elasticUser: '',
-  elasticPassEnc: '',
+  elasticUrl: "",
+  elasticUser: "",
+  elasticPassEnc: "",
   elasticSize: 10000,
-  themeMode: 'system',
+  themeMode: "system",
   // NEW: default UI language
-  locale: 'de',
+  locale: "de",
   histLogger: [],
   // NEW histories for ElasticSearch dialog
   histAppName: [],
@@ -38,8 +38,8 @@ const DEFAULT_SETTINGS: Settings = {
   // NEW: Index history
   histIndex: [],
   // NEW: last environment-case used in Elastic dialog
-  lastEnvironmentCase: 'original',
-  httpUrl: '',
+  lastEnvironmentCase: "original",
+  httpUrl: "",
   httpPollInterval: 5000,
   elasticMaxParallel: 1,
 };
@@ -71,9 +71,9 @@ export class SettingsService {
   private resolveSettingsPath(): string {
     const portableDir = process.env.PORTABLE_EXECUTABLE_DIR;
     if (portableDir && portableDir.length) {
-      return path.join(portableDir, 'data', 'settings.json');
+      return path.join(portableDir, "data", "settings.json");
     }
-    return path.join(app.getPath('userData'), 'settings.json');
+    return path.join(app.getPath("userData"), "settings.json");
   }
 
   /**
@@ -82,25 +82,29 @@ export class SettingsService {
   async load(): Promise<void> {
     try {
       if (!fs.existsSync(this.settingsPath)) {
-        log.info('Settings file not found, using defaults');
+        log.info("Settings file not found, using defaults");
         this.loaded = true;
         return;
       }
 
-      const raw = await fs.promises.readFile(this.settingsPath, 'utf8');
-      const parsed = JSON.parse(raw) as Partial<Settings> & Record<string, unknown>;
+      const raw = await fs.promises.readFile(this.settingsPath, "utf8");
+      const parsed = JSON.parse(raw) as Partial<Settings> &
+        Record<string, unknown>;
       // Entferne veraltete Schlüssel, die nicht mehr unterstützt werden
-      if ('windowTitle' in parsed) {
+      if ("windowTitle" in parsed) {
         delete parsed.windowTitle;
       }
 
       // Merge with defaults to ensure all required fields exist
       this.settings = { ...DEFAULT_SETTINGS, ...parsed } as Settings;
       this.loaded = true;
-      log.info('Settings loaded successfully from', this.settingsPath);
+      log.info("Settings loaded successfully from", this.settingsPath);
     } catch (err) {
-      log.error('Error loading settings:', err instanceof Error ? err.message : String(err));
-      log.info('Using default settings');
+      log.error(
+        "Error loading settings:",
+        err instanceof Error ? err.message : String(err),
+      );
+      log.info("Using default settings");
       this.loaded = true;
     }
   }
@@ -115,16 +119,20 @@ export class SettingsService {
         return;
       }
 
-      const raw = fs.readFileSync(this.settingsPath, 'utf8');
-      const parsed = JSON.parse(raw) as Partial<Settings> & Record<string, unknown>;
+      const raw = fs.readFileSync(this.settingsPath, "utf8");
+      const parsed = JSON.parse(raw) as Partial<Settings> &
+        Record<string, unknown>;
       // Entferne veraltete Schlüssel
-      if ('windowTitle' in parsed) {
-        delete (parsed as Record<string, unknown>)['windowTitle'];
+      if ("windowTitle" in parsed) {
+        delete (parsed as Record<string, unknown>)["windowTitle"];
       }
       this.settings = { ...DEFAULT_SETTINGS, ...parsed } as Settings;
       this.loaded = true;
     } catch (err) {
-      log.error('Error loading settings sync:', err instanceof Error ? err.message : String(err));
+      log.error(
+        "Error loading settings sync:",
+        err instanceof Error ? err.message : String(err),
+      );
       this.loaded = true;
     }
   }
@@ -138,12 +146,15 @@ export class SettingsService {
       const dir = path.dirname(this.settingsPath);
 
       await fs.promises.mkdir(dir, { recursive: true });
-      await fs.promises.writeFile(this.settingsPath, json, 'utf8');
+      await fs.promises.writeFile(this.settingsPath, json, "utf8");
 
-      log.info('Settings saved successfully');
+      log.info("Settings saved successfully");
       return true;
     } catch (err) {
-      log.error('Error saving settings:', err instanceof Error ? err.message : String(err));
+      log.error(
+        "Error saving settings:",
+        err instanceof Error ? err.message : String(err),
+      );
       return false;
     }
   }
@@ -157,12 +168,15 @@ export class SettingsService {
       const dir = path.dirname(this.settingsPath);
 
       fs.mkdirSync(dir, { recursive: true });
-      fs.writeFileSync(this.settingsPath, json, 'utf8');
+      fs.writeFileSync(this.settingsPath, json, "utf8");
 
-      log.info('Settings saved successfully (sync)');
+      log.info("Settings saved successfully (sync)");
       return true;
     } catch (err) {
-      log.error('Error saving settings sync:', err instanceof Error ? err.message : String(err));
+      log.error(
+        "Error saving settings sync:",
+        err instanceof Error ? err.message : String(err),
+      );
       return false;
     }
   }
@@ -187,13 +201,13 @@ export class SettingsService {
 
     // Entferne veraltete Schlüssel aus Patches
     try {
-      if (patch && typeof patch === 'object' && 'windowTitle' in patch) {
-        delete (patch as Record<string, unknown>)['windowTitle'];
+      if (patch && typeof patch === "object" && "windowTitle" in patch) {
+        delete (patch as Record<string, unknown>)["windowTitle"];
       }
     } catch (e) {
       log.warn(
-        'Failed to strip legacy windowTitle from settings patch:',
-        e instanceof Error ? e.message : String(e)
+        "Failed to strip legacy windowTitle from settings patch:",
+        e instanceof Error ? e.message : String(e),
       );
     }
 
@@ -209,21 +223,24 @@ export class SettingsService {
   validate(settings: Partial<Settings>): ValidationResult {
     // Add validation logic here
     if (settings.logMaxBytes !== undefined && settings.logMaxBytes < 0) {
-      return { success: false, error: 'logMaxBytes must be >= 0' };
+      return { success: false, error: "logMaxBytes must be >= 0" };
     }
 
     if (settings.logMaxBackups !== undefined && settings.logMaxBackups < 0) {
-      return { success: false, error: 'logMaxBackups must be >= 0' };
+      return { success: false, error: "logMaxBackups must be >= 0" };
     }
 
-    if (settings.tcpPort !== undefined && (settings.tcpPort < 1 || settings.tcpPort > 65535)) {
-      return { success: false, error: 'tcpPort must be between 1 and 65535' };
+    if (
+      settings.tcpPort !== undefined &&
+      (settings.tcpPort < 1 || settings.tcpPort > 65535)
+    ) {
+      return { success: false, error: "tcpPort must be between 1 and 65535" };
     }
 
     if (settings.elasticMaxParallel !== undefined) {
       const v = Number(settings.elasticMaxParallel);
       if (!Number.isFinite(v) || v < 1) {
-        return { success: false, error: 'elasticMaxParallel must be >= 1' };
+        return { success: false, error: "elasticMaxParallel must be >= 1" };
       }
     }
 
@@ -238,30 +255,33 @@ export class SettingsService {
       // Try Electron safeStorage first
       if (
         safeStorage &&
-        typeof safeStorage.isEncryptionAvailable === 'function' &&
+        typeof safeStorage.isEncryptionAvailable === "function" &&
         safeStorage.isEncryptionAvailable()
       ) {
         const buf = safeStorage.encryptString(plaintext);
-        return 'ss1:' + Buffer.from(buf).toString('base64');
+        return "ss1:" + Buffer.from(buf).toString("base64");
       }
     } catch (err) {
-      log.warn('safeStorage encryption failed, falling back to AES:', err);
+      log.warn("safeStorage encryption failed, falling back to AES:", err);
     }
 
     // Fallback to AES-256-GCM
     try {
       const key = crypto
-        .createHash('sha256')
-        .update(app.getPath('userData') + '|lumberjack')
+        .createHash("sha256")
+        .update(app.getPath("userData") + "|lumberjack")
         .digest();
       const iv = crypto.randomBytes(12);
-      const cipher = crypto.createCipheriv('aes-256-gcm', key, iv);
-      const enc = Buffer.concat([cipher.update(plaintext, 'utf8'), cipher.final()]);
+      const cipher = crypto.createCipheriv("aes-256-gcm", key, iv);
+      const enc = Buffer.concat([
+        cipher.update(plaintext, "utf8"),
+        cipher.final(),
+      ]);
       const tag = cipher.getAuthTag();
-      return 'gcm1:' + Buffer.concat([iv, tag, enc]).toString('base64');
+      return "gcm1:" + Buffer.concat([iv, tag, enc]).toString("base64");
     } catch (err) {
-      log.error('AES encryption failed:', err);
-      return '';
+      log.error("AES encryption failed:", err);
+      return "";
     }
   }
 
@@ -269,36 +289,39 @@ export class SettingsService {
    * Decrypt a secret
    */
   decryptSecret(encrypted: string): string {
-    if (!encrypted) return '';
+    if (!encrypted) return "";
 
     try {
-      if (encrypted.startsWith('ss1:')) {
-        const b = Buffer.from(encrypted.slice(4), 'base64');
-        if (safeStorage && typeof safeStorage.decryptString === 'function') {
+      if (encrypted.startsWith("ss1:")) {
+        const b = Buffer.from(encrypted.slice(4), "base64");
+        if (safeStorage && typeof safeStorage.decryptString === "function") {
           return safeStorage.decryptString(b);
         }
-        return '';
+        return "";
       }
 
-      if (encrypted.startsWith('gcm1:')) {
-        const buf = Buffer.from(encrypted.slice(5), 'base64');
+      if (encrypted.startsWith("gcm1:")) {
+        const buf = Buffer.from(encrypted.slice(5), "base64");
         const iv = buf.subarray(0, 12);
         const tag = buf.subarray(12, 28);
         const data = buf.subarray(28);
         const key = crypto
-          .createHash('sha256')
-          .update(app.getPath('userData') + '|lumberjack')
+          .createHash("sha256")
+          .update(app.getPath("userData") + "|lumberjack")
           .digest();
-        const decipher = crypto.createDecipheriv('aes-256-gcm', key, iv);
+        const decipher = crypto.createDecipheriv("aes-256-gcm", key, iv);
         decipher.setAuthTag(tag);
-        return Buffer.concat([decipher.update(data), decipher.final()]).toString('utf8');
+        return Buffer.concat([
+          decipher.update(data),
+          decipher.final(),
+        ]).toString("utf8");
       }
     } catch (err) {
-      log.error('Decryption failed:', err);
-      return '';
+      log.error("Decryption failed:", err);
+      return "";
     }
 
-    return '';
+    return "";
   }
 
   /**

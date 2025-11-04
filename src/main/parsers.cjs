@@ -55,7 +55,7 @@ function getAdmZip() {
   if (!AdmZip) {
     try {
       AdmZip = require("adm-zip");
-    } catch (e) {
+    } catch {
       const req = (0, import_module.createRequire)(import_path.default.join(process.cwd(), "package.json"));
       AdmZip = req("adm-zip");
     }
@@ -107,7 +107,8 @@ function toEntry(obj = {}, fallbackMessage = "", source = "") {
       const ex = o.exception || o.cause || o.throwable;
       if (ex) {
         if (ex.stack != null) cand.push(ex.stack);
-        if (ex.stackTrace != null) cand.push(ex.stackTrace);
+        if (ex.stackTrace != null)
+          cand.push(ex.stackTrace);
         if (typeof ex === "string") cand.push(ex);
       }
     } catch {
@@ -115,7 +116,8 @@ function toEntry(obj = {}, fallbackMessage = "", source = "") {
     try {
       if (o["exception.stacktrace"] != null)
         cand.push(o["exception.stacktrace"]);
-      if (o["error.stacktrace"] != null) cand.push(o["error.stacktrace"]);
+      if (o["error.stacktrace"] != null)
+        cand.push(o["error.stacktrace"]);
     } catch {
     }
     for (const v of cand) {
@@ -156,6 +158,58 @@ function tryParseJson(line) {
     return null;
   }
 }
+function tryParseJsonLoose(line) {
+  try {
+    const braceStart = line.indexOf("{");
+    const braceEnd = line.lastIndexOf("}");
+    if (braceStart === -1 || braceEnd === -1 || braceEnd - braceStart < 2)
+      return null;
+    const slice = line.slice(braceStart, braceEnd + 1);
+    const obj = {};
+    const re = /"([^"\\]+)"\s*:\s*("(?:[^"\\]|\\.)*"|true|false|null|-?\d+(?:\.\d+)?)/g;
+    let m;
+    let found = 0;
+    while ((m = re.exec(slice)) != null) {
+      const key = m[1] != null ? String(m[1]) : "";
+      const rawValStr = m[2] != null ? String(m[2]) : "";
+      if (!key) continue;
+      let val = null;
+      try {
+        if (rawValStr.startsWith('"')) {
+          val = JSON.parse(rawValStr);
+        } else if (rawValStr === "true" || rawValStr === "false") {
+          val = rawValStr === "true";
+        } else if (rawValStr === "null") {
+          val = null;
+        } else {
+          const n = Number(rawValStr);
+          val = Number.isNaN(n) ? rawValStr : n;
+        }
+      } catch {
+        val = rawValStr;
+      }
+      if (obj[key] === void 0) {
+        obj[key] = val;
+        found++;
+      }
+    }
+    const meaningful = [
+      "@timestamp",
+      "timestamp",
+      "level",
+      "logger",
+      "logger_name",
+      "thread",
+      "thread_name",
+      "TraceID",
+      "message"
+    ].some((k) => Object.prototype.hasOwnProperty.call(obj, k));
+    if (found >= 3 || meaningful) return obj;
+    return null;
+  } catch {
+    return null;
+  }
+}
 function parseTextLines(filename, text) {
   const entries = [];
   const lines = text.split(/\r?\n/);
@@ -165,6 +219,9 @@ function parseTextLines(filename, text) {
     if (!obj) {
       const match = line.match(/{[\s\S]*}$/);
       if (match) obj = tryParseJson(match[0]);
+    }
+    if (!obj) {
+      obj = tryParseJsonLoose(line.trim()) || null;
     }
     if (obj) {
       entries.push(toEntry(obj, "", filename));
@@ -188,7 +245,11 @@ function parseJsonFile(filename, text) {
       const arr = JSON.parse(trimmed);
       if (Array.isArray(arr))
         return arr.map(
-          (o) => toEntry(o && typeof o === "object" ? o : {}, "", filename)
+          (o) => toEntry(
+            o && typeof o === "object" ? o : {},
+            "",
+            filename
+          )
         );
     } catch (e) {
       import_main.default.warn(
@@ -222,7 +283,8 @@ function parsePath(p) {
   const text = ext === ".zip" ? null : import_fs.default.readFileSync(p, "utf8");
   if (ext === ".zip") return parseZipFile(p);
   if (ext === ".json") return parseJsonFile(p, text);
-  if (ext === ".jsonl" || ext === ".txt") return parseTextLines(p, text);
+  if (ext === ".jsonl" || ext === ".txt")
+    return parseTextLines(p, text);
   if (ext === ".log" || !ext) return parseTextLines(p, text);
   return [];
 }
@@ -233,7 +295,13 @@ function parsePaths(paths) {
       all.push(...parsePath(p));
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
-      all.push(toEntry({ level: "ERROR", message: `Failed to parse ${p}: ${msg}` }, "", p));
+      all.push(
+        toEntry(
+          { level: "ERROR", message: `Failed to parse ${p}: ${msg}` },
+          "",
+          p
+        )
+      );
     }
   }
   return all;
@@ -277,14 +345,19 @@ async function httpJsonRequest(method, urlStr, body, headers, allowInsecureTLS, 
             stream = res.pipe(import_zlib.default.createBrotliDecompress());
           }
         } catch (e) {
-          import_main.default.warn("httpJsonRequest: decompression stream creation failed, using raw stream:", e);
+          import_main.default.warn(
+            "httpJsonRequest: decompression stream creation failed, using raw stream:",
+            e
+          );
           stream = res;
         }
         const chunks = [];
         stream.on("data", (c) => chunks.push(c));
         stream.on("end", () => {
           if (timer) clearTimeout(timer);
-          const enc = String(res.headers["content-encoding"] || "").toLowerCase();
+          const enc = String(
+            res.headers["content-encoding"] || ""
+          ).toLowerCase();
           const raw = Buffer.concat(chunks);
           let buf = raw;
           try {
@@ -319,13 +392,13 @@ async function httpJsonRequest(method, urlStr, body, headers, allowInsecureTLS, 
       });
       req.on("error", (err) => {
         if (timer) clearTimeout(timer);
-        reject(err);
+        reject(err instanceof Error ? err : new Error(String(err)));
       });
       const payload = body ? JSON.stringify(body) : "";
       if (payload) req.write(payload);
       req.end();
     } catch (err) {
-      reject(err);
+      reject(err instanceof Error ? err : new Error(String(err)));
     }
   });
 }
@@ -371,7 +444,10 @@ function buildHeadersWithAuth(auth) {
 }
 function buildSortArray(order) {
   const ord = order ?? "desc";
-  return [{ "@timestamp": { order: ord, unmapped_type: "boolean" } }, { _id: { order: ord } }];
+  return [
+    { "@timestamp": { order: ord, unmapped_type: "boolean" } },
+    { _id: { order: ord } }
+  ];
 }
 async function tryOpenPitEs(baseUrl, index, keepAlive, headers, allowInsecureTLS, timeoutMs, maxRetries, backoffBaseMs) {
   const idx = index && index.trim() ? index.trim() : "_all";
@@ -383,7 +459,9 @@ async function tryOpenPitEs(baseUrl, index, keepAlive, headers, allowInsecureTLS
     if (typeof id === "string" && id) return id;
     throw new Error("PIT open: Keine id im Response");
   }
-  throw new Error(`ES PIT open failed ${res.status}: ${res.text.slice(0, 800)}`);
+  throw new Error(
+    `ES PIT open failed ${res.status}: ${res.text.slice(0, 800)}`
+  );
 }
 async function tryOpenPitOs(baseUrl, index, keepAlive, headers, allowInsecureTLS, timeoutMs, maxRetries, backoffBaseMs) {
   const idx = index && index.trim() ? index.trim() : "_all";
@@ -402,7 +480,9 @@ async function tryOpenPitOs(baseUrl, index, keepAlive, headers, allowInsecureTLS
     if (typeof id === "string" && id) return id;
     throw new Error("OpenSearch PIT open: Keine pit_id/id im Response");
   }
-  throw new Error(`OS PIT open failed ${res.status}: ${res.text.slice(0, 800)}`);
+  throw new Error(
+    `OS PIT open failed ${res.status}: ${res.text.slice(0, 800)}`
+  );
 }
 async function closePitEs(baseUrl, pitId, headers, allowInsecureTLS, timeoutMs, maxRetries, backoffBaseMs) {
   const url = `${baseUrl}/_pit/close`;
@@ -410,7 +490,9 @@ async function closePitEs(baseUrl, pitId, headers, allowInsecureTLS, timeoutMs, 
   const exec = () => httpJsonRequest("POST", url, body, headers, allowInsecureTLS, timeoutMs);
   const res = await requestWithRetry(exec, { maxRetries, backoffBaseMs });
   if (!(res.status >= 200 && res.status < 300))
-    throw new Error(`ES PIT close failed ${res.status}: ${res.text.slice(0, 800)}`);
+    throw new Error(
+      `ES PIT close failed ${res.status}: ${res.text.slice(0, 800)}`
+    );
 }
 async function closePitOs(baseUrl, pitId, headers, allowInsecureTLS, timeoutMs, maxRetries, backoffBaseMs) {
   const url = `${baseUrl}/_search/point_in_time`;
@@ -418,7 +500,9 @@ async function closePitOs(baseUrl, pitId, headers, allowInsecureTLS, timeoutMs, 
   const exec = () => httpJsonRequest("DELETE", url, body, headers, allowInsecureTLS, timeoutMs);
   const res = await requestWithRetry(exec, { maxRetries, backoffBaseMs });
   if (!(res.status >= 200 && res.status < 300))
-    throw new Error(`OS PIT close failed ${res.status}: ${res.text.slice(0, 800)}`);
+    throw new Error(
+      `OS PIT close failed ${res.status}: ${res.text.slice(0, 800)}`
+    );
 }
 async function closePit(baseUrl, pitId, headers, allowInsecureTLS, timeoutMs, maxRetries, backoffBaseMs, dialect) {
   if (dialect === "es") {
@@ -484,7 +568,15 @@ async function closePit(baseUrl, pitId, headers, allowInsecureTLS, timeoutMs, ma
     return;
   } catch {
   }
-  await closePitOs(baseUrl, pitId, headers, allowInsecureTLS, timeoutMs, maxRetries, backoffBaseMs);
+  await closePitOs(
+    baseUrl,
+    pitId,
+    headers,
+    allowInsecureTLS,
+    timeoutMs,
+    maxRetries,
+    backoffBaseMs
+  );
 }
 function newSessionId() {
   const rnd = Math.random().toString(36).slice(2);
@@ -526,16 +618,20 @@ function buildElasticSearchBody(opts) {
         }
       });
     } else if (mode === "lower") {
-      must.push({ match_phrase: { environment: { query: rawEnv.toLowerCase() } } });
+      must.push({
+        match_phrase: { environment: { query: rawEnv.toLowerCase() } }
+      });
     } else if (mode === "upper") {
-      must.push({ match_phrase: { environment: { query: rawEnv.toUpperCase() } } });
+      must.push({
+        match_phrase: { environment: { query: rawEnv.toUpperCase() } }
+      });
     } else {
       must.push({ match_phrase: { environment: { query: rawEnv } } });
     }
   }
   const app = String(opts.application_name || "").trim();
   if (app) {
-    const q = app.includes(" ") || /["*?:\\/()\[\]{}]/.test(app) ? `"${app.replace(/"/g, '\\"')}"` : app;
+    const q = app.includes(" ") || /[\["*?:\/()\]{}]/.test(app) ? `"${app.replace(/"/g, '\\"')}"` : app;
     must.push({
       query_string: {
         query: `application_name:${q}`,
@@ -592,7 +688,11 @@ function buildElasticSearchBody(opts) {
   return {
     version: true,
     size: opts.size ?? 1e3,
-    sort: [{ "@timestamp": { order: opts.sort ?? "desc", unmapped_type: "boolean" } }],
+    sort: [
+      {
+        "@timestamp": { order: opts.sort ?? "desc", unmapped_type: "boolean" }
+      }
+    ],
     query: {
       bool: {
         must,
@@ -606,7 +706,10 @@ function buildElasticSearchBody(opts) {
   };
 }
 function buildQueryBodyWithPit(opts, pitId) {
-  const baseBody = buildElasticSearchBody({ ...opts, searchAfter: opts.searchAfter });
+  const baseBody = buildElasticSearchBody({
+    ...opts,
+    searchAfter: opts.searchAfter
+  });
   baseBody.size = opts.size ?? 1e3;
   baseBody.sort = buildSortArray(opts.sort);
   baseBody.pit = { id: pitId, keep_alive: opts.keepAlive ?? "1m" };
@@ -624,16 +727,28 @@ function buildQueryBodyWithPit(opts, pitId) {
 }
 async function searchWithPit(sess, body) {
   const url = `${sess.baseUrl}/_search?filter_path=hits.hits._source,hits.hits.sort,hits.total`;
-  const exec = () => httpJsonRequest("POST", url, body, sess.headers, !!sess.allowInsecureTLS, sess.timeoutMs);
+  const exec = () => httpJsonRequest(
+    "POST",
+    url,
+    body,
+    sess.headers,
+    !!sess.allowInsecureTLS,
+    sess.timeoutMs
+  );
   const res = await requestWithRetry(exec, {
     maxRetries: sess.maxRetries,
     backoffBaseMs: sess.backoffBaseMs
   });
-  return { status: res.status, text: res.text, json: res.json || null };
+  return {
+    status: res.status,
+    text: res.text,
+    json: res.json || null
+  };
 }
 function getOrCreateSessionSyncState(opts) {
   const baseUrl = normalizeBase(opts.url || "");
-  if (!baseUrl) throw new Error("Elasticsearch URL (opts.url) ist erforderlich");
+  if (!baseUrl)
+    throw new Error("Elasticsearch URL (opts.url) ist erforderlich");
   const indexRaw = String(opts.index ?? "").trim();
   const index = indexRaw ? indexRaw : "_all";
   const keepAlive = String(opts.keepAlive || "1m");
@@ -764,12 +879,15 @@ async function openScroll(baseUrl, index, keepAlive, size, sortOrder, headers, a
   const exec = () => httpJsonRequest("POST", url, body, headers, allowInsecureTLS, timeoutMs);
   const res = await requestWithRetry(exec, { maxRetries, backoffBaseMs });
   if (!(res.status >= 200 && res.status < 300))
-    throw new Error(`Scroll open failed ${res.status}: ${res.text.slice(0, 800)}`);
+    throw new Error(
+      `Scroll open failed ${res.status}: ${res.text.slice(0, 800)}`
+    );
   const j = res.json || {};
   const scrollId = j._scroll_id || j.scroll_id || "";
   const { entries, total } = parseHitsResponse(j, size);
   if (!scrollId) {
-    if (entries.length === 0) return { scrollId: "", entries: [], total: total ?? 0 };
+    if (entries.length === 0)
+      return { scrollId: "", entries: [], total: total ?? 0 };
     throw new Error("Scroll open: Keine _scroll_id im Response");
   }
   return { scrollId, entries, total };
@@ -780,25 +898,43 @@ async function scrollNext(baseUrl, keepAlive, scrollId, headers, allowInsecureTL
   const exec = () => httpJsonRequest("POST", url, body, headers, allowInsecureTLS, timeoutMs);
   const res = await requestWithRetry(exec, { maxRetries, backoffBaseMs });
   if (!(res.status >= 200 && res.status < 300))
-    throw new Error(`Scroll next failed ${res.status}: ${res.text.slice(0, 800)}`);
+    throw new Error(
+      `Scroll next failed ${res.status}: ${res.text.slice(0, 800)}`
+    );
   const j = res.json || {};
   const newScrollId = j._scroll_id || j.scroll_id || "";
   const entries = parseHitsResponse(j, Number.MAX_SAFE_INTEGER).entries;
-  if (!newScrollId && entries.length === 0) return { scrollId: "", entries: [] };
-  if (!newScrollId) throw new Error("Scroll next: Keine _scroll_id im Response");
+  if (!newScrollId && entries.length === 0)
+    return { scrollId: "", entries: [] };
+  if (!newScrollId)
+    throw new Error("Scroll next: Keine _scroll_id im Response");
   return { scrollId: newScrollId, entries };
 }
 async function closeScroll(baseUrl, scrollId, headers, allowInsecureTLS, timeoutMs, maxRetries, backoffBaseMs) {
   if (!scrollId) return;
   const url = `${baseUrl}/_search/scroll`;
   const execPost = async (payload) => {
-    const exec = () => httpJsonRequest("POST", url, payload, headers, allowInsecureTLS, timeoutMs);
+    const exec = () => httpJsonRequest(
+      "POST",
+      url,
+      payload,
+      headers,
+      allowInsecureTLS,
+      timeoutMs
+    );
     const res = await requestWithRetry(exec, { maxRetries, backoffBaseMs });
     return res.status >= 200 && res.status < 300;
   };
   const tryDeletePath = async () => {
     const delUrl = `${baseUrl}/_search/scroll/${encodeURIComponent(scrollId)}`;
-    const exec = () => httpJsonRequest("DELETE", delUrl, {}, headers, allowInsecureTLS, timeoutMs);
+    const exec = () => httpJsonRequest(
+      "DELETE",
+      delUrl,
+      {},
+      headers,
+      allowInsecureTLS,
+      timeoutMs
+    );
     const res = await requestWithRetry(exec, { maxRetries, backoffBaseMs });
     return res.status >= 200 && res.status < 300;
   };
@@ -867,12 +1003,23 @@ async function fetchElasticPitPage(opts) {
         pitSessions.delete(sess.sessionId);
       }
     }
-    return { entries: entries2, total: total2, hasMore: hasMore2, nextSearchAfter: null, pitSessionId: sess.sessionId };
+    return {
+      entries: entries2,
+      total: total2,
+      hasMore: hasMore2,
+      nextSearchAfter: null,
+      pitSessionId: sess.sessionId
+    };
   }
-  const body = buildQueryBodyWithPit({ ...opts, keepAlive: sess.keepAlive }, sess.pitId);
+  const body = buildQueryBodyWithPit(
+    { ...opts, keepAlive: sess.keepAlive },
+    sess.pitId
+  );
   const res = await searchWithPit(sess, body);
   if (!(res.status >= 200 && res.status < 300))
-    throw new Error(`Elasticsearch-Fehler ${res.status}: ${res.text.slice(0, 1200)}`);
+    throw new Error(
+      `Elasticsearch-Fehler ${res.status}: ${res.text.slice(0, 1200)}`
+    );
   const { entries, total, hasMore, nextSearchAfter } = parseHitsResponse(
     res.json || null,
     opts.size ?? 1e3
@@ -891,12 +1038,21 @@ async function fetchElasticPitPage(opts) {
         sess.dialect
       );
     } catch (e) {
-      import_main.default.warn("PIT close after completion failed:", e instanceof Error ? e.message : String(e));
+      import_main.default.warn(
+        "PIT close after completion failed:",
+        e instanceof Error ? e.message : String(e)
+      );
     } finally {
       pitSessions.delete(sess.sessionId);
     }
   }
-  return { entries, total, hasMore, nextSearchAfter, pitSessionId: sess.sessionId };
+  return {
+    entries,
+    total,
+    hasMore,
+    nextSearchAfter,
+    pitSessionId: sess.sessionId
+  };
 }
 async function closeElasticPitSession(sessionId) {
   try {
@@ -928,7 +1084,10 @@ async function closeElasticPitSession(sessionId) {
           );
         }
       } catch (e) {
-        import_main.default.warn("PIT/Scroll close failed:", e instanceof Error ? e.message : String(e));
+        import_main.default.warn(
+          "PIT/Scroll close failed:",
+          e instanceof Error ? e.message : String(e)
+        );
       }
     }
   } finally {

@@ -16,10 +16,10 @@ const MAX_LOG_SIZE_BYTES = 1024 * 1024 * 1024; // 1GB
 export const SETTINGS_SCHEMA = {
   // Window settings
   windowBounds: {
-    type: 'object',
+    type: "object",
     default: { width: 1200, height: 800 },
     validate: (val: { width: number; height: number } | null) => {
-      if (typeof val !== 'object' || val === null) return false;
+      if (typeof val !== "object" || val === null) return false;
       const { width, height } = val;
       return width >= 400 && width <= 4096 && height >= 300 && height <= 2160;
     },
@@ -27,141 +27,153 @@ export const SETTINGS_SCHEMA = {
 
   // Network settings
   tcpPort: {
-    type: 'number',
+    type: "number",
     default: 5000,
-    validate: (val: number) => Number.isInteger(val) && val >= MIN_USER_PORT && val <= MAX_PORT,
+    validate: (val: number) =>
+      Number.isInteger(val) && val >= MIN_USER_PORT && val <= MAX_PORT,
   },
 
   httpUrl: {
-    type: 'string',
-    default: '',
+    type: "string",
+    default: "",
     validate: (val: string) => val.length <= 2048,
   },
 
   httpInterval: {
-    type: 'number',
+    type: "number",
     default: 5000,
-    validate: (val: number) => Number.isInteger(val) && val >= 500 && val <= 300000,
+    validate: (val: number) =>
+      Number.isInteger(val) && val >= 500 && val <= 300000,
   },
 
   // UI settings
   detailHeight: {
-    type: 'number',
+    type: "number",
     default: 300,
     validate: (val: number) => val >= 150 && val <= 2000,
   },
 
   colTs: {
-    type: 'number',
+    type: "number",
     default: 220,
     validate: (val: number) => val >= 100 && val <= 600,
   },
 
   colLvl: {
-    type: 'number',
+    type: "number",
     default: 90,
     validate: (val: number) => val >= 50 && val <= 200,
   },
 
   colLogger: {
-    type: 'number',
+    type: "number",
     default: 280,
     validate: (val: number) => val >= 100 && val <= 800,
   },
 
   // NEW: theme mode (persisted user choice)
   themeMode: {
-    type: 'string',
-    default: 'system',
-    validate: (val: string) => ['system', 'light', 'dark'].includes(val),
+    type: "string",
+    default: "system",
+    validate: (val: string) => ["system", "light", "dark"].includes(val),
   },
 
   // NEW: follow flags (persisted UI behaviour)
   follow: {
-    type: 'boolean',
+    type: "boolean",
     default: false,
-    validate: (val: boolean) => typeof val === 'boolean',
+    validate: (val: boolean) => typeof val === "boolean",
   },
   followSmooth: {
-    type: 'boolean',
+    type: "boolean",
     default: false,
-    validate: (val: boolean) => typeof val === 'boolean',
+    validate: (val: boolean) => typeof val === "boolean",
   },
 
   // History
   histLogger: {
-    type: 'array',
+    type: "array",
     default: [],
     validate: (val: string[]) =>
-      Array.isArray(val) && val.length <= 10 && val.every((item) => item.length <= 256),
+      Array.isArray(val) &&
+      val.length <= 10 &&
+      val.every((item) => item.length <= 256),
   },
 
   // NEW: ElasticSearch histories for dropdowns
   histAppName: {
-    type: 'array',
+    type: "array",
     default: [],
     validate: (val: string[]) =>
-      Array.isArray(val) && val.length <= 10 && val.every((item) => item.length <= 256),
+      Array.isArray(val) &&
+      val.length <= 10 &&
+      val.every((item) => item.length <= 256),
   },
   histEnvironment: {
-    type: 'array',
+    type: "array",
     default: [],
     validate: (val: string[]) =>
-      Array.isArray(val) && val.length <= 10 && val.every((item) => item.length <= 256),
+      Array.isArray(val) &&
+      val.length <= 10 &&
+      val.every((item) => item.length <= 256),
   },
 
   histTrace: {
-    type: 'array',
+    type: "array",
     default: [],
     validate: (val: string[]) =>
-      Array.isArray(val) && val.length <= 10 && val.every((item) => item.length <= 256),
+      Array.isArray(val) &&
+      val.length <= 10 &&
+      val.every((item) => item.length <= 256),
   },
 
   // Logging settings
   logToFile: {
-    type: 'boolean',
+    type: "boolean",
     default: false,
     // accept both true and false as valid booleans
-    validate: (val: boolean) => typeof val === 'boolean',
+    validate: (val: boolean) => typeof val === "boolean",
   },
 
   logFilePath: {
-    type: 'string',
-    default: '',
+    type: "string",
+    default: "",
     validate: (val: string) => val.length <= 4096,
   },
 
   logMaxBytes: {
-    type: 'number',
+    type: "number",
     default: 5 * 1024 * 1024,
-    validate: (val: number) => Number.isInteger(val) && val >= 1024 && val <= MAX_LOG_SIZE_BYTES,
+    validate: (val: number) =>
+      Number.isInteger(val) && val >= 1024 && val <= MAX_LOG_SIZE_BYTES,
   },
 
   logMaxBackups: {
-    type: 'number',
+    type: "number",
     default: 3,
     validate: (val: number) => Number.isInteger(val) && val >= 0 && val <= 99,
   },
 
   // Elasticsearch settings
   elasticUrl: {
-    type: 'string',
-    default: '',
+    type: "string",
+    default: "",
     validate: (val: string) => val.length <= 2048,
   },
   elasticSize: {
-    type: 'number',
+    type: "number",
     default: 1000,
-    validate: (val: number) => Number.isInteger(val) && val >= 1 && val <= 10000,
+    validate: (val: number) =>
+      Number.isInteger(val) && val >= 1 && val <= 10000,
   },
   elasticUser: {
-    type: 'string',
-    default: '',
+    type: "string",
+    default: "",
     validate: (val: string) => val.length <= 256,
   },
   elasticPassEnc: {
-    type: 'string',
-    default: '',
+    type: "string",
+    default: "",
     validate: (val: string) => val.length <= 8192,
   },
 };
@@ -179,7 +191,7 @@ export const SETTINGS_VERSION = 1;
  */
 export function validateSetting(
   key: string,
-  value: unknown
+  value: unknown,
 ): { valid: boolean; value: unknown; error?: string } {
   const schema = (
     SETTINGS_SCHEMA as Record<
@@ -198,7 +210,7 @@ export function validateSetting(
   }
 
   // Type check
-  const actualType = Array.isArray(value) ? 'array' : typeof value;
+  const actualType = Array.isArray(value) ? "array" : typeof value;
   if (actualType !== schema.type) {
     return {
       valid: false,
@@ -253,12 +265,12 @@ export function validateSettings(settings: Record<string, any>): {
  */
 export function mergeSettings(
   partialSettings: Record<string, any>,
-  defaults: Record<string, any> | null = null
+  defaults: Record<string, any> | null = null,
 ): Record<string, any> {
   const base = defaults || getDefaultSettings();
   const result: Record<string, any> = { ...base };
 
-  if (!partialSettings || typeof partialSettings !== 'object') {
+  if (!partialSettings || typeof partialSettings !== "object") {
     return result;
   }
 
@@ -294,7 +306,7 @@ export function getDefaultSettings(): Record<string, any> {
  */
 export function migrateSettings(
   settings: Record<string, any>,
-  fromVersion: number
+  fromVersion: number,
 ): Record<string, any> {
   const migrated: Record<string, any> = { ...settings };
 
@@ -327,25 +339,26 @@ export function parseSettingsJSON(jsonString: string): {
 } {
   try {
     if (!jsonString) {
-      return { success: false, error: 'Invalid input: not a string' };
+      return { success: false, error: "Invalid input: not a string" };
     }
 
     const parsed = JSON.parse(jsonString);
 
-    if (typeof parsed !== 'object' || parsed === null) {
-      return { success: false, error: 'Invalid JSON: not an object' };
+    if (typeof parsed !== "object" || parsed === null) {
+      return { success: false, error: "Invalid JSON: not an object" };
     }
 
     // Check version and migrate if needed
-    const version = typeof parsed._version === 'number' ? parsed._version : 0;
-    const settings = version < SETTINGS_VERSION ? migrateSettings(parsed, version) : parsed;
+    const version = typeof parsed._version === "number" ? parsed._version : 0;
+    const settings =
+      version < SETTINGS_VERSION ? migrateSettings(parsed, version) : parsed;
 
     // Validate and sanitize
     const { settings: validated, errors } = validateSettings(settings);
 
     if (errors.length > 0) {
       // Use console.warn to avoid depending on renderer logger in Node context
-      console.warn('Settings validation warnings:', errors);
+      console.warn("Settings validation warnings:", errors);
     }
 
     // Add current version
@@ -371,8 +384,8 @@ export function stringifySettingsJSON(settings: Record<string, any>): {
   error?: string;
 } {
   try {
-    if (typeof settings !== 'object' || settings === null) {
-      return { success: false, error: 'Invalid settings: not an object' };
+    if (typeof settings !== "object" || settings === null) {
+      return { success: false, error: "Invalid settings: not an object" };
     }
 
     // Validate before stringifying

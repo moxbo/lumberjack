@@ -1,5 +1,14 @@
 // Enhanced log row component with memoization and optimizations
-import { memo } from 'preact/compat';
+import { memo } from "preact/compat";
+import type { JSX } from "preact/jsx-runtime";
+import {
+  computeTint,
+  fmtTimestamp,
+  getStr,
+  getTs,
+  levelClass,
+  renderLoggerNameList,
+} from "../utils/format";
 
 interface LogRowProps {
   index: number;
@@ -17,66 +26,6 @@ interface LogRowProps {
   compact?: boolean;
 }
 
-function levelClass(level: string | null | undefined): string {
-  const l = (level || '').toUpperCase();
-  return (
-    {
-      TRACE: 'lev-trace',
-      DEBUG: 'lev-debug',
-      INFO: 'lev-info',
-      WARN: 'lev-warn',
-      ERROR: 'lev-error',
-      FATAL: 'lev-fatal',
-    }[l] || 'lev-unk'
-  );
-}
-
-function fmt(v: unknown): string {
-  if (v == null) return '';
-  if (typeof v === 'string' || typeof v === 'number' || typeof v === 'boolean') {
-    return String(v);
-  }
-  return '';
-}
-
-function fmtTimestamp(ts: string | number | Date | null | undefined): string {
-  if (!ts) return '-';
-  try {
-    const d = new Date(ts);
-    if (isNaN(d.getTime())) return String(ts);
-    const year = d.getFullYear();
-    const month = String(d.getMonth() + 1).padStart(2, '0');
-    const day = String(d.getDate()).padStart(2, '0');
-    const hours = String(d.getHours()).padStart(2, '0');
-    const minutes = String(d.getMinutes()).padStart(2, '0');
-    const seconds = String(d.getSeconds()).padStart(2, '0');
-    const ms = String(d.getMilliseconds()).padStart(3, '0');
-    return `${year}-${month}-${day} ${hours}:${minutes}:${seconds}.${ms}`;
-  } catch {
-    return String(ts);
-  }
-}
-
-function computeTint(color: string | null | undefined, alpha = 0.4): string {
-  if (!color) return '';
-  const c = String(color).trim();
-  const hexRaw = c.startsWith('#') ? c.slice(1) : '';
-  const hex = String(hexRaw);
-  if (hex.length === 3 && hex.length >= 3) {
-    const r = parseInt(hex[0]! + hex[0]!, 16);
-    const g = parseInt(hex[1]! + hex[1]!, 16);
-    const b = parseInt(hex[2]! + hex[2]!, 16);
-    return `rgba(${r}, ${g}, ${b}, ${alpha})`;
-  }
-  if (hex.length === 6) {
-    const r = parseInt(hex.substring(0, 2), 16);
-    const g = parseInt(hex.substring(2, 4), 16);
-    const b = parseInt(hex.substring(4, 6), 16);
-    return `rgba(${r}, ${g}, ${b}, ${alpha})`;
-  }
-  return c;
-}
-
 const LogRowComponent = ({
   index,
   globalIdx,
@@ -91,18 +40,18 @@ const LogRowComponent = ({
   highlightFn,
   compact = false,
 }: LogRowProps): JSX.Element => {
-  const rowCls = 'row' + (isSelected ? ' sel' : '');
+  const rowCls = "row" + (isSelected ? " sel" : "");
   const style = {
-    position: 'absolute' as const,
+    position: "absolute" as const,
     top: 0,
     left: 0,
     right: 0,
     transform: `translateY(${yOffset}px)`,
     height: `${rowHeight}px`,
-    borderLeft: `4px solid ${markColor || 'transparent'}`,
+    borderLeft: `4px solid ${markColor || "transparent"}`,
     background: markColor ? computeTint(markColor, 0.12) : undefined,
     // Enable content-visibility for better performance
-    contentVisibility: 'auto' as const,
+    contentVisibility: "auto" as const,
   };
 
   return (
@@ -114,20 +63,32 @@ const LogRowComponent = ({
       aria-selected={isSelected}
       onClick={(ev) => {
         const mouseEvent = ev as MouseEvent;
-        onSelect(globalIdx, mouseEvent.shiftKey, mouseEvent.ctrlKey || mouseEvent.metaKey);
+        onSelect(
+          globalIdx,
+          mouseEvent.shiftKey,
+          mouseEvent.ctrlKey || mouseEvent.metaKey,
+        );
       }}
       onContextMenu={(ev) => onContextMenu(ev as MouseEvent, globalIdx)}
-      title={String(entry.message || '')}
-      data-marked={markColor ? '1' : '0'}
+      title={getStr(entry, "message")}
+      data-marked={markColor ? "1" : "0"}
     >
-      <div className="col ts">{fmtTimestamp(entry.timestamp)}</div>
+      <div className="col ts">{fmtTimestamp(getTs(entry, "timestamp"))}</div>
       <div className="col lvl">
-        <span className={levelClass(entry.level)}>{fmt(entry.level)}</span>
+        <span className={levelClass(getStr(entry, "level"))}>
+          {getStr(entry, "level")}
+        </span>
       </div>
-      {!compact && <div className="col logger">{fmt(entry.logger)}</div>}
+      {!compact && (
+        <div className="col logger">
+          {renderLoggerNameList(getStr(entry, "logger"))}
+        </div>
+      )}
       <div
         className="col msg"
-        dangerouslySetInnerHTML={{ __html: highlightFn(entry.message, search) }}
+        dangerouslySetInnerHTML={{
+          __html: highlightFn(getStr(entry, "message"), search),
+        }}
       />
     </div>
   );

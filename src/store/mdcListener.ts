@@ -1,14 +1,14 @@
 // MDCListener: sammelt bekannte MDC-Schlüssel und Werte aus dem LoggingStore
 // keys: Map<string, Set<string>>; hält interne Sortierung nicht, liefert aber sortierte Arrays per Getter
 
-import { lazyInstance } from './_lazy';
-import { canonicalDcKey } from './dcFilter';
+import { lazyInstance } from "./_lazy";
+import { canonicalDcKey } from "./dcFilter";
 
 type Listener = () => void;
 class SimpleEmitter {
   private _ls = new Set<Listener>();
   on(fn: Listener) {
-    if (typeof fn === 'function') {
+    if (typeof fn === "function") {
       this._ls.add(fn);
       return () => this._ls.delete(fn);
     }
@@ -19,7 +19,7 @@ class SimpleEmitter {
       try {
         fn();
       } catch (e) {
-        console.warn('MDCListener emitter listener error:', e);
+        console.warn("MDCListener emitter listener error:", e);
       }
     }
   }
@@ -38,7 +38,7 @@ class MDCListenerImpl {
       if (this._started) return;
       this._started = true;
       // Load LoggingStore dynamically to avoid a static circular import
-      import('./loggingStore')
+      import("./loggingStore")
         .then((mod) => {
           const modAny = mod as {
             LoggingStore?: {
@@ -57,21 +57,22 @@ class MDCListenerImpl {
               const all = LS?.getAllEvents?.() || [];
               if (Array.isArray(all) && all.length) this._onAdded(all);
             } catch (e) {
-              console.warn('MDCListener seeding failed:', e);
+              console.warn("MDCListener seeding failed:", e);
             }
             LS?.addLoggingStoreListener({
-              loggingEventsAdded: (events: Record<string, unknown>[]) => this._onAdded(events),
+              loggingEventsAdded: (events: Record<string, unknown>[]) =>
+                this._onAdded(events),
               loggingStoreReset: () => this._onReset(),
             });
           } catch (e) {
-            console.warn('Failed to attach LoggingStore listener:', e);
+            console.warn("Failed to attach LoggingStore listener:", e);
           }
         })
         .catch((e) => {
-          console.warn('Dynamic import of LoggingStore failed:', e);
+          console.warn("Dynamic import of LoggingStore failed:", e);
         });
     } catch (e) {
-      console.warn('startListening failed:', e);
+      console.warn("startListening failed:", e);
     }
   }
 
@@ -83,10 +84,10 @@ class MDCListenerImpl {
     let changed = false;
     for (const e of events || []) {
       const obj = e;
-      const mdc = (obj && (obj['mdc'] as Record<string, unknown>)) || {};
+      const mdc = (obj && (obj["mdc"] as Record<string, unknown>)) || {};
       for (const [k, v] of Object.entries(mdc)) {
         const ck = canonicalDcKey(k);
-        if (!ck || typeof v !== 'string') continue;
+        if (!ck || typeof v !== "string") continue;
         if (!this.keys.has(ck)) {
           this.keys.set(ck, new Set());
           changed = true;

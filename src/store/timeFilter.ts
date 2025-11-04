@@ -3,7 +3,7 @@
 class SimpleEmitterTF {
   private _ls = new Set<() => void>();
   on(fn: () => void): () => void {
-    if (typeof fn === 'function') {
+    if (typeof fn === "function") {
       this._ls.add(fn);
       return () => this._ls.delete(fn);
     }
@@ -28,7 +28,13 @@ function parseDurationMs(str: string): number | null {
   const n = Number(m[1] || 0);
   const u = m[2];
   if (!(n > 0)) return null;
-  const unit = { s: 1000, m: 60_000, h: 3_600_000, d: 86_400_000, w: 604_800_000 } as const;
+  const unit = {
+    s: 1000,
+    m: 60_000,
+    h: 3_600_000,
+    d: 86_400_000,
+    w: 604_800_000,
+  } as const;
   type UnitKey = keyof typeof unit;
   const mul = unit[u as UnitKey];
   if (!mul) return null;
@@ -38,18 +44,18 @@ function parseDurationMs(str: string): number | null {
 function toIso(v: unknown): string | null {
   if (v == null) return null;
   if (v instanceof Date) return isNaN(v.getTime()) ? null : v.toISOString();
-  if (typeof v === 'number') {
+  if (typeof v === "number") {
     const d = new Date(v);
     return isNaN(d.getTime()) ? null : d.toISOString();
   }
-  if (typeof v === 'string') {
+  if (typeof v === "string") {
     const d = new Date(v);
     return isNaN(d.getTime()) ? null : d.toISOString();
   }
   return null;
 }
 
-export type TimeFilterMode = 'relative' | 'absolute';
+export type TimeFilterMode = "relative" | "absolute";
 
 export interface TimeFilterState {
   enabled: boolean;
@@ -65,8 +71,8 @@ class TimeFilterImpl {
   private _em = new SimpleEmitterTF();
   private _state: TimeFilterState = {
     enabled: false,
-    mode: 'relative',
-    duration: '',
+    mode: "relative",
+    duration: "",
     from: null,
     to: null,
     anchorMs: null,
@@ -91,8 +97,8 @@ class TimeFilterImpl {
   reset(): void {
     this._state = {
       enabled: false,
-      mode: 'relative',
-      duration: '',
+      mode: "relative",
+      duration: "",
       from: null,
       to: null,
       anchorMs: null,
@@ -100,8 +106,8 @@ class TimeFilterImpl {
     this._em.emit();
   }
   setRelative(duration: string): void {
-    const d = String(duration || '').trim();
-    this._state.mode = 'relative';
+    const d = String(duration || "").trim();
+    this._state.mode = "relative";
     this._state.duration = d;
     this._state.from = null;
     this._state.to = null;
@@ -110,8 +116,8 @@ class TimeFilterImpl {
     this._em.emit();
   }
   setAbsolute(from?: string | Date | null, to?: string | Date | null): void {
-    this._state.mode = 'absolute';
-    this._state.duration = '';
+    this._state.mode = "absolute";
+    this._state.duration = "";
     this._state.from = toIso(from);
     this._state.to = toIso(to);
     this._state.anchorMs = null;
@@ -120,7 +126,7 @@ class TimeFilterImpl {
 
   /** Optional: Anker aktualisieren (z. B. auf Nutzerwunsch) */
   refreshAnchor(): void {
-    if (this._state.mode === 'relative') {
+    if (this._state.mode === "relative") {
       this._state.anchorMs = Date.now();
       this._em.emit();
     }
@@ -128,7 +134,7 @@ class TimeFilterImpl {
 
   private _rangeNow(): { from: number | null; to: number | null } {
     if (!this._state.enabled) return { from: null, to: null };
-    if (this._state.mode === 'relative') {
+    if (this._state.mode === "relative") {
       const ms = parseDurationMs(this._state.duration);
       if (!ms) return { from: null, to: null };
       // Stabilisiere: benutze Anker, nicht stets Date.now()
@@ -149,7 +155,7 @@ class TimeFilterImpl {
     const { from, to } = this._rangeNow();
     if (from == null && to == null) return true; // kein wirksamer Bereich gesetzt
     if (ts == null) return false;
-    const ms = typeof ts === 'number' ? ts : Date.parse(String(ts));
+    const ms = typeof ts === "number" ? ts : Date.parse(String(ts));
     if (isNaN(ms)) return false;
     if (from != null && ms < from) return false;
     return !(to != null && ms > to);
@@ -157,5 +163,5 @@ class TimeFilterImpl {
 }
 
 // Lazy singleton
-import { lazyInstance } from './_lazy';
+import { lazyInstance } from "./_lazy";
 export const TimeFilter = lazyInstance(() => new TimeFilterImpl());

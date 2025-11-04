@@ -34,7 +34,7 @@ Identify which code executes during startup and would benefit from pre-compilati
 ```javascript
 // In main.js
 const startTime = Date.now();
-console.log('[Startup] Begin');
+console.log("[Startup] Begin");
 
 // ... app initialization ...
 
@@ -61,23 +61,23 @@ Create a script that bundles and prepares code for snapshot:
 
 ```javascript
 // scripts/create-snapshot.js
-const fs = require('fs');
-const path = require('path');
+const fs = require("fs");
+const path = require("path");
 
 // Bundle all startup-critical code
 const code = `
   // Include critical dependencies
-  ${fs.readFileSync('dist/assets/vendor.js', 'utf8')}
+  ${fs.readFileSync("dist/assets/vendor.js", "utf8")}
   
   // Include main app code
-  ${fs.readFileSync('dist/assets/index.js', 'utf8')}
+  ${fs.readFileSync("dist/assets/index.js", "utf8")}
   
   // Initialize core modules
   window.__LUMBERJACK_SNAPSHOT_READY__ = true;
 `;
 
-fs.writeFileSync('snapshot-bundle.js', code);
-console.log('Snapshot bundle created');
+fs.writeFileSync("snapshot-bundle.js", code);
+console.log("Snapshot bundle created");
 ```
 
 ### Step 3: Generate Snapshot Blob
@@ -96,12 +96,12 @@ electron\node_modules\electron\dist\mksnapshot.exe snapshot-bundle.js --startup_
 
 ```javascript
 // In forge.config.js or build script
-const { createSnapshot } = require('electron-mksnapshot');
+const { createSnapshot } = require("electron-mksnapshot");
 
 createSnapshot({
-  script: 'snapshot-bundle.js',
-  output: 'snapshot_blob.bin',
-  v8Flags: ['--turbo', '--always-opt'],
+  script: "snapshot-bundle.js",
+  output: "snapshot_blob.bin",
+  v8Flags: ["--turbo", "--always-opt"],
 });
 ```
 
@@ -111,13 +111,13 @@ Tell Electron to use the custom snapshot:
 
 ```javascript
 // In main.js, before app.whenReady()
-const { app } = require('electron');
+const { app } = require("electron");
 
 if (!process.env.ELECTRON_DISABLE_SNAPSHOT) {
-  const snapshotPath = path.join(__dirname, 'snapshot_blob.bin');
+  const snapshotPath = path.join(__dirname, "snapshot_blob.bin");
   if (fs.existsSync(snapshotPath)) {
-    app.commandLine.appendSwitch('snapshot_blob', snapshotPath);
-    console.log('[Snapshot] Using custom V8 snapshot');
+    app.commandLine.appendSwitch("snapshot_blob", snapshotPath);
+    console.log("[Snapshot] Using custom V8 snapshot");
   }
 }
 ```
@@ -142,7 +142,7 @@ Each platform needs its own snapshot:
 
 ```javascript
 // scripts/build-all-snapshots.js
-const platforms = ['win32', 'darwin', 'linux'];
+const platforms = ["win32", "darwin", "linux"];
 
 for (const platform of platforms) {
   console.log(`Building snapshot for ${platform}...`);
@@ -169,18 +169,18 @@ Compare startup times with and without snapshots:
 
 ```javascript
 // Test script
-const { spawn } = require('child_process');
+const { spawn } = require("child_process");
 
 async function measureStartup(useSnapshot) {
-  const env = useSnapshot ? {} : { ELECTRON_DISABLE_SNAPSHOT: '1' };
+  const env = useSnapshot ? {} : { ELECTRON_DISABLE_SNAPSHOT: "1" };
   const start = Date.now();
 
-  const proc = spawn('electron', ['.'], { env });
+  const proc = spawn("electron", ["."], { env });
 
   // Wait for window ready
   await new Promise((resolve) => {
-    proc.stdout.on('data', (data) => {
-      if (data.includes('Window ready')) {
+    proc.stdout.on("data", (data) => {
+      if (data.includes("Window ready")) {
         resolve();
       }
     });
@@ -311,7 +311,7 @@ Split code into smaller chunks loaded on-demand:
 
 ```javascript
 // Lazy load heavy features
-const HeavyFeature = lazy(() => import('./HeavyFeature'));
+const HeavyFeature = lazy(() => import("./HeavyFeature"));
 ```
 
 **Pros**: Smaller initial bundle, already working

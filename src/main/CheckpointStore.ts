@@ -1,8 +1,8 @@
 /*
  * Persistente Reader-Checkpoints: (fileKey/Inode, size/offset, mtimeMs)
  */
-import fs from 'node:fs';
-import path from 'node:path';
+import fs from "node:fs";
+import path from "node:path";
 
 export interface CheckpointKey {
   file: string; // Absoluter Pfad
@@ -20,7 +20,7 @@ export class CheckpointStore {
   private filePath: string;
   private map: Map<string, CheckpointValue> = new Map();
 
-  constructor(dir: string, name = 'checkpoints.json') {
+  constructor(dir: string, name = "checkpoints.json") {
     this.filePath = path.join(dir, name);
     this.load();
   }
@@ -28,21 +28,21 @@ export class CheckpointStore {
   private load(): void {
     try {
       if (!fs.existsSync(this.filePath)) return;
-      const raw = fs.readFileSync(this.filePath, 'utf8');
+      const raw = fs.readFileSync(this.filePath, "utf8");
       const obj = JSON.parse(raw) as Record<string, unknown>;
       for (const [k, v] of Object.entries(obj || {})) {
         // Validate checkpoint value structure and types
         if (
           v &&
-          typeof v === 'object' &&
-          'offset' in v &&
-          'mtimeMs' in v &&
-          'size' in v &&
-          'updatedAt' in v &&
-          typeof v.offset === 'number' &&
-          typeof v.mtimeMs === 'number' &&
-          typeof v.size === 'number' &&
-          typeof v.updatedAt === 'number'
+          typeof v === "object" &&
+          "offset" in v &&
+          "mtimeMs" in v &&
+          "size" in v &&
+          "updatedAt" in v &&
+          typeof v.offset === "number" &&
+          typeof v.mtimeMs === "number" &&
+          typeof v.size === "number" &&
+          typeof v.updatedAt === "number"
         ) {
           this.map.set(k, v as CheckpointValue);
         }
@@ -58,14 +58,14 @@ export class CheckpointStore {
       fs.mkdirSync(dir, { recursive: true });
       const obj: Record<string, CheckpointValue> = {};
       for (const [k, v] of this.map.entries()) obj[k] = v;
-      fs.writeFileSync(this.filePath, JSON.stringify(obj, null, 2), 'utf8');
+      fs.writeFileSync(this.filePath, JSON.stringify(obj, null, 2), "utf8");
     } catch {
       // ignore
     }
   }
 
   private k(key: CheckpointKey): string {
-    return `${key.fileKey ?? ''}|${key.file}`;
+    return `${key.fileKey ?? ""}|${key.file}`;
   }
 
   get(key: CheckpointKey): CheckpointValue | undefined {
@@ -78,7 +78,10 @@ export class CheckpointStore {
   }
 
   // Rotation/Truncation erkennen: wenn size < offset oder mtimeMs < gespeichert → neu anfangen
-  shouldReset(key: CheckpointKey, stat: { size: number; mtimeMs: number }): boolean {
+  shouldReset(
+    key: CheckpointKey,
+    stat: { size: number; mtimeMs: number },
+  ): boolean {
     const cur = this.get(key);
     if (!cur) return false;
     if (stat.size < cur.offset) return true;

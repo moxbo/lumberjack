@@ -81,7 +81,7 @@ useEffect(() => {
     loggingEventsAdded: () => setKeys(MDCListener.getSortedKeys()),
     loggingStoreReset: () => {
       setKeys([]);
-      setSelectedKey('');
+      setSelectedKey("");
     },
   });
   // ... cleanup
@@ -126,19 +126,19 @@ useEffect(() => {
 ```javascript
 // DCFilterPanel.jsx, lines 57-69
 function onAdd() {
-  const key = String(selectedKey || '').trim();
+  const key = String(selectedKey || "").trim();
   if (!key) return;
-  const raw = String(val ?? '');
+  const raw = String(val ?? "");
   const parts = raw
-    .split('|')
+    .split("|")
     .map((s) => s.trim())
     .filter((s) => s.length > 0);
   if (parts.length === 0) {
-    DiagnosticContextFilter.addMdcEntry(key, '');
+    DiagnosticContextFilter.addMdcEntry(key, "");
   } else {
     for (const p of parts) DiagnosticContextFilter.addMdcEntry(key, p);
   }
-  setVal('');
+  setVal("");
 }
 ```
 
@@ -157,9 +157,9 @@ function onAdd() {
 ```javascript
 // DCFilterPanel.jsx, lines 135-155
 function onValueKeyDown(e) {
-  if (e.key === 'F2') {
+  if (e.key === "F2") {
     e.preventDefault();
-    const k = String(selectedKey || '').trim();
+    const k = String(selectedKey || "").trim();
     if (!k) return;
     const vals = MDCListener.getSortedValues(k);
     setValues(vals);

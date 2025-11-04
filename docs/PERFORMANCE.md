@@ -27,7 +27,7 @@ The application was experiencing slow startup times of 20+ seconds, which is una
   // After: Lazy-loaded via getAdmZip() function
   let AdmZip = null;
   function getAdmZip() {
-    if (!AdmZip) AdmZip = require('adm-zip');
+    if (!AdmZip) AdmZip = require("adm-zip");
     return AdmZip;
   }
   ```
@@ -72,7 +72,7 @@ mainWindow = new BrowserWindow({
   show: false, // Don't show until ready
 });
 
-mainWindow.once('ready-to-show', () => {
+mainWindow.once("ready-to-show", () => {
   mainWindow.show(); // Show only when content is ready to paint
 });
 ```
@@ -145,13 +145,13 @@ void win.loadFile(cachedDistIndexPath);
 - Helps identify regressions and optimization opportunities
 
 ```javascript
-perfService.mark('app-ready');
-perfService.mark('platform-setup-start');
+perfService.mark("app-ready");
+perfService.mark("platform-setup-start");
 // ... platform setup ...
-perfService.mark('platform-setup-complete');
-perfService.mark('create-window-start');
+perfService.mark("platform-setup-complete");
+perfService.mark("create-window-start");
 createWindow();
-perfService.mark('create-window-initiated');
+perfService.mark("create-window-initiated");
 ```
 
 ## Performance Results

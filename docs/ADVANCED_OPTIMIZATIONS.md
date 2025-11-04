@@ -21,24 +21,28 @@ Building upon the initial startup optimizations (documented in PERFORMANCE.md), 
 ```javascript
 manualChunks: (id) => {
   // Vendor dependencies split
-  if (id.includes('node_modules')) {
-    if (id.includes('preact') || id.includes('@tanstack/react-virtual')) {
-      return 'vendor'; // Core bundle
+  if (id.includes("node_modules")) {
+    if (id.includes("preact") || id.includes("@tanstack/react-virtual")) {
+      return "vendor"; // Core bundle
     }
-    return 'vendor-lazy'; // Other dependencies
+    return "vendor-lazy"; // Other dependencies
   }
 
   // Feature-based splitting
-  if (id.includes('DCFilterDialog') || id.includes('DCFilterPanel')) {
-    return 'dc-filter'; // Diagnostic Context Filter (rarely used)
+  if (id.includes("DCFilterDialog") || id.includes("DCFilterPanel")) {
+    return "dc-filter"; // Diagnostic Context Filter (rarely used)
   }
 
-  if (id.includes('/store/') && !id.includes('loggingStore')) {
-    return 'store-utils'; // Store utilities
+  if (id.includes("/store/") && !id.includes("loggingStore")) {
+    return "store-utils"; // Store utilities
   }
 
-  if (id.includes('/utils/') && !id.includes('highlight') && !id.includes('msgFilter')) {
-    return 'utils-lazy'; // Lazy utilities
+  if (
+    id.includes("/utils/") &&
+    !id.includes("highlight") &&
+    !id.includes("msgFilter")
+  ) {
+    return "utils-lazy"; // Lazy utilities
   }
 };
 ```
@@ -81,10 +85,10 @@ manualChunks: (id) => {
 **File: `src/App.jsx`**
 
 ```javascript
-import { lazy, Suspense } from 'preact/hooks';
+import { lazy, Suspense } from "preact/hooks";
 
 // Lazy load DCFilterDialog
-const DCFilterDialog = lazy(() => import('./DCFilterDialog.jsx'));
+const DCFilterDialog = lazy(() => import("./DCFilterDialog.jsx"));
 
 // Render with Suspense
 <Suspense fallback={<div>Lädt...</div>}>
@@ -148,8 +152,8 @@ If workers are unavailable (older browsers or Electron issues):
 Caches static assets for instant subsequent loads:
 
 ```javascript
-const CACHE_NAME = 'lumberjack-v1.0.1';
-const STATIC_ASSETS = ['/', '/index.html', '/styles.css'];
+const CACHE_NAME = "lumberjack-v1.0.1";
+const STATIC_ASSETS = ["/", "/index.html", "/styles.css"];
 
 // Cache-first strategy for static assets
 // Network fallback for dynamic content
@@ -161,8 +165,8 @@ const STATIC_ASSETS = ['/', '/index.html', '/styles.css'];
 **File: `src/main.jsx`**
 
 ```javascript
-if ('serviceWorker' in navigator && !import.meta.env.DEV) {
-  navigator.serviceWorker.register('/service-worker.js');
+if ("serviceWorker" in navigator && !import.meta.env.DEV) {
+  navigator.serviceWorker.register("/service-worker.js");
 }
 ```
 
@@ -242,7 +246,7 @@ To create a V8 snapshot:
    ```
 3. **Configure Electron**:
    ```javascript
-   app.commandLine.appendSwitch('snapshot_blob', 'path/to/snapshot_blob.bin');
+   app.commandLine.appendSwitch("snapshot_blob", "path/to/snapshot_blob.bin");
    ```
 4. **Measure Impact**: Should reduce startup by 30-50%
 
@@ -282,10 +286,10 @@ For very large files, consider streaming/chunked parsing:
 // Future enhancement
 async function* parseFileStreaming(filePath) {
   const stream = fs.createReadStream(filePath);
-  let buffer = '';
+  let buffer = "";
   for await (const chunk of stream) {
     buffer += chunk;
-    const lines = buffer.split('\n');
+    const lines = buffer.split("\n");
     buffer = lines.pop(); // Keep incomplete line
     yield lines.map(parseLine);
   }

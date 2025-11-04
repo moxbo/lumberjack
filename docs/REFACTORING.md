@@ -77,12 +77,12 @@ lumberjack/
 
 ```typescript
 const api: ElectronAPI = {
-  settingsGet: () => ipcRenderer.invoke('settings:get'),
-  settingsSet: (patch) => ipcRenderer.invoke('settings:set', patch),
+  settingsGet: () => ipcRenderer.invoke("settings:get"),
+  settingsSet: (patch) => ipcRenderer.invoke("settings:set", patch),
   // ... all IPC methods
 };
 
-contextBridge.exposeInMainWorld('api', api);
+contextBridge.exposeInMainWorld("api", api);
 ```
 
 **Benefits:**
@@ -101,8 +101,8 @@ const networkService = new NetworkService();
 const perfService = new PerformanceService();
 
 // Performance tracking throughout
-perfService.mark('app-start');
-perfService.mark('window-created');
+perfService.mark("app-start");
+perfService.mark("window-created");
 perfService.checkStartupPerformance(5000);
 ```
 
@@ -144,8 +144,8 @@ perfService.checkStartupPerformance(5000);
 export function registerIpcHandlers(
   settingsService: SettingsService,
   networkService: NetworkService,
-  getParsers: () => typeof import('./parsers.cjs'),
-  getAdmZip: () => typeof import('adm-zip')
+  getParsers: () => typeof import("./parsers.cjs"),
+  getAdmZip: () => typeof import("adm-zip"),
 ): void {
   // All IPC handlers registered here
 }

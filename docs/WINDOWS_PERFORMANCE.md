@@ -21,8 +21,8 @@ This document details the performance optimizations made to improve Lumberjack's
 **Before:**
 
 ```javascript
-const AdmZip = require('adm-zip'); // Loaded immediately
-const parsers = require('./parsers.cjs'); // Loaded at startup
+const AdmZip = require("adm-zip"); // Loaded immediately
+const parsers = require("./parsers.cjs"); // Loaded at startup
 ```
 
 **After:**
@@ -31,9 +31,9 @@ const parsers = require('./parsers.cjs'); // Loaded at startup
 let AdmZip: unknown = null;
 function getAdmZip() {
   if (!AdmZip) {
-    AdmZip = require('adm-zip');
+    AdmZip = require("adm-zip");
   }
-  return AdmZip as typeof import('adm-zip');
+  return AdmZip as typeof import("adm-zip");
 }
 ```
 
@@ -45,7 +45,7 @@ function getAdmZip() {
 
 ```javascript
 // Settings loaded synchronously during startup
-const raw = fs.readFileSync(settingsPath, 'utf8');
+const raw = fs.readFileSync(settingsPath, "utf8");
 ```
 
 **After:**

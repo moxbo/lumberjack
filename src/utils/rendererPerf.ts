@@ -9,7 +9,7 @@ class RendererPerformanceTracker {
 
   constructor() {
     this.startTime = performance.now();
-    this.mark('renderer-init');
+    this.mark("renderer-init");
   }
 
   /**
@@ -47,7 +47,7 @@ class RendererPerformanceTracker {
     const duration = end - start;
     // eslint-disable-next-line no-console
     console.log(
-      `[RENDERER-PERF] ${name}: ${Math.round(duration)}ms (${startMark} → ${endMark ?? 'now'})`
+      `[RENDERER-PERF] ${name}: ${Math.round(duration)}ms (${startMark} → ${endMark ?? "now"})`,
     );
     return duration;
   }

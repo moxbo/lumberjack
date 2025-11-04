@@ -7,7 +7,7 @@ export function lazyInstance<T extends object>(factory: () => T): T {
       real = real || factory();
       // @ts-expect-error dynamic proxy
       const v = (real as Record<string, unknown>)[prop];
-      return typeof v === 'function' ? v.bind(real) : v;
+      return typeof v === "function" ? v.bind(real) : v;
     },
     set(_target, prop, value: unknown) {
       real = real || factory();

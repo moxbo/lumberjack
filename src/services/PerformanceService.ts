@@ -3,7 +3,7 @@
  * Tracks and logs application performance metrics, especially startup time
  */
 
-import log from 'electron-log/main';
+import log from "electron-log/main";
 
 /**
  * Performance mark
@@ -35,7 +35,7 @@ export class PerformanceService {
 
   constructor() {
     this.startTime = Date.now();
-    this.mark('app-start');
+    this.mark("app-start");
   }
 
   /**
@@ -64,7 +64,9 @@ export class PerformanceService {
     }
 
     const duration = end - start;
-    log.info(`[PERF] ${name}: ${duration}ms (${startMark} → ${endMark ?? 'now'})`);
+    log.info(
+      `[PERF] ${name}: ${duration}ms (${startMark} → ${endMark ?? "now"})`,
+    );
 
     return duration;
   }
@@ -84,7 +86,7 @@ export class PerformanceService {
       startupTime: this.getElapsedTime(),
       marks: [...this.metrics],
       platform: process.platform,
-      electronVersion: process.versions.electron ?? 'unknown',
+      electronVersion: process.versions.electron ?? "unknown",
       nodeVersion: process.versions.node,
     };
   }
@@ -95,18 +97,18 @@ export class PerformanceService {
   logSummary(): void {
     const metrics = this.getMetrics();
 
-    log.info('=== Performance Summary ===');
+    log.info("=== Performance Summary ===");
     log.info(`Platform: ${metrics.platform}`);
     log.info(`Electron: ${metrics.electronVersion}`);
     log.info(`Node: ${metrics.nodeVersion}`);
     log.info(`Total startup time: ${metrics.startupTime}ms`);
-    log.info('=== Marks ===');
+    log.info("=== Marks ===");
 
     for (const mark of metrics.marks) {
       log.info(`  ${mark.name}: ${mark.duration}ms`);
     }
 
-    log.info('=========================');
+    log.info("=========================");
   }
 
   /**
@@ -116,8 +118,12 @@ export class PerformanceService {
     const elapsed = this.getElapsedTime();
 
     if (elapsed > thresholdMs) {
-      log.warn(`⚠️  Slow startup detected: ${elapsed}ms (threshold: ${thresholdMs}ms)`);
-      log.warn('Consider optimizing module loading or deferring heavy operations');
+      log.warn(
+        `⚠️  Slow startup detected: ${elapsed}ms (threshold: ${thresholdMs}ms)`,
+      );
+      log.warn(
+        "Consider optimizing module loading or deferring heavy operations",
+      );
       this.logSummary();
     } else {
       log.info(`✓ Startup performance OK: ${elapsed}ms`);
@@ -133,13 +139,13 @@ export class PerformanceService {
   logDetailedBreakdown(): void {
     if (this.metrics.length === 0) return;
 
-    log.info('=== Startup Time Breakdown ===');
+    log.info("=== Startup Time Breakdown ===");
     for (let i = 1; i < this.metrics.length; i++) {
       const prev = this.metrics[i - 1];
       const curr = this.metrics[i];
       const delta = (curr?.duration ?? 0) - (prev?.duration ?? 0);
       log.info(`  ${prev?.name} → ${curr?.name}: ${delta}ms`);
     }
-    log.info('==============================');
+    log.info("==============================");
   }
 }

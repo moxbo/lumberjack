@@ -6,7 +6,7 @@ interface Listener {
 class SimpleEmitter {
   private _ls = new Set<Listener>();
   on(fn: Listener): () => void {
-    if (typeof fn === 'function') {
+    if (typeof fn === "function") {
       this._ls.add(fn);
       return () => this._ls.delete(fn);
     }
@@ -18,7 +18,7 @@ class SimpleEmitter {
         fn();
       } catch (e) {
         // best-effort: do not throw from listeners
-        console.warn('Listener error in DiagnosticContextFilter emitter:', e);
+        console.warn("Listener error in DiagnosticContextFilter emitter:", e);
       }
     }
   }
@@ -32,36 +32,36 @@ function entryKey(key: string, val: string): string {
 
 // Mappe diverse Trace-Key-Varianten auf den kanonischen Anzeigenamen
 function normalizeTraceKeyName(k: string): string | null {
-  const lk = String(k || '')
+  const lk = String(k || "")
     .trim()
     .toLowerCase();
   const variants = new Set([
-    'traceid',
-    'trace_id',
-    'trace.id',
-    'trace-id',
-    'x-trace-id',
-    'x_trace_id',
-    'x.trace.id',
-    'trace',
+    "traceid",
+    "trace_id",
+    "trace.id",
+    "trace-id",
+    "x-trace-id",
+    "x_trace_id",
+    "x.trace.id",
+    "trace",
   ]);
-  return variants.has(lk) ? 'TraceID' : null;
+  return variants.has(lk) ? "TraceID" : null;
 }
 
 // Liefert alle Event-Key-Varianten zu einem kanonischen Key
 function eventKeyVariantsForCanonical(k: string): string[] {
-  const canon = normalizeTraceKeyName(k) || String(k || '').trim();
-  if (canon === 'TraceID') {
+  const canon = normalizeTraceKeyName(k) || String(k || "").trim();
+  if (canon === "TraceID") {
     return [
-      'TraceID',
-      'traceId',
-      'trace_id',
-      'trace.id',
-      'trace-id',
-      'x-trace-id',
-      'x_trace_id',
-      'x.trace.id',
-      'trace',
+      "TraceID",
+      "traceId",
+      "trace_id",
+      "trace.id",
+      "trace-id",
+      "x-trace-id",
+      "x_trace_id",
+      "x.trace.id",
+      "trace",
     ];
   }
   return [canon];
@@ -69,8 +69,8 @@ function eventKeyVariantsForCanonical(k: string): string[] {
 
 // Export: Kanonischer DC-Key für Anzeige/Filterung
 export function canonicalDcKey(k: string): string {
-  const raw = String(k || '').trim();
-  if (!raw) return '';
+  const raw = String(k || "").trim();
+  if (!raw) return "";
   const canonical = normalizeTraceKeyName(raw);
   return canonical || raw;
 }
@@ -93,13 +93,13 @@ class DiagnosticContextFilterImpl {
     }
   }
   private _normalizeKey(k: string): string {
-    const raw = String(k || '').trim();
-    if (!raw) return '';
+    const raw = String(k || "").trim();
+    if (!raw) return "";
     const canonical = normalizeTraceKeyName(raw);
     return canonical || raw;
   }
   private _normalizeVal(v: string): string {
-    return v == null ? '' : String(v);
+    return v == null ? "" : String(v);
   }
   // Re-mappe vorhandene Einträge auf kanonische Keys (z. B. traceId -> TraceID) und merge Duplicates
   addMdcEntry(key: string, val: string): void {
@@ -166,7 +166,7 @@ class DiagnosticContextFilterImpl {
       }
     }
     return Array.from(tmp.values()).sort(
-      (a, b) => a.key.localeCompare(b.key) || a.val.localeCompare(b.val)
+      (a, b) => a.key.localeCompare(b.key) || a.val.localeCompare(b.val),
     );
   }
   private _hasActive(): boolean {
@@ -190,23 +190,28 @@ class DiagnosticContextFilterImpl {
     const hasOwn = (obj: Record<string, unknown>, k: string): boolean =>
       Object.prototype.hasOwnProperty.call(obj, k);
 
-    const obj = mdc && typeof mdc === 'object' ? (mdc as Record<string, unknown>) : {};
+    const obj =
+      mdc && typeof mdc === "object" ? (mdc as Record<string, unknown>) : {};
 
     const toSafeString = (val: unknown): string => {
-      if (val == null) return '';
-      if (typeof val === 'string') return val;
-      if (typeof val === 'number' || typeof val === 'boolean' || typeof val === 'bigint') {
+      if (val == null) return "";
+      if (typeof val === "string") return val;
+      if (
+        typeof val === "number" ||
+        typeof val === "boolean" ||
+        typeof val === "bigint"
+      ) {
         return String(val);
       }
-      if (typeof val === 'object' || typeof val === 'function') {
+      if (typeof val === "object" || typeof val === "function") {
         try {
           return JSON.stringify(val);
         } catch {
-          return '';
+          return "";
         }
       }
       // symbol/unknown
-      return '';
+      return "";
     };
 
     for (const [canonKey, arr] of groups) {
@@ -222,7 +227,7 @@ class DiagnosticContextFilterImpl {
 
       let ok = false;
       for (const it of arr) {
-        if (it.val === '') {
+        if (it.val === "") {
           // Wildcard: Key muss vorhanden sein (mind. ein Kandidat)
           if (present.length > 0) {
             ok = true;
@@ -242,11 +247,13 @@ class DiagnosticContextFilterImpl {
   }
 }
 
-import { lazyInstance } from './_lazy';
+import { lazyInstance } from "./_lazy";
 
 // Export the singleton lazily to avoid temporal-dead-zone issues when modules
 // import each other during initialization (bundlers can reorder/rename symbols).
-export const DiagnosticContextFilter = lazyInstance(() => new DiagnosticContextFilterImpl());
+export const DiagnosticContextFilter = lazyInstance(
+  () => new DiagnosticContextFilterImpl(),
+);
 export function dcEntryId(e: DcEntry): string {
   return entryKey(e.key, e.val);
 }

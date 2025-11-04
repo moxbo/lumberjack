@@ -53,38 +53,38 @@ self.onmessage = function (e: MessageEvent<WorkerMessage>): void {
 
   try {
     switch (type) {
-      case 'parseLines': {
+      case "parseLines": {
         const { lines, filename } = data as ParseLinesData;
         const entries = parseTextLinesWorker(lines, filename);
-        self.postMessage({ type: 'parseLines', id, result: entries });
+        self.postMessage({ type: "parseLines", id, result: entries });
         break;
       }
 
-      case 'parseJSON': {
+      case "parseJSON": {
         const { text, filename } = data as ParseJSONData;
         const entries = parseJsonWorker(text, filename);
-        self.postMessage({ type: 'parseJSON', id, result: entries });
+        self.postMessage({ type: "parseJSON", id, result: entries });
         break;
       }
 
-      case 'parseZipEntries': {
+      case "parseZipEntries": {
         const { entries: zipEntries, zipName } = data as ParseZipEntriesData;
         const parsed: LogEntry[] = [];
         for (const entry of zipEntries) {
           const { name, text } = entry;
-          const parts = name.toLowerCase().split('.');
-          const ext = parts[parts.length - 1] ?? '';
+          const parts = name.toLowerCase().split(".");
+          const ext = parts[parts.length - 1] ?? "";
           let entryData: LogEntry[] = [];
-          if (ext === 'json') {
+          if (ext === "json") {
             entryData = parseJsonWorker(text, name);
           } else {
-            entryData = parseTextLinesWorker(text.split('\n'), name);
+            entryData = parseTextLinesWorker(text.split("\n"), name);
           }
           // Add zip source info
           entryData.forEach((e) => (e.source = `${zipName}::${name}`));
           parsed.push(...entryData);
         }
-        self.postMessage({ type: 'parseZipEntries', id, result: parsed });
+        self.postMessage({ type: "parseZipEntries", id, result: parsed });
         break;
       }
 
@@ -93,7 +93,7 @@ self.onmessage = function (e: MessageEvent<WorkerMessage>): void {
     }
   } catch (error) {
     self.postMessage({
-      type: 'error',
+      type: "error",
       id,
       error: error instanceof Error ? error.message : String(error),
     });
@@ -113,7 +113,7 @@ function parseTextLinesWorker(lines: string[], source: string): LogEntry[] {
     let obj: AnyMap | null = null;
     try {
       const parsed: unknown = JSON.parse(trimmed);
-      obj = parsed && typeof parsed === 'object' ? (parsed as AnyMap) : null;
+      obj = parsed && typeof parsed === "object" ? (parsed as AnyMap) : null;
     } catch {
       // Plain text line
       obj = { message: trimmed };
@@ -133,15 +133,15 @@ function parseJsonWorker(text: string, source: string): LogEntry[] {
     const parsed: unknown = JSON.parse(text);
     if (Array.isArray(parsed)) {
       return parsed.map((item) => {
-        const obj = item && typeof item === 'object' ? (item as AnyMap) : {};
+        const obj = item && typeof item === "object" ? (item as AnyMap) : {};
         return toEntry(obj, source);
       });
     }
-    const obj = parsed && typeof parsed === 'object' ? (parsed as AnyMap) : {};
+    const obj = parsed && typeof parsed === "object" ? (parsed as AnyMap) : {};
     return [toEntry(obj, source)];
   } catch {
     // Fallback: try NDJSON (newline-delimited JSON)
-    const lines = text.split('\n').filter((l) => l.trim());
+    const lines = text.split("\n").filter((l) => l.trim());
     return parseTextLinesWorker(lines, source);
   }
 }
@@ -150,24 +150,25 @@ function parseJsonWorker(text: string, source: string): LogEntry[] {
  * Convert object to standardized log entry (worker-safe version)
  */
 function toEntry(obj: AnyMap, source: string): LogEntry {
-  if (!obj || typeof obj !== 'object') {
+  if (!obj || typeof obj !== "object") {
     return {
       timestamp: new Date().toISOString(),
-      level: 'INFO',
-      logger: '',
-      thread: '',
-      message: String(obj || ''),
-      source: source || 'unknown',
+      level: "INFO",
+      logger: "",
+      thread: "",
+      message: String(obj || ""),
+      source: source || "unknown",
       raw: obj,
-      traceId: '',
+      traceId: "",
       mdc: {},
-      service: '',
+      service: "",
     };
   }
 
   // Extract timestamp (various formats)
-  let timestamp = obj.timestamp || obj.time || obj['@timestamp'] || obj.ts || obj.date;
-  if (timestamp && typeof timestamp === 'object') {
+  let timestamp =
+    obj.timestamp || obj.time || obj["@timestamp"] || obj.ts || obj.date;
+  if (timestamp && typeof timestamp === "object") {
     const timestampObj = timestamp as AnyMap;
     if (timestampObj.$date) {
       timestamp = timestampObj.$date; // MongoDB format
@@ -179,7 +180,13 @@ function toEntry(obj: AnyMap, source: string): LogEntry {
 
   // Extract level
   const level =
-    obj.level || obj.severity || obj.loglevel || obj.priority || obj.lvl || obj.levelname || 'INFO';
+    obj.level ||
+    obj.severity ||
+    obj.loglevel ||
+    obj.priority ||
+    obj.lvl ||
+    obj.levelname ||
+    "INFO";
 
   // Extract logger/category
   const logger =
@@ -188,25 +195,32 @@ function toEntry(obj: AnyMap, source: string): LogEntry {
     obj.name ||
     obj.loggerName ||
     obj.logger_name ||
-    obj['@logger'] ||
-    '';
+    obj["@logger"] ||
+    "";
 
   // Extract thread
-  const thread = obj.thread || obj.threadName || obj.thread_name || obj.tid || '';
+  const thread =
+    obj.thread || obj.threadName || obj.thread_name || obj.tid || "";
 
   // Extract message
   const message =
-    obj.message || obj.msg || obj.text || obj.logMessage || obj.log_message || obj.event || '';
+    obj.message ||
+    obj.msg ||
+    obj.text ||
+    obj.logMessage ||
+    obj.log_message ||
+    obj.event ||
+    "";
 
   // Extract trace ID (various formats)
   const traceId =
     obj.traceId ||
     obj.trace_id ||
     obj.traceid ||
-    obj['x-trace-id'] ||
+    obj["x-trace-id"] ||
     obj.requestId ||
     obj.correlationId ||
-    '';
+    "";
 
   // Extract MDC/context
   let mdc: AnyMap | null = null;
@@ -217,15 +231,25 @@ function toEntry(obj: AnyMap, source: string): LogEntry {
 
   // Stack trace
   const stackTrace =
-    obj.stackTrace || obj.stack_trace || obj.stack || obj.exception || obj.error || '';
+    obj.stackTrace ||
+    obj.stack_trace ||
+    obj.stack ||
+    obj.exception ||
+    obj.error ||
+    "";
 
   // Service/app name
-  const service = obj.service || obj.app || obj.application || obj.serviceName || '';
+  const service =
+    obj.service || obj.app || obj.application || obj.serviceName || "";
 
   // Helper to safely convert to string
-  const safeString = (v: unknown, fallback = ''): string => {
+  const safeString = (v: unknown, fallback = ""): string => {
     if (v == null) return fallback;
-    if (typeof v === 'string' || typeof v === 'number' || typeof v === 'boolean') {
+    if (
+      typeof v === "string" ||
+      typeof v === "number" ||
+      typeof v === "boolean"
+    ) {
       return String(v);
     }
     return fallback;
@@ -233,12 +257,12 @@ function toEntry(obj: AnyMap, source: string): LogEntry {
 
   return {
     timestamp: String(timestamp),
-    level: safeString(level, 'INFO').toUpperCase(),
+    level: safeString(level, "INFO").toUpperCase(),
     logger: safeString(logger),
     thread: safeString(thread),
     message: safeString(message),
     traceId: safeString(traceId),
-    source: source || 'unknown',
+    source: source || "unknown",
     mdc: (mdc as Record<string, unknown>) || {},
     stackTrace: stackTrace ? safeString(stackTrace) : undefined,
     service: safeString(service),
