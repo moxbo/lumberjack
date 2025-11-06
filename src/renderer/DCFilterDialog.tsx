@@ -16,6 +16,15 @@ export default function DCFilterDialog(): preact.JSX.Element {
     DiagnosticContextFilter.isEnabled(),
   );
 
+  // Stelle sicher, dass der MDCListener gestartet ist (idempotent)
+  useEffect(() => {
+    try {
+      MDCListener.startListening();
+    } catch {
+      /* noop */
+    }
+  }, []);
+
   // Kontextmenü
   const [ctx, setCtx] = useState<{ open: boolean; x: number; y: number }>({
     open: false,
@@ -23,6 +32,60 @@ export default function DCFilterDialog(): preact.JSX.Element {
     y: 0,
   });
   const ctxRef = useRef<HTMLDivElement | null>(null);
+  // Ref auf den Key-Input (für Fokus nach Auswahl)
+  const keyInputRef = useRef<HTMLInputElement | null>(null);
+  const valueInputRef = useRef<HTMLInputElement | null>(null);
+  // Fixed-Overlay Dropdown für Keys (verhindert Scrollen des gesamten Dialogs)
+  const [keyDD, setKeyDD] = useState<{
+    open: boolean;
+    x: number;
+    y: number;
+    w: number;
+  }>({ open: false, x: 0, y: 0, w: 0 });
+  const keyDDRef = useRef<HTMLDivElement | null>(null);
+  const keyBtnRef = useRef<HTMLButtonElement | null>(null);
+  const keyWrapRef = useRef<HTMLDivElement | null>(null);
+  const justOpenedRef = useRef<number>(0);
+  useEffect(() => {
+    function onDocClick(e: MouseEvent): void {
+      if (!keyDD.open) return;
+      // Ignore the very same event cycle right after opening to avoid race
+      if (Date.now() - (justOpenedRef.current || 0) < 50) return;
+      const el = keyDDRef.current;
+      const btnEl = keyBtnRef.current;
+      const inputEl = keyInputRef.current;
+      const path =
+        typeof (e as any).composedPath === "function"
+          ? (e as any).composedPath()
+          : [];
+      const tgt = e.target as Node | null;
+      const isInside = (node: Node | null, container: HTMLElement | null) =>
+        !!container &&
+        !!node &&
+        (container === node || container.contains(node));
+      const pathHas = (container: HTMLElement | null) =>
+        Array.isArray(path) && !!container && path.includes(container);
+      if (
+        (el && (isInside(tgt, el) || pathHas(el))) ||
+        (btnEl && (isInside(tgt, btnEl) || pathHas(btnEl))) ||
+        (inputEl && (isInside(tgt, inputEl) || pathHas(inputEl)))
+      )
+        return;
+      setKeyDD({ open: false, x: 0, y: 0, w: 0 });
+    }
+    window.addEventListener(
+      "click",
+      onDocClick as any,
+      { capture: true, passive: true } as AddEventListenerOptions,
+    );
+    return () =>
+      window.removeEventListener(
+        "click",
+        onDocClick as any,
+        { capture: true } as AddEventListenerOptions,
+      );
+  }, [keyDD.open]);
+
   useEffect(() => {
     function onDocClick(e: MouseEvent): void {
       if (!ctx.open) return;
@@ -41,13 +104,13 @@ export default function DCFilterDialog(): preact.JSX.Element {
         return;
       setCtx({ open: false, x: 0, y: 0 });
     }
-    window.addEventListener("mousedown", onDocClick, {
+    window.addEventListener("click", onDocClick, {
       capture: true,
       passive: true,
     } as any);
     return () =>
       window.removeEventListener(
-        "mousedown",
+        "click",
         onDocClick as any,
         { capture: true } as any,
       );
@@ -138,7 +201,11 @@ export default function DCFilterDialog(): preact.JSX.Element {
     ev.preventDefault();
     ev.stopPropagation();
     if (!sel.includes(id)) setSel([id]);
-    setCtx({ open: true, x: ev.clientX, y: ev.clientY });
+    setCtx({
+      open: true,
+      x: (ev as MouseEvent).clientX,
+      y: (ev as MouseEvent).clientY,
+    });
   }
   function activateSelected(active: boolean): void {
     const cur = DiagnosticContextFilter.getDcEntries();
@@ -162,7 +229,35 @@ export default function DCFilterDialog(): preact.JSX.Element {
   // F2: bekannte Werte anzeigen
   const [showValues, setShowValues] = useState<boolean>(false);
   const [values, setValues] = useState<string[]>([]);
-  const valueInputRef = useRef<HTMLInputElement | null>(null);
+
+  // Key-Dropdown öffnen (am Pfeil-Button verankert)
+  function openKeyDropdownAt(target?: HTMLElement | null) {
+    try {
+      const wrap = keyWrapRef.current;
+      const btn = target || keyBtnRef.current;
+      if (!btn) return;
+      const w = Math.max(
+        220,
+        Math.round((wrap || btn).getBoundingClientRect().width),
+      );
+      // mark as just opened to ignore the initiating click in the global closer
+      justOpenedRef.current = Date.now();
+      setKeyDD({ open: true, x: 0, y: 0, w });
+    } catch {
+      // noop
+    }
+  }
+
+  // ESC schließt Dropdown
+  useEffect(() => {
+    function onKey(e: KeyboardEvent) {
+      if (e.key === "Escape" && keyDD.open)
+        setKeyDD({ open: false, x: 0, y: 0, w: 0 });
+    }
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [keyDD.open]);
+
   function onValueKeyDown(e: KeyboardEvent): void {
     if (e.key === "F2") {
       e.preventDefault();
@@ -180,9 +275,24 @@ export default function DCFilterDialog(): preact.JSX.Element {
     setShowValues(true);
   }
   function chooseValue(v: string): void {
-    setVal(v);
+    // Direkt zum Filter hinzufügen, statt über den Input-State zu gehen (vermeidet Race zu "(alle)")
+    const key = String(selectedKey || "").trim();
+    if (!key) {
+      // Falls noch kein Key gesetzt ist, übernehme Wert nur in das Feld
+      setVal(v);
+      setShowValues(false);
+      return;
+    }
+    DiagnosticContextFilter.addMdcEntry(key, v);
+    setVal("");
     setShowValues(false);
-    setTimeout(() => onAdd(), 0);
+  }
+  function chooseKey(k: string): void {
+    setSelectedKey(String(k || ""));
+    setKeyDD({ open: false, x: 0, y: 0, w: 0 });
+    try {
+      valueInputRef.current?.focus();
+    } catch {}
   }
 
   const addDisabled = !String(selectedKey || "").trim();
@@ -195,19 +305,103 @@ export default function DCFilterDialog(): preact.JSX.Element {
         <div style="display:flex; gap:12px; align-items:end; flex-wrap:wrap;">
           <div class="form-field">
             <label>MDC Key</label>
-            <input
-              class="bright-input"
-              list="dc-keys"
-              value={selectedKey}
-              onInput={(e) => setSelectedKey(e.currentTarget.value)}
-              placeholder="Key wählen oder tippen…"
-              autoFocus
-            />
-            <datalist id="dc-keys">
-              {keys.map((k) => (
-                <option value={k} />
-              ))}
-            </datalist>
+            <div
+              ref={keyWrapRef as any}
+              style="position:relative; display:flex; gap:6px; align-items:center;"
+            >
+              <input
+                class="bright-input"
+                type="text"
+                autocomplete="off"
+                value={selectedKey}
+                ref={keyInputRef as any}
+                onInput={(e) => setSelectedKey(e.currentTarget.value)}
+                onClick={(e) => e.stopPropagation()}
+                placeholder="Key wählen oder tippen…"
+                autoFocus
+              />
+              <button
+                ref={keyBtnRef as any}
+                title="MDC-Keys anzeigen"
+                onClick={(e) => {
+                  // Toggle auf Click und Event nicht nach oben lassen, damit der globale Click-Closer nicht sofort schließt
+                  e.stopPropagation();
+                  if (keyDD.open) setKeyDD({ open: false, x: 0, y: 0, w: 0 });
+                  else openKeyDropdownAt(e.currentTarget as HTMLButtonElement);
+                }}
+              >
+                ▼
+              </button>
+              {/* Dropdown unter dem Wrapper anheften */}
+              {keyDD.open && (
+                <div
+                  ref={keyDDRef as any}
+                  className="history-dropdown"
+                  onClick={(e) => e.stopPropagation()}
+                  onWheel={(e) => {
+                    // verhindert Scrollen des übergeordneten Dialogs
+                    e.stopPropagation();
+                  }}
+                  style={{
+                    position: "absolute",
+                    left: 0,
+                    top: "calc(100% + 4px)",
+                    minWidth: Math.max(220, keyDD.w || 0) + "px",
+                    maxHeight: "220px",
+                    overflow: "auto",
+                    border:
+                      "1px solid var(--glass-border, var(--color-border))",
+                    borderRadius: "4px",
+                    background: "var(--color-bg-paper)",
+                    color: "var(--color-text-primary)",
+                    boxShadow: "0 8px 24px rgba(0,0,0,0.18)",
+                    padding: "4px",
+                    zIndex: "var(--z-dropdown)",
+                  }}
+                >
+                  {(!keys || keys.length === 0) && (
+                    <div
+                      style={{
+                        padding: "6px 8px",
+                        color: "var(--color-text-secondary)",
+                      }}
+                    >
+                      Keine bekannten Keys
+                    </div>
+                  )}
+                  {keys.map((k, i) => (
+                    <div
+                      key={i}
+                      role="button"
+                      tabIndex={0}
+                      onClick={() => chooseKey(String(k))}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter" || e.key === " ")
+                          chooseKey(String(k));
+                      }}
+                      style={{
+                        padding: "6px 8px",
+                        cursor: "pointer",
+                        borderRadius: "4px",
+                      }}
+                      onMouseOver={(e) =>
+                        ((
+                          e.currentTarget as HTMLDivElement
+                        ).style.backgroundColor = "var(--color-bg-hover)")
+                      }
+                      onMouseOut={(e) =>
+                        ((
+                          e.currentTarget as HTMLDivElement
+                        ).style.backgroundColor = "transparent")
+                      }
+                      title={String(k)}
+                    >
+                      {String(k)}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
           </div>
           <div class="form-field" style="min-width:260px;">
             <label>MDC Value</label>
