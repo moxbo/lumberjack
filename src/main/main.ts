@@ -256,11 +256,8 @@ function truncateEntryForRenderer(entry: LogEntry): LogEntry {
     const fields = ["message", "raw", "msg", "body", "message_raw", "text"];
     let truncated = false;
     for (const f of fields) {
-      if (
-        typeof copy[f] === "string" &&
-        (copy[f] as string).length > MAX_MESSAGE_LENGTH
-      ) {
-        copy[f] = (copy[f] as string).slice(0, MAX_MESSAGE_LENGTH) + "… [truncated]";
+      if (typeof copy[f] === "string" && copy[f].length > MAX_MESSAGE_LENGTH) {
+        copy[f] = copy[f].slice(0, MAX_MESSAGE_LENGTH) + "… [truncated]";
         truncated = true;
       }
     }
@@ -278,7 +275,11 @@ function prepareRenderBatch(entries: LogEntry[]): LogEntry[] {
     return entries;
   }
 }
-function sendBatchesAsyncTo(wc: any, channel: string, batches: LogEntry[][]): void {
+function sendBatchesAsyncTo(
+  wc: any,
+  channel: string,
+  batches: LogEntry[][],
+): void {
   batches.forEach((batch, idx) => {
     setTimeout(() => {
       try {
