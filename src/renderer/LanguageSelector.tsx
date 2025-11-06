@@ -17,9 +17,7 @@ export default function LanguageSelector() {
       </label>
       <select
         value={locale}
-        onChange={(e) =>
-          setLocale((e.currentTarget as HTMLSelectElement).value as Locale)
-        }
+        onChange={(e) => setLocale(e.currentTarget.value as Locale)}
         style={{
           padding: "2px 6px",
           fontSize: "13px",

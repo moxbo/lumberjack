@@ -61,7 +61,8 @@
       "message": "Message"
     },
     "noEntries": "No entries",
-    "ariaLabel": "Log entries"
+    "ariaLabel": "Log entries",
+    "clearConfirmation": "Are you sure you want to clear all log entries? This action cannot be undone."
   },
   "details": {
     "noSelection": "No selection",

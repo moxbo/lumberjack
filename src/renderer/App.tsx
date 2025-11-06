@@ -15,7 +15,7 @@ import { canonicalDcKey, DiagnosticContextFilter } from "../store/dcFilter";
 import { DragAndDropManager } from "../utils/dnd";
 import { compareByTimestampId } from "../utils/sort";
 import { TimeFilter } from "../store/timeFilter";
-import { lazy, Suspense, createPortal } from "preact/compat";
+import { createPortal, lazy, Suspense } from "preact/compat";
 import type { ElasticSearchOptions } from "../types/ipc";
 import { MDCListener } from "../store/mdcListener";
 
@@ -525,7 +525,9 @@ export default function App() {
     elasticMaxParallel: 1,
   });
   // NEU: hält das tatsächlich beim Start verwendete Poll-Intervall (für stabilen Countdown)
-  const [currentPollInterval, setCurrentPollInterval] = useState<number | null>(null);
+  const [currentPollInterval, setCurrentPollInterval] = useState<number | null>(
+    null,
+  );
 
   const [showHttpLoadDlg, setShowHttpLoadDlg] = useState<boolean>(false);
   const [httpLoadUrl, setHttpLoadUrl] = useState<string>("");
@@ -780,7 +782,8 @@ export default function App() {
   // NEU: Halte den Countdown am Laufen, selbst wenn einzelne Ticks keine Events liefern
   useEffect(() => {
     // Nur aktiv, wenn ein Poll läuft und wir das reale Intervall kennen
-    const interval = currentPollInterval != null ? Math.max(500, currentPollInterval) : null;
+    const interval =
+      currentPollInterval != null ? Math.max(500, currentPollInterval) : null;
     if (httpPollId == null || interval == null) {
       return;
     }
@@ -1717,9 +1720,7 @@ export default function App() {
   function clearLogs() {
     // Sicherheitsabfrage, nur wenn etwas zu löschen ist
     if (entries && entries.length > 0) {
-      const confirmed = window.confirm(
-        "Möchtest du wirklich alle Einträge löschen? Dieser Vorgang kann nicht rückgängig gemacht werden.",
-      );
+      const confirmed = window.confirm(t("list.clearConfirmation"));
       if (!confirmed) return;
     }
     setEntries([]);
@@ -3124,7 +3125,7 @@ export default function App() {
               onKeyDown={(e) => {
                 if ((e as any).key === "Enter")
                   addFilterHistory("thread", (e.currentTarget as any).value);
-                if ((e as any).key === "ArrowDown" ) setShowThreadHist(true);
+                if ((e as any).key === "ArrowDown") setShowThreadHist(true);
                 const key = (e as any).key?.toLowerCase?.() || "";
                 if (key === "a" && ((e as any).ctrlKey || (e as any).metaKey)) {
                   e.preventDefault();

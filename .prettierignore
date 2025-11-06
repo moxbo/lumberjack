@@ -9,6 +9,7 @@ build/
 *.gif
 *.svg
 *.ico
+*.cjs
 .DS_Store
 coverage/
 release/

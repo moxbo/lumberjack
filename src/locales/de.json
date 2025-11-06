@@ -61,7 +61,8 @@
       "message": "Message"
     },
     "noEntries": "Keine Einträge",
-    "ariaLabel": "Logeinträge"
+    "ariaLabel": "Logeinträge",
+    "clearConfirmation": "Möchten Sie wirklich alle Logeinträge löschen? Dieser Vorgang kann nicht rückgängig gemacht werden."
   },
   "details": {
     "noSelection": "Keine Auswahl",

@@ -270,7 +270,7 @@ export function registerIpcHandlers(
   });
 
   // Log parsing handlers
-  // eslint-disable-next-line @typescript-eslint/require-await
+
   ipcMain.handle(
     "logs:parsePaths",
     async (_event, filePaths: string[]): Promise<ParseResult> => {
@@ -291,7 +291,6 @@ export function registerIpcHandlers(
     },
   );
 
-  // eslint-disable-next-line @typescript-eslint/require-await
   ipcMain.handle(
     "logs:parseRaw",
     async (_event, files: DroppedFile[]): Promise<ParseResult> => {
