@@ -1197,6 +1197,9 @@ function createWindow(opts: { makePrimary?: boolean } = {}): BrowserWindow {
   try {
     const wc = win.webContents;
     wc.on("did-fail-load", (_e, errorCode, errorDescription) => {
+      // Error code constants from Chromium
+      const ERR_ABORTED = -3;
+
       log.error("[diag] Renderer did-fail-load:", {
         errorCode,
         errorDescription,
@@ -1204,8 +1207,8 @@ function createWindow(opts: { makePrimary?: boolean } = {}): BrowserWindow {
       });
       // Don't exit on renderer load failure - attempt recovery
       try {
-        if (errorCode === -3) {
-          // ERR_ABORTED - usually harmless
+        if (errorCode === ERR_ABORTED) {
+          // ERR_ABORTED - usually harmless (user navigation or redirect)
           return;
         }
         // For critical errors, try reloading after a delay
@@ -1232,8 +1235,9 @@ function createWindow(opts: { makePrimary?: boolean } = {}): BrowserWindow {
       }
     });
 
+    // Per-window renderer crash handler with recovery logic
     wc.on("render-process-gone", (_e, details) => {
-      log.error("[diag] Renderer gone:", {
+      log.error("[diag] Renderer gone (window-specific):", {
         reason: details.reason,
         exitCode: details.exitCode,
       });
@@ -1385,6 +1389,8 @@ if (process.platform === "win32") {
 
 // Global diagnostics for unexpected exits/crashes
 // Track exit source for debugging
+// Note: These are safe to use in Node.js main process which is single-threaded.
+// Events are processed sequentially, so no race conditions can occur.
 let exitSource = "unknown";
 let exitDetails: any = null;
 
@@ -1510,11 +1516,13 @@ try {
       }
     });
 
+    // App-level render process crash handler for exit tracking
+    // Note: This is separate from the per-window handler above which handles recovery
     app.on("render-process-gone", (_event, webContents, details) => {
       try {
         exitSource = "render-process-gone";
         exitDetails = details;
-        log.error("[diag] render-process-gone:", {
+        log.error("[diag] render-process-gone (app-level):", {
           reason: details.reason,
           exitCode: details.exitCode,
         });

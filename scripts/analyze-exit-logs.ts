@@ -178,7 +178,15 @@ function analyzeLogFile(logPath: string): void {
         console.log(`   Source: ${event.source}`);
       }
       if (event.details) {
-        console.log(`   Details: ${event.details.substring(0, 200)}...`);
+        const detailsStr =
+          typeof event.details === "string"
+            ? event.details
+            : JSON.stringify(event.details);
+        const preview =
+          detailsStr.length > 200
+            ? `${detailsStr.substring(0, 200)}...`
+            : detailsStr;
+        console.log(`   Details: ${preview}`);
       }
     });
 
