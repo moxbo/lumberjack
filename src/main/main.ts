@@ -244,6 +244,52 @@ const pendingMenuCmdsByWindow = new Map<
 let lastFocusedWindowId: number | null = null;
 const pendingAppendsByWindow = new Map<number, LogEntry[]>();
 
+// UI-freundliche Batch-/Trunkierungs-Parameter
+const MAX_BATCH_ENTRIES = 200;
+const MAX_MESSAGE_LENGTH = 10 * 1024; // 10 KB pro Textfeld
+const BATCH_SEND_DELAY_MS = 8; // kleine Verzögerung zwischen Batches
+
+function truncateEntryForRenderer(entry: LogEntry): LogEntry {
+  try {
+    if (!entry || typeof entry !== "object") return entry;
+    const copy: any = { ...(entry as any) };
+    const fields = ["message", "raw", "msg", "body", "message_raw", "text"];
+    let truncated = false;
+    for (const f of fields) {
+      if (
+        typeof copy[f] === "string" &&
+        (copy[f] as string).length > MAX_MESSAGE_LENGTH
+      ) {
+        copy[f] = (copy[f] as string).slice(0, MAX_MESSAGE_LENGTH) + "… [truncated]";
+        truncated = true;
+      }
+    }
+    if (truncated && !copy._truncated) copy._truncated = true;
+    return copy as LogEntry;
+  } catch {
+    return entry;
+  }
+}
+function prepareRenderBatch(entries: LogEntry[]): LogEntry[] {
+  try {
+    if (!Array.isArray(entries) || entries.length === 0) return entries;
+    return entries.map(truncateEntryForRenderer);
+  } catch {
+    return entries;
+  }
+}
+function sendBatchesAsyncTo(wc: any, channel: string, batches: LogEntry[][]): void {
+  batches.forEach((batch, idx) => {
+    setTimeout(() => {
+      try {
+        wc.send(channel, batch);
+      } catch {
+        // Ignorieren; erneuter Versand erfolgt später ggf. über Buffer
+      }
+    }, idx * BATCH_SEND_DELAY_MS);
+  });
+}
+
 // File logging
 let logStream: fs.WriteStream | null = null;
 let logBytes = 0;
@@ -405,13 +451,16 @@ function flushPendingAppends(): void {
   if (!pendingAppends.length) return;
   const wc = mainWindow?.webContents;
   if (!wc) return;
-  const CHUNK = 1000;
   try {
-    for (let i = 0; i < pendingAppends.length; i += CHUNK) {
-      const slice = pendingAppends.slice(i, i + CHUNK);
-      wc.send("logs:append", slice);
+    const batches: LogEntry[][] = [];
+    for (let i = 0; i < pendingAppends.length; i += MAX_BATCH_ENTRIES) {
+      const slice = pendingAppends.slice(i, i + MAX_BATCH_ENTRIES);
+      batches.push(prepareRenderBatch(slice));
     }
+    // gestaffelt senden, damit der Event-Loop atmen kann
+    sendBatchesAsyncTo(wc, "logs:append", batches);
   } catch {
+    // nicht leeren, damit später erneut versucht werden kann
     return;
   }
   pendingAppends = [];
@@ -442,12 +491,13 @@ function flushPendingAppendsFor(win: BrowserWindow): void {
   const buf = pendingAppendsByWindow.get(win.id);
   if (!buf || !buf.length) return;
   const wc = win.webContents;
-  const CHUNK = 1000;
   try {
-    for (let i = 0; i < buf.length; i += CHUNK) {
-      const slice = buf.slice(i, i + CHUNK);
-      wc.send("logs:append", slice);
+    const batches: LogEntry[][] = [];
+    for (let i = 0; i < buf.length; i += MAX_BATCH_ENTRIES) {
+      const slice = buf.slice(i, i + MAX_BATCH_ENTRIES);
+      batches.push(prepareRenderBatch(slice));
     }
+    sendBatchesAsyncTo(wc, "logs:append", batches);
   } catch (e) {
     log.error(
       "flushPendingAppendsFor send failed:",
@@ -461,6 +511,7 @@ function flushPendingAppendsFor(win: BrowserWindow): void {
 // NetworkService callback → route to right window(s)
 function sendAppend(entries: LogEntry[]): void {
   try {
+    // volle Daten in Datei (ohne Kürzung)
     writeEntriesToFile(entries);
   } catch {
     // Intentionally empty - ignore errors
@@ -472,6 +523,16 @@ function sendAppend(entries: LogEntry[]): void {
   const otherEntries: LogEntry[] = [];
   for (const e of entries) (isTcpEntry(e) ? tcpEntries : otherEntries).push(e);
 
+  const sendEntriesToWc = (wc: any, arr: LogEntry[]) => {
+    if (!Array.isArray(arr) || arr.length === 0) return;
+    const batches: LogEntry[][] = [];
+    for (let i = 0; i < arr.length; i += MAX_BATCH_ENTRIES) {
+      const slice = arr.slice(i, i + MAX_BATCH_ENTRIES);
+      batches.push(prepareRenderBatch(slice));
+    }
+    sendBatchesAsyncTo(wc, "logs:append", batches);
+  };
+
   // TCP → owner window only
   if (tcpEntries.length) {
     const ownerId = getTcpOwnerWindowId();
@@ -479,27 +540,29 @@ function sendAppend(entries: LogEntry[]): void {
       ownerId != null ? BrowserWindow.fromId?.(ownerId) || null : null;
     if (ownerWin && isWindowReady(ownerWin)) {
       try {
-        ownerWin.webContents.send("logs:append", tcpEntries);
+        sendEntriesToWc(ownerWin.webContents, tcpEntries);
       } catch {
         enqueueAppendsFor(ownerWin.id, tcpEntries);
       }
     } else if (ownerWin) {
       enqueueAppendsFor(ownerWin.id, tcpEntries);
     }
-    // else: no owner → drop or route to main; we choose to route to main for now
+    // else: no owner → route to main
     else {
       otherEntries.push(...tcpEntries);
     }
   }
 
-  // Non-TCP → primary window (existing behavior)
+  // Non-TCP → primary window (bestehendes Verhalten)
   if (otherEntries.length) {
     if (!isRendererReady()) {
       enqueueAppends(otherEntries);
       return;
     }
     try {
-      mainWindow?.webContents.send("logs:append", otherEntries);
+      const wc = mainWindow?.webContents as any;
+      if (wc) sendEntriesToWc(wc, otherEntries);
+      else enqueueAppends(otherEntries);
     } catch {
       enqueueAppends(otherEntries);
     }
@@ -1399,7 +1462,7 @@ app.on("before-quit", async (e) => {
   } catch (err) {
     log.warn(
       "before-quit confirm failed:",
-      err instanceof Error ? err.message : String(err),
+      err instanceof Error ? e.message : String(err),
     );
   }
 });
