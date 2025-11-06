@@ -162,6 +162,11 @@ function analyzeLogFile(logPath: string): void {
   console.log(`Warnings: ${warnings.length}`);
   console.log(`Diagnostic messages: ${diagnostics.length}`);
 
+  // Check for exit code 1 events
+  const exitCode1Events = exitEvents.filter(
+    (e) => e.exitCode === 1,
+  );
+
   if (exitEvents.length > 0) {
     console.log("\n=== Exit Events ===");
     exitEvents.forEach((event, idx) => {
@@ -177,10 +182,6 @@ function analyzeLogFile(logPath: string): void {
       }
     });
 
-    // Check for exit code 1 events
-    const exitCode1Events = exitEvents.filter(
-      (e) => e.exitCode === 1,
-    );
     if (exitCode1Events.length > 0) {
       console.log("\n⚠️  EXIT CODE 1 DETECTED! ⚠️");
       console.log(
@@ -218,11 +219,6 @@ function analyzeLogFile(logPath: string): void {
       );
     });
   }
-
-  // Check for exit code 1 events (defined earlier after exitEvents)
-  const exitCode1Events = exitEvents.filter(
-    (e) => e.exitCode === 1,
-  );
 
   console.log("\n=== Recommendations ===");
   if (exitCode1Events.length > 0) {

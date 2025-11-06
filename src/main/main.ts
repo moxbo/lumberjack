@@ -1638,39 +1638,6 @@ void app
     );
     // Don't exit - try to continue anyway
   });
-    } catch (e) {
-      log.warn(
-        "[diag] Failed to set window focus handlers:",
-        e instanceof Error ? e.message : String(e),
-      );
-    }
-
-    if (process.argv.some((a) => a === "--new-window")) {
-      createWindow({ makePrimary: false });
-    }
-  } catch (e) {
-    log.error(
-      "[diag] Error in app.whenReady handler:",
-      e instanceof Error ? e.stack : String(e),
-    );
-    // Try to create window anyway as last resort
-    try {
-      createWindow({ makePrimary: true });
-    } catch (e2) {
-      log.error(
-        "[diag] Critical: Failed to create initial window:",
-        e2 instanceof Error ? e2.stack : String(e2),
-      );
-    }
-  }
-})
-.catch((err) => {
-  log.error(
-    "[diag] app.whenReady() rejected:",
-    err instanceof Error ? err.stack : String(err),
-  );
-  // Don't exit - try to continue anyway
-});
 
 // Bestätigung bei Cmd+Q / Beenden-Menü (plattformübergreifend)
 // eslint-disable-next-line @typescript-eslint/no-misused-promises
