@@ -1197,29 +1197,107 @@ function createWindow(opts: { makePrimary?: boolean } = {}): BrowserWindow {
   try {
     const wc = win.webContents;
     wc.on("did-fail-load", (_e, errorCode, errorDescription) => {
-      log.error("Renderer did-fail-load:", errorCode, errorDescription);
+      log.error("[diag] Renderer did-fail-load:", {
+        errorCode,
+        errorDescription,
+        url: wc.getURL?.(),
+      });
+      // Don't exit on renderer load failure - attempt recovery
+      try {
+        if (errorCode === -3) {
+          // ERR_ABORTED - usually harmless
+          return;
+        }
+        // For critical errors, try reloading after a delay
+        if (!win.isDestroyed() && !quitConfirmed) {
+          setTimeout(() => {
+            try {
+              if (!win.isDestroyed()) {
+                log.info("[diag] Attempting renderer reload after load failure");
+                win.reload();
+              }
+            } catch (e) {
+              log.error(
+                "[diag] Renderer reload failed:",
+                e instanceof Error ? e.message : String(e),
+              );
+            }
+          }, 1000);
+        }
+      } catch (e) {
+        log.error(
+          "[diag] Error handling did-fail-load:",
+          e instanceof Error ? e.message : String(e),
+        );
+      }
     });
+
     wc.on("render-process-gone", (_e, details) => {
-      log.error("Renderer gone:", details);
+      log.error("[diag] Renderer gone:", {
+        reason: details.reason,
+        exitCode: details.exitCode,
+      });
+
       // Auto-Recovery: Versuche bei Crash/Exit den Renderer neu zu laden oder ein neues Fenster zu erstellen,
       // sofern der Benutzer das Beenden nicht bestätigt hat.
       try {
-        if (!quitConfirmed) {
-          // Bei typischen Crash-Gründen neu laden
-          if (!win.isDestroyed()) {
-            // Reload nur, wenn das Fenster noch existiert
-            try {
+        if (quitConfirmed) {
+          log.info(
+            "[diag] Renderer gone but quit confirmed - not recovering",
+          );
+          return;
+        }
+
+        // Different recovery strategies based on exit reason
+        const shouldRecover =
+          details.reason === "crashed" ||
+          details.reason === "oom" ||
+          details.reason === "launch-failed" ||
+          details.reason === "integrity-failure";
+
+        if (!shouldRecover) {
+          log.info(
+            "[diag] Renderer gone reason does not require recovery:",
+            details.reason,
+          );
+          return;
+        }
+
+        log.info("[diag] Attempting renderer recovery...");
+
+        // Wait a bit before recovery to avoid rapid crash loops
+        setTimeout(() => {
+          try {
+            if (!win.isDestroyed()) {
+              // Reload only if window still exists
+              log.info("[diag] Reloading existing window");
               win.reload();
-            } catch {
-              // Fallback: neues Fenster
+            } else {
+              // Create new window if old one is destroyed
+              log.info("[diag] Creating new window to replace destroyed one");
               createWindow({ makePrimary: win === mainWindow });
             }
-          } else {
-            createWindow({ makePrimary: true });
+          } catch (e) {
+            log.error(
+              "[diag] Recovery failed:",
+              e instanceof Error ? e.message : String(e),
+            );
+            // Last resort: try creating a new window
+            try {
+              createWindow({ makePrimary: true });
+            } catch (e2) {
+              log.error(
+                "[diag] Last resort window creation failed:",
+                e2 instanceof Error ? e2.message : String(e2),
+              );
+            }
           }
-        }
-      } catch {
-        // Intentionally empty - ignore errors
+        }, 500);
+      } catch (e) {
+        log.error(
+          "[diag] Error in render-process-gone handler:",
+          e instanceof Error ? e.message : String(e),
+        );
       }
     });
     if (isDev || process.env.LJ_DEBUG_RENDERER === "1") {
@@ -1263,7 +1341,15 @@ setImmediate(() => {
 });
 
 // Register IPC
-registerIpcHandlers(settingsService, networkService, getParsers, getAdmZip);
+try {
+  registerIpcHandlers(settingsService, networkService, getParsers, getAdmZip);
+  log.info("[diag] IPC handlers registered successfully");
+} catch (err) {
+  log.error(
+    "[diag] CRITICAL: Failed to register IPC handlers:",
+    err instanceof Error ? err.stack : String(err),
+  );
+}
 
 // Fallback: react to tcp:status broadcasts
 try {
@@ -1271,11 +1357,21 @@ try {
   const { ipcMain } = require("electron");
   // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
   ipcMain.on("tcp:status", () => {
-    applyWindowTitles();
-    updateMenu();
+    try {
+      applyWindowTitles();
+      updateMenu();
+    } catch (err) {
+      log.error(
+        "[diag] Error in tcp:status handler:",
+        err instanceof Error ? err.message : String(err),
+      );
+    }
   });
-} catch {
-  // Intentionally empty - ignore errors
+} catch (err) {
+  log.error(
+    "[diag] Failed to register tcp:status handler:",
+    err instanceof Error ? err.message : String(err),
+  );
 }
 
 // App lifecycle
@@ -1288,73 +1384,149 @@ if (process.platform === "win32") {
 }
 
 // Global diagnostics for unexpected exits/crashes
+// Track exit source for debugging
+let exitSource = "unknown";
+let exitDetails: any = null;
+
 try {
-  process.on("uncaughtException", (err) => {
+  process.on("uncaughtException", (err, origin) => {
     try {
-      log.error("[diag] uncaughtException:", err?.stack || String(err));
-      // Sicherstellen, dass wir nicht mit Exit-Code 1 enden
-      if (process && typeof process.exitCode === "number") {
-        process.exitCode = 0;
-      }
+      exitSource = "uncaughtException";
+      exitDetails = { origin, error: err?.stack || String(err) };
+      log.error("[diag] uncaughtException", {
+        origin,
+        error: err?.stack || String(err),
+        name: err?.name,
+        message: err?.message,
+      });
+      // Log to stderr as well for visibility
+      console.error(
+        "[FATAL] uncaughtException:",
+        err?.name,
+        err?.message,
+        "\nStack:",
+        err?.stack,
+      );
     } catch {
-      // ignore
+      // ignore logging errors
     }
+    // DO NOT EXIT - let the app continue if possible
+    // The default behavior would exit with code 1, but we prevent that
   });
-  process.on("unhandledRejection", (reason) => {
+
+  process.on("unhandledRejection", (reason, promise) => {
     try {
+      exitSource = "unhandledRejection";
       const msg =
         reason instanceof Error
           ? reason.stack || reason.message
           : String(reason);
-      log.error("[diag] unhandledRejection:", msg);
-      // Sicherstellen, dass wir nicht mit Exit-Code 1 enden
-      if (process && typeof process.exitCode === "number") {
-        process.exitCode = 0;
-      }
+      exitDetails = { reason: msg, promise: String(promise) };
+      log.error("[diag] unhandledRejection", {
+        reason: msg,
+        promise: String(promise),
+      });
+      // Log to stderr as well
+      console.error("[FATAL] unhandledRejection:", msg);
     } catch {
-      // ignore
+      // ignore logging errors
+    }
+    // DO NOT EXIT - log and continue
+  });
+
+  process.on("warning", (warning) => {
+    try {
+      log.warn("[diag] process warning:", {
+        name: warning.name,
+        message: warning.message,
+        stack: warning.stack,
+      });
+    } catch {
+      // ignore logging errors
     }
   });
+
   process.on("beforeExit", (code) => {
     try {
-      if (code && code !== 0) {
-        log.warn("[diag] beforeExit non-zero code detected; forcing 0", code);
-        process.exitCode = 0;
+      log.info("[diag] beforeExit", {
+        code,
+        exitSource,
+        exitDetails,
+        quitConfirmed,
+      });
+      if (code !== 0) {
+        log.warn(
+          `[diag] beforeExit non-zero code detected: ${code}, source: ${exitSource}`,
+        );
       }
     } catch {
-      // ignore
+      // ignore logging errors
     }
   });
+
   process.on("exit", (code) => {
     try {
-      log.info("[diag] process exit code:", code);
+      log.info("[diag] process exit", {
+        code,
+        exitSource,
+        quitConfirmed,
+        hasDetails: !!exitDetails,
+      });
+      if (exitDetails) {
+        log.error("[diag] exit details:", exitDetails);
+      }
     } catch {
-      // ignore
+      // ignore logging errors
     }
   });
-  // Some Electron-level crash diagnostics (best-effort, may not exist in all versions)
+
+  // Electron-level crash diagnostics
   try {
     // @ts-expect-error: event may not exist in all Electron versions
     app.on("child-process-gone", (_event, details) => {
       try {
-        log.error("[diag] child-process-gone:", details);
+        exitSource = "child-process-gone";
+        exitDetails = details;
+        log.error("[diag] child-process-gone:", {
+          type: details.type,
+          reason: details.reason,
+          exitCode: details.exitCode,
+          serviceName: details.serviceName,
+          name: details.name,
+        });
       } catch {
-        // ignore
+        // ignore logging errors
       }
     });
+
     // @ts-expect-error: legacy event in some versions
     app.on("gpu-process-crashed", (_e, killed) => {
       try {
+        exitSource = "gpu-process-crashed";
+        exitDetails = { killed };
         log.error("[diag] gpu-process-crashed, killed:", killed);
       } catch {
-        // ignore
+        // ignore logging errors
+      }
+    });
+
+    app.on("render-process-gone", (_event, webContents, details) => {
+      try {
+        exitSource = "render-process-gone";
+        exitDetails = details;
+        log.error("[diag] render-process-gone:", {
+          reason: details.reason,
+          exitCode: details.exitCode,
+        });
+      } catch {
+        // ignore logging errors
       }
     });
   } catch {
-    // ignore
+    // ignore if events not available
   }
 } catch {
-  // ignore
+  // ignore handler setup errors
 }
 
 const gotLock = app.requestSingleInstanceLock();
@@ -1395,42 +1567,109 @@ if (!gotLock) {
   });
 }
 
-void app.whenReady().then(() => {
-  if (process.platform === "darwin" && app.dock) {
-    const macIconPath = resolveMacIconPath();
-    if (macIconPath) {
+void app
+  .whenReady()
+  .then(() => {
+    try {
+      if (process.platform === "darwin" && app.dock) {
+        const macIconPath = resolveMacIconPath();
+        if (macIconPath) {
+          try {
+            const img = nativeImage.createFromPath(macIconPath);
+            if (!img.isEmpty()) app.dock.setIcon(img);
+          } catch (e) {
+            log.warn(
+              "[diag] Failed to set dock icon:",
+              e instanceof Error ? e.message : String(e),
+            );
+          }
+        }
+        try {
+          const dockMenu = Menu.buildFromTemplate([
+            {
+              label: "Neues Fenster",
+              click: () => createWindow({ makePrimary: false }),
+            },
+          ]);
+          app.dock.setMenu(dockMenu);
+        } catch (e) {
+          log.warn(
+            "[diag] Failed to set dock menu:",
+            e instanceof Error ? e.message : String(e),
+          );
+        }
+      }
+
+      createWindow({ makePrimary: true });
+
       try {
-        const img = nativeImage.createFromPath(macIconPath);
-        if (!img.isEmpty()) app.dock.setIcon(img);
-      } catch {
-        // Intentionally empty - ignore errors
+        app.on("browser-window-focus", () => updateMenu());
+        app.on("browser-window-blur", () => updateMenu());
+      } catch (e) {
+        log.warn(
+          "[diag] Failed to set window focus handlers:",
+          e instanceof Error ? e.message : String(e),
+        );
+      }
+
+      if (process.argv.some((a) => a === "--new-window")) {
+        createWindow({ makePrimary: false });
+      }
+    } catch (e) {
+      log.error(
+        "[diag] Error in app.whenReady handler:",
+        e instanceof Error ? e.stack : String(e),
+      );
+      // Try to create window anyway as last resort
+      try {
+        createWindow({ makePrimary: true });
+      } catch (e2) {
+        log.error(
+          "[diag] Critical: Failed to create initial window:",
+          e2 instanceof Error ? e2.stack : String(e2),
+        );
       }
     }
+  })
+  .catch((err) => {
+    log.error(
+      "[diag] app.whenReady() rejected:",
+      err instanceof Error ? err.stack : String(err),
+    );
+    // Don't exit - try to continue anyway
+  });
+    } catch (e) {
+      log.warn(
+        "[diag] Failed to set window focus handlers:",
+        e instanceof Error ? e.message : String(e),
+      );
+    }
+
+    if (process.argv.some((a) => a === "--new-window")) {
+      createWindow({ makePrimary: false });
+    }
+  } catch (e) {
+    log.error(
+      "[diag] Error in app.whenReady handler:",
+      e instanceof Error ? e.stack : String(e),
+    );
+    // Try to create window anyway as last resort
     try {
-      const dockMenu = Menu.buildFromTemplate([
-        {
-          label: "Neues Fenster",
-          click: () => createWindow({ makePrimary: false }),
-        },
-      ]);
-      app.dock.setMenu(dockMenu);
-    } catch {
-      // Intentionally empty - ignore errors
+      createWindow({ makePrimary: true });
+    } catch (e2) {
+      log.error(
+        "[diag] Critical: Failed to create initial window:",
+        e2 instanceof Error ? e2.stack : String(e2),
+      );
     }
   }
-
-  createWindow({ makePrimary: true });
-
-  try {
-    app.on("browser-window-focus", () => updateMenu());
-    app.on("browser-window-blur", () => updateMenu());
-  } catch {
-    // Intentionally empty - ignore errors
-  }
-
-  if (process.argv.some((a) => a === "--new-window")) {
-    createWindow({ makePrimary: false });
-  }
+})
+.catch((err) => {
+  log.error(
+    "[diag] app.whenReady() rejected:",
+    err instanceof Error ? err.stack : String(err),
+  );
+  // Don't exit - try to continue anyway
 });
 
 // Bestätigung bei Cmd+Q / Beenden-Menü (plattformübergreifend)
@@ -1438,33 +1677,37 @@ void app.whenReady().then(() => {
 app.on("before-quit", async (e) => {
   try {
     log.info("[diag] before-quit fired; quitConfirmed=", quitConfirmed);
-  } catch {
-    // ignore
+  } catch (err) {
+    log.error(
+      "[diag] Error logging before-quit:",
+      err instanceof Error ? err.message : String(err),
+    );
   }
+
   try {
     if (quitConfirmed) {
-      // Vor dem tatsächlichen Quit sicherstellen, dass Exit-Code 0 ist
-      if (process && typeof process.exitCode === "number") {
-        process.exitCode = 0;
-      }
+      log.info("[diag] Quit already confirmed, proceeding");
       return;
     }
+
     e.preventDefault();
     const focused = BrowserWindow.getFocusedWindow?.() || mainWindow || null;
     const ok = await confirmQuit(focused || undefined);
+
     if (ok) {
+      log.info("[diag] User confirmed quit");
       quitConfirmed = true;
-      if (process && typeof process.exitCode === "number") {
-        process.exitCode = 0;
-      }
       // Erneut quit anstoßen; before-quit greift jetzt nicht mehr
       app.quit();
+    } else {
+      log.info("[diag] User cancelled quit");
     }
   } catch (err) {
-    log.warn(
-      "before-quit confirm failed:",
-      err instanceof Error ? e.message : String(err),
+    log.error(
+      "[diag] before-quit handler error:",
+      err instanceof Error ? err.stack : String(err),
     );
+    // Don't quit on error - let user try again
   }
 });
 
@@ -1473,12 +1716,18 @@ try {
   app.on("will-quit", (e) => {
     try {
       log.info("[diag] will-quit fired; defaultPrevented=", e.defaultPrevented);
-    } catch {
-      // ignore
+    } catch (err) {
+      log.error(
+        "[diag] Error in will-quit:",
+        err instanceof Error ? err.message : String(err),
+      );
     }
   });
-} catch {
-  // ignore
+} catch (err) {
+  log.error(
+    "[diag] Failed to register will-quit handler:",
+    err instanceof Error ? err.message : String(err),
+  );
 }
 
 app.on("window-all-closed", () => {
@@ -1489,39 +1738,47 @@ app.on("window-all-closed", () => {
       "platform:",
       process.platform,
     );
-  } catch {
-    // ignore
+  } catch (e) {
+    log.error(
+      "[diag] Error logging window-all-closed:",
+      e instanceof Error ? e.message : String(e),
+    );
   }
+
   if (process.platform !== "darwin") {
     // Unerwartetes Schließen aller Fenster? → Nicht beenden, sondern wiederherstellen,
     // außer der Benutzer hat das Beenden bestätigt.
     if (!quitConfirmed) {
       try {
+        log.info("[diag] Recreating window after all windows closed");
         createWindow({ makePrimary: true });
         return;
-      } catch {
-        // Fallback: wenn Wiederherstellung fehlschlägt, normal beenden
+      } catch (e) {
+        log.error(
+          "[diag] Failed to recreate window:",
+          e instanceof Error ? e.stack : String(e),
+        );
+        // Continue to quit if we can't recover
       }
     }
+
     // Vor dem Beenden Exit-Code 0 sicherstellen
-    try {
-      if (process && typeof process.exitCode === "number") {
-        process.exitCode = 0;
-      }
-    } catch {
-      // ignore
-    }
+    log.info("[diag] Quitting application normally");
     app.quit();
   }
 });
+
 app.on("quit", () => {
   try {
     log.info("[diag] app quit fired; cleaning up");
-  } catch {
-    // ignore
+    closeLogStream();
+    networkService.cleanup();
+  } catch (e) {
+    log.error(
+      "[diag] Error during quit cleanup:",
+      e instanceof Error ? e.message : String(e),
+    );
   }
-  closeLogStream();
-  networkService.cleanup();
 });
 
 // Export for IPC handlers
