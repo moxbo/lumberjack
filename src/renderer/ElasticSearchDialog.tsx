@@ -29,7 +29,7 @@ export default function ElasticSearchDialog(props: any) {
       environment: "",
       // NEW: environment case handling
       environmentCase: "original", // 'original' | 'lower' | 'upper' | 'case-sensitive'
-      loadMode: "replace",
+      loadMode: "append", // geändert: Standard jetzt 'append' statt 'replace'
       // new fields
       index: "",
       sort: "asc",
@@ -67,7 +67,7 @@ export default function ElasticSearchDialog(props: any) {
         level: (base as any).level || "",
         environment: (base as any).environment || "",
         environmentCase: envCase,
-        loadMode: (base as any).loadMode || "replace",
+        loadMode: (base as any).loadMode || "append", // geändert: Default beim Öffnen
         index: (base as any).index || "",
         sort: (base as any).sort || "asc",
         allowInsecureTLS: !!(base as any).allowInsecureTLS,

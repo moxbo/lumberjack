@@ -857,16 +857,21 @@ export default function App() {
           if (!msgMatches(e.message, filter.message)) continue;
         }
       }
-      try {
-        if (!(TimeFilter as any).matchesTs(e.timestamp)) continue;
-      } catch (e) {
-        logger.error("TimeFilter.matchesTs error:", e);
-        continue;
+      const isElasticSrc =
+        typeof e?.source === "string" && e.source.startsWith("elastic://");
+      // Zeitfilter nur für Elastic-Quellen anwenden; Nicht-Elastic nie durch Zeitfilter ausblenden
+      if (isElasticSrc) {
+        try {
+          if (!(TimeFilter as any).matchesTs(e.timestamp)) continue;
+        } catch (err) {
+          logger.error("TimeFilter.matchesTs error:", err);
+          continue;
+        }
       }
       try {
         if (!(DiagnosticContextFilter as any).matches(e.mdc || {})) continue;
-      } catch (e) {
-        logger.error("DiagnosticContextFilter.matches error:", e);
+      } catch (err) {
+        logger.error("DiagnosticContextFilter.matches error:", err);
       }
       out.push(i);
     }
@@ -2114,9 +2119,21 @@ export default function App() {
                       );
 
                       if (loadMode === "replace") {
+                        // Vollständiges Zurücksetzen: alle vorhandenen Einträge entfernen
                         setEntries([]);
                         setSelected(new Set());
                         setNextId(1);
+                        // Datei-Dedupe-Cache leeren, damit Files erneut geladen werden können
+                        fileSigCacheRef.current = new Map();
+                        // LoggingStore zurücksetzen (MDC etc.)
+                        try {
+                          (LoggingStore as any).reset();
+                        } catch (e) {
+                          logger.error(
+                            "LoggingStore.reset error (Elastic replace)",
+                            e,
+                          );
+                        }
                       }
 
                       // Anhängen mit Kappung
@@ -3370,7 +3387,12 @@ export default function App() {
           {(() => {
             try {
               const s = TimeFilter.getState();
-              if (!s.enabled) return null;
+              const show = !!(
+                s &&
+                s.enabled &&
+                (esBusy || esElasticCountAll > 0 || esPitSessionId)
+              );
+              if (!show) return null;
               return (
                 <span
                   className="status"
