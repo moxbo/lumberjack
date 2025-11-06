@@ -142,17 +142,20 @@ export default function ElasticSearchDialog(props: any) {
           marginTop: "4px",
           maxHeight: "180px",
           overflow: "auto",
-          border: "1px solid var(--color-border, #ddd)",
+          border: "1px solid var(--glass-border, var(--color-border))",
           borderRadius: "4px",
-          background: "var(--color-bg, #fff)",
+          background: "var(--color-bg-paper)",
+          color: "var(--color-text-primary)",
           boxShadow: "0 2px 8px rgba(0,0,0,0.12)",
           padding: "4px",
-          zIndex: 30,
+          zIndex: "var(--z-dropdown)",
           ...(props.style || {}),
         }}
       >
         {items.length === 0 && (
-          <div style={{ padding: "6px 8px", color: "#888" }}>
+          <div
+            style={{ padding: "6px 8px", color: "var(--color-text-secondary)" }}
+          >
             Keine Einträge
           </div>
         )}
@@ -172,7 +175,7 @@ export default function ElasticSearchDialog(props: any) {
             }}
             onMouseOver={(e) =>
               ((e.currentTarget as HTMLDivElement).style.backgroundColor =
-                "rgba(0,0,0,0.06)")
+                "var(--color-bg-hover)")
             }
             onMouseOut={(e) =>
               ((e.currentTarget as HTMLDivElement).style.backgroundColor =
@@ -383,7 +386,6 @@ export default function ElasticSearchDialog(props: any) {
               }}
             >
               <input
-                list="esIndexHistory"
                 type="text"
                 value={form.index}
                 onInput={(e) =>
@@ -423,10 +425,6 @@ export default function ElasticSearchDialog(props: any) {
               />
             )}
           </div>
-          <datalist id="esIndexHistory">
-            {Array.isArray(histIndex) &&
-              histIndex.map((v: any, i: any) => <option key={i} value={v} />)}
-          </datalist>
         </div>
 
         <div className="kv">
@@ -454,7 +452,6 @@ export default function ElasticSearchDialog(props: any) {
               }}
             >
               <input
-                list="esAppNameHistory"
                 type="text"
                 value={form.application_name}
                 onInput={(e) =>
@@ -496,10 +493,6 @@ export default function ElasticSearchDialog(props: any) {
               />
             )}
           </div>
-          <datalist id="esAppNameHistory">
-            {Array.isArray(histAppName) &&
-              histAppName.map((v: any, i: any) => <option key={i} value={v} />)}
-          </datalist>
         </div>
 
         <div className="kv">
@@ -538,7 +531,6 @@ export default function ElasticSearchDialog(props: any) {
               }}
             >
               <input
-                list="esEnvHistory"
                 type="text"
                 value={form.environment}
                 onInput={(e) =>
@@ -581,12 +573,6 @@ export default function ElasticSearchDialog(props: any) {
               />
             )}
           </div>
-          <datalist id="esEnvHistory">
-            {Array.isArray(histEnvironment) &&
-              histEnvironment.map((v: any, i: any) => (
-                <option key={i} value={v} />
-              ))}
-          </datalist>
         </div>
 
         {/* NEW: Environment Case Handling */}
