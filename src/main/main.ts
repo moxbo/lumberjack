@@ -25,10 +25,68 @@ import os from "node:os";
 const isDev =
   process.env.NODE_ENV === "development" ||
   Boolean(process.env.VITE_DEV_SERVER_URL);
+
+// Initialize logging as early as possible to catch startup crashes
 log.initialize();
+
+// Configure immediate log flushing to prevent data loss on crashes
+// Write synchronously for critical messages to ensure they reach disk
 log.transports.console.level = "debug";
-// Schreibe in Nicht-Dev alle Level in die Datei
 log.transports.file.level = isDev ? false : "silly";
+
+// Configure file transport for immediate writes (reduce buffering)
+if (log.transports.file.level !== false) {
+  // Force sync writes for error and fatal levels
+  log.transports.file.sync = true;
+  // Reduce buffer size to ensure more frequent disk writes
+  log.transports.file.maxSize = 5 * 1024 * 1024; // 5MB max file size
+
+  // Verify log directory is accessible and writable
+  try {
+    const logPath = log.transports.file.getFile().path;
+    const logDir = path.dirname(logPath);
+    
+    // Ensure directory exists
+    if (!fs.existsSync(logDir)) {
+      fs.mkdirSync(logDir, { recursive: true });
+    }
+    
+    // Test write permissions with a temp file
+    const testFile = path.join(logDir, ".write-test");
+    try {
+      fs.writeFileSync(testFile, "test", "utf8");
+      fs.unlinkSync(testFile);
+    } catch (e) {
+      console.error(
+        "[FATAL] Log directory not writable:",
+        logDir,
+        e instanceof Error ? e.message : String(e),
+      );
+      // Continue anyway - logs will go to console
+    }
+  } catch (e) {
+    console.error(
+      "[FATAL] Failed to verify log directory:",
+      e instanceof Error ? e.message : String(e),
+    );
+    // Continue anyway - logs will go to console
+  }
+}
+
+// Log startup immediately to help diagnose early crashes
+log.info("[diag] ========================================");
+log.info("[diag] Application starting", {
+  version: app.getVersion?.() || "unknown",
+  platform: process.platform,
+  arch: process.arch,
+  nodeVersion: process.versions.node,
+  electronVersion: process.versions.electron,
+  pid: process.pid,
+  isDev,
+  logPath: log.transports.file.level !== false 
+    ? log.transports.file.getFile().path 
+    : "disabled",
+});
 
 // Services
 const perfService = new PerformanceService();
@@ -1387,6 +1445,21 @@ if (process.platform === "win32") {
   }
 }
 
+// Helper function to force flush logs to disk
+// This is critical for ensuring crash logs are written before process termination
+function forceFlushLogs(): void {
+  try {
+    // Electron-log automatically flushes on error/fatal, but we force it here
+    // to ensure all logs reach disk before exit
+    if (log && typeof (log as any).transports?.file?.flush === "function") {
+      (log as any).transports.file.flush();
+    }
+  } catch (e) {
+    // Last resort: write to stderr if log flushing fails
+    console.error("[FATAL] Failed to flush logs:", e);
+  }
+}
+
 // Global diagnostics for unexpected exits/crashes
 // Track exit source for debugging
 // Note: These are safe to use in Node.js main process which is single-threaded.
@@ -1413,6 +1486,8 @@ try {
         "\nStack:",
         err?.stack,
       );
+      // Force flush to ensure error is written to disk
+      forceFlushLogs();
     } catch {
       // ignore logging errors
     }
@@ -1434,10 +1509,45 @@ try {
       });
       // Log to stderr as well
       console.error("[FATAL] unhandledRejection:", msg);
+      // Force flush to ensure error is written to disk
+      forceFlushLogs();
     } catch {
       // ignore logging errors
     }
     // DO NOT EXIT - log and continue
+  });
+
+  // OS-level signal handlers - catch process termination signals
+  // These are critical for logging when the OS or user terminates the process
+  const signals = ["SIGTERM", "SIGINT", "SIGHUP"] as const;
+  signals.forEach((signal) => {
+    try {
+      process.on(signal, () => {
+        try {
+          exitSource = signal;
+          log.warn(`[diag] Received ${signal} signal - process terminating`, {
+            signal,
+            pid: process.pid,
+            uptime: process.uptime(),
+          });
+          // Force flush to ensure signal is logged
+          forceFlushLogs();
+          // Give logs a moment to flush, then exit gracefully
+          setTimeout(() => {
+            try {
+              app.quit();
+            } catch {
+              process.exit(0);
+            }
+          }, 100);
+        } catch (e) {
+          console.error(`[FATAL] Error handling ${signal}:`, e);
+          process.exit(0);
+        }
+      });
+    } catch (e) {
+      log.error(`[diag] Failed to register ${signal} handler:`, e);
+    }
   });
 
   process.on("warning", (warning) => {
@@ -1465,6 +1575,8 @@ try {
           `[diag] beforeExit non-zero code detected: ${code}, source: ${exitSource}`,
         );
       }
+      // Force flush on exit
+      forceFlushLogs();
     } catch {
       // ignore logging errors
     }
@@ -1481,6 +1593,8 @@ try {
       if (exitDetails) {
         log.error("[diag] exit details:", exitDetails);
       }
+      // Final flush attempt
+      forceFlushLogs();
     } catch {
       // ignore logging errors
     }
@@ -1500,6 +1614,8 @@ try {
           serviceName: details.serviceName,
           name: details.name,
         });
+        // Force flush on critical errors
+        forceFlushLogs();
       } catch {
         // ignore logging errors
       }
@@ -1511,6 +1627,8 @@ try {
         exitSource = "gpu-process-crashed";
         exitDetails = { killed };
         log.error("[diag] gpu-process-crashed, killed:", killed);
+        // Force flush on critical errors
+        forceFlushLogs();
       } catch {
         // ignore logging errors
       }
@@ -1526,6 +1644,8 @@ try {
           reason: details.reason,
           exitCode: details.exitCode,
         });
+        // Force flush on critical errors
+        forceFlushLogs();
       } catch {
         // ignore logging errors
       }
@@ -1533,6 +1653,16 @@ try {
   } catch {
     // ignore if events not available
   }
+
+  // Periodic log flushing to reduce data loss window
+  // Flush logs every 5 seconds to ensure recent logs are on disk
+  setInterval(() => {
+    try {
+      forceFlushLogs();
+    } catch {
+      // ignore flush errors
+    }
+  }, 5000);
 } catch {
   // ignore handler setup errors
 }
@@ -1579,6 +1709,20 @@ void app
   .whenReady()
   .then(() => {
     try {
+      // Enable crash dumps for native crashes
+      // This helps diagnose crashes that occur in native code (e.g., GPU, V8)
+      try {
+        const crashDumpPath = path.join(app.getPath("userData"), "crashes");
+        fs.mkdirSync(crashDumpPath, { recursive: true });
+        app.setPath("crashDumps", crashDumpPath);
+        log.info("[diag] Crash dumps enabled at:", crashDumpPath);
+      } catch (e) {
+        log.warn(
+          "[diag] Failed to configure crash dumps:",
+          e instanceof Error ? e.message : String(e),
+        );
+      }
+
       if (process.platform === "darwin" && app.dock) {
         const macIconPath = resolveMacIconPath();
         if (macIconPath) {
@@ -1652,6 +1796,8 @@ void app
 app.on("before-quit", async (e) => {
   try {
     log.info("[diag] before-quit fired; quitConfirmed=", quitConfirmed);
+    // Flush logs immediately on quit attempt
+    forceFlushLogs();
   } catch (err) {
     log.error(
       "[diag] Error logging before-quit:",
@@ -1662,6 +1808,7 @@ app.on("before-quit", async (e) => {
   try {
     if (quitConfirmed) {
       log.info("[diag] Quit already confirmed, proceeding");
+      forceFlushLogs();
       return;
     }
 
@@ -1672,16 +1819,19 @@ app.on("before-quit", async (e) => {
     if (ok) {
       log.info("[diag] User confirmed quit");
       quitConfirmed = true;
+      forceFlushLogs();
       // Erneut quit anstoßen; before-quit greift jetzt nicht mehr
       app.quit();
     } else {
       log.info("[diag] User cancelled quit");
+      forceFlushLogs();
     }
   } catch (err) {
     log.error(
       "[diag] before-quit handler error:",
       err instanceof Error ? err.stack : String(err),
     );
+    forceFlushLogs();
     // Don't quit on error - let user try again
   }
 });
@@ -1691,6 +1841,7 @@ try {
   app.on("will-quit", (e) => {
     try {
       log.info("[diag] will-quit fired; defaultPrevented=", e.defaultPrevented);
+      forceFlushLogs();
     } catch (err) {
       log.error(
         "[diag] Error in will-quit:",
@@ -1713,6 +1864,7 @@ app.on("window-all-closed", () => {
       "platform:",
       process.platform,
     );
+    forceFlushLogs();
   } catch (e) {
     log.error(
       "[diag] Error logging window-all-closed:",
@@ -1748,11 +1900,19 @@ app.on("quit", () => {
     log.info("[diag] app quit fired; cleaning up");
     closeLogStream();
     networkService.cleanup();
+    // Final log flush before process exits
+    forceFlushLogs();
   } catch (e) {
     log.error(
       "[diag] Error during quit cleanup:",
       e instanceof Error ? e.message : String(e),
     );
+    // Attempt flush even if cleanup failed
+    try {
+      forceFlushLogs();
+    } catch {
+      // ignore
+    }
   }
 });
 
