@@ -72,6 +72,11 @@ export class NetworkService {
   private static readonly MAX_LINE_LENGTH = 100 * 1024; // 100KB max line length
   private static readonly MAX_SEEN_ENTRIES = 10000; // Max deduplication entries per poller
 
+  // Additional robustness constants
+  private static readonly HTTP_FETCH_TIMEOUT_MS = 30 * 1000; // 30 seconds HTTP timeout
+  private static readonly HTTP_MAX_RESPONSE_SIZE = 100 * 1024 * 1024; // 100MB max response size
+  private static readonly TCP_MAX_CONNECTIONS = 1000; // Max concurrent TCP connections
+
   // Track active sockets for monitoring
   private activeSockets = new Set<net.Socket>();
 
@@ -128,6 +133,15 @@ export class NetworkService {
     const toEntry = this.toEntry;
 
     const server = net.createServer((socket) => {
+      // Check connection limit before accepting
+      if (this.activeSockets.size >= NetworkService.TCP_MAX_CONNECTIONS) {
+        log.warn(
+          `[tcp] Connection limit reached (${NetworkService.TCP_MAX_CONNECTIONS}), rejecting connection from ${socket.remoteAddress}:${socket.remotePort}`,
+        );
+        socket.end(); // Gracefully close the connection
+        return;
+      }
+
       let buffer = "";
       const remoteAddr = socket.remoteAddress ?? "unknown";
       const remotePort = socket.remotePort ?? 0;
@@ -136,6 +150,16 @@ export class NetworkService {
       // Track socket for monitoring
       this.activeSockets.add(socket);
       log.debug(`[tcp] Socket connected: ${socketId} (active: ${this.activeSockets.size})`);
+
+      // Log warning when approaching connection limit
+      if (
+        this.activeSockets.size >=
+        NetworkService.TCP_MAX_CONNECTIONS * 0.8
+      ) {
+        log.warn(
+          `[tcp] Approaching connection limit: ${this.activeSockets.size}/${NetworkService.TCP_MAX_CONNECTIONS}`,
+        );
+      }
 
       // Set socket timeout to prevent hanging connections
       socket.setTimeout(NetworkService.SOCKET_TIMEOUT_MS);
@@ -360,15 +384,60 @@ export class NetworkService {
   }
 
   /**
-   * Fetch text from HTTP URL
+   * Fetch text from HTTP URL with timeout and size limits
    */
   private async httpFetchText(url: string): Promise<string> {
     if (typeof fetch === "function") {
-      const res = await fetch(url, { cache: "no-store" });
-      if (!res.ok) {
-        throw new Error(`${res.status} ${res.statusText}`);
+      // Create AbortController for timeout
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => {
+        controller.abort();
+        log.warn(
+          `[http:fetch] Request timeout after ${NetworkService.HTTP_FETCH_TIMEOUT_MS}ms: ${url}`,
+        );
+      }, NetworkService.HTTP_FETCH_TIMEOUT_MS);
+
+      try {
+        const res = await fetch(url, {
+          cache: "no-store",
+          signal: controller.signal,
+        });
+
+        if (!res.ok) {
+          throw new Error(`${res.status} ${res.statusText}`);
+        }
+
+        // Check Content-Length header if available
+        const contentLength = res.headers.get("content-length");
+        if (contentLength) {
+          const size = parseInt(contentLength, 10);
+          if (size > NetworkService.HTTP_MAX_RESPONSE_SIZE) {
+            throw new Error(
+              `Response too large: ${size} bytes (max: ${NetworkService.HTTP_MAX_RESPONSE_SIZE})`,
+            );
+          }
+        }
+
+        // Read response with size limit check
+        const text = await res.text();
+        if (text.length > NetworkService.HTTP_MAX_RESPONSE_SIZE) {
+          log.warn(
+            `[http:fetch] Response size ${text.length} exceeds limit ${NetworkService.HTTP_MAX_RESPONSE_SIZE}, truncating`,
+          );
+          return text.slice(0, NetworkService.HTTP_MAX_RESPONSE_SIZE);
+        }
+
+        return text;
+      } catch (err) {
+        if (err instanceof Error && err.name === "AbortError") {
+          throw new Error(
+            `Request timeout after ${NetworkService.HTTP_FETCH_TIMEOUT_MS}ms`,
+          );
+        }
+        throw err;
+      } finally {
+        clearTimeout(timeoutId);
       }
-      return await res.text();
     }
     throw new Error("fetch unavailable");
   }
@@ -539,6 +608,8 @@ export class NetworkService {
       running: boolean;
       port?: number;
       activeConnections: number;
+      maxConnections: number;
+      connectionLimit: number;
     };
     http: {
       activePollers: number;
@@ -548,6 +619,16 @@ export class NetworkService {
         intervalMs: number;
         seenEntries: number;
       }>;
+      fetchTimeoutMs: number;
+      maxResponseSize: number;
+    };
+    limits: {
+      tcpMaxConnections: number;
+      tcpBufferSize: number;
+      tcpTimeout: number;
+      httpTimeout: number;
+      httpMaxResponseSize: number;
+      maxSeenEntries: number;
     };
   } {
     return {
@@ -555,6 +636,8 @@ export class NetworkService {
         running: this.tcpRunning,
         port: this.tcpPort || undefined,
         activeConnections: this.activeSockets.size,
+        maxConnections: NetworkService.TCP_MAX_CONNECTIONS,
+        connectionLimit: NetworkService.TCP_MAX_CONNECTIONS,
       },
       http: {
         activePollers: this.httpPollers.size,
@@ -564,6 +647,16 @@ export class NetworkService {
           intervalMs: p.intervalMs,
           seenEntries: p.seen.size,
         })),
+        fetchTimeoutMs: NetworkService.HTTP_FETCH_TIMEOUT_MS,
+        maxResponseSize: NetworkService.HTTP_MAX_RESPONSE_SIZE,
+      },
+      limits: {
+        tcpMaxConnections: NetworkService.TCP_MAX_CONNECTIONS,
+        tcpBufferSize: NetworkService.MAX_BUFFER_SIZE,
+        tcpTimeout: NetworkService.SOCKET_TIMEOUT_MS,
+        httpTimeout: NetworkService.HTTP_FETCH_TIMEOUT_MS,
+        httpMaxResponseSize: NetworkService.HTTP_MAX_RESPONSE_SIZE,
+        maxSeenEntries: NetworkService.MAX_SEEN_ENTRIES,
       },
     };
   }
