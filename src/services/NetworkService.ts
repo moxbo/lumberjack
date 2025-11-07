@@ -149,13 +149,12 @@ export class NetworkService {
 
       // Track socket for monitoring
       this.activeSockets.add(socket);
-      log.debug(`[tcp] Socket connected: ${socketId} (active: ${this.activeSockets.size})`);
+      log.debug(
+        `[tcp] Socket connected: ${socketId} (active: ${this.activeSockets.size})`,
+      );
 
       // Log warning when approaching connection limit
-      if (
-        this.activeSockets.size >=
-        NetworkService.TCP_MAX_CONNECTIONS * 0.8
-      ) {
+      if (this.activeSockets.size >= NetworkService.TCP_MAX_CONNECTIONS * 0.8) {
         log.warn(
           `[tcp] Approaching connection limit: ${this.activeSockets.size}/${NetworkService.TCP_MAX_CONNECTIONS}`,
         );
@@ -168,7 +167,9 @@ export class NetworkService {
       const cleanup = (): void => {
         if (this.activeSockets.has(socket)) {
           this.activeSockets.delete(socket);
-          log.debug(`[tcp] Socket cleaned up: ${socketId} (active: ${this.activeSockets.size})`);
+          log.debug(
+            `[tcp] Socket cleaned up: ${socketId} (active: ${this.activeSockets.size})`,
+          );
         }
         // Clear buffer to free memory
         buffer = "";
@@ -184,7 +185,9 @@ export class NetworkService {
               `[tcp] Buffer overflow on ${socketId}, dropping oldest data. Buffer size: ${buffer.length} bytes`,
             );
             // Keep only the most recent data
-            buffer = buffer.slice(buffer.length - NetworkService.MAX_BUFFER_SIZE / 2);
+            buffer = buffer.slice(
+              buffer.length - NetworkService.MAX_BUFFER_SIZE / 2,
+            );
           }
 
           buffer += chunk.toString("utf8");
@@ -295,11 +298,12 @@ export class NetworkService {
             e instanceof Error ? e.message : String(e),
           );
         }
-        
+
         // Get the actual port if 0 was specified (auto-assign)
         const address = server.address();
-        const actualPort = address && typeof address === "object" ? address.port : port;
-        
+        const actualPort =
+          address && typeof address === "object" ? address.port : port;
+
         this.tcpRunning = true;
         this.tcpPort = actualPort;
         log.info(`TCP server listening on port ${actualPort}`);
@@ -461,14 +465,16 @@ export class NetworkService {
       if (!seen.has(key)) {
         seen.add(key);
         fresh.push(e);
-        
+
         // Prevent unbounded growth of seen Set (memory leak prevention)
         if (seen.size > NetworkService.MAX_SEEN_ENTRIES) {
           // Remove oldest entries by converting to array, slicing, and recreating
           // This keeps the most recent entries which are more likely to be duplicates
-          const recentEntries = Array.from(seen).slice(-NetworkService.MAX_SEEN_ENTRIES / 2);
+          const recentEntries = Array.from(seen).slice(
+            -NetworkService.MAX_SEEN_ENTRIES / 2,
+          );
           seen.clear();
-          recentEntries.forEach(k => seen.add(k));
+          recentEntries.forEach((k) => seen.add(k));
           log.debug(
             `[http:poll] Trimmed seen Set to ${seen.size} entries (was ${seen.size + fresh.length})`,
           );
@@ -613,9 +619,9 @@ export class NetworkService {
     };
     http: {
       activePollers: number;
-      pollerDetails: Array<{ 
-        id: number; 
-        url: string; 
+      pollerDetails: Array<{
+        id: number;
+        url: string;
         intervalMs: number;
         seenEntries: number;
       }>;

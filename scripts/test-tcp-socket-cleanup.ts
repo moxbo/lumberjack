@@ -75,7 +75,9 @@ async function testTcpSocketCleanup(): Promise<void> {
       `Expected 1 active connection, got ${status2.activeConnections}`,
     );
   }
-  console.log(`✓ Active connections after connect: ${status2.activeConnections}`);
+  console.log(
+    `✓ Active connections after connect: ${status2.activeConnections}`,
+  );
 
   client1.write('{"message":"test message 1"}\n');
   await sleep(100);
@@ -96,7 +98,9 @@ async function testTcpSocketCleanup(): Promise<void> {
       `Expected 0 active connections after disconnect, got ${status3.activeConnections}`,
     );
   }
-  console.log(`✓ Active connections after disconnect: ${status3.activeConnections}\n`);
+  console.log(
+    `✓ Active connections after disconnect: ${status3.activeConnections}\n`,
+  );
 
   // Test 4: Multiple simultaneous connections
   console.log("Test 4: Testing multiple simultaneous connections...");
@@ -114,7 +118,9 @@ async function testTcpSocketCleanup(): Promise<void> {
       `Expected 5 active connections, got ${status4.activeConnections}`,
     );
   }
-  console.log(`✓ Active connections with multiple clients: ${status4.activeConnections}`);
+  console.log(
+    `✓ Active connections with multiple clients: ${status4.activeConnections}`,
+  );
 
   // Close all clients
   for (const client of clients) {
@@ -128,7 +134,9 @@ async function testTcpSocketCleanup(): Promise<void> {
       `Expected 0 active connections after closing all, got ${status5.activeConnections}`,
     );
   }
-  console.log(`✓ Active connections after closing all clients: ${status5.activeConnections}\n`);
+  console.log(
+    `✓ Active connections after closing all clients: ${status5.activeConnections}\n`,
+  );
 
   // Test 5: Buffer overflow protection
   console.log("Test 5: Testing buffer overflow protection...");
@@ -172,7 +180,9 @@ async function testTcpSocketCleanup(): Promise<void> {
     );
   }
   console.log(`✓ Server stopped successfully`);
-  console.log(`✓ Active connections after stop: ${status7.activeConnections}\n`);
+  console.log(
+    `✓ Active connections after stop: ${status7.activeConnections}\n`,
+  );
 
   // Test 7: Verify diagnostics
   console.log("Test 7: Verifying diagnostics...");

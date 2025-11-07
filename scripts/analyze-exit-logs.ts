@@ -1,13 +1,13 @@
 #!/usr/bin/env tsx
 /**
  * Exit Code 1 Diagnostic Script
- * 
+ *
  * This script analyzes electron-log files to identify the root cause
  * of exit code 1 issues in the Lumberjack application.
- * 
+ *
  * Usage:
  *   tsx scripts/analyze-exit-logs.ts [path-to-log-file]
- * 
+ *
  * If no path is provided, it will look in the default electron-log location.
  */
 
@@ -42,13 +42,7 @@ function getDefaultLogPath(): string {
       "main.log",
     );
   } else if (platform === "darwin") {
-    return path.join(
-      os.homedir(),
-      "Library",
-      "Logs",
-      appName,
-      "main.log",
-    );
+    return path.join(os.homedir(), "Library", "Logs", appName, "main.log");
   } else {
     // Linux
     return path.join(
@@ -63,9 +57,7 @@ function getDefaultLogPath(): string {
 function parseLogLine(line: string): LogEntry | null {
   try {
     // electron-log format: [YYYY-MM-DD HH:mm:ss.SSS] [level] message
-    const match = line.match(
-      /^\[([\d-]+ [\d:.]+)\] \[(\w+)\] (.+)$/,
-    );
+    const match = line.match(/^\[([\d-]+ [\d:.]+)\] \[(\w+)\] (.+)$/);
     if (!match) return null;
 
     const [, timestamp, level, message] = match;
@@ -163,9 +155,7 @@ function analyzeLogFile(logPath: string): void {
   console.log(`Diagnostic messages: ${diagnostics.length}`);
 
   // Check for exit code 1 events
-  const exitCode1Events = exitEvents.filter(
-    (e) => e.exitCode === 1,
-  );
+  const exitCode1Events = exitEvents.filter((e) => e.exitCode === 1);
 
   if (exitEvents.length > 0) {
     console.log("\n=== Exit Events ===");

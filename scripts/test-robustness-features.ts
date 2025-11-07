@@ -108,7 +108,7 @@ async function testRobustnessFeatures(): Promise<void> {
 
   // Test 4: HTTP fetch timeout (simulate with a slow server)
   console.log("Test 4: Testing HTTP fetch timeout protection...");
-  
+
   // Create a slow HTTP server
   const slowServer = http.createServer((req, res) => {
     // Never send response - will trigger timeout
@@ -152,7 +152,7 @@ async function testRobustnessFeatures(): Promise<void> {
 
   // Test 5: HTTP response size limit
   console.log("\nTest 5: Testing HTTP response size limit...");
-  
+
   // Create a server that sends large response
   const largeServer = http.createServer((req, res) => {
     res.writeHead(200, { "content-type": "text/plain" });
