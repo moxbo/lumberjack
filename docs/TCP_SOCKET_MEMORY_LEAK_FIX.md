@@ -1,16 +1,18 @@
-# TCP Socket and HTTP Poller Memory Leak Fixes
+# TCP Socket and HTTP Poller Memory Leak Fixes + Robustness Improvements
 
 ## Problem Description
 
-The Lumberjack application was experiencing memory leaks when using network functionality for log ingestion. The issues manifested as:
+The Lumberjack application was experiencing memory leaks and stability issues when using network functionality for log ingestion. The issues manifested as:
 
 1. **Persistent memory growth** over time with active TCP connections and HTTP polling
 2. **Resource exhaustion** after extended periods of use
 3. **Application instability** or unexpected exits
+4. **Hanging HTTP requests** with no timeout
+5. **Unbounded resource consumption** from malicious/misconfigured sources
 
 ## Root Cause Analysis
 
-Investigation revealed several memory leak issues in `NetworkService.ts`:
+Investigation revealed several critical issues in `NetworkService.ts`:
 
 ### 1. TCP Socket Handler Issues
 
@@ -53,6 +55,30 @@ No visibility into resource usage:
 - Number of active connections not tracked
 - No diagnostics available for troubleshooting
 - Impossible to detect resource leaks in production
+
+### 6. Missing HTTP Request Timeout
+
+**NEW ISSUE DISCOVERED**: HTTP requests had no timeout:
+- Hanging requests could wait indefinitely
+- Network issues caused indefinite waits
+- Accumulation of stalled HTTP requests
+- No way to fail fast on network problems
+
+### 7. Missing HTTP Response Size Limit
+
+**NEW ISSUE DISCOVERED**: HTTP responses had no size limit:
+- Large/infinite responses could exhaust memory
+- Malicious endpoints could send GBs of data
+- Misconfigured log sources could crash the app
+- No protection against memory bombs
+
+### 8. Missing TCP Connection Limit
+
+**NEW ISSUE DISCOVERED**: TCP server had no connection limit:
+- DoS attacks could exhaust all resources
+- Misconfiguration could open thousands of connections
+- Each connection uses memory (buffers, tracking)
+- No protection against connection floods
 
 ## Implemented Solutions
 
@@ -243,9 +269,111 @@ getDiagnostics(): {
 
 **Impact**: Can now monitor HTTP poller memory usage and verify trimming is working.
 
+### 8. HTTP Request Timeout ⭐ NEW
+
+**NEW FIX**: Added timeout to all HTTP requests to prevent hanging:
+
+```typescript
+private static readonly HTTP_FETCH_TIMEOUT_MS = 30 * 1000; // 30 seconds
+
+private async httpFetchText(url: string): Promise<string> {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => {
+    controller.abort();
+  }, NetworkService.HTTP_FETCH_TIMEOUT_MS);
+
+  try {
+    const res = await fetch(url, {
+      cache: "no-store",
+      signal: controller.signal,
+    });
+    // ... handle response
+  } finally {
+    clearTimeout(timeoutId);
+  }
+}
+```
+
+**Impact**:
+- HTTP requests timeout after 30 seconds
+- No more indefinite hangs on network issues
+- Faster failure detection and recovery
+- Resources released promptly
+
+### 9. HTTP Response Size Limit ⭐ NEW
+
+**NEW FIX**: Added maximum response size limit to prevent memory exhaustion:
+
+```typescript
+private static readonly HTTP_MAX_RESPONSE_SIZE = 100 * 1024 * 1024; // 100MB
+
+private async httpFetchText(url: string): Promise<string> {
+  // Check Content-Length header if available
+  const contentLength = res.headers.get("content-length");
+  if (contentLength) {
+    const size = parseInt(contentLength, 10);
+    if (size > NetworkService.HTTP_MAX_RESPONSE_SIZE) {
+      throw new Error(`Response too large: ${size} bytes`);
+    }
+  }
+
+  // Also check actual response size
+  const text = await res.text();
+  if (text.length > NetworkService.HTTP_MAX_RESPONSE_SIZE) {
+    return text.slice(0, NetworkService.HTTP_MAX_RESPONSE_SIZE); // Truncate
+  }
+  return text;
+}
+```
+
+**Impact**:
+- Responses limited to 100MB maximum
+- Prevents memory exhaustion from large responses
+- Protects against malicious/misconfigured endpoints
+- Predictable memory usage
+
+**Trade-offs**:
+- Very large log files may be truncated
+- Mitigation: 100MB limit is very generous, larger files should use streaming
+
+### 10. TCP Connection Limit ⭐ NEW
+
+**NEW FIX**: Added maximum concurrent connection limit:
+
+```typescript
+private static readonly TCP_MAX_CONNECTIONS = 1000;
+
+const server = net.createServer((socket) => {
+  // Check connection limit before accepting
+  if (this.activeSockets.size >= NetworkService.TCP_MAX_CONNECTIONS) {
+    log.warn(`Connection limit reached, rejecting connection`);
+    socket.end();
+    return;
+  }
+
+  // Log warning when approaching limit (80%)
+  if (this.activeSockets.size >= NetworkService.TCP_MAX_CONNECTIONS * 0.8) {
+    log.warn(`Approaching connection limit: ${this.activeSockets.size}/1000`);
+  }
+  
+  // ... handle connection
+});
+```
+
+**Impact**:
+- Maximum 1000 concurrent TCP connections
+- Early warning at 800 connections (80%)
+- Prevents resource exhaustion from connection floods
+- Protection against DoS attacks
+- Predictable resource usage
+
+**Trade-offs**:
+- Legitimate clients may be rejected when at limit
+- Mitigation: 1000 connections is generous for most use cases
+
 ## Testing
 
-Two comprehensive test suites were added:
+Three comprehensive test suites were added:
 
 ### TCP Socket Cleanup Tests (`scripts/test-tcp-socket-cleanup.ts`)
 
@@ -265,12 +393,22 @@ Verifies:
 3. ✅ Diagnostics include seen entries count
 4. ✅ Large batches of entries are handled correctly
 
+### Robustness Features Tests (`scripts/test-robustness-features.ts`) ⭐ NEW
+
+Verifies:
+1. ✅ HTTP fetch timeout protection (30 second timeout)
+2. ✅ HTTP response size limit (100MB maximum)
+3. ✅ TCP connection limit (1000 maximum)
+4. ✅ Connection limit warning threshold (80%)
+5. ✅ Enhanced diagnostics with all limits
+
 Run the tests with:
 ```bash
 npm test
 # or individually:
 npx tsx scripts/test-tcp-socket-cleanup.ts
 npx tsx scripts/test-http-poller-memory.ts
+npx tsx scripts/test-robustness-features.ts
 ```
 
 ## Verification
