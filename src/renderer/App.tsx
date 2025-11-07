@@ -2769,10 +2769,10 @@ export default function App() {
       <header className="toolbar">
         <div className="section">
           <span className="counts">
-            <span id="countTotal">{countTotal}</span> {t("toolbar.total")},{" "}
-            <span id="countFiltered">{countFiltered}</span>{" "}
+            <span id="countTotal" className="count">{countTotal}</span> {t("toolbar.total")},{" "}
+            <span id="countFiltered" className="count">{countFiltered}</span>{" "}
             {t("toolbar.filtered")},{" "}
-            <span id="countSelected">{countSelected}</span>{" "}
+            <span id="countSelected" className="count">{countSelected}</span>{" "}
             {t("toolbar.selected")}
           </span>
           <button onClick={clearLogs} disabled={entries.length === 0}>
