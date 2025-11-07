@@ -11,7 +11,7 @@
     "build:renderer": "vite build",
     "start": "npm run prebuild && npm run build:renderer && electron .",
     "dev": "npm run prebuild && concurrently -k -s first -n \"VITE,ELECTRON\" -c \"cyan,magenta\" \"cross-env NODE_ENV=development vite --open=false\" \"wait-on http://localhost:5173 && cross-env NODE_ENV=development VITE_DEV_SERVER_URL=http://localhost:5173 electron .\"",
-    "test": "tsx ./scripts/smoke-parse.ts && tsx ./scripts/test-msg-filter.ts && node ./scripts/verify-mdc-flow.mjs && tsx ./scripts/test-elastic-indexer.ts && tsx ./scripts/test-log-data-store.ts && tsx ./scripts/test-tcp-socket-cleanup.ts",
+    "test": "tsx ./scripts/smoke-parse.ts && tsx ./scripts/test-msg-filter.ts && node ./scripts/verify-mdc-flow.mjs && tsx ./scripts/test-elastic-indexer.ts && tsx ./scripts/test-log-data-store.ts && tsx ./scripts/test-tcp-socket-cleanup.ts && tsx ./scripts/test-http-poller-memory.ts",
     "lint": "eslint src --ext .ts,.tsx",
     "lint:fix": "eslint src --ext .ts,.tsx --fix",
     "format": "prettier --write .",
