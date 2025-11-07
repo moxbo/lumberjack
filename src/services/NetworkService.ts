@@ -70,6 +70,7 @@ export class NetworkService {
   private static readonly MAX_BUFFER_SIZE = 1024 * 1024; // 1MB max buffer per socket
   private static readonly SOCKET_TIMEOUT_MS = 5 * 60 * 1000; // 5 minutes timeout
   private static readonly MAX_LINE_LENGTH = 100 * 1024; // 100KB max line length
+  private static readonly MAX_SEEN_ENTRIES = 10000; // Max deduplication entries per poller
 
   // Track active sockets for monitoring
   private activeSockets = new Set<net.Socket>();
@@ -374,6 +375,7 @@ export class NetworkService {
 
   /**
    * Deduplicate new entries based on key fields
+   * Limits the size of the seen Set to prevent unbounded memory growth
    */
   private dedupeNewEntries(entries: LogEntry[], seen: Set<string>): LogEntry[] {
     const fresh: LogEntry[] = [];
@@ -390,6 +392,18 @@ export class NetworkService {
       if (!seen.has(key)) {
         seen.add(key);
         fresh.push(e);
+        
+        // Prevent unbounded growth of seen Set (memory leak prevention)
+        if (seen.size > NetworkService.MAX_SEEN_ENTRIES) {
+          // Remove oldest entries by converting to array, slicing, and recreating
+          // This keeps the most recent entries which are more likely to be duplicates
+          const recentEntries = Array.from(seen).slice(-NetworkService.MAX_SEEN_ENTRIES / 2);
+          seen.clear();
+          recentEntries.forEach(k => seen.add(k));
+          log.debug(
+            `[http:poll] Trimmed seen Set to ${seen.size} entries (was ${seen.size + fresh.length})`,
+          );
+        }
       }
     }
     return fresh;
@@ -528,7 +542,12 @@ export class NetworkService {
     };
     http: {
       activePollers: number;
-      pollerDetails: Array<{ id: number; url: string; intervalMs: number }>;
+      pollerDetails: Array<{ 
+        id: number; 
+        url: string; 
+        intervalMs: number;
+        seenEntries: number;
+      }>;
     };
   } {
     return {
@@ -543,6 +562,7 @@ export class NetworkService {
           id: p.id,
           url: p.url,
           intervalMs: p.intervalMs,
+          seenEntries: p.seen.size,
         })),
       },
     };
