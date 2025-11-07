@@ -1,10 +1,10 @@
 #!/usr/bin/env tsx
 /**
  * Memory and Resource Diagnostics Script
- * 
+ *
  * This script analyzes logs, crash dumps, and system state to diagnose
  * memory and resource-related issues in Lumberjack.
- * 
+ *
  * Usage:
  *   npm run diagnose:memory
  *   or
@@ -39,7 +39,7 @@ function addResult(
   category: string,
   status: DiagnosticResult["status"],
   message: string,
-  details?: string[]
+  details?: string[],
 ): void {
   results.push({ category, status, message, details });
 }
@@ -49,7 +49,12 @@ function getLogPath(): string {
   const home = os.homedir();
 
   if (platform === "win32") {
-    return path.join(process.env.APPDATA || "", "Lumberjack", "logs", "main.log");
+    return path.join(
+      process.env.APPDATA || "",
+      "Lumberjack",
+      "logs",
+      "main.log",
+    );
   } else if (platform === "darwin") {
     return path.join(home, "Library", "Logs", "Lumberjack", "main.log");
   } else {
@@ -64,7 +69,13 @@ function getCrashDumpPath(): string {
   if (platform === "win32") {
     return path.join(process.env.APPDATA || "", "Lumberjack", "crashes");
   } else if (platform === "darwin") {
-    return path.join(home, "Library", "Application Support", "Lumberjack", "crashes");
+    return path.join(
+      home,
+      "Library",
+      "Application Support",
+      "Lumberjack",
+      "crashes",
+    );
   } else {
     return path.join(home, ".local", "share", "Lumberjack", "crashes");
   }
@@ -79,7 +90,9 @@ function formatBytes(bytes: number): string {
 }
 
 function checkSystemResources(): void {
-  console.log(`\n${colors.bold}${colors.cyan}=== System Resources ===${colors.reset}\n`);
+  console.log(
+    `\n${colors.bold}${colors.cyan}=== System Resources ===${colors.reset}\n`,
+  );
 
   const totalMem = os.totalmem();
   const freeMem = os.freemem();
@@ -90,7 +103,7 @@ function checkSystemResources(): void {
     "System Memory",
     usedPercent > 90 ? "WARNING" : "OK",
     `${formatBytes(usedMem)} used of ${formatBytes(totalMem)} (${usedPercent.toFixed(1)}%)`,
-    [`Free: ${formatBytes(freeMem)}`, `Used: ${formatBytes(usedMem)}`]
+    [`Free: ${formatBytes(freeMem)}`, `Used: ${formatBytes(usedMem)}`],
   );
 
   if (usedPercent > 90) {
@@ -102,7 +115,7 @@ function checkSystemResources(): void {
         "This may cause the application to be slow or crash",
         "Consider closing other applications",
         "If Lumberjack uses a lot of memory, see TROUBLESHOOTING_MEMORY.md",
-      ]
+      ],
     );
   }
 
@@ -111,12 +124,14 @@ function checkSystemResources(): void {
     "CPU",
     "INFO",
     `${cpus.length} CPU(s): ${cpus[0]?.model || "Unknown"}`,
-    [`Platform: ${os.platform()}`, `Architecture: ${os.arch()}`]
+    [`Platform: ${os.platform()}`, `Architecture: ${os.arch()}`],
   );
 }
 
 function checkLogFiles(): void {
-  console.log(`\n${colors.bold}${colors.cyan}=== Log File Analysis ===${colors.reset}\n`);
+  console.log(
+    `\n${colors.bold}${colors.cyan}=== Log File Analysis ===${colors.reset}\n`,
+  );
 
   const logPath = getLogPath();
   console.log(`Log path: ${logPath}`);
@@ -137,7 +152,7 @@ function checkLogFiles(): void {
     "Log File",
     logSize > 100 * 1024 * 1024 ? "WARNING" : "OK",
     `Log file size: ${formatBytes(logSize)}`,
-    [`Last modified: ${stats.mtime.toLocaleString()}`]
+    [`Last modified: ${stats.mtime.toLocaleString()}`],
   );
 
   if (logSize > 100 * 1024 * 1024) {
@@ -159,19 +174,30 @@ function checkLogFiles(): void {
         line.includes("Buffer overflow") ||
         line.includes("memory") ||
         line.includes("OOM") ||
-        line.includes("heap")
+        line.includes("heap"),
     );
 
     if (memoryWarnings.length > 0) {
-      addResult("Log Analysis", "WARNING", `Found ${memoryWarnings.length} memory-related log entries`, [
-        "Sample entries:",
-        ...memoryWarnings.slice(0, 3).map((line) => `  ${line.substring(0, 100)}...`),
-      ]);
+      addResult(
+        "Log Analysis",
+        "WARNING",
+        `Found ${memoryWarnings.length} memory-related log entries`,
+        [
+          "Sample entries:",
+          ...memoryWarnings
+            .slice(0, 3)
+            .map((line) => `  ${line.substring(0, 100)}...`),
+        ],
+      );
     }
 
     // Check for TCP socket issues
-    const tcpConnected = recentLines.filter((line) => line.includes("[tcp] Socket connected")).length;
-    const tcpCleaned = recentLines.filter((line) => line.includes("[tcp] Socket cleaned up")).length;
+    const tcpConnected = recentLines.filter((line) =>
+      line.includes("[tcp] Socket connected"),
+    ).length;
+    const tcpCleaned = recentLines.filter((line) =>
+      line.includes("[tcp] Socket cleaned up"),
+    ).length;
 
     if (tcpConnected > 0) {
       const status = tcpConnected > tcpCleaned * 1.5 ? "WARNING" : "OK";
@@ -184,12 +210,14 @@ function checkLogFiles(): void {
               "More connections than cleanups may indicate a socket leak",
               "Check if TCP clients are properly disconnecting",
             ]
-          : undefined
+          : undefined,
       );
     }
 
     // Check for HTTP poller trimming
-    const httpTrimming = recentLines.filter((line) => line.includes("Trimmed seen Set")).length;
+    const httpTrimming = recentLines.filter((line) =>
+      line.includes("Trimmed seen Set"),
+    ).length;
 
     if (httpTrimming > 0) {
       addResult(
@@ -201,52 +229,76 @@ function checkLogFiles(): void {
               "Frequent trimming indicates many unique log entries",
               "This is normal but may indicate high memory usage",
             ]
-          : undefined
+          : undefined,
       );
     }
 
     // Check for connection limit warnings
     const connectionLimitWarnings = recentLines.filter((line) =>
-      line.includes("Connection limit")
+      line.includes("Connection limit"),
     ).length;
 
     if (connectionLimitWarnings > 0) {
-      addResult("Connection Limits", "WARNING", `${connectionLimitWarnings} connection limit warnings`, [
-        "Application is approaching or at connection limit",
-        "Consider reducing concurrent connections",
-        "Default limit: 1000 connections",
-      ]);
+      addResult(
+        "Connection Limits",
+        "WARNING",
+        `${connectionLimitWarnings} connection limit warnings`,
+        [
+          "Application is approaching or at connection limit",
+          "Consider reducing concurrent connections",
+          "Default limit: 1000 connections",
+        ],
+      );
     }
 
     // Check for crashes/errors
     const errors = recentLines.filter(
-      (line) => line.toLowerCase().includes("error") || line.toLowerCase().includes("fatal")
+      (line) =>
+        line.toLowerCase().includes("error") ||
+        line.toLowerCase().includes("fatal"),
     ).length;
 
     if (errors > 10) {
-      addResult("Errors", "WARNING", `Found ${errors} error log entries (last 1000 lines)`, [
-        "Review logs for error details",
-        "Multiple errors may indicate an underlying issue",
-      ]);
+      addResult(
+        "Errors",
+        "WARNING",
+        `Found ${errors} error log entries (last 1000 lines)`,
+        [
+          "Review logs for error details",
+          "Multiple errors may indicate an underlying issue",
+        ],
+      );
     }
 
     // Check for signal handlers
     const signals = recentLines.filter(
-      (line) => line.includes("SIGTERM") || line.includes("SIGINT") || line.includes("SIGHUP")
+      (line) =>
+        line.includes("SIGTERM") ||
+        line.includes("SIGINT") ||
+        line.includes("SIGHUP"),
     );
 
     if (signals.length > 0) {
-      addResult("Process Signals", "INFO", `Found ${signals.length} signal events`, [
-        "Application received OS termination signals",
-        "Sample entries:",
-        ...signals.slice(0, 2).map((line) => `  ${line.substring(0, 100)}...`),
-      ]);
+      addResult(
+        "Process Signals",
+        "INFO",
+        `Found ${signals.length} signal events`,
+        [
+          "Application received OS termination signals",
+          "Sample entries:",
+          ...signals
+            .slice(0, 2)
+            .map((line) => `  ${line.substring(0, 100)}...`),
+        ],
+      );
     }
 
     // Check last log entry timestamp
     const lastLine = lines[lines.length - 1];
     if (lastLine) {
-      const timestampMatch = lastLine.match(/(\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2})/);
+      const timestampMatch = lastLine.match(
+        /(\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2})/,
+      );
       if (timestampMatch) {
         const lastLogTime = new Date(timestampMatch[1]);
         const now = new Date();
@@ -256,7 +308,7 @@ function checkLogFiles(): void {
           "Last Log Entry",
           "INFO",
           `${minutesAgo.toFixed(0)} minutes ago`,
-          [`Timestamp: ${lastLogTime.toLocaleString()}`]
+          [`Timestamp: ${lastLogTime.toLocaleString()}`],
         );
       }
     }
@@ -268,7 +320,9 @@ function checkLogFiles(): void {
 }
 
 function checkCrashDumps(): void {
-  console.log(`\n${colors.bold}${colors.cyan}=== Crash Dumps ===${colors.reset}\n`);
+  console.log(
+    `\n${colors.bold}${colors.cyan}=== Crash Dumps ===${colors.reset}\n`,
+  );
 
   const crashPath = getCrashDumpPath();
   console.log(`Crash dump path: ${crashPath}`);
@@ -282,22 +336,29 @@ function checkCrashDumps(): void {
 
   try {
     const files = fs.readdirSync(crashPath);
-    const dumpFiles = files.filter((f) => f.endsWith(".dmp") || f.includes("crash"));
+    const dumpFiles = files.filter(
+      (f) => f.endsWith(".dmp") || f.includes("crash"),
+    );
 
     if (dumpFiles.length === 0) {
       addResult("Crash Dumps", "OK", "No crash dumps found", [
         "Application has not crashed with native errors",
       ]);
     } else {
-      addResult("Crash Dumps", "WARNING", `Found ${dumpFiles.length} crash dump(s)`, [
-        "Application has experienced native crashes",
-        "Crash dumps:",
-        ...dumpFiles.slice(0, 5).map((f) => {
-          const stat = fs.statSync(path.join(crashPath, f));
-          return `  ${f} (${formatBytes(stat.size)}, ${stat.mtime.toLocaleDateString()})`;
-        }),
-        dumpFiles.length > 5 ? `  ... and ${dumpFiles.length - 5} more` : "",
-      ]);
+      addResult(
+        "Crash Dumps",
+        "WARNING",
+        `Found ${dumpFiles.length} crash dump(s)`,
+        [
+          "Application has experienced native crashes",
+          "Crash dumps:",
+          ...dumpFiles.slice(0, 5).map((f) => {
+            const stat = fs.statSync(path.join(crashPath, f));
+            return `  ${f} (${formatBytes(stat.size)}, ${stat.mtime.toLocaleDateString()})`;
+          }),
+          dumpFiles.length > 5 ? `  ... and ${dumpFiles.length - 5} more` : "",
+        ],
+      );
     }
   } catch (error) {
     addResult("Crash Dumps", "ERROR", "Failed to check crash dumps", [
@@ -307,7 +368,9 @@ function checkCrashDumps(): void {
 }
 
 function checkApplicationData(): void {
-  console.log(`\n${colors.bold}${colors.cyan}=== Application Data ===${colors.reset}\n`);
+  console.log(
+    `\n${colors.bold}${colors.cyan}=== Application Data ===${colors.reset}\n`,
+  );
 
   const platform = process.platform;
   const home = os.homedir();
@@ -316,7 +379,12 @@ function checkApplicationData(): void {
   if (platform === "win32") {
     appDataPath = path.join(process.env.APPDATA || "", "Lumberjack");
   } else if (platform === "darwin") {
-    appDataPath = path.join(home, "Library", "Application Support", "Lumberjack");
+    appDataPath = path.join(
+      home,
+      "Library",
+      "Application Support",
+      "Lumberjack",
+    );
   } else {
     appDataPath = path.join(home, ".local", "share", "Lumberjack");
   }
@@ -324,9 +392,12 @@ function checkApplicationData(): void {
   console.log(`Application data path: ${appDataPath}`);
 
   if (!fs.existsSync(appDataPath)) {
-    addResult("Application Data", "INFO", "No application data directory found", [
-      "Application may not have been run yet",
-    ]);
+    addResult(
+      "Application Data",
+      "INFO",
+      "No application data directory found",
+      ["Application may not have been run yet"],
+    );
     return;
   }
 
@@ -362,7 +433,7 @@ function checkApplicationData(): void {
           "May include large cache or log files",
           "Consider cleaning up old data",
         ]
-      : undefined
+      : undefined,
   );
 
   // Check for large subdirectories
@@ -376,9 +447,12 @@ function checkApplicationData(): void {
       const subdirPath = path.join(appDataPath, subdir);
       const subdirSize = getDirSize(subdirPath);
       if (subdirSize > 100 * 1024 * 1024) {
-        addResult("Application Data", "INFO", `${subdir}: ${formatBytes(subdirSize)}`, [
-          `Large subdirectory found`,
-        ]);
+        addResult(
+          "Application Data",
+          "INFO",
+          `${subdir}: ${formatBytes(subdirSize)}`,
+          [`Large subdirectory found`],
+        );
       }
     }
   } catch (error) {
@@ -387,7 +461,9 @@ function checkApplicationData(): void {
 }
 
 function printResults(): void {
-  console.log(`\n${colors.bold}${colors.cyan}=== Diagnostic Results ===${colors.reset}\n`);
+  console.log(
+    `\n${colors.bold}${colors.cyan}=== Diagnostic Results ===${colors.reset}\n`,
+  );
 
   const statusColors = {
     OK: colors.green,
@@ -408,7 +484,7 @@ function printResults(): void {
     const symbol = statusSymbols[result.status];
 
     console.log(
-      `${color}${symbol} [${result.category}]${colors.reset} ${result.message}`
+      `${color}${symbol} [${result.category}]${colors.reset} ${result.message}`,
     );
 
     if (result.details && result.details.length > 0) {
@@ -439,47 +515,56 @@ function printSummary(): void {
 
   if (errorCount > 0) {
     console.log(
-      `${colors.red}${colors.bold}Action Required:${colors.reset} ${errorCount} error(s) detected.`
+      `${colors.red}${colors.bold}Action Required:${colors.reset} ${errorCount} error(s) detected.`,
     );
     console.log(`Review the errors above and take corrective action.`);
     console.log();
   } else if (warningCount > 0) {
     console.log(
-      `${colors.yellow}${colors.bold}Attention:${colors.reset} ${warningCount} warning(s) detected.`
+      `${colors.yellow}${colors.bold}Attention:${colors.reset} ${warningCount} warning(s) detected.`,
     );
     console.log(
-      `Review the warnings above. These may indicate potential issues.`
+      `Review the warnings above. These may indicate potential issues.`,
     );
     console.log();
   } else {
     console.log(
-      `${colors.green}${colors.bold}All checks passed!${colors.reset} No issues detected.`
+      `${colors.green}${colors.bold}All checks passed!${colors.reset} No issues detected.`,
     );
     console.log();
   }
 
   console.log(`${colors.bold}Next Steps:${colors.reset}`);
   console.log(`1. Review warnings and errors above`);
-  console.log(`2. Consult docs/TROUBLESHOOTING_MEMORY.md for detailed guidance`);
+  console.log(
+    `2. Consult docs/TROUBLESHOOTING_MEMORY.md for detailed guidance`,
+  );
   console.log(`3. If issues persist, collect logs and system info for support`);
-  console.log(`4. Check GitHub issues: https://github.com/moxbo/lumberjack/issues`);
+  console.log(
+    `4. Check GitHub issues: https://github.com/moxbo/lumberjack/issues`,
+  );
   console.log();
 }
 
 function printRecommendations(): void {
-  const hasWarnings = results.some((r) => r.status === "WARNING" || r.status === "ERROR");
+  const hasWarnings = results.some(
+    (r) => r.status === "WARNING" || r.status === "ERROR",
+  );
 
   if (!hasWarnings) {
     return;
   }
 
-  console.log(`\n${colors.bold}${colors.cyan}=== Recommendations ===${colors.reset}\n`);
+  console.log(
+    `\n${colors.bold}${colors.cyan}=== Recommendations ===${colors.reset}\n`,
+  );
 
   // Memory warnings
   const memoryIssues = results.filter(
     (r) =>
       (r.status === "WARNING" || r.status === "ERROR") &&
-      (r.category.includes("Memory") || r.message.toLowerCase().includes("memory"))
+      (r.category.includes("Memory") ||
+        r.message.toLowerCase().includes("memory")),
   );
 
   if (memoryIssues.length > 0) {
@@ -495,11 +580,13 @@ function printRecommendations(): void {
   const tcpIssues = results.filter(
     (r) =>
       (r.status === "WARNING" || r.status === "ERROR") &&
-      r.category.includes("TCP")
+      r.category.includes("TCP"),
   );
 
   if (tcpIssues.length > 0) {
-    console.log(`${colors.yellow}TCP Connection Issues Detected:${colors.reset}`);
+    console.log(
+      `${colors.yellow}TCP Connection Issues Detected:${colors.reset}`,
+    );
     console.log(`• Ensure TCP clients are properly disconnecting`);
     console.log(`• Check for client-side connection leaks`);
     console.log(`• Review TCP server logs for cleanup messages`);
@@ -511,7 +598,7 @@ function printRecommendations(): void {
   const httpIssues = results.filter(
     (r) =>
       (r.status === "WARNING" || r.status === "ERROR") &&
-      r.category.includes("HTTP")
+      r.category.includes("HTTP"),
   );
 
   if (httpIssues.length > 0) {
@@ -527,7 +614,7 @@ function printRecommendations(): void {
   const logIssues = results.filter(
     (r) =>
       (r.status === "WARNING" || r.status === "ERROR") &&
-      r.category.includes("Log")
+      r.category.includes("Log"),
   );
 
   if (logIssues.length > 0) {
@@ -542,7 +629,7 @@ function printRecommendations(): void {
   const crashIssues = results.filter(
     (r) =>
       (r.status === "WARNING" || r.status === "ERROR") &&
-      r.category.includes("Crash")
+      r.category.includes("Crash"),
   );
 
   if (crashIssues.length > 0) {
@@ -558,10 +645,10 @@ function printRecommendations(): void {
 
 // Main execution
 console.log(
-  `${colors.bold}${colors.cyan}Lumberjack Memory & Resource Diagnostics${colors.reset}`
+  `${colors.bold}${colors.cyan}Lumberjack Memory & Resource Diagnostics${colors.reset}`,
 );
 console.log(
-  `${colors.cyan}==========================================${colors.reset}\n`
+  `${colors.cyan}==========================================${colors.reset}\n`,
 );
 
 checkSystemResources();
@@ -573,11 +660,9 @@ printSummary();
 printRecommendations();
 
 console.log(
-  `${colors.cyan}===========================================${colors.reset}`
+  `${colors.cyan}===========================================${colors.reset}`,
 );
-console.log(
-  `${colors.bold}Diagnostics complete!${colors.reset}\n`
-);
+console.log(`${colors.bold}Diagnostics complete!${colors.reset}\n`);
 
 // Exit with appropriate code
 const hasErrors = results.some((r) => r.status === "ERROR");

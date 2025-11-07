@@ -20,7 +20,10 @@ interface ErrorBoundaryState {
  * ErrorBoundary catches errors in child components and displays a fallback UI
  * This prevents UI errors from crashing the entire application
  */
-export class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundaryState> {
+export class ErrorBoundary extends Component<
+  ErrorBoundaryProps,
+  ErrorBoundaryState
+> {
   constructor(props: ErrorBoundaryProps) {
     super(props);
     this.state = { hasError: false, error: null };
@@ -35,7 +38,10 @@ export class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundarySt
 
     // Log to main process via IPC if available
     try {
-      if (typeof window !== "undefined" && (window as any).electronAPI?.logError) {
+      if (
+        typeof window !== "undefined" &&
+        (window as any).electronAPI?.logError
+      ) {
         (window as any).electronAPI.logError({
           error: {
             name: error.name,
@@ -47,7 +53,10 @@ export class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundarySt
         });
       }
     } catch (logError) {
-      console.error("[ErrorBoundary] Failed to log error to main process:", logError);
+      console.error(
+        "[ErrorBoundary] Failed to log error to main process:",
+        logError,
+      );
     }
   }
 
@@ -132,12 +141,12 @@ export class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundarySt
  */
 export function withErrorBoundary<T extends (...args: any[]) => any>(
   fn: T,
-  onError?: (error: Error) => void
+  onError?: (error: Error) => void,
 ): T {
   return ((...args: Parameters<T>) => {
     try {
       const result = fn(...args);
-      
+
       // Handle promises
       if (result && typeof result.then === "function") {
         return result.catch((error: Error) => {
@@ -146,7 +155,7 @@ export function withErrorBoundary<T extends (...args: any[]) => any>(
           throw error;
         });
       }
-      
+
       return result;
     } catch (error) {
       console.error("[withErrorBoundary] Sync error:", error);
