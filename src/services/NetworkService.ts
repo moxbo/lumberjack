@@ -66,6 +66,14 @@ export class NetworkService {
   private parseTextLines: TextParserFn | null = null;
   private toEntry: EntryConverterFn | null = null;
 
+  // Memory leak prevention constants
+  private static readonly MAX_BUFFER_SIZE = 1024 * 1024; // 1MB max buffer per socket
+  private static readonly SOCKET_TIMEOUT_MS = 5 * 60 * 1000; // 5 minutes timeout
+  private static readonly MAX_LINE_LENGTH = 100 * 1024; // 100KB max line length
+
+  // Track active sockets for monitoring
+  private activeSockets = new Set<net.Socket>();
+
   /**
    * Set the log callback function
    */
@@ -120,45 +128,104 @@ export class NetworkService {
 
     const server = net.createServer((socket) => {
       let buffer = "";
+      const remoteAddr = socket.remoteAddress ?? "unknown";
+      const remotePort = socket.remotePort ?? 0;
+      const socketId = `${remoteAddr}:${remotePort}`;
+
+      // Track socket for monitoring
+      this.activeSockets.add(socket);
+      log.debug(`[tcp] Socket connected: ${socketId} (active: ${this.activeSockets.size})`);
+
+      // Set socket timeout to prevent hanging connections
+      socket.setTimeout(NetworkService.SOCKET_TIMEOUT_MS);
+
+      // Cleanup function to be called on socket end/close
+      const cleanup = (): void => {
+        if (this.activeSockets.has(socket)) {
+          this.activeSockets.delete(socket);
+          log.debug(`[tcp] Socket cleaned up: ${socketId} (active: ${this.activeSockets.size})`);
+        }
+        // Clear buffer to free memory
+        buffer = "";
+        // Remove all listeners to prevent memory leaks
+        socket.removeAllListeners();
+      };
 
       socket.on("data", (chunk) => {
-        buffer += chunk.toString("utf8");
-        let idx: number;
-
-        while ((idx = buffer.indexOf("\n")) >= 0) {
-          const line = buffer.slice(0, idx).trim();
-          buffer = buffer.slice(idx + 1);
-
-          if (!line) continue;
-
-          // Parse JSON line, fallback to plain text
-          let obj: Record<string, unknown>;
-          try {
-            obj = JSON.parse(line) as Record<string, unknown>;
-          } catch (e) {
+        try {
+          // Prevent buffer from growing too large (memory leak prevention)
+          if (buffer.length > NetworkService.MAX_BUFFER_SIZE) {
             log.warn(
-              "TCP JSON parse failed, treating as plain text:",
-              e instanceof Error ? e.message : String(e),
+              `[tcp] Buffer overflow on ${socketId}, dropping oldest data. Buffer size: ${buffer.length} bytes`,
             );
-            obj = { message: line };
+            // Keep only the most recent data
+            buffer = buffer.slice(buffer.length - NetworkService.MAX_BUFFER_SIZE / 2);
           }
 
-          const entry = toEntry(
-            obj,
-            "",
-            `tcp:${socket.remoteAddress ?? "unknown"}:${socket.remotePort ?? 0}`,
+          buffer += chunk.toString("utf8");
+          let idx: number;
+
+          while ((idx = buffer.indexOf("\n")) >= 0) {
+            const line = buffer.slice(0, idx).trim();
+            buffer = buffer.slice(idx + 1);
+
+            if (!line) continue;
+
+            // Skip lines that are too long (potential attack or malformed data)
+            if (line.length > NetworkService.MAX_LINE_LENGTH) {
+              log.warn(
+                `[tcp] Line too long on ${socketId}, skipping. Length: ${line.length} bytes`,
+              );
+              continue;
+            }
+
+            // Parse JSON line, fallback to plain text
+            let obj: Record<string, unknown>;
+            try {
+              obj = JSON.parse(line) as Record<string, unknown>;
+            } catch (e) {
+              log.warn(
+                "TCP JSON parse failed, treating as plain text:",
+                e instanceof Error ? e.message : String(e),
+              );
+              obj = { message: line };
+            }
+
+            const entry = toEntry(obj, "", `tcp:${remoteAddr}:${remotePort}`);
+            this.sendLogs([entry]);
+          }
+        } catch (err) {
+          log.error(
+            `[tcp] Error processing data on ${socketId}:`,
+            err instanceof Error ? err.message : String(err),
           );
-          this.sendLogs([entry]);
         }
       });
 
       socket.on("error", (err) => {
+        log.warn(`[tcp] Socket error on ${socketId}:`, err.message);
         const errorEntry = toEntry(
           { level: "ERROR", message: `TCP socket error: ${err.message}` },
           "",
           "tcp",
         );
         this.sendLogs([errorEntry]);
+      });
+
+      socket.on("timeout", () => {
+        log.warn(`[tcp] Socket timeout on ${socketId}, closing connection`);
+        socket.end();
+      });
+
+      socket.on("close", (hadError) => {
+        log.debug(
+          `[tcp] Socket closed: ${socketId}${hadError ? " (with error)" : ""}`,
+        );
+        cleanup();
+      });
+
+      socket.on("end", () => {
+        log.debug(`[tcp] Socket ended: ${socketId}`);
       });
     });
 
@@ -203,18 +270,23 @@ export class NetworkService {
             e instanceof Error ? e.message : String(e),
           );
         }
+        
+        // Get the actual port if 0 was specified (auto-assign)
+        const address = server.address();
+        const actualPort = address && typeof address === "object" ? address.port : port;
+        
         this.tcpRunning = true;
-        this.tcpPort = port;
-        log.info(`TCP server listening on port ${port}`);
+        this.tcpPort = actualPort;
+        log.info(`TCP server listening on port ${actualPort}`);
         // Attach a general error logger for runtime errors (does not change running state)
         server.on("error", (err) => {
           log.error("TCP server runtime error:", err);
         });
         resolve({
           ok: true,
-          message: `Listening on ${port}`,
+          message: `Listening on ${actualPort}`,
           running: true,
-          port,
+          port: actualPort,
         });
       };
 
@@ -238,6 +310,25 @@ export class NetworkService {
     }
 
     return new Promise<TcpStatus>((resolve) => {
+      // Close all active sockets first
+      const socketsToClose = Array.from(this.activeSockets);
+      log.info(
+        `[tcp] Stopping server, closing ${socketsToClose.length} active socket(s)`,
+      );
+
+      for (const socket of socketsToClose) {
+        try {
+          socket.end();
+        } catch (e) {
+          log.warn(
+            "Error closing socket:",
+            e instanceof Error ? e.message : String(e),
+          );
+        }
+      }
+
+      this.activeSockets.clear();
+
       this.tcpServer!.close(() => {
         this.tcpServer = null;
         this.tcpRunning = false;
@@ -255,7 +346,7 @@ export class NetworkService {
   /**
    * Get TCP server status
    */
-  getTcpStatus(): TcpStatus {
+  getTcpStatus(): TcpStatus & { activeConnections?: number } {
     return {
       ok: true,
       message: this.tcpRunning
@@ -263,6 +354,7 @@ export class NetworkService {
         : "Not running",
       running: this.tcpRunning,
       port: this.tcpRunning ? this.tcpPort : undefined,
+      activeConnections: this.activeSockets.size,
     };
   }
 
@@ -423,5 +515,36 @@ export class NetworkService {
     if (this.tcpServer) {
       void this.stopTcpServer();
     }
+  }
+
+  /**
+   * Get diagnostic information about resource usage
+   */
+  getDiagnostics(): {
+    tcp: {
+      running: boolean;
+      port?: number;
+      activeConnections: number;
+    };
+    http: {
+      activePollers: number;
+      pollerDetails: Array<{ id: number; url: string; intervalMs: number }>;
+    };
+  } {
+    return {
+      tcp: {
+        running: this.tcpRunning,
+        port: this.tcpPort || undefined,
+        activeConnections: this.activeSockets.size,
+      },
+      http: {
+        activePollers: this.httpPollers.size,
+        pollerDetails: Array.from(this.httpPollers.values()).map((p) => ({
+          id: p.id,
+          url: p.url,
+          intervalMs: p.intervalMs,
+        })),
+      },
+    };
   }
 }
