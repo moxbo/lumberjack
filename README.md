@@ -11,6 +11,7 @@ Ein schneller, schlanker Electron-basierter Log-Viewer mit leistungsfähigen Fil
 - Icon erzeugen (Multi-Size ICO)
 - Troubleshooting: Wenn trotzdem das Standard-Icon erscheint
 - Performance
+- Troubleshooting & Diagnostik
 - Copilot-Agent Leitfaden (siehe docs/COPILOT_AGENT.md)
 
 ## Überblick & Features
@@ -184,6 +185,36 @@ Lumberjack is highly optimized for fast startup, responsive UI, and efficient me
 
 - Startup optimizations: [PERFORMANCE.md](docs/PERFORMANCE.md)
 - Advanced optimizations: [ADVANCED_OPTIMIZATIONS.md](docs/ADVANCED_OPTIMIZATIONS.md)
+
+## Troubleshooting & Diagnostik
+
+### Anwendung beendet sich unerwartet
+
+Wenn die Anwendung sich unerwartet beendet und keine Logs vorhanden sind:
+
+1. **Log-Dateien prüfen**:
+   - Windows: `%APPDATA%\Lumberjack\logs\main.log`
+   - macOS: `~/Library/Logs/Lumberjack/main.log`
+   - Linux: `~/.local/share/Lumberjack/logs/main.log`
+
+2. **Log-Analyse-Skript verwenden**:
+   ```bash
+   tsx scripts/analyze-exit-logs.ts
+   ```
+
+3. **Crash Dumps prüfen**:
+   - Crash Dumps werden in `%APPDATA%\Lumberjack\crashes\` gespeichert
+
+4. **Dokumentation lesen**:
+   - [Unerklärliche Beendigungen beheben](docs/SILENT_EXIT_FIX.md)
+   - [Exit Code 1 Fehler beheben](docs/EXIT_CODE_1_FIX.md)
+
+Die Anwendung verfügt über umfassende Logging-Funktionen:
+- Logs werden sofort auf die Festplatte geschrieben (keine Pufferung)
+- Alle Beendigungspfade werden protokolliert
+- OS-Signale (SIGTERM, SIGINT) werden abgefangen und protokolliert
+- Logs werden alle 5 Sekunden automatisch gespeichert
+- Crash Dumps werden bei nativen Abstürzen erstellt
 
 ## Lizenz
 

@@ -203,8 +203,8 @@ export default function DCFilterDialog(): preact.JSX.Element {
     if (!sel.includes(id)) setSel([id]);
     setCtx({
       open: true,
-      x: (ev as MouseEvent).clientX,
-      y: (ev as MouseEvent).clientY,
+      x: ev.clientX,
+      y: ev.clientY,
     });
   }
   function activateSelected(active: boolean): void {
@@ -327,7 +327,7 @@ export default function DCFilterDialog(): preact.JSX.Element {
                   // Toggle auf Click und Event nicht nach oben lassen, damit der globale Click-Closer nicht sofort schließt
                   e.stopPropagation();
                   if (keyDD.open) setKeyDD({ open: false, x: 0, y: 0, w: 0 });
-                  else openKeyDropdownAt(e.currentTarget as HTMLButtonElement);
+                  else openKeyDropdownAt(e.currentTarget);
                 }}
               >
                 ▼
@@ -385,14 +385,11 @@ export default function DCFilterDialog(): preact.JSX.Element {
                         borderRadius: "4px",
                       }}
                       onMouseOver={(e) =>
-                        ((
-                          e.currentTarget as HTMLDivElement
-                        ).style.backgroundColor = "var(--color-bg-hover)")
+                        (e.currentTarget.style.backgroundColor =
+                          "var(--color-bg-hover)")
                       }
                       onMouseOut={(e) =>
-                        ((
-                          e.currentTarget as HTMLDivElement
-                        ).style.backgroundColor = "transparent")
+                        (e.currentTarget.style.backgroundColor = "transparent")
                       }
                       title={String(k)}
                     >
