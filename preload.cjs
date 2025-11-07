@@ -59,6 +59,9 @@ var api = {
     return () => {
       import_electron.ipcRenderer.removeListener("menu:cmd", listener);
     };
-  }
+  },
+  // Error logging from renderer to main process
+  logError: (errorData) => import_electron.ipcRenderer.invoke("logError", errorData)
 };
 import_electron.contextBridge.exposeInMainWorld("api", api);
+import_electron.contextBridge.exposeInMainWorld("electronAPI", api);
