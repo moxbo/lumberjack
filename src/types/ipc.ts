@@ -265,6 +265,9 @@ export interface ElectronAPI {
   onAppend: (callback: (entries: LogEntry[]) => void) => () => void;
   onTcpStatus: (callback: (status: TcpStatus) => void) => () => void;
   onMenu: (callback: (command: MenuCommand) => void) => () => void;
+
+  // Error logging from renderer to main process
+  logError: (errorData: any) => Promise<Result<void>>;
 }
 
 /**
@@ -273,5 +276,6 @@ export interface ElectronAPI {
 declare global {
   interface Window {
     api: ElectronAPI;
+    electronAPI?: ElectronAPI; // Also support electronAPI for consistency
   }
 }

@@ -119,7 +119,12 @@ const api: ElectronAPI = {
       ipcRenderer.removeListener("menu:cmd", listener);
     };
   },
+
+  // Error logging from renderer to main process
+  logError: (errorData: any): Promise<Result<void>> =>
+    ipcRenderer.invoke("logError", errorData),
 };
 
 // Expose the API to the renderer process in a secure way
 contextBridge.exposeInMainWorld("api", api);
+contextBridge.exposeInMainWorld("electronAPI", api); // Also expose as electronAPI for consistency

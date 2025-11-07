@@ -1,5 +1,6 @@
 import { render } from "preact";
 import App from "../../renderer/App";
+import { ErrorBoundary } from "../../renderer/ErrorBoundary";
 import { I18nProvider } from "../../utils/i18n";
 import "../styles.css";
 import logger from "../../utils/logger";
@@ -40,9 +41,11 @@ rendererPerf.mark("pre-render");
 const root = document.getElementById("app");
 if (root) {
   render(
-    <I18nProvider>
-      <App />
-    </I18nProvider>,
+    <ErrorBoundary>
+      <I18nProvider>
+        <App />
+      </I18nProvider>
+    </ErrorBoundary>,
     root,
   );
   rendererPerf.mark("post-render");

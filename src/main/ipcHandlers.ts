@@ -614,4 +614,22 @@ export function registerIpcHandlers(
       };
     }
   });
+
+  // Error logging from renderer
+  ipcMain.handle("logError", (_event, errorData: any) => {
+    try {
+      log.error("[renderer] Error caught by ErrorBoundary:", {
+        error: errorData.error,
+        errorInfo: errorData.errorInfo,
+        timestamp: errorData.timestamp,
+      });
+      return { ok: true };
+    } catch (err) {
+      log.warn(
+        "logError handler failed:",
+        err instanceof Error ? err.message : String(err),
+      );
+      return { ok: false };
+    }
+  });
 }
