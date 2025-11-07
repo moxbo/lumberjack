@@ -45,12 +45,12 @@ if (log.transports.file.level !== false) {
   try {
     const logPath = log.transports.file.getFile().path;
     const logDir = path.dirname(logPath);
-    
+
     // Ensure directory exists
     if (!fs.existsSync(logDir)) {
       fs.mkdirSync(logDir, { recursive: true });
     }
-    
+
     // Test write permissions with a temp file
     const testFile = path.join(logDir, ".write-test");
     try {
@@ -83,9 +83,10 @@ log.info("[diag] Application starting", {
   electronVersion: process.versions.electron,
   pid: process.pid,
   isDev,
-  logPath: log.transports.file.level !== false 
-    ? log.transports.file.getFile().path 
-    : "disabled",
+  logPath:
+    log.transports.file.level !== false
+      ? log.transports.file.getFile().path
+      : "disabled",
 });
 
 // Services
@@ -1274,7 +1275,9 @@ function createWindow(opts: { makePrimary?: boolean } = {}): BrowserWindow {
           setTimeout(() => {
             try {
               if (!win.isDestroyed()) {
-                log.info("[diag] Attempting renderer reload after load failure");
+                log.info(
+                  "[diag] Attempting renderer reload after load failure",
+                );
                 win.reload();
               }
             } catch (e) {
@@ -1304,9 +1307,7 @@ function createWindow(opts: { makePrimary?: boolean } = {}): BrowserWindow {
       // sofern der Benutzer das Beenden nicht bestätigt hat.
       try {
         if (quitConfirmed) {
-          log.info(
-            "[diag] Renderer gone but quit confirmed - not recovering",
-          );
+          log.info("[diag] Renderer gone but quit confirmed - not recovering");
           return;
         }
 
