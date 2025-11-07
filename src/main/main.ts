@@ -29,14 +29,13 @@ const isDev =
 // Initialize logging as early as possible to catch startup crashes
 log.initialize();
 
-// Configure immediate log flushing to prevent data loss on crashes
-// Write synchronously for critical messages to ensure they reach disk
+// Configure log levels
 log.transports.console.level = "debug";
 log.transports.file.level = isDev ? false : "silly";
 
-// Configure file transport for immediate writes (reduce buffering)
+// Configure file transport for immediate writes to prevent data loss on crashes
 if (log.transports.file.level !== false) {
-  // Force sync writes for error and fatal levels
+  // Force sync writes - logs written immediately to disk without buffering
   log.transports.file.sync = true;
   // Reduce buffer size to ensure more frequent disk writes
   log.transports.file.maxSize = 5 * 1024 * 1024; // 5MB max file size
@@ -1446,14 +1445,26 @@ if (process.platform === "win32") {
   }
 }
 
+// Log flushing configuration constants
+const LOG_FLUSH_INTERVAL_MS = 5000; // Flush logs every 5 seconds
+const LOG_FLUSH_TIMEOUT_MS = 100; // Wait 100ms for flush on signal before exit
+
+// Type-safe log transport interface for flushing
+interface LogTransportWithFlush {
+  file?: {
+    flush?: () => void;
+  };
+}
+
 // Helper function to force flush logs to disk
 // This is critical for ensuring crash logs are written before process termination
 function forceFlushLogs(): void {
   try {
     // Electron-log automatically flushes on error/fatal, but we force it here
     // to ensure all logs reach disk before exit
-    if (log && typeof (log as any).transports?.file?.flush === "function") {
-      (log as any).transports.file.flush();
+    const transport = log as unknown as LogTransportWithFlush;
+    if (transport?.transports?.file?.flush) {
+      transport.transports.file.flush();
     }
   } catch (e) {
     // Last resort: write to stderr if log flushing fails
@@ -1540,7 +1551,7 @@ try {
             } catch {
               process.exit(0);
             }
-          }, 100);
+          }, LOG_FLUSH_TIMEOUT_MS);
         } catch (e) {
           console.error(`[FATAL] Error handling ${signal}:`, e);
           process.exit(0);
@@ -1656,14 +1667,14 @@ try {
   }
 
   // Periodic log flushing to reduce data loss window
-  // Flush logs every 5 seconds to ensure recent logs are on disk
+  // Periodic log flushing to reduce data loss window
   setInterval(() => {
     try {
       forceFlushLogs();
     } catch {
       // ignore flush errors
     }
-  }, 5000);
+  }, LOG_FLUSH_INTERVAL_MS);
 } catch {
   // ignore handler setup errors
 }
