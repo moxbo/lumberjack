@@ -188,6 +188,31 @@ Lumberjack is highly optimized for fast startup, responsive UI, and efficient me
 
 ## Troubleshooting & Diagnostik
 
+### Speicher- und Ressourcenprobleme diagnostizieren
+
+Wenn Probleme auftreten, die auf Speicher oder Ressourcen zurückzuführen sein könnten:
+
+1. **Schnelldiagnose ausführen**:
+   ```bash
+   npm run diagnose:memory
+   ```
+   
+   Dieses Skript analysiert:
+   - Systemressourcen (RAM, CPU)
+   - Log-Dateien auf Fehler und Warnungen
+   - Crash Dumps
+   - Anwendungsdaten-Größe
+   - Netzwerkverbindungen (TCP/HTTP)
+
+2. **Detaillierte Anleitung lesen**:
+   - [Speicher- und Ressourcenprobleme beheben](docs/TROUBLESHOOTING_MEMORY.md)
+   
+   Dieses Dokument enthält:
+   - Symptome von Speicherproblemen
+   - Schritt-für-Schritt-Diagnose
+   - Lösungen für häufige Probleme
+   - Vorbeugende Maßnahmen
+
 ### Anwendung beendet sich unerwartet
 
 Wenn die Anwendung sich unerwartet beendet und keine Logs vorhanden sind:
