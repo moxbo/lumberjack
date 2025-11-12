@@ -172,7 +172,6 @@ export function registerIpcHandlers(
           return { ok: false, error: "Invalid patch: not an object" };
         }
 
-        // Handle sensitive fields not in schema: elasticPassPlain and elasticPassClear
         type SettingsPatch = Partial<Settings> & {
           elasticPassPlain?: string;
           elasticPassClear?: boolean;
@@ -181,12 +180,10 @@ export function registerIpcHandlers(
         const passPlain = typedPatch.elasticPassPlain;
         const passClear = !!typedPatch.elasticPassClear;
 
-        // Build patch sans sensitive transient fields
         const clone: Partial<Settings> = { ...patch };
         delete (clone as SettingsPatch).elasticPassPlain;
         delete (clone as SettingsPatch).elasticPassClear;
 
-        // Merge with validation
         const validation = settingsService.validate(clone);
         if (!validation.success) {
           return { ok: false, error: validation.error };
@@ -194,7 +191,6 @@ export function registerIpcHandlers(
 
         const updated = settingsService.update(clone);
 
-        // Apply password updates after merge
         if (passClear) {
           updated.elasticPassEnc = "";
         } else if (passPlain && passPlain.trim()) {
@@ -202,19 +198,15 @@ export function registerIpcHandlers(
             passPlain.trim(),
           );
         }
-
-        // Update again if password changed
         if (passClear || passPlain) {
           settingsService.update(updated);
         }
 
-        // Save to disk
         const saved = settingsService.saveSync();
         if (!saved) {
           return { ok: false, error: "Failed to save settings to disk" };
         }
 
-        // Nach erfolgreichem Speichern Fenstertitel aktualisieren (via Main)
         updateWindowTitles();
 
         return { ok: true, settings: settingsService.get() };
@@ -373,11 +365,15 @@ export function registerIpcHandlers(
         event.reply("tcp:status", status);
 
         if (status.ok && win) {
-          const settings = settingsService.get();
-          settings.tcpPort = port;
-          settingsService.update(settings);
-          void settingsService.save();
-          // Eigentümer auf dieses Fenster setzen
+          // Nur speichern, wenn sich der Port tatsächlich geändert hat
+          const prevSettings = settingsService.get();
+          if (prevSettings.tcpPort !== port) {
+            settingsService.update({ tcpPort: port });
+            void settingsService.save();
+          } else {
+            // Keine Änderung – kein persistenter Save nötig
+          }
+          // Eigentümer auf dieses Fenster setzen (ephemeral, nicht persistiert)
           try {
             // eslint-disable-next-line @typescript-eslint/no-explicit-any
             (global as any).__setTcpOwnerWindowId?.(win.id);

@@ -73,7 +73,15 @@ export class SettingsService {
     if (portableDir && portableDir.length) {
       return path.join(portableDir, "data", "settings.json");
     }
-    return path.join(app.getPath("userData"), "settings.json");
+    try {
+      if (app && typeof app.getPath === "function") {
+        return path.join(app.getPath("userData"), "settings.json");
+      }
+    } catch {
+      // ignore
+    }
+    // Fallback für Nicht-Electron-Testkontexte
+    return path.join(process.cwd(), ".test-settings", "settings.json");
   }
 
   /**
@@ -142,13 +150,29 @@ export class SettingsService {
    */
   async save(): Promise<boolean> {
     try {
+      // Vorherigen persistierten Zustand laden (falls vorhanden)
+      let prev: Settings | null = null;
+      try {
+        if (fs.existsSync(this.settingsPath)) {
+          const rawPrev = await fs.promises.readFile(this.settingsPath, "utf8");
+          prev = {
+            ...DEFAULT_SETTINGS,
+            ...(JSON.parse(rawPrev) as Partial<Settings>),
+          } as Settings;
+        }
+      } catch (e) {
+        log.warn(
+          "[settings] Could not read previous settings for delta (async):",
+          e instanceof Error ? e.message : String(e),
+        );
+      }
+
       const json = JSON.stringify(this.settings, null, 2);
       const dir = path.dirname(this.settingsPath);
-
       await fs.promises.mkdir(dir, { recursive: true });
       await fs.promises.writeFile(this.settingsPath, json, "utf8");
 
-      log.info("Settings saved successfully");
+      this.logDelta(prev, this.settings, "async");
       return true;
     } catch (err) {
       log.error(
@@ -164,13 +188,27 @@ export class SettingsService {
    */
   saveSync(): boolean {
     try {
+      let prev: Settings | null = null;
+      try {
+        if (fs.existsSync(this.settingsPath)) {
+          const rawPrev = fs.readFileSync(this.settingsPath, "utf8");
+          prev = {
+            ...DEFAULT_SETTINGS,
+            ...(JSON.parse(rawPrev) as Partial<Settings>),
+          } as Settings;
+        }
+      } catch (e) {
+        log.warn(
+          "[settings] Could not read previous settings for delta (sync):",
+          e instanceof Error ? e.message : String(e),
+        );
+      }
       const json = JSON.stringify(this.settings, null, 2);
       const dir = path.dirname(this.settingsPath);
-
       fs.mkdirSync(dir, { recursive: true });
       fs.writeFileSync(this.settingsPath, json, "utf8");
 
-      log.info("Settings saved successfully (sync)");
+      this.logDelta(prev, this.settings, "sync");
       return true;
     } catch (err) {
       log.error(
@@ -178,6 +216,46 @@ export class SettingsService {
         err instanceof Error ? err.message : String(err),
       );
       return false;
+    }
+  }
+
+  /**
+   * Vergleicht vorherigen (persistierten) Zustand mit aktuellem und loggt Delta
+   */
+  private logDelta(
+    prev: Settings | null,
+    next: Settings,
+    mode: "async" | "sync",
+  ): void {
+    try {
+      if (!prev) {
+        log.info(`[settings] Initial settings ${mode} persisted`);
+        return;
+      }
+      const changes: Record<string, { alpha: unknown; delta: unknown }> = {};
+      const allKeys = new Set<string>([
+        ...Object.keys(prev),
+        ...Object.keys(next),
+      ]);
+      for (const key of allKeys) {
+        const alphaVal = (prev as unknown as Record<string, unknown>)[key];
+        const deltaVal = (next as unknown as Record<string, unknown>)[key];
+        if (JSON.stringify(alphaVal) !== JSON.stringify(deltaVal)) {
+          changes[key] = { alpha: alphaVal, delta: deltaVal };
+        }
+      }
+      if (Object.keys(changes).length) {
+        log.info(`[settings] Configuration changed (${mode} save)`, {
+          changes,
+        });
+      } else {
+        log.info(`[settings] No changes (${mode} save)`);
+      }
+    } catch (e) {
+      log.warn(
+        "[settings] Delta logging failed:",
+        e instanceof Error ? e.message : String(e),
+      );
     }
   }
 

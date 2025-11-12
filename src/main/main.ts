@@ -333,17 +333,62 @@ function prepareRenderBatch(entries: LogEntry[]): LogEntry[] {
     return entries;
   }
 }
+
+// [FREEZE FIX] Track batch sends for diagnostics
+let batchSendStats = { total: 0, failed: 0, lastSendTime: 0 };
 function sendBatchesAsyncTo(
   wc: any,
   channel: string,
   batches: LogEntry[][],
 ): void {
+  if (!batches || batches.length === 0) return;
+
+  const batchCount = batches.length;
+  const totalEntries = batches.reduce((sum, b) => sum + (b?.length || 0), 0);
+  const startTime = Date.now();
+
   batches.forEach((batch, idx) => {
     setTimeout(() => {
       try {
+        if (!wc || wc.isDestroyed?.()) {
+          try {
+            log.debug("[freeze-diag] wc destroyed before batch send:", {
+              idx,
+              batchCount,
+            });
+          } catch {}
+          return;
+        }
+
         wc.send(channel, batch);
-      } catch {
+        batchSendStats.total++;
+        batchSendStats.lastSendTime = Date.now();
+
+        // Log every 10th successful send or if batch takes too long
+        if (batchSendStats.total % 10 === 0) {
+          try {
+            const elapsed = Date.now() - startTime;
+            if (elapsed > 100) {
+              log.debug("[freeze-diag] batch send taking time:", {
+                batchIdx: idx,
+                batchCount,
+                totalEntries,
+                elapsedMs: elapsed,
+              });
+            }
+          } catch {}
+        }
+      } catch (e) {
+        batchSendStats.failed++;
         // Ignorieren; erneuter Versand erfolgt später ggf. über Buffer
+        try {
+          if (batchSendStats.failed % 5 === 0) {
+            log.warn(
+              "[freeze-diag] batch send error (recurring):",
+              e instanceof Error ? e.message : String(e),
+            );
+          }
+        } catch {}
       }
     }, idx * BATCH_SEND_DELAY_MS);
   });
@@ -1463,8 +1508,8 @@ function forceFlushLogs(): void {
     // Electron-log automatically flushes on error/fatal, but we force it here
     // to ensure all logs reach disk before exit
     const transport = log as unknown as LogTransportWithFlush;
-    if (transport?.transports?.file?.flush) {
-      transport.transports.file.flush();
+    if (transport?.file?.flush) {
+      transport.file.flush();
     }
   } catch (e) {
     // Last resort: write to stderr if log flushing fails
@@ -1614,7 +1659,6 @@ try {
 
   // Electron-level crash diagnostics
   try {
-    // @ts-expect-error: event may not exist in all Electron versions
     app.on("child-process-gone", (_event, details) => {
       try {
         exitSource = "child-process-gone";
@@ -1926,6 +1970,49 @@ app.on("quit", () => {
       // ignore
     }
   }
+});
+
+// [FREEZE FIX] Event Loop Activity Monitor
+// Detect if main thread is blocked for extended periods
+let lastActivityTime = Date.now();
+let frozenIntervalCount = 0;
+const FROZEN_THRESHOLD_MS = 2000; // 2 second freeze threshold
+
+setInterval(() => {
+  const now = Date.now();
+  const timeSinceLastActivity = now - lastActivityTime;
+
+  if (timeSinceLastActivity > FROZEN_THRESHOLD_MS) {
+    frozenIntervalCount++;
+    if (frozenIntervalCount === 1 || frozenIntervalCount % 5 === 0) {
+      try {
+        log.warn("[freeze-monitor] Potential main thread freeze detected:", {
+          frozenMs: timeSinceLastActivity,
+          occurrenceCount: frozenIntervalCount,
+          timestamp: new Date().toISOString(),
+        });
+      } catch {}
+    }
+  } else {
+    if (frozenIntervalCount > 0) {
+      try {
+        log.info("[freeze-monitor] Main thread responsive again after", {
+          frozenFor: frozenIntervalCount,
+          checks: "interval cycles",
+        });
+      } catch {}
+      frozenIntervalCount = 0;
+    }
+    lastActivityTime = now;
+  }
+}, 1000); // Check every second
+
+// Mark activity on important async operations
+process.on("beforeExit", () => {
+  lastActivityTime = Date.now();
+  try {
+    log.info("[freeze-monitor] beforeExit: marking activity");
+  } catch {}
 });
 
 // Export for IPC handlers
