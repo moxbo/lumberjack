@@ -21,6 +21,9 @@ import { PerformanceService } from "../services/PerformanceService";
 import { AdaptiveBatchService } from "../services/AdaptiveBatchService";
 import { AsyncFileWriter } from "../services/AsyncFileWriter";
 import { HealthMonitor } from "../services/HealthMonitor";
+import { LoggingStrategy, LogLevel } from "../services/LoggingStrategy";
+import { FeatureFlags } from "../services/FeatureFlags";
+import { ShutdownCoordinator } from "../services/ShutdownCoordinator";
 import { registerIpcHandlers } from "./ipcHandlers";
 import os from "node:os";
 
@@ -97,6 +100,18 @@ const settingsService = new SettingsService();
 const networkService = new NetworkService();
 const adaptiveBatchService = new AdaptiveBatchService();
 const healthMonitor = new HealthMonitor();
+const loggingStrategy = new LoggingStrategy();
+const featureFlags = new FeatureFlags();
+const shutdownCoordinator = new ShutdownCoordinator();
+
+// Configure logging strategy based on environment
+if (isDev) {
+  loggingStrategy.setLevel(LogLevel.DEBUG);
+  loggingStrategy.setCategoryLevel("parser", LogLevel.TRACE);
+  loggingStrategy.setCategoryLevel("worker", LogLevel.DEBUG);
+} else {
+  loggingStrategy.setLevel(LogLevel.WARN);
+}
 
 // Lazy modules
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -297,8 +312,8 @@ function applyWindowTitles(): void {
   }
 };
 
-// Buffers
-const MAX_PENDING_APPENDS = 5000;
+// Buffers with adaptive memory limits
+let MAX_PENDING_APPENDS = 5000;
 let pendingAppends: LogEntry[] = [];
 const pendingMenuCmdsByWindow = new Map<
   number,
@@ -306,6 +321,54 @@ const pendingMenuCmdsByWindow = new Map<
 >();
 let lastFocusedWindowId: number | null = null;
 const pendingAppendsByWindow = new Map<number, LogEntry[]>();
+
+// Adaptive Memory Management
+// Periodically adjust buffer sizes based on memory usage
+setInterval(() => {
+  try {
+    const mem = process.memoryUsage();
+    const heapUsed = mem.heapUsed;
+    const heapTotal = mem.heapTotal;
+    const heapPercent = heapUsed / heapTotal;
+
+    if (heapPercent > 0.75) {
+      // High memory usage: reduce buffer
+      const newLimit = Math.max(1000, Math.floor(MAX_PENDING_APPENDS * 0.5));
+      if (newLimit !== MAX_PENDING_APPENDS) {
+        loggingStrategy.logMessage(
+          "memory",
+          LogLevel.WARN,
+          `Buffer reduced due to high memory usage: ${MAX_PENDING_APPENDS} -> ${newLimit}`,
+          { heapPercent: Math.round(heapPercent * 100) + "%" },
+        );
+        MAX_PENDING_APPENDS = newLimit;
+
+        // Trim existing buffers if needed
+        if (pendingAppends.length > MAX_PENDING_APPENDS) {
+          const overflow = pendingAppends.length - MAX_PENDING_APPENDS;
+          pendingAppends.splice(0, overflow);
+        }
+      }
+    } else if (heapPercent < 0.4 && MAX_PENDING_APPENDS < 5000) {
+      // Low memory usage: increase buffer back to normal
+      const newLimit = Math.min(5000, Math.floor(MAX_PENDING_APPENDS * 1.5));
+      if (newLimit !== MAX_PENDING_APPENDS) {
+        loggingStrategy.logMessage(
+          "memory",
+          LogLevel.INFO,
+          `Buffer increased: ${MAX_PENDING_APPENDS} -> ${newLimit}`,
+          { heapPercent: Math.round(heapPercent * 100) + "%" },
+        );
+        MAX_PENDING_APPENDS = newLimit;
+      }
+    }
+  } catch (e) {
+    log.error(
+      "[memory] Adaptive buffer adjustment failed:",
+      e instanceof Error ? e.message : String(e),
+    );
+  }
+}, 10000); // Check every 10 seconds
 
 // UI-freundliche Batch-/Trunkierungs-Parameter
 const MAX_BATCH_ENTRIES = 200;
@@ -2035,31 +2098,67 @@ void app
 
       createWindow({ makePrimary: true });
 
-      // Setup health monitoring
+      // Setup health monitoring with feature flags
       try {
-        // Register health checks
-        healthMonitor.registerCheck("memory-usage", async () => {
-          const usage = process.memoryUsage();
-          const limitMB = 1024; // 1GB limit
-          const heapUsedMB = usage.heapUsed / (1024 * 1024);
-          return heapUsedMB < limitMB;
-        });
+        if (featureFlags.isEnabled("HEALTH_MONITORING")) {
+          // Register health checks
+          healthMonitor.registerCheck("memory-usage", async () => {
+            const usage = process.memoryUsage();
+            const limitMB = 1024; // 1GB limit
+            const heapUsedMB = usage.heapUsed / (1024 * 1024);
+            return heapUsedMB < limitMB;
+          });
 
-        healthMonitor.registerCheck("tcp-server", async () => {
-          const status = networkService.getTcpStatus();
-          return status.running || status.activeConnections === 0;
-        });
+          healthMonitor.registerCheck("tcp-server", async () => {
+            if (!featureFlags.isEnabled("TCP_SERVER")) return true;
+            const status = networkService.getTcpStatus();
+            return status.running || status.activeConnections === 0;
+          });
 
-        healthMonitor.registerCheck("main-window", async () => {
-          return mainWindow !== null && !mainWindow.isDestroyed();
-        });
+          healthMonitor.registerCheck("main-window", async () => {
+            return mainWindow !== null && !mainWindow.isDestroyed();
+          });
 
-        // Start monitoring every 60 seconds
-        healthMonitor.startMonitoring(60000);
-        log.info("[health-monitor] Health monitoring started");
+          // Start monitoring every 60 seconds
+          healthMonitor.startMonitoring(60000);
+          log.info("[health-monitor] Health monitoring started");
+        }
       } catch (e) {
         log.warn(
           "[health-monitor] Failed to start health monitoring:",
+          e instanceof Error ? e.message : String(e),
+        );
+        featureFlags.disable("HEALTH_MONITORING", "Startup failed");
+      }
+
+      // Register shutdown handlers
+      try {
+        shutdownCoordinator.register("health-monitor", async () => {
+          healthMonitor.stopMonitoring();
+        });
+
+        shutdownCoordinator.register("async-file-writer", async () => {
+          if (asyncFileWriter) {
+            await asyncFileWriter.flush();
+          }
+        });
+
+        shutdownCoordinator.register("network-service", async () => {
+          networkService.cleanup();
+        });
+
+        shutdownCoordinator.register("log-stream", async () => {
+          closeLogStream();
+        });
+
+        shutdownCoordinator.register("log-flush", async () => {
+          forceFlushLogs();
+        });
+
+        log.info("[shutdown] Shutdown coordinator initialized");
+      } catch (e) {
+        log.warn(
+          "[shutdown] Failed to register shutdown handlers:",
           e instanceof Error ? e.message : String(e),
         );
       }
@@ -2205,24 +2304,13 @@ app.on("window-all-closed", () => {
   }
 });
 
-app.on("quit", () => {
+app.on("quit", async () => {
   try {
-    log.info("[diag] app quit fired; cleaning up");
+    log.info("[diag] app quit fired; starting graceful shutdown");
     
-    // Stop health monitoring
-    healthMonitor.stopMonitoring();
+    // Use shutdown coordinator for organized cleanup
+    await shutdownCoordinator.shutdown();
     
-    // Flush async file writer
-    if (asyncFileWriter) {
-      asyncFileWriter.flush().catch((err) => {
-        log.error("Failed to flush async file writer:", err);
-      });
-    }
-    
-    closeLogStream();
-    networkService.cleanup();
-    // Final log flush before process exits
-    forceFlushLogs();
   } catch (e) {
     log.error(
       "[diag] Error during quit cleanup:",

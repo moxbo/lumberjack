@@ -22,6 +22,8 @@ class WorkerPool {
   private nextTaskId: number;
   private pendingTasks: Map<number, PoolTask>;
   private unavailable: boolean;
+  private workerRestartAttempts = new Map<number, number>();
+  private readonly maxRestartAttempts = 3;
 
   constructor(workerPath: string, poolSize = 2) {
     this.workerPath = workerPath;
@@ -94,10 +96,68 @@ class WorkerPool {
     logger.error("[WorkerPool] Worker error:", err);
     // Find the worker that errored
     const worker = err.target as PWorker | null;
-    if (worker) worker.busy = false;
+    if (worker) {
+      worker.busy = false;
+      
+      // Attempt to restart the worker
+      const workerIndex = this.workers.indexOf(worker);
+      if (workerIndex !== -1) {
+        this.restartWorker(workerIndex);
+      }
+    }
 
     // Process next task
     this.processNextTask();
+  }
+
+  /**
+   * Restart a failed worker with exponential backoff
+   */
+  private restartWorker(index: number): void {
+    const attempts = this.workerRestartAttempts.get(index) ?? 0;
+    
+    if (attempts >= this.maxRestartAttempts) {
+      logger.error(`[WorkerPool] Worker ${index} failed too many times, not restarting`);
+      this.workers.splice(index, 1);
+      
+      // Check if we still have workers
+      if (this.workers.length === 0) {
+        logger.warn("[WorkerPool] All workers failed, marking pool as unavailable");
+        this.unavailable = true;
+      }
+      return;
+    }
+
+    this.workerRestartAttempts.set(index, attempts + 1);
+    
+    // Exponential backoff: 1s, 2s, 4s
+    const backoffMs = 1000 * Math.pow(2, attempts);
+    
+    logger.info(`[WorkerPool] Restarting worker ${index} in ${backoffMs}ms (attempt ${attempts + 1}/${this.maxRestartAttempts})`);
+    
+    setTimeout(() => {
+      try {
+        // Terminate old worker
+        this.workers[index]?.terminate();
+        
+        // Create new worker
+        const worker = new Worker(new URL(this.workerPath, import.meta.url), {
+          type: "module",
+        }) as PWorker;
+        worker.onmessage = (e: MessageEvent) => this.handleWorkerMessage(e);
+        worker.onerror = (err: ErrorEvent) => this.handleWorkerError(err);
+        worker.busy = false;
+        this.workers[index] = worker;
+        
+        logger.info(`[WorkerPool] Worker ${index} restarted successfully`);
+        
+        // Reset restart counter on successful restart
+        this.workerRestartAttempts.delete(index);
+      } catch (err) {
+        logger.error(`[WorkerPool] Failed to restart worker ${index}:`, err);
+        // Will try again on next error if within max attempts
+      }
+    }, backoffMs);
   }
 
   private processNextTask(): void {
