@@ -19,6 +19,8 @@ import { SettingsService } from "../services/SettingsService";
 import { NetworkService } from "../services/NetworkService";
 import { PerformanceService } from "../services/PerformanceService";
 import { AdaptiveBatchService } from "../services/AdaptiveBatchService";
+import { AsyncFileWriter } from "../services/AsyncFileWriter";
+import { HealthMonitor } from "../services/HealthMonitor";
 import { registerIpcHandlers } from "./ipcHandlers";
 import os from "node:os";
 
@@ -94,6 +96,7 @@ const perfService = new PerformanceService();
 const settingsService = new SettingsService();
 const networkService = new NetworkService();
 const adaptiveBatchService = new AdaptiveBatchService();
+const healthMonitor = new HealthMonitor();
 
 // Lazy modules
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -412,6 +415,7 @@ function sendBatchesAsyncTo(
 
 // File logging
 let logStream: fs.WriteStream | null = null;
+let asyncFileWriter: AsyncFileWriter | null = null;
 let logBytes = 0;
 function defaultLogFilePath(): string {
   const base = app.getPath("userData");
@@ -427,6 +431,13 @@ function closeLogStream(): void {
     );
   }
   logStream = null;
+  
+  // Clear async file writer
+  if (asyncFileWriter) {
+    asyncFileWriter.clearQueue();
+    asyncFileWriter = null;
+  }
+  
   logBytes = 0;
 }
 function openLogStream(): void {
@@ -440,6 +451,9 @@ function openLogStream(): void {
     const st = fs.existsSync(p) ? fs.statSync(p) : null;
     logBytes = st ? st.size : 0;
     logStream = fs.createWriteStream(p, { flags: "a" });
+    
+    // Initialize AsyncFileWriter for non-blocking writes
+    asyncFileWriter = new AsyncFileWriter(p);
   } catch (err) {
     log.error(
       "Log-Datei kann nicht geöffnet werden:",
@@ -498,13 +512,34 @@ function writeEntriesToFile(entries: LogEntry[]): void {
     if (!entries || !entries.length) return;
     if (!logStream) openLogStream();
     if (!logStream) return;
-    for (const e of entries) {
-      const line = JSON.stringify(e) + "\n";
-      rotateIfNeeded(line.length);
-      if (!logStream) openLogStream();
-      if (!logStream) return;
-      logStream.write(line);
-      logBytes += line.length;
+    
+    // Use AsyncFileWriter if available for non-blocking writes
+    if (asyncFileWriter) {
+      for (const e of entries) {
+        const line = JSON.stringify(e) + "\n";
+        rotateIfNeeded(line.length);
+        if (!asyncFileWriter) openLogStream();
+        if (!asyncFileWriter) return;
+        
+        // Non-blocking async write
+        asyncFileWriter.write(line).catch((err) => {
+          log.error(
+            "Async write failed:",
+            err instanceof Error ? err.message : String(err),
+          );
+        });
+        logBytes += line.length;
+      }
+    } else {
+      // Fallback to sync writes if AsyncFileWriter not available
+      for (const e of entries) {
+        const line = JSON.stringify(e) + "\n";
+        rotateIfNeeded(line.length);
+        if (!logStream) openLogStream();
+        if (!logStream) return;
+        logStream.write(line);
+        logBytes += line.length;
+      }
     }
   } catch (err) {
     log.error(
@@ -2000,6 +2035,35 @@ void app
 
       createWindow({ makePrimary: true });
 
+      // Setup health monitoring
+      try {
+        // Register health checks
+        healthMonitor.registerCheck("memory-usage", async () => {
+          const usage = process.memoryUsage();
+          const limitMB = 1024; // 1GB limit
+          const heapUsedMB = usage.heapUsed / (1024 * 1024);
+          return heapUsedMB < limitMB;
+        });
+
+        healthMonitor.registerCheck("tcp-server", async () => {
+          const status = networkService.getTcpStatus();
+          return status.running || status.activeConnections === 0;
+        });
+
+        healthMonitor.registerCheck("main-window", async () => {
+          return mainWindow !== null && !mainWindow.isDestroyed();
+        });
+
+        // Start monitoring every 60 seconds
+        healthMonitor.startMonitoring(60000);
+        log.info("[health-monitor] Health monitoring started");
+      } catch (e) {
+        log.warn(
+          "[health-monitor] Failed to start health monitoring:",
+          e instanceof Error ? e.message : String(e),
+        );
+      }
+
       try {
         app.on("browser-window-focus", () => updateMenu());
         app.on("browser-window-blur", () => updateMenu());
@@ -2144,6 +2208,17 @@ app.on("window-all-closed", () => {
 app.on("quit", () => {
   try {
     log.info("[diag] app quit fired; cleaning up");
+    
+    // Stop health monitoring
+    healthMonitor.stopMonitoring();
+    
+    // Flush async file writer
+    if (asyncFileWriter) {
+      asyncFileWriter.flush().catch((err) => {
+        log.error("Failed to flush async file writer:", err);
+      });
+    }
+    
     closeLogStream();
     networkService.cleanup();
     // Final log flush before process exits
