@@ -124,9 +124,20 @@ await (async () => {
         console.log("ICNS erzeugt:", outIcns);
       } catch (e: any) {
         console.error(
-          "Fehler beim Erzeugen der ICNS (ist Xcode Command Line Tools installiert?):",
+          "Fehler beim Erzeugen der ICNS mit iconutil (ist Xcode Command Line Tools installiert?):",
           e?.message || e,
         );
+        // Fallback: Kopiere die PNG als ICNS (funktioniert in Electron)
+        try {
+          console.log("Fallback: Kopiere PNG als ICNS...");
+          fs.copyFileSync(srcPng, outIcns);
+          console.log("ICNS (PNG-Fallback) erstellt:", outIcns);
+        } catch (copyErr: any) {
+          console.error(
+            "Fehler beim PNG-Fallback für ICNS:",
+            copyErr?.message || copyErr,
+          );
+        }
       } finally {
         // iconset entfernen
         try {

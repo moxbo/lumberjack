@@ -679,19 +679,26 @@ let cachedDistIndexPath: string | null = null;
 function resolveIconPathSync(): string | null {
   if (cachedIconPath !== null) return cachedIconPath || null;
   const resPath = process.resourcesPath || "";
+  const appPath = app.getAppPath?.() || "";
   const candidates = [
+    // Production: app.asar.unpacked
     path.join(resPath, "app.asar.unpacked", "images", "icon.ico"),
     path.join(resPath, "images", "icon.ico"),
+    // Development: __dirname (compiled main.js) and project root
     path.join(__dirname, "images", "icon.ico"),
-    path.join(app.getAppPath?.() || "", "images", "icon.ico"),
+    path.join(appPath, "images", "icon.ico"),
+    // Fallback: Current working directory
     path.join(process.cwd(), "images", "icon.ico"),
+    // Additional fallback: src/main (for dev mode)
+    path.join(__dirname, "..", "..", "images", "icon.ico"),
   ].filter(Boolean);
+
   for (const p of candidates) {
     try {
       if (p && fs.existsSync(p)) {
         cachedIconPath = p;
         try {
-          log.debug?.("[icon] resolveIconPathSync hit:", p);
+          log.info?.("[icon] resolveIconPathSync hit:", p);
         } catch (e) {
           log.error(
             "[icon] resolveIconPathSync log error:",
@@ -708,7 +715,10 @@ function resolveIconPathSync(): string | null {
     }
   }
   try {
-    log.warn?.("[icon] resolveIconPathSync: no candidate exists");
+    log.warn?.(
+      "[icon] resolveIconPathSync: no candidate exists, checked:",
+      candidates,
+    );
   } catch (e) {
     log.error(
       "[icon] resolveIconPathSync log error:",
@@ -765,19 +775,83 @@ async function resolveIconPathAsync(): Promise<string | null> {
   return null;
 }
 function resolveMacIconPath(): string | null {
+  try {
+    log.info?.("[icon] resolveMacIconPath called");
+  } catch {
+    // Intentionally empty
+  }
+
   const resPath = process.resourcesPath || "";
-  const candidates = [
-    path.join(resPath, "app.asar.unpacked", "images", "icon.icns"),
-    path.join(resPath, "images", "icon.icns"),
-    path.join(__dirname, "images", "icon.icns"),
-    path.join(process.cwd(), "images", "icon.icns"),
-  ];
-  for (const p of candidates) {
+  const appPath = app.getAppPath?.() || "";
+
+  // Versuche zuerst ICNS (native macOS format)
+  const icnsFile = "icon.icns";
+  const icnsCandidates = [
+    // Production: app.asar.unpacked
+    path.join(resPath, "app.asar.unpacked", "images", icnsFile),
+    path.join(resPath, "images", icnsFile),
+    // Development: __dirname (compiled main.js) and project root
+    path.join(__dirname, "images", icnsFile),
+    path.join(appPath, "images", icnsFile),
+    // Fallback: Current working directory
+    path.join(process.cwd(), "images", icnsFile),
+    // Additional fallback: src/main (for dev mode)
+    path.join(__dirname, "..", "..", "images", icnsFile),
+  ].filter(Boolean);
+
+  for (const p of icnsCandidates) {
     try {
-      if (fs.existsSync(p)) return p;
+      if (fs.existsSync(p)) {
+        try {
+          log.info?.("[icon] resolveMacIconPath ICNS hit:", p);
+        } catch {
+          // Intentionally empty - ignore errors
+        }
+        return p;
+      }
     } catch {
       // Intentionally empty - ignore errors
     }
+  }
+
+  try {
+    log.warn?.(
+      "[icon] resolveMacIconPath: no ICNS candidate exists, trying PNG fallback",
+    );
+  } catch {
+    // Intentionally empty - ignore errors
+  }
+
+  // Fallback zu PNG wenn ICNS nicht vorhanden
+  const pngFile = "lumberjack_v4_normal_1024.png";
+  const pngCandidates = [
+    path.join(resPath, "app.asar.unpacked", "images", pngFile),
+    path.join(resPath, "images", pngFile),
+    path.join(__dirname, "images", pngFile),
+    path.join(appPath, "images", pngFile),
+    path.join(process.cwd(), "images", pngFile),
+    path.join(__dirname, "..", "..", "images", pngFile),
+  ].filter(Boolean);
+
+  for (const p of pngCandidates) {
+    try {
+      if (fs.existsSync(p)) {
+        try {
+          log.info?.("[icon] resolveMacIconPath PNG fallback hit:", p);
+        } catch {
+          // Intentionally empty - ignore errors
+        }
+        return p;
+      }
+    } catch {
+      // Intentionally empty - ignore errors
+    }
+  }
+
+  try {
+    log.warn?.("[icon] resolveMacIconPath: no candidate exists (ICNS or PNG)");
+  } catch {
+    // Intentionally empty - ignore errors
   }
   return null;
 }
@@ -1058,13 +1132,18 @@ function createWindow(opts: { makePrimary?: boolean } = {}): BrowserWindow {
     height: height || 800,
     ...(x != null && y != null ? { x, y } : {}),
     title: getDefaultBaseTitle(),
-    // Icon bereits beim Erzeugen setzen (wichtig für Taskbar/Alt-Tab unter Windows)
-    ...(process.platform === "win32"
+    // Icon bereits beim Erzeugen setzen (wichtig für Taskbar/Alt-Tab unter Windows und Dock auf macOS)
+    ...(process.platform === "darwin"
       ? (() => {
-          const iconPath = resolveIconPathSync();
+          const iconPath = resolveMacIconPath();
           return iconPath ? { icon: iconPath } : {};
         })()
-      : {}),
+      : process.platform === "win32"
+        ? (() => {
+            const iconPath = resolveIconPathSync();
+            return iconPath ? { icon: iconPath } : {};
+          })()
+        : {}),
     webPreferences: {
       preload: path.join(app.getAppPath(), "preload.cjs"),
       contextIsolation: true,
@@ -1159,6 +1238,72 @@ function createWindow(opts: { makePrimary?: boolean } = {}): BrowserWindow {
 
   win.once("ready-to-show", () => {
     if (!win.isVisible()) win.show();
+
+    // macOS: Dock-Icon setzen
+    if (process.platform === "darwin") {
+      try {
+        const macIconPath = resolveMacIconPath();
+        if (macIconPath) {
+          try {
+            log.info(
+              "[icon] Loading macOS icon for ready-to-show:",
+              macIconPath,
+            );
+            // Versuche, die Datei direkt als Buffer zu lesen und zu laden
+            try {
+              const iconBuffer = fs.readFileSync(macIconPath);
+              const img = nativeImage.createFromBuffer(iconBuffer);
+              if (!img.isEmpty()) {
+                app.dock.setIcon(img);
+                log.info(
+                  "[icon] app.dock.setIcon applied in ready-to-show via buffer",
+                );
+              } else {
+                log.warn("[icon] macOS nativeImage is empty from buffer");
+              }
+            } catch (bufferErr) {
+              log.warn(
+                "[icon] Error with createFromBuffer, trying createFromPath:",
+                bufferErr instanceof Error
+                  ? bufferErr.message
+                  : String(bufferErr),
+              );
+              // Fallback: Versuche mit Pfad
+              const img = nativeImage.createFromPath(macIconPath);
+              if (!img.isEmpty()) {
+                app.dock.setIcon(img);
+                log.info(
+                  "[icon] app.dock.setIcon applied in ready-to-show via path",
+                );
+              } else {
+                log.warn("[icon] macOS nativeImage is empty from path");
+              }
+            }
+          } catch (imgErr) {
+            log.warn(
+              "[icon] Error creating nativeImage for macOS:",
+              imgErr instanceof Error ? imgErr.message : String(imgErr),
+            );
+          }
+        } else {
+          try {
+            log.warn?.("[icon] No macOS icon resolved for ready-to-show dock");
+          } catch {
+            // Intentionally empty - ignore errors
+          }
+        }
+      } catch (e) {
+        try {
+          log.warn?.(
+            "[icon] macOS dock icon error in ready-to-show:",
+            e instanceof Error ? e.message : String(e),
+          );
+        } catch {
+          // Intentionally empty - ignore errors
+        }
+      }
+    }
+
     if (process.platform === "win32") {
       setImmediate(async () => {
         try {
@@ -1167,7 +1312,7 @@ function createWindow(opts: { makePrimary?: boolean } = {}): BrowserWindow {
             try {
               win.setIcon(iconPath);
               try {
-                log.debug?.("[icon] BrowserWindow.setIcon applied:", iconPath);
+                log.info?.("[icon] BrowserWindow.setIcon applied:", iconPath);
               } catch {
                 // Intentionally empty - ignore errors
               }
@@ -1783,14 +1928,43 @@ void app
         const macIconPath = resolveMacIconPath();
         if (macIconPath) {
           try {
-            const img = nativeImage.createFromPath(macIconPath);
-            if (!img.isEmpty()) app.dock.setIcon(img);
+            log.info("[icon] Attempting to load macOS icon from:", macIconPath);
+            try {
+              // Versuche, die Datei direkt als Buffer zu lesen und zu laden
+              const iconBuffer = fs.readFileSync(macIconPath);
+              const img = nativeImage.createFromBuffer(iconBuffer);
+              if (!img.isEmpty()) {
+                app.dock.setIcon(img);
+                log.info(
+                  "[icon] macOS dock icon set successfully via createFromBuffer",
+                );
+              } else {
+                log.warn("[icon] macOS nativeImage is empty from buffer");
+              }
+            } catch (bufferErr) {
+              log.warn(
+                "[icon] Error with createFromBuffer, trying createFromPath:",
+                bufferErr instanceof Error
+                  ? bufferErr.message
+                  : String(bufferErr),
+              );
+              // Fallback: Versuche mit Pfad
+              const img = nativeImage.createFromPath(macIconPath);
+              if (!img.isEmpty()) {
+                app.dock.setIcon(img);
+                log.info("[icon] macOS dock icon set via createFromPath");
+              } else {
+                log.warn("[icon] macOS nativeImage is empty from path too");
+              }
+            }
           } catch (e) {
             log.warn(
-              "[diag] Failed to set dock icon:",
+              "[icon] Failed to set dock icon:",
               e instanceof Error ? e.message : String(e),
             );
           }
+        } else {
+          log.warn("[icon] No macOS icon path resolved in whenReady()");
         }
         try {
           const dockMenu = Menu.buildFromTemplate([
