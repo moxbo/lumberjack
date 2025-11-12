@@ -185,6 +185,26 @@ Lumberjack is highly optimized for fast startup, responsive UI, and efficient me
 
 - Startup optimizations: [PERFORMANCE.md](docs/PERFORMANCE.md)
 - Advanced optimizations: [ADVANCED_OPTIMIZATIONS.md](docs/ADVANCED_OPTIMIZATIONS.md)
+- **Production-ready optimizations**: [PRODUCTION_OPTIMIZATIONS.md](docs/PRODUCTION_OPTIMIZATIONS.md)
+  - Adaptive batch processing (4-100ms dynamic delay)
+  - Non-blocking file I/O with AsyncFileWriter
+  - Circuit breaker pattern for resilient service calls
+  - Token bucket rate limiting
+  - Proactive health monitoring (every 60s)
+  - Real-time performance metrics tracking
+
+### Production-Ready Features ✅
+
+The application includes enterprise-grade stability and performance features:
+
+- **Adaptive Batching**: Automatically adjusts processing delays based on system load
+- **Health Monitoring**: Proactive checks for memory usage, TCP server, and main window
+- **Circuit Breaker**: Protects against cascading failures with automatic recovery
+- **Rate Limiting**: Prevents system overload with token bucket algorithm
+- **Performance Tracking**: Real-time monitoring of memory, CPU, and event loop lag
+- **Async File I/O**: Non-blocking writes prevent main thread stalls
+
+See [OPTIMIZATIONS_README.md](docs/OPTIMIZATIONS_README.md) for quick reference and [PRODUCTION_OPTIMIZATIONS.md](docs/PRODUCTION_OPTIMIZATIONS.md) for detailed documentation.
 
 ## Troubleshooting & Diagnostik
 
