@@ -18,6 +18,7 @@ import type { LogEntry } from "../types/ipc";
 import { SettingsService } from "../services/SettingsService";
 import { NetworkService } from "../services/NetworkService";
 import { PerformanceService } from "../services/PerformanceService";
+import { AdaptiveBatchService } from "../services/AdaptiveBatchService";
 import { registerIpcHandlers } from "./ipcHandlers";
 import os from "node:os";
 
@@ -92,6 +93,7 @@ log.info("[diag] Application starting", {
 const perfService = new PerformanceService();
 const settingsService = new SettingsService();
 const networkService = new NetworkService();
+const adaptiveBatchService = new AdaptiveBatchService();
 
 // Lazy modules
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -348,7 +350,12 @@ function sendBatchesAsyncTo(
   const startTime = Date.now();
 
   batches.forEach((batch, idx) => {
+    // Use adaptive delay from AdaptiveBatchService
+    const delay = adaptiveBatchService.getDelay() * idx;
+    
     setTimeout(() => {
+      const batchStartTime = Date.now();
+      
       try {
         if (!wc || wc.isDestroyed?.()) {
           try {
@@ -363,6 +370,14 @@ function sendBatchesAsyncTo(
         wc.send(channel, batch);
         batchSendStats.total++;
         batchSendStats.lastSendTime = Date.now();
+        
+        // Calculate processing time and adjust adaptive delay
+        const processingTime = Date.now() - batchStartTime;
+        if (idx === batchCount - 1) {
+          // Adjust delay based on last batch processing time
+          const totalProcessingTime = Date.now() - startTime;
+          adaptiveBatchService.adjustDelay(totalProcessingTime, batchCount, totalEntries);
+        }
 
         // Log every 10th successful send or if batch takes too long
         if (batchSendStats.total % 10 === 0) {
@@ -374,6 +389,7 @@ function sendBatchesAsyncTo(
                 batchCount,
                 totalEntries,
                 elapsedMs: elapsed,
+                adaptiveDelay: adaptiveBatchService.getDelay(),
               });
             }
           } catch {}
@@ -390,7 +406,7 @@ function sendBatchesAsyncTo(
           }
         } catch {}
       }
-    }, idx * BATCH_SEND_DELAY_MS);
+    }, delay);
   });
 }
 
