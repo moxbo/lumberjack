@@ -840,14 +840,24 @@ export default function App() {
   // Filtered indices
   const filteredIdx = useMemo(() => {
     const out: number[] = [];
+    let filterStats = { total: 0, passed: 0, rejectedByOnlyMarked: 0, rejectedByLevel: 0, rejectedByLogger: 0, rejectedByThread: 0, rejectedByMessage: 0, rejectedByTime: 0, rejectedByDC: 0 };
+    
     for (let i = 0; i < entries.length; i++) {
       const e = entries[i];
+      filterStats.total++;
+      
       if (!e) continue;
-      if (onlyMarked && !e._mark) continue;
+      if (onlyMarked && !e._mark) {
+        filterStats.rejectedByOnlyMarked++;
+        continue;
+      }
       if (stdFiltersEnabled) {
         if (filter.level) {
           const lev = String(e.level || "").toUpperCase();
-          if (lev !== String(filter.level).toUpperCase()) continue;
+          if (lev !== String(filter.level).toUpperCase()) {
+            filterStats.rejectedByLevel++;
+            continue;
+          }
         }
         if (filter.logger) {
           const q = String(filter.logger || "").toLowerCase();
@@ -855,8 +865,10 @@ export default function App() {
             !String(e.logger || "")
               .toLowerCase()
               .includes(q)
-          )
+          ) {
+            filterStats.rejectedByLogger++;
             continue;
+          }
         }
         if (filter.thread) {
           const q = String(filter.thread || "").toLowerCase();
@@ -864,11 +876,16 @@ export default function App() {
             !String(e.thread || "")
               .toLowerCase()
               .includes(q)
-          )
+          ) {
+            filterStats.rejectedByThread++;
             continue;
+          }
         }
         if (filter.message) {
-          if (!msgMatches(e.message, filter.message)) continue;
+          if (!msgMatches(e.message, filter.message)) {
+            filterStats.rejectedByMessage++;
+            continue;
+          }
         }
       }
       const isElasticSrc =
@@ -876,19 +893,41 @@ export default function App() {
       // Zeitfilter nur für Elastic-Quellen anwenden; Nicht-Elastic nie durch Zeitfilter ausblenden
       if (isElasticSrc) {
         try {
-          if (!(TimeFilter as any).matchesTs(e.timestamp)) continue;
+          if (!(TimeFilter as any).matchesTs(e.timestamp)) {
+            filterStats.rejectedByTime++;
+            continue;
+          }
         } catch (err) {
           logger.error("TimeFilter.matchesTs error:", err);
+          filterStats.rejectedByTime++;
           continue;
         }
       }
       try {
-        if (!(DiagnosticContextFilter as any).matches(e.mdc || {})) continue;
+        if (!(DiagnosticContextFilter as any).matches(e.mdc || {})) {
+          filterStats.rejectedByDC++;
+          continue;
+        }
       } catch (err) {
         logger.error("DiagnosticContextFilter.matches error:", err);
       }
+      filterStats.passed++;
       out.push(i);
     }
+    
+    if (filterStats.total > 0) {
+      console.log('[filter-diag] Filter stats:', filterStats);
+      if (filterStats.passed === 0 && filterStats.total > 0) {
+        console.warn('[filter-diag] WARNING: All entries filtered out!', {
+          total: filterStats.total,
+          onlyMarked,
+          stdFiltersEnabled,
+          filter,
+          dcFilterEnabled: (DiagnosticContextFilter as any).isEnabled?.(),
+        });
+      }
+    }
+    
     return out;
   }, [entries, stdFiltersEnabled, filter, dcVersion, timeVersion, onlyMarked]);
 
@@ -1170,7 +1209,11 @@ export default function App() {
     newEntries: any[],
     options?: { ignoreExistingForElastic?: boolean },
   ) {
-    if (!Array.isArray(newEntries) || newEntries.length === 0) return;
+    console.log(`[renderer-diag] appendEntries called with ${newEntries?.length || 0} entries, isArray: ${Array.isArray(newEntries)}`);
+    if (!Array.isArray(newEntries) || newEntries.length === 0) {
+      console.log("[renderer-diag] appendEntries: rejecting - not array or empty");
+      return;
+    }
 
     const ignoreExistingForElastic = !!options?.ignoreExistingForElastic;
 
@@ -1278,6 +1321,7 @@ export default function App() {
       }
     }
 
+    console.log(`[renderer-diag] Adding ${toAdd.length} entries to state (after dedup from ${accepted.length})`);
     try {
       (LoggingStore as any).addEvents(toAdd);
     } catch (e) {
@@ -1287,7 +1331,11 @@ export default function App() {
           ((e as any)?.message || String(e)),
       );
     }
-    setEntries((prev) => [...prev, ...toAdd].sort(compareByTimestampId as any));
+    setEntries((prev) => {
+      const newState = [...prev, ...toAdd].sort(compareByTimestampId as any);
+      console.log(`[renderer-diag] State updated: ${prev.length} -> ${newState.length} entries`);
+      return newState;
+    });
     setNextId((prev) => prev + toAdd.length);
   }
 
@@ -1590,12 +1638,18 @@ export default function App() {
     const offs: Array<() => void> = [];
     try {
       if (window.api?.onAppend) {
+        console.log("[renderer-diag] Setting up onAppend listener");
         const off = window.api.onAppend((newEntries) => {
+          console.log(`[renderer-diag] Received IPC logs:append with ${newEntries?.length || 0} entries`);
           appendEntries(newEntries as any[]);
         });
         offs.push(off);
+      } else {
+        console.warn("[renderer-diag] window.api.onAppend not available!");
       }
-    } catch {}
+    } catch (err) {
+      console.error("[renderer-diag] Error setting up onAppend:", err);
+    }
     try {
       if (window.api?.onMenu) {
         const off = window.api.onMenu(async (cmd) => {
