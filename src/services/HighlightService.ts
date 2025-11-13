@@ -130,7 +130,7 @@ class HighlightService {
     stackTrace?: string | null,
   ): { formattedMessage: string; formattedStackTrace?: string } {
     // Simple escaping for safety
-    const escape = (str: string) =>
+    const escape = (str: string): string =>
       str
         .replace(/&/g, "&amp;")
         .replace(/</g, "&lt;")

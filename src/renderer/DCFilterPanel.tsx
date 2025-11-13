@@ -36,8 +36,11 @@ export default function DCFilterPanel(): preact.JSX.Element {
       if (!ctx.open) return;
       const el = ctxRef.current;
       const path =
-        typeof (e as any).composedPath === "function"
-          ? ((e as any).composedPath() as unknown[])
+        typeof (e as unknown as Record<string, unknown>).composedPath ===
+        "function"
+          ? ((
+              e as unknown as Record<string, (...args: unknown[]) => unknown[]>
+            ).composedPath() as unknown[])
           : [];
       const tgt = (e.target as Node) || null;
       if (
@@ -49,20 +52,14 @@ export default function DCFilterPanel(): preact.JSX.Element {
         return;
       setCtx({ open: false, x: 0, y: 0 });
     }
-    window.addEventListener(
-      "mousedown",
-      onDocClick as any,
-      {
-        capture: true,
-        passive: true,
-      } as AddEventListenerOptions,
-    );
+    window.addEventListener("mousedown", onDocClick as EventListener, {
+      capture: true,
+      passive: true,
+    });
     return () =>
-      window.removeEventListener(
-        "mousedown",
-        onDocClick as any,
-        { capture: true } as AddEventListenerOptions,
-      );
+      window.removeEventListener("mousedown", onDocClick as EventListener, {
+        capture: true,
+      });
   }, [ctx.open]);
 
   // sync keys from MDCListener; clear on store reset
@@ -102,12 +99,15 @@ export default function DCFilterPanel(): preact.JSX.Element {
   }
   const valueInputRef = useRef<HTMLInputElement | null>(null);
   function chooseKey(k: unknown): void {
-    setSelectedKey(String(k || ""));
+    const keyStr = typeof k === "string" ? k : String(k || "");
+    setSelectedKey(keyStr);
     setShowKeyPicker(false);
     // Fokus auf Value-Feld für schnellen Flow
     try {
       valueInputRef.current?.focus();
-    } catch {}
+    } catch {
+      // No-op: focus may fail if ref not ready
+    }
   }
 
   function onAdd(): void {

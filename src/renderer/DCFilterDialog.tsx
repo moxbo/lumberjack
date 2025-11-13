@@ -55,15 +55,21 @@ export default function DCFilterDialog(): preact.JSX.Element {
       const btnEl = keyBtnRef.current;
       const inputEl = keyInputRef.current;
       const path =
-        typeof (e as any).composedPath === "function"
-          ? (e as any).composedPath()
+        typeof (e as unknown as Record<string, unknown>).composedPath ===
+        "function"
+          ? (
+              e as unknown as Record<string, (...args: unknown[]) => unknown[]>
+            ).composedPath()
           : [];
       const tgt = e.target as Node | null;
-      const isInside = (node: Node | null, container: HTMLElement | null) =>
+      const isInside = (
+        node: Node | null,
+        container: HTMLElement | null,
+      ): boolean =>
         !!container &&
         !!node &&
         (container === node || container.contains(node));
-      const pathHas = (container: HTMLElement | null) =>
+      const pathHas = (container: HTMLElement | null): boolean =>
         Array.isArray(path) && !!container && path.includes(container);
       if (
         (el && (isInside(tgt, el) || pathHas(el))) ||
@@ -73,17 +79,14 @@ export default function DCFilterDialog(): preact.JSX.Element {
         return;
       setKeyDD({ open: false, x: 0, y: 0, w: 0 });
     }
-    window.addEventListener(
-      "click",
-      onDocClick as any,
-      { capture: true, passive: true } as AddEventListenerOptions,
-    );
+    window.addEventListener("click", onDocClick as EventListener, {
+      capture: true,
+      passive: true,
+    });
     return () =>
-      window.removeEventListener(
-        "click",
-        onDocClick as any,
-        { capture: true } as AddEventListenerOptions,
-      );
+      window.removeEventListener("click", onDocClick as EventListener, {
+        capture: true,
+      });
   }, [keyDD.open]);
 
   useEffect(() => {
@@ -104,16 +107,14 @@ export default function DCFilterDialog(): preact.JSX.Element {
         return;
       setCtx({ open: false, x: 0, y: 0 });
     }
-    window.addEventListener("click", onDocClick, {
+    window.addEventListener("click", onDocClick as EventListener, {
       capture: true,
       passive: true,
-    } as any);
+    });
     return () =>
-      window.removeEventListener(
-        "click",
-        onDocClick as any,
-        { capture: true } as any,
-      );
+      window.removeEventListener("click", onDocClick as EventListener, {
+        capture: true,
+      });
   }, [ctx.open]);
 
   // MDC-Keys laden & bei Store-Reset leeren
@@ -292,7 +293,9 @@ export default function DCFilterDialog(): preact.JSX.Element {
     setKeyDD({ open: false, x: 0, y: 0, w: 0 });
     try {
       valueInputRef.current?.focus();
-    } catch {}
+    } catch {
+      // No-op: focus may fail if ref not ready
+    }
   }
 
   const addDisabled = !String(selectedKey || "").trim();
@@ -469,11 +472,11 @@ export default function DCFilterDialog(): preact.JSX.Element {
                   onClick={(ev) =>
                     toggleRow(
                       id,
-                      (ev as any).shiftKey,
-                      (ev as any).ctrlKey || (ev as any).metaKey,
+                      (ev as MouseEvent).shiftKey,
+                      (ev as MouseEvent).ctrlKey || (ev as MouseEvent).metaKey,
                     )
                   }
-                  onContextMenu={(ev) => openCtx(ev as any, id)}
+                  onContextMenu={(ev) => openCtx(ev as MouseEvent, id)}
                   style="cursor: default;"
                 >
                   <td class="cell-key">{e.key}</td>

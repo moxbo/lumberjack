@@ -80,9 +80,10 @@ function formatMessage(message: string, level?: string | null): string {
 // Format stack trace with line numbers and highlighting
 function formatStackTrace(stackTrace: string): string {
   const lines = stackTrace.split("\n");
-  const formatted = lines
-    .map((line, index) => {
-      let formattedLine = line;
+
+  return lines
+    .map((_line, _index) => {
+      let formattedLine = _line;
 
       // Highlight file paths and line numbers
       formattedLine = formattedLine.replace(
@@ -99,8 +100,6 @@ function formatStackTrace(stackTrace: string): string {
       return `<span class="stack-line">${formattedLine}</span>`;
     })
     .join("\n");
-
-  return formatted;
 }
 
 // Worker message handler

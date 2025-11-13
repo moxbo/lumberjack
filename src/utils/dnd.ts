@@ -39,21 +39,24 @@ export class DragAndDropManager {
     this._handlers = null;
   }
 
-  attach(target: Window | HTMLElement = window) {
+  attach(target: Window | HTMLElement = window): void {
     if (this._handlers) return;
     const debug =
-      typeof window !== "undefined" && !!(window as any).__DEBUG_DND__;
+      typeof window !== "undefined" &&
+      !!(window as Record<string, unknown>).__DEBUG_DND__;
 
-    const onDragOverBlockAll = (e: DragEvent) => {
+    const onDragOverBlockAll = (e: DragEvent): void => {
       e.preventDefault();
     };
 
-    const isFileDrag = (e: DragEvent) => {
+    const isFileDrag = (e: DragEvent): boolean => {
       const dt = e.dataTransfer;
       if (!dt) return false;
       if (debug) {
         try {
-          const types = Array.from(dt.types || ([] as any));
+          const types = Array.from(
+            (dt.types as unknown as ArrayLike<unknown>) || [],
+          );
           logger.log("[DnD] drag types:", types);
         } catch (e) {
           logger.warn("DnD: failed to log drag types:", e);
@@ -61,10 +64,14 @@ export class DragAndDropManager {
       }
       // DataTransfer.types ist array-ähnlich, iterierbar
       let hasFiles = false;
-      const types: any = dt.types as any;
-      if (types && typeof types.length === "number") {
-        for (let i = 0; i < types.length; i++) {
-          const t = types[i];
+      const types = dt.types as unknown as ArrayLike<unknown>;
+      if (
+        types &&
+        typeof (types as Record<string, unknown>).length === "number"
+      ) {
+        const len = (types as Record<string, unknown>).length as number;
+        for (let i = 0; i < len; i++) {
+          const t = (types as Record<string, unknown>)[i];
           if (
             t === "Files" ||
             t === "public.file-url" ||
@@ -366,37 +373,36 @@ export class DragAndDropManager {
     };
 
     // Two layers: block default navigation and add functional handlers (with capture)
-    (target as any).addEventListener(
-      "dragover",
-      onDragOverBlockAll as any,
-      { capture: true } as any,
-    );
-    (target as any).addEventListener(
-      "drop",
-      onDragOverBlockAll as any,
-      { capture: true } as any,
-    );
+    const addEventListenerSafe = (
+      el: Window | HTMLElement,
+      type: string,
+      handler: (e: DragEvent) => void | Promise<void>,
+    ): void => {
+      const wrappedHandler = (e: Event): void => {
+        const result = handler(e as DragEvent);
+        if (result instanceof Promise) {
+          void result;
+        }
+      };
+      if (el instanceof Window) {
+        (el as unknown as EventTarget).addEventListener(
+          type,
+          wrappedHandler as EventListener,
+          { capture: true },
+        );
+      } else {
+        el.addEventListener(type, wrappedHandler as EventListener, {
+          capture: true,
+        });
+      }
+    };
 
-    (target as any).addEventListener(
-      "dragenter",
-      onDragEnter as any,
-      { capture: true } as any,
-    );
-    (target as any).addEventListener(
-      "dragover",
-      onDragOver as any,
-      { capture: true } as any,
-    );
-    (target as any).addEventListener(
-      "dragleave",
-      onDragLeave as any,
-      { capture: true } as any,
-    );
-    (target as any).addEventListener(
-      "drop",
-      onDrop as any,
-      { capture: true } as any,
-    );
+    addEventListenerSafe(target, "dragover", onDragOverBlockAll);
+    addEventListenerSafe(target, "drop", onDragOverBlockAll);
+    addEventListenerSafe(target, "dragenter", onDragEnter);
+    addEventListenerSafe(target, "dragover", onDragOver);
+    addEventListenerSafe(target, "dragleave", onDragLeave);
+    addEventListenerSafe(target, "drop", onDrop);
 
     this._handlers = {
       onDragOverBlockAll,
@@ -408,21 +414,33 @@ export class DragAndDropManager {
     };
   }
 
-  detach() {
+  detach(): void {
     const h = this._handlers;
     if (!h) return;
-    const t: any = h.target;
-    t.removeEventListener("dragover", h.onDragOverBlockAll, {
-      capture: true,
-    } as any);
-    t.removeEventListener("drop", h.onDragOverBlockAll, {
-      capture: true,
-    } as any);
+    const removeEventListenerSafe = (
+      el: Window | HTMLElement,
+      type: string,
+      handler: (e: DragEvent) => void,
+    ): void => {
+      if (el instanceof Window) {
+        (el as unknown as EventTarget).removeEventListener(
+          type,
+          handler as EventListener,
+          { capture: true },
+        );
+      } else {
+        el.removeEventListener(type, handler as EventListener, {
+          capture: true,
+        });
+      }
+    };
 
-    t.removeEventListener("dragenter", h.onDragEnter, { capture: true } as any);
-    t.removeEventListener("dragover", h.onDragOver, { capture: true } as any);
-    t.removeEventListener("dragleave", h.onDragLeave, { capture: true } as any);
-    t.removeEventListener("drop", h.onDrop, { capture: true } as any);
+    removeEventListenerSafe(h.target, "dragover", h.onDragOverBlockAll);
+    removeEventListenerSafe(h.target, "drop", h.onDragOverBlockAll);
+    removeEventListenerSafe(h.target, "dragenter", h.onDragEnter);
+    removeEventListenerSafe(h.target, "dragover", h.onDragOver);
+    removeEventListenerSafe(h.target, "dragleave", h.onDragLeave);
+    removeEventListenerSafe(h.target, "drop", h.onDrop);
 
     this._handlers = null;
   }

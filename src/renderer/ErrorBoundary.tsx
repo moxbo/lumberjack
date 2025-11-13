@@ -29,7 +29,7 @@ export class ErrorBoundary extends Component<
     this.state = { hasError: false, error: null };
   }
 
-  componentDidCatch(error: Error, errorInfo: any): void {
+  componentDidCatch(error: Error, errorInfo: Record<string, unknown>): void {
     // Log error to console
     console.error("[ErrorBoundary] Caught error:", error, errorInfo);
 
@@ -38,19 +38,22 @@ export class ErrorBoundary extends Component<
 
     // Log to main process via IPC if available
     try {
-      if (
-        typeof window !== "undefined" &&
-        (window as any).electronAPI?.logError
-      ) {
-        (window as any).electronAPI.logError({
-          error: {
-            name: error.name,
-            message: error.message,
-            stack: error.stack,
-          },
-          errorInfo,
-          timestamp: new Date().toISOString(),
-        });
+      if (typeof window !== "undefined") {
+        const win = window as unknown as Record<string, unknown>;
+        const electronAPI = win.electronAPI as
+          | Record<string, (...args: unknown[]) => void>
+          | undefined;
+        if (electronAPI?.logError) {
+          void (electronAPI.logError as (...args: unknown[]) => void)({
+            error: {
+              name: error.name,
+              message: error.message,
+              stack: error.stack,
+            },
+            errorInfo,
+            timestamp: new Date().toISOString(),
+          });
+        }
       }
     } catch (logError) {
       console.error(
@@ -139,7 +142,7 @@ export class ErrorBoundary extends Component<
  * Hook-based error boundary helper
  * Use this to wrap async operations that might throw
  */
-export function withErrorBoundary<T extends (...args: any[]) => any>(
+export function withErrorBoundary<T extends (...args: unknown[]) => unknown>(
   fn: T,
   onError?: (error: Error) => void,
 ): T {
@@ -148,15 +151,19 @@ export function withErrorBoundary<T extends (...args: any[]) => any>(
       const result = fn(...args);
 
       // Handle promises
-      if (result && typeof result.then === "function") {
-        return result.catch((error: Error) => {
-          console.error("[withErrorBoundary] Async error:", error);
-          if (onError) onError(error);
-          throw error;
-        });
+      if (
+        result &&
+        typeof (result as Record<string, unknown>).then === "function"
+      ) {
+        return (result as Promise<unknown>).catch((error: unknown) => {
+          const err = error instanceof Error ? error : new Error(String(error));
+          console.error("[withErrorBoundary] Async error:", err);
+          if (onError) onError(err);
+          throw err;
+        }) as unknown as T;
       }
 
-      return result;
+      return result as T;
     } catch (error) {
       console.error("[withErrorBoundary] Sync error:", error);
       if (onError && error instanceof Error) onError(error);

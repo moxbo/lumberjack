@@ -597,7 +597,7 @@ async function tryOpenPitEs(
 ): Promise<string> {
   const idx = index && index.trim() ? index.trim() : "_all";
   const url = `${baseUrl}/${encodeURIComponent(idx)}/_pit?keep_alive=${encodeURIComponent(keepAlive)}&ignore_unavailable=true&allow_no_indices=true&expand_wildcards=open`;
-  const exec = () =>
+  const exec = (): Promise<HttpResponse> =>
     httpJsonRequest("POST", url, {}, headers, allowInsecureTLS, timeoutMs);
   const res = await requestWithRetry(exec, { maxRetries, backoffBaseMs });
   if (res.status >= 200 && res.status < 300) {
@@ -629,7 +629,7 @@ async function tryOpenPitOs(
     ignore_unavailable: true,
     allow_no_indices: true,
   } as AnyMap;
-  const exec = () =>
+  const exec = (): Promise<HttpResponse> =>
     httpJsonRequest("POST", url, body, headers, allowInsecureTLS, timeoutMs);
   const res = await requestWithRetry(exec, { maxRetries, backoffBaseMs });
   if (res.status >= 200 && res.status < 300) {
@@ -654,7 +654,7 @@ async function closePitEs(
 ): Promise<void> {
   const url = `${baseUrl}/_pit/close`;
   const body = { id: pitId };
-  const exec = () =>
+  const exec = (): Promise<HttpResponse> =>
     httpJsonRequest("POST", url, body, headers, allowInsecureTLS, timeoutMs);
   const res = await requestWithRetry(exec, { maxRetries, backoffBaseMs });
   if (!(res.status >= 200 && res.status < 300))
@@ -674,7 +674,7 @@ async function closePitOs(
 ): Promise<void> {
   const url = `${baseUrl}/_search/point_in_time`;
   const body = { pit_id: pitId };
-  const exec = () =>
+  const exec = (): Promise<HttpResponse> =>
     httpJsonRequest("DELETE", url, body, headers, allowInsecureTLS, timeoutMs);
   const res = await requestWithRetry(exec, { maxRetries, backoffBaseMs });
   if (!(res.status >= 200 && res.status < 300))
@@ -832,7 +832,7 @@ function buildElasticSearchBody(opts: ElasticsearchOptions): AnyMap {
   const app = String(opts.application_name || "").trim();
   if (app) {
     const q =
-      app.includes(" ") || /[\["*?:\/()\]{}]/.test(app)
+      app.includes(" ") || /[\["*?:/()\]{}]/.test(app)
         ? `"${app.replace(/"/g, '\\"')}"`
         : app;
     must.push({
@@ -956,7 +956,7 @@ async function searchWithPit(
   body: AnyMap,
 ): Promise<{ status: number; text: string; json: AnyMap | null }> {
   const url = `${sess.baseUrl}/_search?filter_path=hits.hits._source,hits.hits.sort,hits.total`;
-  const exec = () =>
+  const exec = (): Promise<HttpResponse> =>
     httpJsonRequest(
       "POST",
       url,
@@ -1176,7 +1176,7 @@ async function scrollNext(
 ): Promise<{ scrollId: string; entries: Entry[] }> {
   const url = `${baseUrl}/_search/scroll?filter_path=hits.hits._source,hits.hits.sort,_scroll_id`;
   const body = { scroll: keepAlive, scroll_id: scrollId } as AnyMap;
-  const exec = () =>
+  const exec = (): Promise<HttpResponse> =>
     httpJsonRequest("POST", url, body, headers, allowInsecureTLS, timeoutMs);
   const res = await requestWithRetry(exec, { maxRetries, backoffBaseMs });
   if (!(res.status >= 200 && res.status < 300))

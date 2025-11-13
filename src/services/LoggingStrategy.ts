@@ -55,18 +55,18 @@ export class LoggingStrategy {
     category: string,
     level: LogLevel,
     message: string,
-    data?: any,
+    data?: unknown,
   ): void {
     if (!this.shouldLog(category, level)) return;
 
     const logFn =
       level >= LogLevel.ERROR
-        ? log.error
+        ? (msg: string, d?: unknown): void => log.error(msg, d)
         : level >= LogLevel.WARN
-          ? log.warn
+          ? (msg: string, d?: unknown): void => log.warn(msg, d)
           : level >= LogLevel.DEBUG
-            ? log.debug
-            : log.info;
+            ? (msg: string, d?: unknown): void => log.debug(msg, d)
+            : (msg: string, d?: unknown): void => log.info(msg, d);
 
     if (data !== undefined) {
       logFn(`[${category}] ${message}`, data);

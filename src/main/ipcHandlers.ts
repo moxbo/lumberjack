@@ -301,9 +301,9 @@ export function registerIpcHandlers(
           if (!name || !data) continue;
           if (ext === ".zip") {
             const buf = Buffer.from(data, enc === "base64" ? "base64" : "utf8");
-            const zip = new (ZipClass as any)(buf);
-            zip.getEntries().forEach((zEntry: any) => {
-              const ename = zEntry.entryName;
+            const zip = new (ZipClass as typeof import("adm-zip"))(buf);
+            zip.getEntries().forEach((zEntry: Record<string, unknown>) => {
+              const ename = String(zEntry.entryName || "");
               const eext = path.extname(ename).toLowerCase();
               if (
                 !zEntry.isDirectory &&
@@ -312,12 +312,15 @@ export function registerIpcHandlers(
                   eext === ".jsonl" ||
                   eext === ".txt")
               ) {
-                const text = zEntry.getData().toString("utf8");
+                const getData = zEntry.getData as (
+                  ...args: unknown[]
+                ) => Buffer;
+                const text = getData().toString("utf8");
                 const parsed =
                   eext === ".json"
                     ? parseJsonFile(ename, text)
                     : parseTextLines(ename, text);
-                parsed.forEach((e: any) => {
+                parsed.forEach((e: Record<string, unknown>) => {
                   e.source = `${name}::${ename}`;
                 });
                 all.push(...parsed);
@@ -612,12 +615,16 @@ export function registerIpcHandlers(
   });
 
   // Error logging from renderer
-  ipcMain.handle("logError", (_event, errorData: any) => {
+  ipcMain.handle("logError", (_event, errorData: Record<string, unknown>) => {
     try {
+      const errData = errorData as Record<
+        string,
+        Record<string, unknown> | string
+      >;
       log.error("[renderer] Error caught by ErrorBoundary:", {
-        error: errorData.error,
-        errorInfo: errorData.errorInfo,
-        timestamp: errorData.timestamp,
+        error: errData.error,
+        errorInfo: errData.errorInfo,
+        timestamp: errData.timestamp,
       });
       return { ok: true };
     } catch (err) {

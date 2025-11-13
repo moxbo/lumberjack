@@ -8,15 +8,20 @@
  */
 export async function ipcInvokeWithTimeout<T>(
   channel: string,
-  data: any,
+  data: unknown,
   timeoutMs: number = 30000,
 ): Promise<T> {
-  if (typeof window === "undefined" || !(window as any).electronAPI?.invoke) {
+  const win = typeof window !== "undefined" ? window : null;
+  const electronAPI = (win as Record<string, unknown> | null)?.electronAPI as
+    | Record<string, unknown>
+    | undefined;
+  if (!electronAPI || typeof electronAPI.invoke !== "function") {
     throw new Error("Electron API not available");
   }
 
+  const invoke = electronAPI.invoke as (...args: unknown[]) => Promise<T>;
   return Promise.race([
-    (window as any).electronAPI.invoke(channel, data) as Promise<T>,
+    invoke(channel, data),
     new Promise<T>((_, reject) =>
       setTimeout(() => reject(new Error(`IPC timeout: ${channel}`)), timeoutMs),
     ),

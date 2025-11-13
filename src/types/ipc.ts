@@ -267,7 +267,7 @@ export interface ElectronAPI {
   onMenu: (callback: (command: MenuCommand) => void) => () => void;
 
   // Error logging from renderer to main process
-  logError: (errorData: any) => Promise<Result<void>>;
+  logError: (errorData: Record<string, unknown>) => Promise<Result<void>>;
 }
 
 /**

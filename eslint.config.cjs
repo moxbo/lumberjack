@@ -15,7 +15,18 @@ const compat = new FlatCompat({
 });
 
 module.exports = defineConfig([
+  globalIgnores([
+    "**/node_modules/",
+    "**/dist/",
+    "**/release/",
+    "**/*.cjs",
+    "**/*.mjs",
+    "**/*.js",
+    "**/forge.config.js",
+    "**/vite.config.mjs",
+  ]),
   {
+    files: ["**/*.ts", "**/*.tsx"],
     languageOptions: {
       parser: tsParser,
       ecmaVersion: 2020,
@@ -80,15 +91,6 @@ module.exports = defineConfig([
       ],
     },
   },
-  globalIgnores([
-    "**/node_modules/",
-    "**/dist/",
-    "**/release/",
-    "**/*.cjs",
-    "**/*.mjs",
-    "**/forge.config.js",
-    "**/vite.config.mjs",
-  ]),
   {
     files: ["**/*.tsx"],
     extends: compat.extends("plugin:@typescript-eslint/recommended"),

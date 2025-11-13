@@ -18,26 +18,49 @@ let _backend: LogBackend = {
 
 // Try to dynamically import electron-log/renderer; ignore failures
 try {
+  // eslint-disable-next-line @typescript-eslint/no-floating-promises
   import("electron-log/renderer.js")
-    .then((mod) => {
+    .then((mod: Record<string, unknown>) => {
       try {
-        const el = (mod as any)?.default || (mod as any);
-        if (el) {
+        const el =
+          (mod.default as LogBackend | undefined) ||
+          (mod as LogBackend | undefined);
+        if (el && typeof el === "object" && "error" in el) {
           // Configure transports defensively
           try {
-            const env: any = (import.meta as any)?.env || {};
+            const env =
+              (
+                import.meta as Record<
+                  string,
+                  Record<string, unknown> | undefined
+                >
+              )?.env || {};
             const lvl = String(
-              env.VITE_LOG_CONSOLE_LEVEL || env.LOG_CONSOLE_LEVEL || "error",
+              (env.VITE_LOG_CONSOLE_LEVEL as string | undefined) ||
+                (env.LOG_CONSOLE_LEVEL as string | undefined) ||
+                "error",
             );
-            if (el.transports?.console) el.transports.console.level = lvl;
-            if (el.transports?.remote)
-              el.transports.remote.level = false as any;
+            const transports = el as Record<
+              string,
+              Record<string, unknown> | undefined
+            >;
+            if (transports.console && typeof transports.console === "object") {
+              const console_ = transports.console as Record<string, unknown>;
+              console_.level = lvl;
+            }
+            if (transports.remote && typeof transports.remote === "object") {
+              const remote = transports.remote as Record<string, unknown>;
+              remote.level = false;
+            }
             const isDev =
               !!env?.DEV ||
               (typeof process !== "undefined" &&
-                (process as any)?.env?.NODE_ENV === "development");
-            if (el.transports?.file)
-              el.transports.file.level = isDev ? (false as any) : "silly";
+                (process as Record<string, Record<string, string>>)?.env
+                  ?.NODE_ENV === "development");
+            if (transports.file && typeof transports.file === "object") {
+              const file = transports.file as Record<string, unknown>;
+              file.level = isDev ? false : "silly";
+            }
           } catch (e) {
             console.warn("logger: dynamic configure failed:", e);
           }
@@ -47,7 +70,7 @@ try {
         console.warn("logger: adopting electron-log backend failed:", e);
       }
     })
-    .catch((e) => {
+    .catch((e: unknown) => {
       console.warn(
         "logger: dynamic import of electron-log/renderer failed:",
         e,

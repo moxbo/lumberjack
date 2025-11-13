@@ -236,16 +236,16 @@ export function validateSetting(
  * @param {Object} settings - Raw settings object
  * @returns {{ settings: Object, errors: string[] }}
  */
-export function validateSettings(settings: Record<string, any>): {
-  settings: Record<string, any>;
+export function validateSettings(settings: Record<string, unknown>): {
+  settings: Record<string, unknown>;
   errors: string[];
 } {
-  const validated: Record<string, any> = {};
+  const validated: Record<string, unknown> = {};
   const errors: string[] = [];
 
   // Validate each known setting
   for (const key of Object.keys(SETTINGS_SCHEMA)) {
-    const result = validateSetting(key, (settings as any)?.[key]);
+    const result = validateSetting(key, settings?.[key]);
     validated[key] = result.value;
 
     if (!result.valid && result.error) {
@@ -264,11 +264,11 @@ export function validateSettings(settings: Record<string, any>): {
  * @returns {Object}
  */
 export function mergeSettings(
-  partialSettings: Record<string, any>,
-  defaults: Record<string, any> | null = null,
-): Record<string, any> {
+  partialSettings: Record<string, unknown>,
+  defaults: Record<string, unknown> | null = null,
+): Record<string, unknown> {
   const base = defaults || getDefaultSettings();
-  const result: Record<string, any> = { ...base };
+  const result: Record<string, unknown> = { ...base };
 
   if (!partialSettings || typeof partialSettings !== "object") {
     return result;
@@ -290,10 +290,11 @@ export function mergeSettings(
  * Gets default settings for all schema entries
  * @returns {Object}
  */
-export function getDefaultSettings(): Record<string, any> {
-  const defaults: Record<string, any> = {};
-  for (const [key, schema] of Object.entries(SETTINGS_SCHEMA as any)) {
-    (defaults as any)[key] = (schema as any).default;
+export function getDefaultSettings(): Record<string, unknown> {
+  const defaults: Record<string, unknown> = {};
+  for (const [key, schema] of Object.entries(SETTINGS_SCHEMA)) {
+    const schemaObj = schema as Record<string, unknown>;
+    defaults[key] = schemaObj.default;
   }
   return defaults;
 }
@@ -305,10 +306,10 @@ export function getDefaultSettings(): Record<string, any> {
  * @returns {Object}
  */
 export function migrateSettings(
-  settings: Record<string, any>,
+  settings: Record<string, unknown>,
   fromVersion: number,
-): Record<string, any> {
-  const migrated: Record<string, any> = { ...settings };
+): Record<string, unknown> {
+  const migrated: Record<string, unknown> = { ...settings };
 
   // Migration from version 0 (no version) to version 1
   if (fromVersion < 1) {
@@ -316,7 +317,7 @@ export function migrateSettings(
     const defaults = getDefaultSettings();
     for (const key of Object.keys(defaults)) {
       if (!(key in migrated)) {
-        (migrated as any)[key] = (defaults as any)[key];
+        migrated[key] = defaults[key];
       }
     }
   }
@@ -334,7 +335,7 @@ export function migrateSettings(
  */
 export function parseSettingsJSON(jsonString: string): {
   success: boolean;
-  settings?: Record<string, any>;
+  settings?: Record<string, unknown>;
   error?: string;
 } {
   try {
@@ -342,19 +343,25 @@ export function parseSettingsJSON(jsonString: string): {
       return { success: false, error: "Invalid input: not a string" };
     }
 
-    const parsed = JSON.parse(jsonString);
+    const parsed = JSON.parse(jsonString) as unknown;
 
     if (typeof parsed !== "object" || parsed === null) {
       return { success: false, error: "Invalid JSON: not an object" };
     }
 
     // Check version and migrate if needed
-    const version = typeof parsed._version === "number" ? parsed._version : 0;
+    const parsedObj = parsed as Record<string, unknown>;
+    const version =
+      typeof parsedObj._version === "number" ? parsedObj._version : 0;
     const settings =
-      version < SETTINGS_VERSION ? migrateSettings(parsed, version) : parsed;
+      version < SETTINGS_VERSION
+        ? migrateSettings(parsedObj, version)
+        : parsedObj;
 
     // Validate and sanitize
-    const { settings: validated, errors } = validateSettings(settings);
+    const { settings: validated, errors } = validateSettings(
+      settings as Record<string, unknown>,
+    );
 
     if (errors.length > 0) {
       // Use console.warn to avoid depending on renderer logger in Node context

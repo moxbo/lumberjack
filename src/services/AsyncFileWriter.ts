@@ -30,10 +30,10 @@ export class AsyncFileWriter {
   /**
    * Queue a write operation
    */
-  async write(data: string): Promise<void> {
+  write(data: string): Promise<void> {
     return new Promise((resolve, reject) => {
       this.queue.push({ data, resolve, reject });
-      this.processQueue();
+      void this.processQueue();
     });
   }
 
@@ -70,7 +70,7 @@ export class AsyncFileWriter {
       this.isWriting = false;
       // Continue processing queue
       if (this.queue.length > 0) {
-        this.processQueue();
+        void this.processQueue();
       }
     }
   }

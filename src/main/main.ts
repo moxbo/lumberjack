@@ -130,24 +130,24 @@ if (isDev) {
 
 // Lazy modules
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-let AdmZip: any = null;
+let AdmZip: typeof import("adm-zip") | null = null;
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-function getAdmZip(): any {
+function getAdmZip(): typeof import("adm-zip") {
   if (!AdmZip) {
     // eslint-disable-next-line @typescript-eslint/no-require-imports
-    AdmZip = require("adm-zip");
+    AdmZip = require("adm-zip") as typeof import("adm-zip");
   }
-  return AdmZip;
+  return AdmZip as typeof import("adm-zip");
 }
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-let parsers: any = null;
+let parsers: typeof import("./parsers.cjs") | null = null;
 function getParsers(): typeof import("./parsers.cjs") {
   if (!parsers) {
     const appRoot = app.getAppPath();
     const parserPath = path.join(appRoot, "src", "main", "parsers.cjs");
     // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
-    parsers = require(parserPath);
+    parsers = require(parserPath) as typeof import("./parsers.cjs");
   }
   return parsers;
 }
@@ -389,17 +389,18 @@ setInterval(() => {
 // UI-freundliche Batch-/Trunkierungs-Parameter
 const MAX_BATCH_ENTRIES = 200;
 const MAX_MESSAGE_LENGTH = 10 * 1024; // 10 KB pro Textfeld
-const BATCH_SEND_DELAY_MS = 8; // kleine Verzögerung zwischen Batches
+// const _BATCH_SEND_DELAY_MS = 8; // kleine Verzögerung zwischen Batches (replaced by adaptiveBatchService)
 
 function truncateEntryForRenderer(entry: LogEntry): LogEntry {
   try {
     if (!entry || typeof entry !== "object") return entry;
-    const copy: any = { ...(entry as any) };
+    const copy = { ...(entry as Record<string, unknown>) };
     const fields = ["message", "raw", "msg", "body", "message_raw", "text"];
     let truncated = false;
     for (const f of fields) {
-      if (typeof copy[f] === "string" && copy[f].length > MAX_MESSAGE_LENGTH) {
-        copy[f] = copy[f].slice(0, MAX_MESSAGE_LENGTH) + "… [truncated]";
+      const val = copy[f];
+      if (typeof val === "string" && val.length > MAX_MESSAGE_LENGTH) {
+        copy[f] = val.slice(0, MAX_MESSAGE_LENGTH) + "… [truncated]";
         truncated = true;
       }
     }
@@ -421,7 +422,7 @@ function prepareRenderBatch(entries: LogEntry[]): LogEntry[] {
 // [FREEZE FIX] Track batch sends for diagnostics
 const batchSendStats = { total: 0, failed: 0, lastSendTime: 0 };
 function sendBatchesAsyncTo(
-  wc: any,
+  wc: Electron.WebContents,
   channel: string,
   batches: LogEntry[][],
 ): void {
@@ -436,8 +437,6 @@ function sendBatchesAsyncTo(
     const delay = adaptiveBatchService.getDelay() * idx;
 
     setTimeout(() => {
-      const batchStartTime = Date.now();
-
       try {
         if (!wc || wc.isDestroyed?.()) {
           try {
@@ -451,13 +450,14 @@ function sendBatchesAsyncTo(
           return;
         }
 
-        log.debug(`[ipc-diag] Sending IPC batch on channel "${channel}": ${batch?.length || 0} entries`);
+        log.debug(
+          `[ipc-diag] Sending IPC batch on channel "${channel}": ${batch?.length || 0} entries`,
+        );
         wc.send(channel, batch);
         batchSendStats.total++;
         batchSendStats.lastSendTime = Date.now();
 
-        // Calculate processing time and adjust adaptive delay
-        const processingTime = Date.now() - batchStartTime;
+        // Adjust adaptive delay based on last batch
         if (idx === batchCount - 1) {
           // Adjust delay based on last batch processing time
           const totalProcessingTime = Date.now() - startTime;
@@ -701,7 +701,9 @@ function flushPendingAppends(): void {
     log.debug("[flush-diag] No webContents, skipping flush");
     return;
   }
-  log.debug(`[flush-diag] Flushing ${pendingAppends.length} pending appends to main window`);
+  log.debug(
+    `[flush-diag] Flushing ${pendingAppends.length} pending appends to main window`,
+  );
   try {
     const batches: LogEntry[][] = [];
     for (let i = 0; i < pendingAppends.length; i += MAX_BATCH_ENTRIES) {
@@ -713,7 +715,10 @@ function flushPendingAppends(): void {
     log.debug(`[flush-diag] Sent ${batches.length} batches to main window`);
   } catch (err) {
     // nicht leeren, damit später erneut versucht werden kann
-    log.debug("[flush-diag] Error flushing, will retry:", err instanceof Error ? err.message : String(err));
+    log.debug(
+      "[flush-diag] Error flushing, will retry:",
+      err instanceof Error ? err.message : String(err),
+    );
     return;
   }
   pendingAppends = [];
@@ -748,7 +753,9 @@ function flushPendingAppendsFor(win: BrowserWindow): void {
   }
   const buf = pendingAppendsByWindow.get(win.id);
   if (!buf || !buf.length) return;
-  log.debug(`[flush-diag] Flushing ${buf.length} pending appends for window ${win.id}`);
+  log.debug(
+    `[flush-diag] Flushing ${buf.length} pending appends for window ${win.id}`,
+  );
   const wc = win.webContents;
   try {
     const batches: LogEntry[][] = [];
@@ -757,7 +764,9 @@ function flushPendingAppendsFor(win: BrowserWindow): void {
       batches.push(prepareRenderBatch(slice));
     }
     sendBatchesAsyncTo(wc, "logs:append", batches);
-    log.debug(`[flush-diag] Sent ${batches.length} batches to window ${win.id}`);
+    log.debug(
+      `[flush-diag] Sent ${batches.length} batches to window ${win.id}`,
+    );
   } catch (e) {
     log.error(
       "flushPendingAppendsFor send failed:",
@@ -783,9 +792,11 @@ function sendAppend(entries: LogEntry[]): void {
   const otherEntries: LogEntry[] = [];
   for (const e of entries) (isTcpEntry(e) ? tcpEntries : otherEntries).push(e);
 
-  log.debug(`[tcp-diag] sendAppend called: ${entries.length} total, ${tcpEntries.length} TCP, ${otherEntries.length} other`);
+  log.debug(
+    `[tcp-diag] sendAppend called: ${entries.length} total, ${tcpEntries.length} TCP, ${otherEntries.length} other`,
+  );
 
-  const sendEntriesToWc = (wc: any, arr: LogEntry[]) => {
+  const sendEntriesToWc = (wc: Electron.WebContents, arr: LogEntry[]): void => {
     if (!Array.isArray(arr) || arr.length === 0) return;
     const batches: LogEntry[][] = [];
     for (let i = 0; i < arr.length; i += MAX_BATCH_ENTRIES) {
@@ -802,20 +813,29 @@ function sendAppend(entries: LogEntry[]): void {
     const ownerWin =
       ownerId != null ? BrowserWindow.fromId?.(ownerId) || null : null;
     if (ownerWin && isWindowReady(ownerWin)) {
-      log.debug(`[tcp-diag] Sending ${tcpEntries.length} TCP entries directly to owner window ${ownerWin.id}`);
+      log.debug(
+        `[tcp-diag] Sending ${tcpEntries.length} TCP entries directly to owner window ${ownerWin.id}`,
+      );
       try {
         sendEntriesToWc(ownerWin.webContents, tcpEntries);
       } catch (err) {
-        log.debug(`[tcp-diag] Failed to send directly, enqueueing for window ${ownerWin.id}:`, err instanceof Error ? err.message : String(err));
+        log.debug(
+          `[tcp-diag] Failed to send directly, enqueueing for window ${ownerWin.id}:`,
+          err instanceof Error ? err.message : String(err),
+        );
         enqueueAppendsFor(ownerWin.id, tcpEntries);
       }
     } else if (ownerWin) {
-      log.debug(`[tcp-diag] Owner window ${ownerWin.id} not ready, enqueueing ${tcpEntries.length} TCP entries`);
+      log.debug(
+        `[tcp-diag] Owner window ${ownerWin.id} not ready, enqueueing ${tcpEntries.length} TCP entries`,
+      );
       enqueueAppendsFor(ownerWin.id, tcpEntries);
     }
     // else: no owner → route to main
     else {
-      log.debug(`[tcp-diag] No owner window, routing ${tcpEntries.length} TCP entries to main window`);
+      log.debug(
+        `[tcp-diag] No owner window, routing ${tcpEntries.length} TCP entries to main window`,
+      );
       otherEntries.push(...tcpEntries);
     }
   }
@@ -823,21 +843,30 @@ function sendAppend(entries: LogEntry[]): void {
   // Non-TCP → primary window (bestehendes Verhalten)
   if (otherEntries.length) {
     if (!isRendererReady()) {
-      log.debug(`[tcp-diag] Main renderer not ready, enqueueing ${otherEntries.length} entries`);
+      log.debug(
+        `[tcp-diag] Main renderer not ready, enqueueing ${otherEntries.length} entries`,
+      );
       enqueueAppends(otherEntries);
       return;
     }
     try {
       const wc = mainWindow?.webContents as any;
       if (wc) {
-        log.debug(`[tcp-diag] Sending ${otherEntries.length} entries to main window`);
+        log.debug(
+          `[tcp-diag] Sending ${otherEntries.length} entries to main window`,
+        );
         sendEntriesToWc(wc, otherEntries);
       } else {
-        log.debug(`[tcp-diag] No main window webContents, enqueueing ${otherEntries.length} entries`);
+        log.debug(
+          `[tcp-diag] No main window webContents, enqueueing ${otherEntries.length} entries`,
+        );
         enqueueAppends(otherEntries);
       }
     } catch (err) {
-      log.debug(`[tcp-diag] Error sending to main window, enqueueing:`, err instanceof Error ? err.message : String(err));
+      log.debug(
+        `[tcp-diag] Error sending to main window, enqueueing:`,
+        err instanceof Error ? err.message : String(err),
+      );
       enqueueAppends(otherEntries);
     }
   }
@@ -854,10 +883,15 @@ function isValidIcoFile(filePath: string): boolean {
   try {
     const buffer = Buffer.alloc(4);
     const fd = fs.openSync(filePath, "r");
-    fs.readSync(fd, buffer, 0, 4);
+    fs.readSync(fd, buffer, 0, 4, 0);
     fs.closeSync(fd);
     // Valid ICO format starts with 0x00 0x00 0x01 0x00
-    return buffer[0] === 0x00 && buffer[1] === 0x00 && buffer[2] === 0x01 && buffer[3] === 0x00;
+    return (
+      buffer[0] === 0x00 &&
+      buffer[1] === 0x00 &&
+      buffer[2] === 0x01 &&
+      buffer[3] === 0x00
+    );
   } catch {
     return false;
   }
@@ -914,10 +948,7 @@ function resolveIconPathSync(): string | null {
         // Validate file is readable and is valid ICO format
         if (!canAccessFile(p)) {
           try {
-            log.debug?.(
-              "[icon] Candidate exists but not readable:",
-              p,
-            );
+            log.debug?.("[icon] Candidate exists but not readable:", p);
           } catch {
             // Ignore
           }
@@ -1505,8 +1536,10 @@ function createWindow(opts: { makePrimary?: boolean } = {}): BrowserWindow {
   win.webContents.on("did-finish-load", () => {
     // Mark window as loaded so isWindowReady() will return true
     loadedWindows.add(win.id);
-    log.debug(`[window-ready] Window ${win.id} finished loading, marked as ready`);
-    
+    log.debug(
+      `[window-ready] Window ${win.id} finished loading, marked as ready`,
+    );
+
     applyWindowTitles();
 
     // Flush queued menu cmds for this window
@@ -1558,7 +1591,7 @@ function createWindow(opts: { makePrimary?: boolean } = {}): BrowserWindow {
               const iconBuffer = fs.readFileSync(macIconPath);
               const img = nativeImage.createFromBuffer(iconBuffer);
               if (!img.isEmpty()) {
-                app.dock.setIcon(img);
+                app.dock?.setIcon(img);
                 log.info(
                   "[icon] app.dock.setIcon applied in ready-to-show via buffer",
                 );
@@ -1968,15 +2001,17 @@ setInterval(() => {
   try {
     flushTimerCount++;
     const hasPending = pendingAppends.length > 0;
-    const hasWindowPending = Array.from(windows).some(w => {
+    const hasWindowPending = Array.from(windows).some((w) => {
       const buf = pendingAppendsByWindow.get(w.id);
       return buf && buf.length > 0;
     });
-    
+
     if (flushTimerCount % 10 === 1 || hasPending || hasWindowPending) {
-      log.debug(`[flush-timer] Run #${flushTimerCount}: pendingAppends=${pendingAppends.length}, windows=${windows.size}, hasWindowPending=${hasWindowPending}`);
+      log.debug(
+        `[flush-timer] Run #${flushTimerCount}: pendingAppends=${pendingAppends.length}, windows=${windows.size}, hasWindowPending=${hasWindowPending}`,
+      );
     }
-    
+
     // Flush main window buffer
     flushPendingAppends();
 
@@ -2044,7 +2079,7 @@ function forceFlushLogs(): void {
 // Note: These are safe to use in Node.js main process which is single-threaded.
 // Events are processed sequentially, so no race conditions can occur.
 let exitSource = "unknown";
-let exitDetails: any = null;
+let exitDetails: Record<string, unknown> | null = null;
 
 try {
   process.on("uncaughtException", (err, origin) => {
@@ -2184,7 +2219,7 @@ try {
     app.on("child-process-gone", (_event, details) => {
       try {
         exitSource = "child-process-gone";
-        exitDetails = details;
+        exitDetails = details as unknown as Record<string, unknown>;
         log.error("[diag] child-process-gone:", {
           type: details.type,
           reason: details.reason,
@@ -2214,10 +2249,10 @@ try {
 
     // App-level render process crash handler for exit tracking
     // Note: This is separate from the per-window handler above which handles recovery
-    app.on("render-process-gone", (_event, webContents, details) => {
+    app.on("render-process-gone", (_event, _webContents, details) => {
       try {
         exitSource = "render-process-gone";
-        exitDetails = details;
+        exitDetails = details as unknown as Record<string, unknown>;
         log.error("[diag] render-process-gone (app-level):", {
           reason: details.reason,
           exitCode: details.exitCode,

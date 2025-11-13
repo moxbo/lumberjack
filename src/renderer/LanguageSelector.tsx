@@ -1,6 +1,7 @@
 import { useI18n, type Locale } from "../utils/i18n";
+import { JSX } from "preact/jsx-runtime";
 
-export default function LanguageSelector() {
+export default function LanguageSelector(): JSX.Element {
   const { locale, setLocale, t } = useI18n();
 
   return (
