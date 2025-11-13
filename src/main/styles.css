@@ -352,6 +352,8 @@ body {
   min-height: 0;
   overflow: hidden;
   position: relative;
+  /* FIX: Stelle sicher, dass der Layout-Container und seine Kinder interaktiv sind */
+  pointer-events: auto;
 }
 
 /* Die Liste füllt weiterhin den verfügbaren Raum und scrollt */
@@ -367,6 +369,8 @@ body {
   user-select: none; /* Standard-Textmarkierung in der Liste deaktivieren */
   -webkit-user-select: none;
   -ms-user-select: none;
+  /* FIX: Stelle sicher, dass die Liste selbst interaktiv ist */
+  pointer-events: auto;
 }
 
 /* Scrollbar komplett ausblenden (WebKit) */
@@ -408,6 +412,8 @@ body {
   height: calc(var(--detail-height) + var(--divider-h));
   pointer-events: none; /* nur Kinder interaktiv machen */
   z-index: 1010; /* sicher über der Liste */
+  /* FIX: Stelle sicher, dass Kinder mit pointer-events:auto auch interaktiv bleiben */
+  /* Verhindere, dass pointer-events:none Kinder blockiert */
 }
 
 /* Divider: interaktiver Drag-Bereich mit Grifflinie */
@@ -470,7 +476,11 @@ body {
   box-shadow: 0 -8px 24px rgba(0, 0, 0, 0.08);
   padding: 18px 20px;
   min-height: 0;
-  pointer-events: auto; /* Overlay ist interaktiv */
+  /* WICHTIG: Details-Panel MUSS interaktiv sein, aber nur für Events in sich selbst */
+  pointer-events: auto; /* Details-Panel ist interaktiv */
+  /* FIX: Stelle sicher dass die Details nicht über der klickbaren Liste schwebt */
+  /* Verwende will-change für bessere Rendering-Performance */
+  will-change: contents;
 }
 
 /* Überdeckende Füllfläche entfernen – Scrollbar bleibt vollständig sichtbar */
@@ -532,6 +542,11 @@ body {
   align-items: center;
   border-bottom: 1px solid var(--color-divider);
   background: transparent;
+  /* FIX: Stelle sicher, dass Zeilen interaktiv sind */
+  pointer-events: auto;
+  cursor: pointer;
+  user-select: none;
+  transition: background-color 150ms cubic-bezier(0.4, 0, 0.2, 1);
 }
 
 .row:hover {
