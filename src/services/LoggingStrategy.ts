@@ -35,7 +35,9 @@ export class LoggingStrategy {
    */
   setCategoryLevel(category: string, level: LogLevel): void {
     this.categories.set(category, level);
-    log.info(`[logging] Category '${category}' level set to ${LogLevel[level]}`);
+    log.info(
+      `[logging] Category '${category}' level set to ${LogLevel[level]}`,
+    );
   }
 
   /**

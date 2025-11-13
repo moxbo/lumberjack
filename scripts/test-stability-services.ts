@@ -122,9 +122,7 @@ console.log(`✓ Health check report:`, {
 });
 
 if (report.overallStatus === "healthy") {
-  throw new Error(
-    "Overall status should be unhealthy with one failing check",
-  );
+  throw new Error("Overall status should be unhealthy with one failing check");
 }
 
 const healthyCheck = report.checks.find((c) => c.name === "always-healthy");

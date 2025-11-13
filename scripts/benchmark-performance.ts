@@ -33,9 +33,7 @@ for (const test of processingTimes) {
   const metrics = batchService.getMetrics();
   console.log(`${test.label} (${test.time}ms):`);
   console.log(`  Current delay: ${metrics.currentDelay}ms`);
-  console.log(
-    `  Avg processing time: ${metrics.avgProcessingTime}ms`,
-  );
+  console.log(`  Avg processing time: ${metrics.avgProcessingTime}ms`);
   console.log("");
 }
 
@@ -69,7 +67,9 @@ for (const entry of testData) {
 }
 const syncDuration = Date.now() - syncStart;
 console.log(`✓ Sync writes completed in ${syncDuration}ms`);
-console.log(`  Throughput: ${Math.round(testData.length / (syncDuration / 1000))} entries/sec\n`);
+console.log(
+  `  Throughput: ${Math.round(testData.length / (syncDuration / 1000))} entries/sec\n`,
+);
 
 // Clean up
 fs.unlinkSync(testFile);
@@ -88,14 +88,18 @@ await writer.flush();
 
 const asyncDuration = Date.now() - asyncStart;
 console.log(`✓ Async writes completed in ${asyncDuration}ms`);
-console.log(`  Throughput: ${Math.round(testData.length / (asyncDuration / 1000))} entries/sec`);
+console.log(
+  `  Throughput: ${Math.round(testData.length / (asyncDuration / 1000))} entries/sec`,
+);
 
 const stats = writer.getStats();
 console.log(`  Total bytes: ${stats.bytesWritten}`);
 console.log(`  Write count: ${stats.writeCount}\n`);
 
 // Calculate improvement
-const improvement = Math.round(((syncDuration - asyncDuration) / syncDuration) * 100);
+const improvement = Math.round(
+  ((syncDuration - asyncDuration) / syncDuration) * 100,
+);
 console.log(`Performance improvement: ${improvement}%`);
 console.log(`  Sync:  ${syncDuration}ms`);
 console.log(`  Async: ${asyncDuration}ms`);
@@ -122,7 +126,9 @@ for (const size of batchSizes) {
   console.log(`Batch size ${size}:`);
   console.log(`  Processing time: ${processingTime}ms`);
   console.log(`  Adaptive delay: ${delay}ms`);
-  console.log(`  Throughput: ~${Math.round((size / processingTime) * 1000)} entries/sec\n`);
+  console.log(
+    `  Throughput: ~${Math.round((size / processingTime) * 1000)} entries/sec\n`,
+  );
 }
 
 // Benchmark 4: Memory Impact

@@ -47,7 +47,7 @@ export class RateLimiter {
     }
 
     this.throttledRequests++;
-    
+
     if (this.throttledRequests % 10 === 0) {
       log.warn(`[rate-limiter:${this.name}] Rate limit exceeded`, {
         throttledRequests: this.throttledRequests,
@@ -66,8 +66,11 @@ export class RateLimiter {
     while (!this.tryConsume(tokensToConsume)) {
       // Calculate wait time based on token refill rate
       const tokensNeeded = tokensToConsume - this.tokens;
-      const waitTimeMs = (tokensNeeded / this.tokensPerInterval) * this.interval;
-      await new Promise((resolve) => setTimeout(resolve, Math.min(waitTimeMs, this.interval)));
+      const waitTimeMs =
+        (tokensNeeded / this.tokensPerInterval) * this.interval;
+      await new Promise((resolve) =>
+        setTimeout(resolve, Math.min(waitTimeMs, this.interval)),
+      );
     }
   }
 
