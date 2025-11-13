@@ -943,15 +943,11 @@ export default function App() {
     overscan: 10,
   } as any);
 
-  // WICHTIG: useMemo um sicherzustellen, dass virtualItems stabil bleiben und Event-Handler nicht neugebunden werden
-  const virtualItems = useMemo(
-    () => virtualizer.getVirtualItems(),
-    [virtualizer],
-  );
-  const totalHeight = useMemo(
-    () => virtualizer.getTotalSize(),
-    [virtualizer],
-  );
+  // Get virtual items - this should update when filteredIdx changes
+  const virtualItems = virtualizer.getVirtualItems();
+  const totalHeight = virtualizer.getTotalSize();
+  
+  console.log(`[virtualizer-diag] Rendering ${virtualItems.length} virtual items out of ${filteredIdx.length} filtered entries (total: ${entries.length})`);
 
   function gotoListStart() {
     if (!filteredIdx.length) return;
