@@ -1921,6 +1921,38 @@ try {
   );
 }
 
+// [CRITICAL FIX] Periodic flush of pending appends to renderer
+// This ensures buffered log entries are sent to UI regularly
+// Without this timer, logs can be delayed indefinitely in pendingAppends buffer
+const PENDING_APPEND_FLUSH_INTERVAL_MS = 100; // Flush every 100ms for responsive UI
+setInterval(() => {
+  try {
+    // Flush main window buffer
+    flushPendingAppends();
+
+    // Flush per-window buffers for multi-window scenarios
+    for (const win of windows) {
+      try {
+        if (!win.isDestroyed()) {
+          flushPendingAppendsFor(win);
+        }
+      } catch {
+        // Ignore errors for individual windows
+      }
+    }
+  } catch (err) {
+    // Ignore errors to prevent timer from being cancelled
+    try {
+      log.debug(
+        "[flush-timer] Periodic flush error (continuing):",
+        err instanceof Error ? err.message : String(err),
+      );
+    } catch {
+      // Ignore logging errors
+    }
+  }
+}, PENDING_APPEND_FLUSH_INTERVAL_MS);
+
 // App lifecycle
 if (process.platform === "win32") {
   try {
