@@ -627,12 +627,26 @@ export default function App() {
     };
   }, [ctxMenu.open]);
   function openContextMenu(ev: MouseEvent, idx: number) {
-    ev.preventDefault();
-    setSelected((prev) => {
-      if (prev && prev.has(idx)) return prev;
-      return new Set([idx]);
-    });
-    setCtxMenu({ open: true, x: ev.clientX, y: ev.clientY });
+    try {
+      ev.preventDefault();
+      setSelected((prev) => {
+        if (prev && prev.has(idx)) return prev;
+        return new Set([idx]);
+      });
+      setCtxMenu({ open: true, x: ev.clientX, y: ev.clientY });
+      // Stelle sicher, dass die Liste fokussiert bleibt auch nach Kontextmenü
+      try {
+        setTimeout(() => {
+          if (parentRef.current && !parentRef.current.contains(document.activeElement || null)) {
+            (parentRef.current as any)?.focus?.({ preventScroll: true });
+          }
+        }, 0);
+      } catch (err) {
+        logger.warn("Failed to restore focus after context menu:", err);
+      }
+    } catch (err) {
+      logger.error("openContextMenu error:", err);
+    }
   }
 
   // Markierung anwenden/entfernen + Persistenz
@@ -889,8 +903,16 @@ export default function App() {
     estimateSize: () => rowHeight,
     overscan: 10,
   } as any);
-  const virtualItems = virtualizer.getVirtualItems();
-  const totalHeight = virtualizer.getTotalSize();
+
+  // WICHTIG: useMemo um sicherzustellen, dass virtualItems stabil bleiben und Event-Handler nicht neugebunden werden
+  const virtualItems = useMemo(
+    () => virtualizer.getVirtualItems(),
+    [virtualizer],
+  );
+  const totalHeight = useMemo(
+    () => virtualizer.getTotalSize(),
+    [virtualizer],
+  );
 
   function gotoListStart() {
     if (!filteredIdx.length) return;
@@ -957,24 +979,33 @@ export default function App() {
 
   // Selection
   function toggleSelectIndex(idx: number, shift: boolean, meta: boolean) {
-    setSelected((prev) => {
-      let next = new Set(prev);
-      if (shift && lastClicked.current != null) {
-        const a = filteredIdx.indexOf(lastClicked.current);
-        const b = filteredIdx.indexOf(idx);
-        if (a >= 0 && b >= 0) {
-          const [lo, hi] = a < b ? [a, b] : [b, a];
-          next = new Set(filteredIdx.slice(lo, hi + 1).map((i) => i));
-        } else next = new Set([idx]);
-      } else if (meta) {
-        if (next.has(idx)) next.delete(idx);
-        else next.add(idx);
-      } else {
-        next = new Set([idx]);
-      }
-      lastClicked.current = idx;
-      return next;
-    });
+    try {
+      setSelected((prev) => {
+        try {
+          let next = new Set(prev);
+          if (shift && lastClicked.current != null) {
+            const a = filteredIdx.indexOf(lastClicked.current);
+            const b = filteredIdx.indexOf(idx);
+            if (a >= 0 && b >= 0) {
+              const [lo, hi] = a < b ? [a, b] : [b, a];
+              next = new Set(filteredIdx.slice(lo, hi + 1).map((i) => i));
+            } else next = new Set([idx]);
+          } else if (meta) {
+            if (next.has(idx)) next.delete(idx);
+            else next.add(idx);
+          } else {
+            next = new Set([idx]);
+          }
+          lastClicked.current = idx;
+          return next;
+        } catch (err) {
+          logger.error("toggleSelectIndex internal error:", err);
+          return prev;
+        }
+      });
+    } catch (err) {
+      logger.error("toggleSelectIndex error:", err);
+    }
   }
 
   const selectedOneIdx = useMemo(() => {
@@ -1279,12 +1310,25 @@ export default function App() {
     if (!filteredIdx.length) return;
     // Nur reagieren, wenn Fokus auf der Liste liegt
     // preventDefault stoppt Textcursor in Inputs außerhalb nicht, da wir nur bei Fokus der Liste sind
-    if (e.key === "ArrowDown") {
-      e.preventDefault();
-      moveSelectionBy(1, !!(e as any).shiftKey);
-    } else if (e.key === "ArrowUp") {
-      e.preventDefault();
-      moveSelectionBy(-1, !!(e as any).shiftKey);
+    try {
+      if (e.key === "ArrowDown") {
+        e.preventDefault();
+        moveSelectionBy(1, !!(e as any).shiftKey);
+      } else if (e.key === "ArrowUp") {
+        e.preventDefault();
+        moveSelectionBy(-1, !!(e as any).shiftKey);
+      } else if (e.key === "End") {
+        e.preventDefault();
+        gotoListEnd();
+      } else if (e.key === "Home") {
+        e.preventDefault();
+        gotoListStart();
+      } else if (e.key === "Escape") {
+        e.preventDefault();
+        setSelected(new Set());
+      }
+    } catch (err) {
+      logger.warn("Error in onListKeyDown:", err);
     }
   };
 
@@ -3548,6 +3592,16 @@ export default function App() {
           role="listbox"
           aria-label={t("list.ariaLabel")}
           onKeyDown={onListKeyDown as any}
+          onMouseDown={(ev) => {
+            try {
+              // Stelle sicher, dass die Liste fokussiert ist wenn sie geklickt wird
+              if ((parentRef.current as any)?.focus && !ev.defaultPrevented) {
+                (parentRef.current as any).focus({ preventScroll: true });
+              }
+            } catch (err) {
+              logger.warn("onMouseDown focus set failed:", err);
+            }
+          }}
         >
           <div className="list-header">
             <div className="cell">
@@ -3574,7 +3628,14 @@ export default function App() {
             <div className="cell">{t("list.header.message")}</div>
           </div>
           {/* Virtualized rows */}
-          <div style={{ height: totalHeight + "px", position: "relative" }}>
+          <div
+            style={{
+              height: totalHeight + "px",
+              position: "relative",
+              /* FIX: Stelle sicher dass Events in virtualisierte Zeilen durchgeleitet werden */
+              pointerEvents: "auto",
+            }}
+          >
             {virtualItems.map((vi: any) => {
               const viIndex =
                 typeof vi?.index === "number" ? (vi.index as number) : -1;
@@ -3600,27 +3661,38 @@ export default function App() {
                   ? computeTint(markColor, 0.12)
                   : undefined,
               } as any;
-              const key = (vi && vi.key) || `${viIndex}-${globalIdx}`;
+              const key = (vi && vi.key) || `row-${globalIdx}`;
               return (
                 <div
                   key={key}
                   className={rowCls}
-                  style={style}
+                  style={style as any}
                   role="option"
                   aria-selected={isSel}
                   onClick={(ev) => {
-                    toggleSelectIndex(
-                      globalIdx,
-                      (ev as any).shiftKey,
-                      (ev as any).ctrlKey || (ev as any).metaKey,
-                    );
                     try {
-                      (parentRef.current as any)?.focus?.();
-                    } catch {}
+                      toggleSelectIndex(
+                        globalIdx,
+                        (ev as any).shiftKey,
+                        (ev as any).ctrlKey || (ev as any).metaKey,
+                      );
+                      try {
+                        (parentRef.current as any)?.focus?.();
+                      } catch {}
+                    } catch (err) {
+                      logger.error("onClick handler error:", err);
+                    }
                   }}
-                  onContextMenu={(ev) => openContextMenu(ev as any, globalIdx)}
+                  onContextMenu={(ev) => {
+                    try {
+                      openContextMenu(ev as any, globalIdx);
+                    } catch (err) {
+                      logger.error("onContextMenu handler error:", err);
+                    }
+                  }}
                   title={String(e.message || "")}
                   data-marked={markColor ? "1" : "0"}
+                  tabIndex={-1}
                 >
                   <div className="col ts">{fmtTimestamp(e.timestamp)}</div>
                   <div className="col lvl">
