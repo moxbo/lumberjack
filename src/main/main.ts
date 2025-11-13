@@ -157,6 +157,7 @@ let mainWindow: BrowserWindow | null = null;
 const iconPlay: NativeImage | null = null;
 const iconStop: NativeImage | null = null;
 const windows = new Set<BrowserWindow>();
+const loadedWindows = new Set<number>(); // Track windows that have finished loading
 
 // Quit-Bestätigung
 let quitConfirmed = false;
@@ -671,7 +672,8 @@ function isRendererReady(): boolean {
     if (mainWindow.isDestroyed()) return false;
     const wc = mainWindow.webContents;
     if (!wc || wc.isDestroyed()) return false;
-    return !wc.isLoading();
+    // Check if main window has finished loading at least once
+    return loadedWindows.has(mainWindow.id);
   } catch {
     return false;
   }
@@ -721,7 +723,9 @@ function isWindowReady(win: BrowserWindow | null | undefined): boolean {
     if (!win || win.isDestroyed()) return false;
     const wc = win.webContents;
     if (!wc || wc.isDestroyed()) return false;
-    return !wc.isLoading();
+    // Check if the window has finished loading at least once
+    // This is more reliable than isLoading() which can be true during resource loads
+    return loadedWindows.has(win.id);
   } catch {
     return false;
   }
@@ -1499,6 +1503,10 @@ function createWindow(opts: { makePrimary?: boolean } = {}): BrowserWindow {
   win.webContents.on("will-navigate", (event) => event.preventDefault());
 
   win.webContents.on("did-finish-load", () => {
+    // Mark window as loaded so isWindowReady() will return true
+    loadedWindows.add(win.id);
+    log.debug(`[window-ready] Window ${win.id} finished loading, marked as ready`);
+    
     applyWindowTitles();
 
     // Flush queued menu cmds for this window
@@ -1711,6 +1719,7 @@ function createWindow(opts: { makePrimary?: boolean } = {}): BrowserWindow {
     windows.delete(win);
     windowMeta.delete(win.id);
     pendingAppendsByWindow.delete(win.id);
+    loadedWindows.delete(win.id); // Remove from loaded windows set
     if (tcpOwnerWindowId != null && tcpOwnerWindowId === win.id) {
       try {
         void networkService.stopTcpServer();
