@@ -450,6 +450,7 @@ function sendBatchesAsyncTo(
           return;
         }
 
+        log.debug(`[ipc-diag] Sending IPC batch on channel "${channel}": ${batch?.length || 0} entries`);
         wc.send(channel, batch);
         batchSendStats.total++;
         batchSendStats.lastSendTime = Date.now();
@@ -688,10 +689,17 @@ function enqueueAppends(entries: LogEntry[]): void {
   }
 }
 function flushPendingAppends(): void {
-  if (!isRendererReady()) return;
+  if (!isRendererReady()) {
+    log.debug("[flush-diag] Renderer not ready, skipping flush");
+    return;
+  }
   if (!pendingAppends.length) return;
   const wc = mainWindow?.webContents;
-  if (!wc) return;
+  if (!wc) {
+    log.debug("[flush-diag] No webContents, skipping flush");
+    return;
+  }
+  log.debug(`[flush-diag] Flushing ${pendingAppends.length} pending appends to main window`);
   try {
     const batches: LogEntry[][] = [];
     for (let i = 0; i < pendingAppends.length; i += MAX_BATCH_ENTRIES) {
@@ -700,8 +708,10 @@ function flushPendingAppends(): void {
     }
     // gestaffelt senden, damit der Event-Loop atmen kann
     sendBatchesAsyncTo(wc, "logs:append", batches);
-  } catch {
+    log.debug(`[flush-diag] Sent ${batches.length} batches to main window`);
+  } catch (err) {
     // nicht leeren, damit später erneut versucht werden kann
+    log.debug("[flush-diag] Error flushing, will retry:", err instanceof Error ? err.message : String(err));
     return;
   }
   pendingAppends = [];
@@ -728,9 +738,13 @@ function enqueueAppendsFor(winId: number, entries: LogEntry[]): void {
   pendingAppendsByWindow.set(winId, updated);
 }
 function flushPendingAppendsFor(win: BrowserWindow): void {
-  if (!isWindowReady(win)) return;
+  if (!isWindowReady(win)) {
+    log.debug(`[flush-diag] Window ${win.id} not ready, skipping flush`);
+    return;
+  }
   const buf = pendingAppendsByWindow.get(win.id);
   if (!buf || !buf.length) return;
+  log.debug(`[flush-diag] Flushing ${buf.length} pending appends for window ${win.id}`);
   const wc = win.webContents;
   try {
     const batches: LogEntry[][] = [];
@@ -739,6 +753,7 @@ function flushPendingAppendsFor(win: BrowserWindow): void {
       batches.push(prepareRenderBatch(slice));
     }
     sendBatchesAsyncTo(wc, "logs:append", batches);
+    log.debug(`[flush-diag] Sent ${batches.length} batches to window ${win.id}`);
   } catch (e) {
     log.error(
       "flushPendingAppendsFor send failed:",
@@ -764,6 +779,8 @@ function sendAppend(entries: LogEntry[]): void {
   const otherEntries: LogEntry[] = [];
   for (const e of entries) (isTcpEntry(e) ? tcpEntries : otherEntries).push(e);
 
+  log.debug(`[tcp-diag] sendAppend called: ${entries.length} total, ${tcpEntries.length} TCP, ${otherEntries.length} other`);
+
   const sendEntriesToWc = (wc: any, arr: LogEntry[]) => {
     if (!Array.isArray(arr) || arr.length === 0) return;
     const batches: LogEntry[][] = [];
@@ -777,19 +794,24 @@ function sendAppend(entries: LogEntry[]): void {
   // TCP → owner window only
   if (tcpEntries.length) {
     const ownerId = getTcpOwnerWindowId();
+    log.debug(`[tcp-diag] TCP owner window ID: ${ownerId}`);
     const ownerWin =
       ownerId != null ? BrowserWindow.fromId?.(ownerId) || null : null;
     if (ownerWin && isWindowReady(ownerWin)) {
+      log.debug(`[tcp-diag] Sending ${tcpEntries.length} TCP entries directly to owner window ${ownerWin.id}`);
       try {
         sendEntriesToWc(ownerWin.webContents, tcpEntries);
-      } catch {
+      } catch (err) {
+        log.debug(`[tcp-diag] Failed to send directly, enqueueing for window ${ownerWin.id}:`, err instanceof Error ? err.message : String(err));
         enqueueAppendsFor(ownerWin.id, tcpEntries);
       }
     } else if (ownerWin) {
+      log.debug(`[tcp-diag] Owner window ${ownerWin.id} not ready, enqueueing ${tcpEntries.length} TCP entries`);
       enqueueAppendsFor(ownerWin.id, tcpEntries);
     }
     // else: no owner → route to main
     else {
+      log.debug(`[tcp-diag] No owner window, routing ${tcpEntries.length} TCP entries to main window`);
       otherEntries.push(...tcpEntries);
     }
   }
@@ -797,14 +819,21 @@ function sendAppend(entries: LogEntry[]): void {
   // Non-TCP → primary window (bestehendes Verhalten)
   if (otherEntries.length) {
     if (!isRendererReady()) {
+      log.debug(`[tcp-diag] Main renderer not ready, enqueueing ${otherEntries.length} entries`);
       enqueueAppends(otherEntries);
       return;
     }
     try {
       const wc = mainWindow?.webContents as any;
-      if (wc) sendEntriesToWc(wc, otherEntries);
-      else enqueueAppends(otherEntries);
-    } catch {
+      if (wc) {
+        log.debug(`[tcp-diag] Sending ${otherEntries.length} entries to main window`);
+        sendEntriesToWc(wc, otherEntries);
+      } else {
+        log.debug(`[tcp-diag] No main window webContents, enqueueing ${otherEntries.length} entries`);
+        enqueueAppends(otherEntries);
+      }
+    } catch (err) {
+      log.debug(`[tcp-diag] Error sending to main window, enqueueing:`, err instanceof Error ? err.message : String(err));
       enqueueAppends(otherEntries);
     }
   }
@@ -1925,8 +1954,20 @@ try {
 // This ensures buffered log entries are sent to UI regularly
 // Without this timer, logs can be delayed indefinitely in pendingAppends buffer
 const PENDING_APPEND_FLUSH_INTERVAL_MS = 100; // Flush every 100ms for responsive UI
+let flushTimerCount = 0;
 setInterval(() => {
   try {
+    flushTimerCount++;
+    const hasPending = pendingAppends.length > 0;
+    const hasWindowPending = Array.from(windows).some(w => {
+      const buf = pendingAppendsByWindow.get(w.id);
+      return buf && buf.length > 0;
+    });
+    
+    if (flushTimerCount % 10 === 1 || hasPending || hasWindowPending) {
+      log.debug(`[flush-timer] Run #${flushTimerCount}: pendingAppends=${pendingAppends.length}, windows=${windows.size}, hasWindowPending=${hasWindowPending}`);
+    }
+    
     // Flush main window buffer
     flushPendingAppends();
 
