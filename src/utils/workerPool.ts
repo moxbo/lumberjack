@@ -98,7 +98,7 @@ class WorkerPool {
     const worker = err.target as PWorker | null;
     if (worker) {
       worker.busy = false;
-      
+
       // Attempt to restart the worker
       const workerIndex = this.workers.indexOf(worker);
       if (workerIndex !== -1) {
@@ -115,31 +115,37 @@ class WorkerPool {
    */
   private restartWorker(index: number): void {
     const attempts = this.workerRestartAttempts.get(index) ?? 0;
-    
+
     if (attempts >= this.maxRestartAttempts) {
-      logger.error(`[WorkerPool] Worker ${index} failed too many times, not restarting`);
+      logger.error(
+        `[WorkerPool] Worker ${index} failed too many times, not restarting`,
+      );
       this.workers.splice(index, 1);
-      
+
       // Check if we still have workers
       if (this.workers.length === 0) {
-        logger.warn("[WorkerPool] All workers failed, marking pool as unavailable");
+        logger.warn(
+          "[WorkerPool] All workers failed, marking pool as unavailable",
+        );
         this.unavailable = true;
       }
       return;
     }
 
     this.workerRestartAttempts.set(index, attempts + 1);
-    
+
     // Exponential backoff: 1s, 2s, 4s
     const backoffMs = 1000 * Math.pow(2, attempts);
-    
-    logger.info(`[WorkerPool] Restarting worker ${index} in ${backoffMs}ms (attempt ${attempts + 1}/${this.maxRestartAttempts})`);
-    
+
+    logger.info(
+      `[WorkerPool] Restarting worker ${index} in ${backoffMs}ms (attempt ${attempts + 1}/${this.maxRestartAttempts})`,
+    );
+
     setTimeout(() => {
       try {
         // Terminate old worker
         this.workers[index]?.terminate();
-        
+
         // Create new worker
         const worker = new Worker(new URL(this.workerPath, import.meta.url), {
           type: "module",
@@ -148,9 +154,9 @@ class WorkerPool {
         worker.onerror = (err: ErrorEvent) => this.handleWorkerError(err);
         worker.busy = false;
         this.workers[index] = worker;
-        
+
         logger.info(`[WorkerPool] Worker ${index} restarted successfully`);
-        
+
         // Reset restart counter on successful restart
         this.workerRestartAttempts.delete(index);
       } catch (err) {

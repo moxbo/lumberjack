@@ -117,12 +117,12 @@
       "signAndEditExecutable": false,
       "forceCodeSigning": false,
       "signExts": [],
-      "icon": "icon.ico"
+      "icon": "images/icon.ico"
     },
     "nsis": {
       "oneClick": true,
-      "installerIcon": "icon.ico",
-      "uninstallerIcon": "icon.ico",
+      "installerIcon": "images/icon.ico",
+      "uninstallerIcon": "images/icon.ico",
       "createDesktopShortcut": true,
       "shortcutName": "Lumberjack"
     },
@@ -132,7 +132,7 @@
         "zip"
       ],
       "category": "public.app-category.developer-tools",
-      "icon": "icon.icns",
+      "icon": "images/icon.icns",
       "identity": null
     }
   },

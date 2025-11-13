@@ -79,7 +79,9 @@ export class CircuitBreaker {
       if (this.successCount >= this.successThreshold) {
         this.state = CircuitState.CLOSED;
         this.successCount = 0;
-        log.info(`[circuit-breaker:${this.name}] Circuit CLOSED after recovery`);
+        log.info(
+          `[circuit-breaker:${this.name}] Circuit CLOSED after recovery`,
+        );
       }
     }
   }
@@ -94,10 +96,14 @@ export class CircuitBreaker {
     if (this.state === CircuitState.HALF_OPEN) {
       // Failed during recovery attempt
       this.state = CircuitState.OPEN;
-      log.warn(`[circuit-breaker:${this.name}] Circuit OPEN (failed during recovery)`);
+      log.warn(
+        `[circuit-breaker:${this.name}] Circuit OPEN (failed during recovery)`,
+      );
     } else if (this.failureCount >= this.failureThreshold) {
       this.state = CircuitState.OPEN;
-      log.warn(`[circuit-breaker:${this.name}] Circuit OPEN (${this.failureCount} failures)`);
+      log.warn(
+        `[circuit-breaker:${this.name}] Circuit OPEN (${this.failureCount} failures)`,
+      );
     }
   }
 

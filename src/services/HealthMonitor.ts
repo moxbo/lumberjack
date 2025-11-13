@@ -237,13 +237,19 @@ export class HealthMonitor {
   getStats(): {
     isMonitoring: boolean;
     totalChecks: number;
-    lastResults: Array<{ name: string; status?: HealthStatus; lastRun?: number }>;
+    lastResults: Array<{
+      name: string;
+      status?: HealthStatus;
+      lastRun?: number;
+    }>;
   } {
-    const lastResults = Array.from(this.checks.entries()).map(([name, check]) => ({
-      name,
-      status: check.lastResult?.status,
-      lastRun: check.lastRun,
-    }));
+    const lastResults = Array.from(this.checks.entries()).map(
+      ([name, check]) => ({
+        name,
+        status: check.lastResult?.status,
+        lastRun: check.lastRun,
+      }),
+    );
 
     return {
       isMonitoring: this.isRunning,

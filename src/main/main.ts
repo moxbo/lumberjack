@@ -94,6 +94,21 @@ log.info("[diag] Application starting", {
       : "disabled",
 });
 
+// Set AppUserModelId for Windows taskbar and notifications
+// This must be done early in the app lifecycle
+if (process.platform === "win32") {
+  try {
+    const appId = "de.moxbo.lumberjack";
+    app.setAppUserModelId(appId);
+    log.info("[icon] AppUserModelId set to:", appId);
+  } catch (e) {
+    log.warn(
+      "[icon] Failed to set AppUserModelId:",
+      e instanceof Error ? e.message : String(e),
+    );
+  }
+}
+
 // Services
 const perfService = new PerformanceService();
 const settingsService = new SettingsService();
@@ -403,7 +418,7 @@ function prepareRenderBatch(entries: LogEntry[]): LogEntry[] {
 }
 
 // [FREEZE FIX] Track batch sends for diagnostics
-let batchSendStats = { total: 0, failed: 0, lastSendTime: 0 };
+const batchSendStats = { total: 0, failed: 0, lastSendTime: 0 };
 function sendBatchesAsyncTo(
   wc: any,
   channel: string,
@@ -418,10 +433,10 @@ function sendBatchesAsyncTo(
   batches.forEach((batch, idx) => {
     // Use adaptive delay from AdaptiveBatchService
     const delay = adaptiveBatchService.getDelay() * idx;
-    
+
     setTimeout(() => {
       const batchStartTime = Date.now();
-      
+
       try {
         if (!wc || wc.isDestroyed?.()) {
           try {
@@ -429,20 +444,26 @@ function sendBatchesAsyncTo(
               idx,
               batchCount,
             });
-          } catch {}
+          } catch {
+            /* empty */
+          }
           return;
         }
 
         wc.send(channel, batch);
         batchSendStats.total++;
         batchSendStats.lastSendTime = Date.now();
-        
+
         // Calculate processing time and adjust adaptive delay
         const processingTime = Date.now() - batchStartTime;
         if (idx === batchCount - 1) {
           // Adjust delay based on last batch processing time
           const totalProcessingTime = Date.now() - startTime;
-          adaptiveBatchService.adjustDelay(totalProcessingTime, batchCount, totalEntries);
+          adaptiveBatchService.adjustDelay(
+            totalProcessingTime,
+            batchCount,
+            totalEntries,
+          );
         }
 
         // Log every 10th successful send or if batch takes too long
@@ -458,7 +479,9 @@ function sendBatchesAsyncTo(
                 adaptiveDelay: adaptiveBatchService.getDelay(),
               });
             }
-          } catch {}
+          } catch {
+            /* empty */
+          }
         }
       } catch (e) {
         batchSendStats.failed++;
@@ -494,13 +517,13 @@ function closeLogStream(): void {
     );
   }
   logStream = null;
-  
+
   // Clear async file writer
   if (asyncFileWriter) {
     asyncFileWriter.clearQueue();
     asyncFileWriter = null;
   }
-  
+
   logBytes = 0;
 }
 function openLogStream(): void {
@@ -514,7 +537,7 @@ function openLogStream(): void {
     const st = fs.existsSync(p) ? fs.statSync(p) : null;
     logBytes = st ? st.size : 0;
     logStream = fs.createWriteStream(p, { flags: "a" });
-    
+
     // Initialize AsyncFileWriter for non-blocking writes
     asyncFileWriter = new AsyncFileWriter(p);
   } catch (err) {
@@ -575,7 +598,7 @@ function writeEntriesToFile(entries: LogEntry[]): void {
     if (!entries || !entries.length) return;
     if (!logStream) openLogStream();
     if (!logStream) return;
-    
+
     // Use AsyncFileWriter if available for non-blocking writes
     if (asyncFileWriter) {
       for (const e of entries) {
@@ -583,7 +606,7 @@ function writeEntriesToFile(entries: LogEntry[]): void {
         rotateIfNeeded(line.length);
         if (!asyncFileWriter) openLogStream();
         if (!asyncFileWriter) return;
-        
+
         // Non-blocking async write
         asyncFileWriter.write(line).catch((err) => {
           log.error(
@@ -794,17 +817,33 @@ function resolveIconPathSync(): string | null {
   if (cachedIconPath !== null) return cachedIconPath || null;
   const resPath = process.resourcesPath || "";
   const appPath = app.getAppPath?.() || "";
+  const cwdPath = process.cwd();
+
+  // Debug logging
+  try {
+    log.debug?.("[icon] resolveIconPathSync context:", {
+      __dirname,
+      appPath,
+      cwdPath,
+      resPath,
+      isDev: process.env.NODE_ENV === "development",
+    });
+  } catch {
+    // Ignore
+  }
+
   const candidates = [
-    // Production: app.asar.unpacked
+    // Production: app.asar.unpacked (highest priority for packaged app)
     path.join(resPath, "app.asar.unpacked", "images", "icon.ico"),
     path.join(resPath, "images", "icon.ico"),
-    // Development: __dirname (compiled main.js) and project root
+    // Development: Project root first (IMPORTANT for dev mode)
+    path.join(cwdPath, "images", "icon.ico"),
+    // Development: __dirname (compiled dist-main/main.cjs) and project root
     path.join(__dirname, "images", "icon.ico"),
     path.join(appPath, "images", "icon.ico"),
-    // Fallback: Current working directory
-    path.join(process.cwd(), "images", "icon.ico"),
-    // Additional fallback: src/main (for dev mode)
+    // Additional fallback: Go up from compiled location
     path.join(__dirname, "..", "..", "images", "icon.ico"),
+    path.join(__dirname, "..", "images", "icon.ico"),
   ].filter(Boolean);
 
   for (const p of candidates) {
@@ -812,32 +851,32 @@ function resolveIconPathSync(): string | null {
       if (p && fs.existsSync(p)) {
         cachedIconPath = p;
         try {
-          log.info?.("[icon] resolveIconPathSync hit:", p);
-        } catch (e) {
-          log.error(
-            "[icon] resolveIconPathSync log error:",
-            e instanceof Error ? e.message : String(e),
-          );
+          log.info?.("[icon] resolveIconPathSync found:", p);
+        } catch {
+          // Intentionally empty - ignore errors
         }
         return p;
       }
     } catch (e) {
-      log.error(
-        "[icon] resolveIconPathSync exists check error:",
-        e instanceof Error ? e.message : String(e),
-      );
+      try {
+        log.debug?.(
+          "[icon] resolveIconPathSync exists check error for",
+          p,
+          ":",
+          e instanceof Error ? e.message : String(e),
+        );
+      } catch {
+        // Intentionally empty - ignore errors
+      }
     }
   }
   try {
     log.warn?.(
-      "[icon] resolveIconPathSync: no candidate exists, checked:",
+      "[icon] resolveIconPathSync: no candidate exists. Checked:",
       candidates,
     );
-  } catch (e) {
-    log.error(
-      "[icon] resolveIconPathSync log error:",
-      e instanceof Error ? e.message : String(e),
-    );
+  } catch {
+    // Intentionally empty - ignore errors
   }
   cachedIconPath = "";
   return null;
@@ -845,13 +884,22 @@ function resolveIconPathSync(): string | null {
 async function resolveIconPathAsync(): Promise<string | null> {
   if (cachedIconPath !== null) return cachedIconPath;
   const resPath = process.resourcesPath || "";
+  const appPath = app.getAppPath?.() || "";
+  const cwdPath = process.cwd();
+
   const candidates = [
+    // Production: app.asar.unpacked
     path.join(resPath, "app.asar.unpacked", "images", "icon.ico"),
     path.join(resPath, "images", "icon.ico"),
+    // Development: Project root (CWD) first
+    path.join(cwdPath, "images", "icon.ico"),
+    // Development: Other paths
     path.join(__dirname, "images", "icon.ico"),
-    path.join(app.getAppPath?.() || "", "images", "icon.ico"),
-    path.join(process.cwd(), "images", "icon.ico"),
+    path.join(appPath, "images", "icon.ico"),
+    path.join(__dirname, "..", "..", "images", "icon.ico"),
+    path.join(__dirname, "..", "images", "icon.ico"),
   ];
+
   for (const p of candidates) {
     try {
       const exists = await fs.promises
@@ -861,29 +909,29 @@ async function resolveIconPathAsync(): Promise<string | null> {
       if (exists) {
         cachedIconPath = p;
         try {
-          log.debug?.("[icon] resolveIconPathAsync hit:", p);
-        } catch (e) {
-          log.error(
-            "[icon] resolveIconPathAsync log error:",
-            e instanceof Error ? e.message : String(e),
-          );
+          log.debug?.("[icon] resolveIconPathAsync found:", p);
+        } catch {
+          // Ignore
         }
         return p;
       }
     } catch (e) {
-      log.error(
-        "[icon] resolveIconPathAsync exists check error:",
-        e instanceof Error ? e.message : String(e),
-      );
+      try {
+        log.debug?.(
+          "[icon] resolveIconPathAsync error for",
+          p,
+          ":",
+          e instanceof Error ? e.message : String(e),
+        );
+      } catch {
+        // Ignore
+      }
     }
   }
   try {
     log.warn?.("[icon] resolveIconPathAsync: no candidate exists");
-  } catch (e) {
-    log.error(
-      "[icon] resolveIconPathAsync log error:",
-      e instanceof Error ? e.message : String(e),
-    );
+  } catch {
+    // Ignore
   }
   cachedIconPath = "";
   return null;
@@ -1269,6 +1317,34 @@ function createWindow(opts: { makePrimary?: boolean } = {}): BrowserWindow {
   });
 
   // Abfangen des Schließens des letzten Fensters (Win/Linux) → Beenden bestätigen
+
+  // [Windows Taskbar] Set icon immediately after window creation for early taskbar display
+  if (process.platform === "win32") {
+    try {
+      const iconPath = resolveIconPathSync();
+      if (iconPath) {
+        try {
+          win.setIcon(iconPath);
+          log.info?.(
+            "[icon] Windows icon set immediately at window creation:",
+            iconPath,
+          );
+        } catch (e) {
+          log.debug?.(
+            "[icon] Immediate Windows icon set failed, will retry in ready-to-show:",
+            e instanceof Error ? e.message : String(e),
+          );
+        }
+      }
+    } catch (e) {
+      log.debug?.(
+        "[icon] Error setting immediate Windows icon:",
+        e instanceof Error ? e.message : String(e),
+      );
+    }
+  }
+
+  // Abfangen des Schließens des letzten Fensters (Win/Linux) → Beenden bestätigen
   win.on("close", async (e) => {
     try {
       if (process.platform === "darwin") return; // Auf macOS beendet das Schließen nicht die App
@@ -1385,7 +1461,7 @@ function createWindow(opts: { makePrimary?: boolean } = {}): BrowserWindow {
               // Fallback: Versuche mit Pfad
               const img = nativeImage.createFromPath(macIconPath);
               if (!img.isEmpty()) {
-                app.dock.setIcon(img);
+                app.dock?.setIcon(img);
                 log.info(
                   "[icon] app.dock.setIcon applied in ready-to-show via path",
                 );
@@ -1419,25 +1495,53 @@ function createWindow(opts: { makePrimary?: boolean } = {}): BrowserWindow {
     }
 
     if (process.platform === "win32") {
+      // eslint-disable-next-line @typescript-eslint/no-misused-promises
       setImmediate(async () => {
         try {
           const iconPath = await resolveIconPathAsync();
           if (iconPath && !win.isDestroyed()) {
             try {
+              // Try with path first (most reliable)
               win.setIcon(iconPath);
               try {
                 log.info?.("[icon] BrowserWindow.setIcon applied:", iconPath);
               } catch {
                 // Intentionally empty - ignore errors
               }
-            } catch (e) {
+            } catch (pathErr) {
+              // Fallback: Try with nativeImage
               try {
-                log.warn?.(
-                  "[icon] BrowserWindow.setIcon failed:",
-                  e instanceof Error ? e.message : String(e),
-                );
-              } catch {
-                // Intentionally empty - ignore errors
+                const iconBuffer = fs.readFileSync(iconPath);
+                const img = nativeImage.createFromBuffer(iconBuffer);
+                if (!img.isEmpty()) {
+                  win.setIcon(img);
+                  try {
+                    log.info?.(
+                      "[icon] BrowserWindow.setIcon applied via nativeImage buffer",
+                    );
+                  } catch {
+                    // Intentionally empty - ignore errors
+                  }
+                } else {
+                  try {
+                    log.warn(
+                      "[icon] nativeImage is empty from buffer for Windows",
+                    );
+                  } catch {
+                    // Intentionally empty - ignore errors
+                  }
+                }
+              } catch (bufferErr) {
+                try {
+                  log.warn?.(
+                    "[icon] BrowserWindow.setIcon failed:",
+                    pathErr instanceof Error
+                      ? pathErr.message
+                      : String(pathErr),
+                  );
+                } catch {
+                  // Intentionally empty - ignore errors
+                }
               }
             }
           } else {
@@ -2307,10 +2411,9 @@ app.on("window-all-closed", () => {
 app.on("quit", async () => {
   try {
     log.info("[diag] app quit fired; starting graceful shutdown");
-    
+
     // Use shutdown coordinator for organized cleanup
     await shutdownCoordinator.shutdown();
-    
   } catch (e) {
     log.error(
       "[diag] Error during quit cleanup:",
@@ -2365,7 +2468,9 @@ process.on("beforeExit", () => {
   lastActivityTime = Date.now();
   try {
     log.info("[freeze-monitor] beforeExit: marking activity");
-  } catch {}
+  } catch {
+    /* empty */
+  }
 });
 
 // Export for IPC handlers

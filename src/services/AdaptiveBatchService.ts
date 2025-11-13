@@ -43,7 +43,11 @@ export class AdaptiveBatchService {
   /**
    * Adjust delay based on processing time
    */
-  adjustDelay(processingTimeMs: number, batchCount: number = 1, entryCount: number = 0): void {
+  adjustDelay(
+    processingTimeMs: number,
+    batchCount: number = 1,
+    entryCount: number = 0,
+  ): void {
     this.lastProcessingTime = processingTimeMs;
 
     // Store metrics for analysis
@@ -63,8 +67,11 @@ export class AdaptiveBatchService {
     if (processingTimeMs > this.SLOW_THRESHOLD_MS) {
       // System is struggling - increase delay
       const increment = Math.ceil(processingTimeMs / 50);
-      this.currentDelay = Math.min(this.MAX_DELAY_MS, this.currentDelay + increment);
-      
+      this.currentDelay = Math.min(
+        this.MAX_DELAY_MS,
+        this.currentDelay + increment,
+      );
+
       log.debug("[adaptive-batch] Increased delay due to slow processing", {
         processingTimeMs,
         newDelay: this.currentDelay,
@@ -73,7 +80,7 @@ export class AdaptiveBatchService {
     } else if (processingTimeMs < this.FAST_THRESHOLD_MS) {
       // System is fast - decrease delay
       this.currentDelay = Math.max(this.MIN_DELAY_MS, this.currentDelay - 1);
-      
+
       if (this.currentDelay === this.MIN_DELAY_MS) {
         log.debug("[adaptive-batch] At minimum delay", {
           processingTimeMs,

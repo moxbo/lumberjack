@@ -211,7 +211,9 @@ export class PerformanceMonitor {
       log.info(
         `  Memory RSS: ${Math.round(stats.averages.memoryRSS / (1024 * 1024))}MB`,
       );
-      log.info(`  Event loop lag: ${Math.round(stats.averages.eventLoopLag)}ms`);
+      log.info(
+        `  Event loop lag: ${Math.round(stats.averages.eventLoopLag)}ms`,
+      );
     }
 
     log.info("===========================");
