@@ -813,6 +813,35 @@ function sendAppend(entries: LogEntry[]): void {
 // Cache icon/dist paths
 let cachedIconPath: string | null = null;
 let cachedDistIndexPath: string | null = null;
+
+/**
+ * Validates if a file is a valid ICO format by checking magic bytes
+ */
+function isValidIcoFile(filePath: string): boolean {
+  try {
+    const buffer = Buffer.alloc(4);
+    const fd = fs.openSync(filePath, "r");
+    fs.readSync(fd, buffer, 0, 4);
+    fs.closeSync(fd);
+    // Valid ICO format starts with 0x00 0x00 0x01 0x00
+    return buffer[0] === 0x00 && buffer[1] === 0x00 && buffer[2] === 0x01 && buffer[3] === 0x00;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Validates file access and readability
+ */
+function canAccessFile(filePath: string): boolean {
+  try {
+    fs.accessSync(filePath, fs.constants.R_OK);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 function resolveIconPathSync(): string | null {
   if (cachedIconPath !== null) return cachedIconPath || null;
   const resPath = process.resourcesPath || "";
@@ -849,9 +878,34 @@ function resolveIconPathSync(): string | null {
   for (const p of candidates) {
     try {
       if (p && fs.existsSync(p)) {
+        // Validate file is readable and is valid ICO format
+        if (!canAccessFile(p)) {
+          try {
+            log.debug?.(
+              "[icon] Candidate exists but not readable:",
+              p,
+            );
+          } catch {
+            // Ignore
+          }
+          continue;
+        }
+
+        if (!isValidIcoFile(p)) {
+          try {
+            log.warn?.(
+              "[icon] Candidate exists but is not valid ICO format:",
+              p,
+            );
+          } catch {
+            // Ignore
+          }
+          continue;
+        }
+
         cachedIconPath = p;
         try {
-          log.info?.("[icon] resolveIconPathSync found:", p);
+          log.info?.("[icon] resolveIconPathSync found valid ICO:", p);
         } catch {
           // Intentionally empty - ignore errors
         }
@@ -872,7 +926,7 @@ function resolveIconPathSync(): string | null {
   }
   try {
     log.warn?.(
-      "[icon] resolveIconPathSync: no candidate exists. Checked:",
+      "[icon] resolveIconPathSync: no valid candidate found. Checked:",
       candidates,
     );
   } catch {
@@ -907,9 +961,22 @@ async function resolveIconPathAsync(): Promise<string | null> {
         .then(() => true)
         .catch(() => false);
       if (exists) {
+        // Validate ICO format
+        if (!isValidIcoFile(p)) {
+          try {
+            log.warn?.(
+              "[icon] Candidate exists but is not valid ICO format (async):",
+              p,
+            );
+          } catch {
+            // Ignore
+          }
+          continue;
+        }
+
         cachedIconPath = p;
         try {
-          log.debug?.("[icon] resolveIconPathAsync found:", p);
+          log.debug?.("[icon] resolveIconPathAsync found valid ICO:", p);
         } catch {
           // Ignore
         }
@@ -929,7 +996,7 @@ async function resolveIconPathAsync(): Promise<string | null> {
     }
   }
   try {
-    log.warn?.("[icon] resolveIconPathAsync: no candidate exists");
+    log.warn?.("[icon] resolveIconPathAsync: no valid candidate exists");
   } catch {
     // Ignore
   }
@@ -1324,17 +1391,27 @@ function createWindow(opts: { makePrimary?: boolean } = {}): BrowserWindow {
       const iconPath = resolveIconPathSync();
       if (iconPath) {
         try {
-          win.setIcon(iconPath);
-          log.info?.(
-            "[icon] Windows icon set immediately at window creation:",
-            iconPath,
-          );
+          // Validate file access before setting
+          if (canAccessFile(iconPath) && isValidIcoFile(iconPath)) {
+            win.setIcon(iconPath);
+            log.info?.(
+              "[icon] Windows icon set immediately at window creation:",
+              iconPath,
+            );
+          } else {
+            log.warn?.(
+              "[icon] Icon file exists but failed validation checks:",
+              iconPath,
+            );
+          }
         } catch (e) {
           log.debug?.(
             "[icon] Immediate Windows icon set failed, will retry in ready-to-show:",
             e instanceof Error ? e.message : String(e),
           );
         }
+      } else {
+        log.warn?.("[icon] No icon path resolved at window creation");
       }
     } catch (e) {
       log.debug?.(
