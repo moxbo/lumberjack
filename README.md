@@ -12,6 +12,7 @@ Ein schneller, schlanker Electron-basierter Log-Viewer mit leistungsfähigen Fil
 - Troubleshooting: Wenn trotzdem das Standard-Icon erscheint
 - Performance
 - Troubleshooting & Diagnostik
+- Architektur-Entscheidungen (siehe docs/ARCHITECTURE_DECISION.md)
 - Copilot-Agent Leitfaden (siehe docs/COPILOT_AGENT.md)
 
 ## Überblick & Features
