@@ -631,7 +631,7 @@ function buildElasticSearchBody(opts) {
   }
   const app = String(opts.application_name || "").trim();
   if (app) {
-    const q = app.includes(" ") || /[\["*?:\/()\]{}]/.test(app) ? `"${app.replace(/"/g, '\\"')}"` : app;
+    const q = app.includes(" ") || /[\["*?:/()\]{}]/.test(app) ? `"${app.replace(/"/g, '\\"')}"` : app;
     must.push({
       query_string: {
         query: `application_name:${q}`,

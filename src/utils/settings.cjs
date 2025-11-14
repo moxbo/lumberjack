@@ -219,7 +219,8 @@ function mergeSettings(partialSettings, defaults = null) {
 function getDefaultSettings() {
   const defaults = {};
   for (const [key, schema] of Object.entries(SETTINGS_SCHEMA)) {
-    defaults[key] = schema.default;
+    const schemaObj = schema;
+    defaults[key] = schemaObj.default;
   }
   return defaults;
 }
@@ -244,9 +245,12 @@ function parseSettingsJSON(jsonString) {
     if (typeof parsed !== "object" || parsed === null) {
       return { success: false, error: "Invalid JSON: not an object" };
     }
-    const version = typeof parsed._version === "number" ? parsed._version : 0;
-    const settings = version < SETTINGS_VERSION ? migrateSettings(parsed, version) : parsed;
-    const { settings: validated, errors } = validateSettings(settings);
+    const parsedObj = parsed;
+    const version = typeof parsedObj._version === "number" ? parsedObj._version : 0;
+    const settings = version < SETTINGS_VERSION ? migrateSettings(parsedObj, version) : parsedObj;
+    const { settings: validated, errors } = validateSettings(
+      settings
+    );
     if (errors.length > 0) {
       console.warn("Settings validation warnings:", errors);
     }
