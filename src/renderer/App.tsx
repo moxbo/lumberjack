@@ -18,6 +18,7 @@ import { TimeFilter } from "../store/timeFilter";
 import { createPortal, lazy, Suspense } from "preact/compat";
 import type { ElasticSearchOptions } from "../types/ipc";
 import { MDCListener } from "../store/mdcListener";
+import { LogRow } from "./LogRow";
 
 // Feste Basisfarben für Markierungen
 const BASE_MARK_COLORS = [
@@ -91,6 +92,38 @@ function computeTint(color: string | null | undefined, alpha = 0.4): string {
   }
   // Fallback: unveränderte Farbe (ohne Alpha)
   return c;
+}
+
+// Efficient merge function for sorted arrays - O(n+m) instead of O(n log n)
+// Assumes both prevSorted and newSorted are already sorted by compareByTimestampId
+function mergeSorted(prevSorted: any[], newSorted: any[]): any[] {
+  if (newSorted.length === 0) return prevSorted;
+  if (prevSorted.length === 0) return newSorted;
+  
+  const result: any[] = [];
+  let i = 0, j = 0;
+  
+  while (i < prevSorted.length && j < newSorted.length) {
+    if (compareByTimestampId(prevSorted[i], newSorted[j]) <= 0) {
+      result.push(prevSorted[i]);
+      i++;
+    } else {
+      result.push(newSorted[j]);
+      j++;
+    }
+  }
+  
+  // Add remaining elements
+  while (i < prevSorted.length) {
+    result.push(prevSorted[i]);
+    i++;
+  }
+  while (j < newSorted.length) {
+    result.push(newSorted[j]);
+    j++;
+  }
+  
+  return result;
 }
 
 export default function App() {
@@ -928,7 +961,8 @@ export default function App() {
       out.push(i);
     }
 
-    if (filterStats.total > 0) {
+    // Reduced logging: only log filter stats when count changes significantly or all entries are filtered
+    if (process.env.NODE_ENV === 'development' && (filterStats.total % 5000 === 0 || (filterStats.passed === 0 && filterStats.total > 0))) {
       console.log("[filter-diag] Filter stats:", filterStats);
       if (filterStats.passed === 0 && filterStats.total > 0) {
         console.warn("[filter-diag] WARNING: All entries filtered out!", {
@@ -960,9 +994,12 @@ export default function App() {
   const virtualItems = virtualizer.getVirtualItems();
   const totalHeight = virtualizer.getTotalSize();
 
-  console.log(
-    `[virtualizer-diag] Rendering ${virtualItems.length} virtual items out of ${filteredIdx.length} filtered entries (total: ${entries.length})`,
-  );
+  // Reduced logging: only log when there's a significant change (e.g., every 1000 entries)
+  if (process.env.NODE_ENV === 'development' && filteredIdx.length % 1000 === 0) {
+    console.log(
+      `[virtualizer-diag] Rendering ${virtualItems.length} virtual items out of ${filteredIdx.length} filtered entries (total: ${entries.length})`,
+    );
+  }
 
   function gotoListStart() {
     if (!filteredIdx.length) return;
@@ -1349,7 +1386,9 @@ export default function App() {
       );
     }
     setEntries((prev) => {
-      const newState = [...prev, ...toAdd].sort(compareByTimestampId as any);
+      // Sort new entries only, then merge with existing sorted array - O(m log m + n+m) instead of O((n+m) log (n+m))
+      const sortedNew = toAdd.slice().sort(compareByTimestampId as any);
+      const newState = mergeSorted(prev, sortedNew);
       console.log(
         `[renderer-diag] State updated: ${prev.length} -> ${newState.length} entries`,
       );
@@ -3718,39 +3757,28 @@ export default function App() {
               const globalIdx: number = filteredIdx[viIndex]!;
               const e = entries[globalIdx] || {};
               const isSel = selected.has(globalIdx);
-              const rowCls = "row" + (isSel ? " sel" : "");
               const markColor = (e && (e._mark || e.color)) as
                 | string
                 | undefined;
               const y: number =
                 typeof vi?.start === "number" ? (vi.start as number) : 0;
-              const style = {
-                position: "absolute",
-                top: 0,
-                left: 0,
-                right: 0,
-                transform: `translateY(${y}px)`,
-                height: rowHeight + "px",
-                borderLeft: `4px solid ${markColor ? String(markColor) : "transparent"}`,
-                background: markColor
-                  ? computeTint(markColor, 0.12)
-                  : undefined,
-              } as any;
               const key = (vi && vi.key) || `row-${globalIdx}`;
+              
+              // Use memoized LogRow component for better performance
               return (
-                <div
+                <LogRow
                   key={key}
-                  className={rowCls}
-                  style={style as any}
-                  role="option"
-                  aria-selected={isSel}
-                  onClick={(ev) => {
+                  index={viIndex}
+                  globalIdx={globalIdx}
+                  entry={e}
+                  isSelected={isSel}
+                  rowHeight={rowHeight}
+                  yOffset={y}
+                  markColor={markColor}
+                  search={search}
+                  onSelect={(idx, shift, meta) => {
                     try {
-                      toggleSelectIndex(
-                        globalIdx,
-                        (ev as any).shiftKey,
-                        (ev as any).ctrlKey || (ev as any).metaKey,
-                      );
+                      toggleSelectIndex(idx, shift, meta);
                       try {
                         (parentRef.current as any)?.focus?.();
                       } catch {}
@@ -3758,29 +3786,16 @@ export default function App() {
                       logger.error("onClick handler error:", err);
                     }
                   }}
-                  onContextMenu={(ev) => {
+                  onContextMenu={(ev, idx) => {
                     try {
-                      openContextMenu(ev as any, globalIdx);
+                      openContextMenu(ev, idx);
                     } catch (err) {
                       logger.error("onContextMenu handler error:", err);
                     }
                   }}
-                  title={String(e.message || "")}
-                  data-marked={markColor ? "1" : "0"}
-                  tabIndex={-1}
-                >
-                  <div className="col ts">{fmtTimestamp(e.timestamp)}</div>
-                  <div className="col lvl">
-                    <span className={levelClass(e.level)}>{fmt(e.level)}</span>
-                  </div>
-                  <div className="col logger">{fmt(e.logger)}</div>
-                  <div
-                    className="col msg"
-                    dangerouslySetInnerHTML={{
-                      __html: highlightAll(e.message, search),
-                    }}
-                  />
-                </div>
+                  highlightFn={highlightAll}
+                  t={t}
+                />
               );
             })}
             {countFiltered === 0 && (
