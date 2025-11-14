@@ -70,7 +70,7 @@
       "output": "release",
       "buildResources": "images"
     },
-    "icon": "icon.ico",
+    "icon": "images/icon.ico",
     "files": [
       "dist/**/*",
       "dist-main/**/*",
