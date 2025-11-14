@@ -2086,11 +2086,37 @@ try {
     try {
       exitSource = "uncaughtException";
       exitDetails = { origin, error: err?.stack || String(err) };
+      
+      // Detect potential installer conflicts (Windows Node.js installer interference)
+      const errorMsg = String(err?.message || "").toLowerCase();
+      const errorCode = (err as NodeJS.ErrnoException)?.code;
+      const isInstallerConflict =
+        errorMsg.includes("installer") ||
+        errorMsg.includes("ebusy") ||
+        errorMsg.includes("busy") ||
+        errorMsg.includes("in use") ||
+        errorCode === "EBUSY" ||
+        errorCode === "EACCES" ||
+        errorCode === "EPERM";
+      
+      if (isInstallerConflict) {
+        log.warn("[installer-conflict] Potential installer interference detected", {
+          errorCode,
+          errorMessage: err?.message,
+          hint: "This may be caused by Node.js installer running simultaneously. See docs/NODE_INSTALLER_CONFLICT.md",
+        });
+        console.warn(
+          "[WARNUNG] Möglicher Installer-Konflikt erkannt. Dies kann durch gleichzeitige Node.js-Installation verursacht werden.",
+        );
+      }
+      
       log.error("[diag] uncaughtException", {
         origin,
         error: err?.stack || String(err),
         name: err?.name,
         message: err?.message,
+        code: errorCode,
+        installerConflict: isInstallerConflict,
       });
       // Log to stderr as well for visibility
       console.error(
@@ -2220,6 +2246,25 @@ try {
       try {
         exitSource = "child-process-gone";
         exitDetails = details as unknown as Record<string, unknown>;
+        
+        // Check if this might be related to installer interference
+        const isUnusualExit =
+          details.exitCode !== 0 &&
+          details.reason !== "clean-exit" &&
+          details.reason !== "normal-termination";
+        
+        if (isUnusualExit) {
+          log.warn(
+            "[installer-conflict] Child process crashed unexpectedly. This may indicate system interference.",
+            {
+              type: details.type,
+              reason: details.reason,
+              exitCode: details.exitCode,
+              hint: "If Node.js installer is running, close Lumberjack and wait for installation to complete.",
+            },
+          );
+        }
+        
         log.error("[diag] child-process-gone:", {
           type: details.type,
           reason: details.reason,

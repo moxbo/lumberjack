@@ -253,6 +253,15 @@ Wenn die Anwendung sich unerwartet beendet und keine Logs vorhanden sind:
 4. **Dokumentation lesen**:
    - [Unerklärliche Beendigungen beheben](docs/SILENT_EXIT_FIX.md)
    - [Exit Code 1 Fehler beheben](docs/EXIT_CODE_1_FIX.md)
+   - [Node.js Installer Konflikt](docs/NODE_INSTALLER_CONFLICT.md) - **NEU**: Wenn Node.js-Installation interferiert
+
+### Node.js Installer Konflikt (Windows)
+
+Wenn Windows Event Log "Product: Node.js -- A later version of Node.js is already installed" zeigt und die Anwendung kurz darauf abstürzt:
+
+1. **Beenden Sie Lumberjack vor Node.js-Installation/Updates**
+2. **System-Node.js ist NICHT erforderlich** - Lumberjack enthält bereits Node.js
+3. **Siehe**: [Node.js Installer Konflikt Troubleshooting](docs/NODE_INSTALLER_CONFLICT.md)
 
 Die Anwendung verfügt über umfassende Logging-Funktionen:
 - Logs werden sofort auf die Festplatte geschrieben (keine Pufferung)
@@ -260,6 +269,7 @@ Die Anwendung verfügt über umfassende Logging-Funktionen:
 - OS-Signale (SIGTERM, SIGINT) werden abgefangen und protokolliert
 - Logs werden alle 5 Sekunden automatisch gespeichert
 - Crash Dumps werden bei nativen Abstürzen erstellt
+- **NEU**: Erkennung von Installer-Konflikten mit detaillierter Diagnose
 
 ## Lizenz
 
