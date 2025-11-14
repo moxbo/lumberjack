@@ -637,7 +637,10 @@ export default function App() {
       // Stelle sicher, dass die Liste fokussiert bleibt auch nach Kontextmenü
       try {
         setTimeout(() => {
-          if (parentRef.current && !parentRef.current.contains(document.activeElement || null)) {
+          if (
+            parentRef.current &&
+            !parentRef.current.contains(document.activeElement || null)
+          ) {
             (parentRef.current as any)?.focus?.({ preventScroll: true });
           }
         }, 0);
@@ -840,12 +843,22 @@ export default function App() {
   // Filtered indices
   const filteredIdx = useMemo(() => {
     const out: number[] = [];
-    let filterStats = { total: 0, passed: 0, rejectedByOnlyMarked: 0, rejectedByLevel: 0, rejectedByLogger: 0, rejectedByThread: 0, rejectedByMessage: 0, rejectedByTime: 0, rejectedByDC: 0 };
-    
+    let filterStats = {
+      total: 0,
+      passed: 0,
+      rejectedByOnlyMarked: 0,
+      rejectedByLevel: 0,
+      rejectedByLogger: 0,
+      rejectedByThread: 0,
+      rejectedByMessage: 0,
+      rejectedByTime: 0,
+      rejectedByDC: 0,
+    };
+
     for (let i = 0; i < entries.length; i++) {
       const e = entries[i];
       filterStats.total++;
-      
+
       if (!e) continue;
       if (onlyMarked && !e._mark) {
         filterStats.rejectedByOnlyMarked++;
@@ -914,11 +927,11 @@ export default function App() {
       filterStats.passed++;
       out.push(i);
     }
-    
+
     if (filterStats.total > 0) {
-      console.log('[filter-diag] Filter stats:', filterStats);
+      console.log("[filter-diag] Filter stats:", filterStats);
       if (filterStats.passed === 0 && filterStats.total > 0) {
-        console.warn('[filter-diag] WARNING: All entries filtered out!', {
+        console.warn("[filter-diag] WARNING: All entries filtered out!", {
           total: filterStats.total,
           onlyMarked,
           stdFiltersEnabled,
@@ -927,7 +940,7 @@ export default function App() {
         });
       }
     }
-    
+
     return out;
   }, [entries, stdFiltersEnabled, filter, dcVersion, timeVersion, onlyMarked]);
 
@@ -946,8 +959,10 @@ export default function App() {
   // Get virtual items - this should update when filteredIdx changes
   const virtualItems = virtualizer.getVirtualItems();
   const totalHeight = virtualizer.getTotalSize();
-  
-  console.log(`[virtualizer-diag] Rendering ${virtualItems.length} virtual items out of ${filteredIdx.length} filtered entries (total: ${entries.length})`);
+
+  console.log(
+    `[virtualizer-diag] Rendering ${virtualItems.length} virtual items out of ${filteredIdx.length} filtered entries (total: ${entries.length})`,
+  );
 
   function gotoListStart() {
     if (!filteredIdx.length) return;
@@ -1205,9 +1220,13 @@ export default function App() {
     newEntries: any[],
     options?: { ignoreExistingForElastic?: boolean },
   ) {
-    console.log(`[renderer-diag] appendEntries called with ${newEntries?.length || 0} entries, isArray: ${Array.isArray(newEntries)}`);
+    console.log(
+      `[renderer-diag] appendEntries called with ${newEntries?.length || 0} entries, isArray: ${Array.isArray(newEntries)}`,
+    );
     if (!Array.isArray(newEntries) || newEntries.length === 0) {
-      console.log("[renderer-diag] appendEntries: rejecting - not array or empty");
+      console.log(
+        "[renderer-diag] appendEntries: rejecting - not array or empty",
+      );
       return;
     }
 
@@ -1317,7 +1336,9 @@ export default function App() {
       }
     }
 
-    console.log(`[renderer-diag] Adding ${toAdd.length} entries to state (after dedup from ${accepted.length})`);
+    console.log(
+      `[renderer-diag] Adding ${toAdd.length} entries to state (after dedup from ${accepted.length})`,
+    );
     try {
       (LoggingStore as any).addEvents(toAdd);
     } catch (e) {
@@ -1329,7 +1350,9 @@ export default function App() {
     }
     setEntries((prev) => {
       const newState = [...prev, ...toAdd].sort(compareByTimestampId as any);
-      console.log(`[renderer-diag] State updated: ${prev.length} -> ${newState.length} entries`);
+      console.log(
+        `[renderer-diag] State updated: ${prev.length} -> ${newState.length} entries`,
+      );
       return newState;
     });
     setNextId((prev) => prev + toAdd.length);
@@ -1636,7 +1659,9 @@ export default function App() {
       if (window.api?.onAppend) {
         console.log("[renderer-diag] Setting up onAppend listener");
         const off = window.api.onAppend((newEntries) => {
-          console.log(`[renderer-diag] Received IPC logs:append with ${newEntries?.length || 0} entries`);
+          console.log(
+            `[renderer-diag] Received IPC logs:append with ${newEntries?.length || 0} entries`,
+          );
           appendEntries(newEntries as any[]);
         });
         offs.push(off);

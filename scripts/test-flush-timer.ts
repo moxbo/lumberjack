@@ -47,10 +47,7 @@ function sendEntry(socket: net.Socket, entry: LogEntry): void {
   });
 }
 
-async function runInteractiveMode(
-  host: string,
-  port: number,
-): Promise<void> {
+function runInteractiveMode(host: string, port: number): void {
   const socket = net.createConnection({ host, port });
 
   socket.on("connect", () => {
@@ -64,7 +61,9 @@ async function runInteractiveMode(
 
   socket.on("error", (err) => {
     console.error(`[ERROR] Connection failed: ${err.message}`);
-    console.error(`Make sure Lumberjack has TCP server running on ${host}:${port}`);
+    console.error(
+      `Make sure Lumberjack has TCP server running on ${host}:${port}`,
+    );
     process.exit(1);
   });
 
@@ -90,7 +89,9 @@ async function runInteractiveMode(
         switch (cmd.toLowerCase()) {
           case "send": {
             const count = parseInt(arg || "1", 10) || 1;
-            console.log(`Sending ${count} entries with level ${currentLevel}...`);
+            console.log(
+              `Sending ${count} entries with level ${currentLevel}...`,
+            );
             for (let i = 0; i < count; i++) {
               entryCount++;
               const entry = createTestEntry(entryCount, currentLevel);
@@ -105,9 +106,7 @@ async function runInteractiveMode(
 
           case "burst": {
             const count = parseInt(arg || "10", 10) || 10;
-            console.log(
-              `Sending ${count} entries RAPIDLY (tests batching)...`,
-            );
+            console.log(`Sending ${count} entries RAPIDLY (tests batching)...`);
             for (let i = 0; i < count; i++) {
               entryCount++;
               const entry = createTestEntry(entryCount, currentLevel);
@@ -144,7 +143,10 @@ async function runInteractiveMode(
             }
         }
       } catch (err) {
-        console.error("Error:", err instanceof Error ? err.message : String(err));
+        console.error(
+          "Error:",
+          err instanceof Error ? err.message : String(err),
+        );
       }
 
       prompt();
@@ -182,7 +184,9 @@ async function runBatchMode(
 
   socket.on("error", (err) => {
     console.error(`[ERROR] Connection failed: ${err.message}`);
-    console.error(`Make sure Lumberjack has TCP server running on ${host}:${port}`);
+    console.error(
+      `Make sure Lumberjack has TCP server running on ${host}:${port}`,
+    );
     process.exit(1);
   });
 
@@ -213,4 +217,3 @@ main().catch((err) => {
   console.error("Fatal error:", err);
   process.exit(1);
 });
-
