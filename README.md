@@ -42,13 +42,12 @@ Hinweise:
 
 ## Build & Artefakte (Windows)
 
-Es wird mit electron-builder gebaut. Die Artefakte liegen unter `release/`.
+Es wird mit electron-builder gebaut. Die Artefakte liegen unter `release/build/`.
 
-- Schnellstart (ZIP x64):
-
-```cmd
-npm run build:zip:x64
-```
+**Build-Struktur:**
+- Source-Code wird nach `release/app/dist/` kompiliert
+- Icons befinden sich in `assets/` (werden von electron-builder automatisch verarbeitet)
+- Keine Source-Dateien im finalen Paket
 
 - Portable (ohne Installer):
 
@@ -56,37 +55,41 @@ npm run build:zip:x64
 npm run build:portable:x64
 ```
 
+- NSIS Installer:
+
+```cmd
+npm run build:x64
+```
+
+- Mac DMG:
+
+```cmd
+npm run build:mac:dmg
+```
+
 - Start der gepackten App (für verlässlichen Icon-Check):
 
 ```cmd
-.\release\win-unpacked\Lumberjack.exe
+.\release\build\win-unpacked\Lumberjack.exe
 ```
 
 ## App-Icon (Windows): EXE-Icon und Laufzeit-Icon
 
-Es gibt zwei unterschiedliche Icons:
+Icons befinden sich nun in `assets/` und werden von electron-builder automatisch verarbeitet:
 
-1. EXE-Icon (Datei-/Explorer-/Installer-Icon)
+1. **EXE-Icon** (Datei-/Explorer-/Installer-Icon)
+   - electron-builder embettet das Icon automatisch in die .exe
+   - Konfiguration: `directories.buildResources: "assets"`
+   - Icons: `assets/icon.ico` (Windows), `assets/icon.icns` (macOS)
 
-- Wird beim Build in die `Lumberjack.exe` eingebettet.
-- Konfiguration (aus `package.json` → `build`):
-  - `directories.buildResources: "images"`
-  - `win.icon: "icon.ico"` (relativ zu `buildResources`)
-- Erwartetes Layout in diesem Repo:
-  - `images/icon.ico` (Multi-Size ICO)
-
-2. Laufzeit-Icon (Fenster-/Taskleisten-Icon zur Laufzeit)
-
-- Wird in `main.js` beim Erzeugen des `BrowserWindow` gesetzt.
-- Wichtig: Pfad muss eine echte Datei sein (nicht nur aus `app.asar`). In dieser App:
-  - Es wird zuerst `resources/app.asar.unpacked/images/icon.ico` genutzt (falls vorhanden),
-  - oder `resources/images/icon.ico`,
-  - oder – wenn nur in `app.asar` vorhanden – zur Laufzeit nach `%AppData%/Lumberjack/assets/app-icon.ico` extrahiert und dieser Pfad verwendet.
-- Beim Start steht in der Konsole: `App-Icon verwendet: <Pfad>`.
+2. **Laufzeit-Icon** (Fenster-/Taskleisten-Icon)
+   - Wird von electron-builder in die resources kopiert
+   - Die Anwendung findet das Icon automatisch
+   - Keine manuelle asarUnpack-Konfiguration mehr nötig
 
 AUMID/Gruppierung:
-
-- `app.setAppUserModelId('de.hhla.lumberjack')` ist gesetzt und entspricht `build.appId`. Das ist wichtig für die Taskleisten-Gruppierung und ein konsistentes Icon-Verhalten.
+- `app.setAppUserModelId('de.hhla.lumberjack')` entspricht `build.appId`
+- Wichtig für Taskleisten-Gruppierung und konsistentes Icon-Verhalten
 
 ## Icon erzeugen (Multi-Size ICO)
 
@@ -94,7 +97,7 @@ Windows erwartet ein „vollwertiges“ Icon mit mehreren Größen (z. B. 16, 32
 
 Quelle (Beispiel):
 
-- `images/lumberjack_v4_normal_1024.png` (oder `..._dark_1024.png`)
+- `images/lumberjack_v4_dark_1024.png` (1024x1024 hochauflösende PNG)
 
 ICO erzeugen:
 
@@ -104,59 +107,45 @@ npm run icon:generate
 
 Ergebnis:
 
-- `images/icon.ico` wird neu erstellt (mehrere Größen enthalten).
+- `assets/icon.ico` wird neu erstellt (mehrere Größen enthalten)
+- `assets/icon.icns` wird auf macOS erstellt
 
 Danach neu bauen:
 
 ```cmd
-npm run build:zip:x64
+npm run build:portable:x64
 ```
 
 ## Troubleshooting: Wenn trotzdem das Standard-Icon erscheint
 
-Wenn die EXE im Explorer oder in der Taskleiste weiterhin das Electron-Icon zeigt, prüfe Folgendes:
+Mit der neuen Build-Struktur sollten Icon-Probleme seltener auftreten. Falls doch:
 
-1. Prüfe die gepackte EXE im Explorer
+1. **Prüfe die gepackte EXE im Explorer**
+   - Rechtsklick auf `release\build\win-unpacked\Lumberjack.exe` → Eigenschaften
+   - Icon sollte korrekt angezeigt werden
 
-- Rechtsklick auf `release\win-unpacked\Lumberjack.exe` → Eigenschaften.
-- Wird hier dein Icon angezeigt? Wenn ja: EXE-Icon ist korrekt eingebettet.
+2. **Taskleisten-Pins und Icon-Cache**
+   - Entferne alte angepinnte Verknüpfungen
+   - Version in `package.json` erhöhen (z. B. `1.0.1` → `1.0.2`) und neu bauen
 
-2. Taskleisten-Pins und Icon-Cache
+3. **Icon neu generieren**
+   - `npm run icon:generate`
+   - Stelle sicher, dass `assets/icon.ico` mehrere Größen enthält
 
-- Entferne alte angepinnte Verknüpfungen (Taskleiste/Start) der App, dann erst die neue EXE anpinnen.
-- Optional: Version in `package.json` erhöhen (z. B. `1.0.1` → `1.0.2`) und neu bauen – Windows bewertet Icons dann eher neu, da sich Dateinamen ändern.
+4. **Keine laufende EXE beim Bauen**
+   ```cmd
+   taskkill /IM Lumberjack.exe /F
+   npm run build:portable:x64
+   ```
 
-3. Laufzeit-Icon-Pfad prüfen
+5. **Dev vs. Paket**
+   - Im Dev-Start zeigt die Taskleiste das Electron-Icon (normal)
+   - Für Tests immer die gepackte EXE starten
 
-- Starte die gepackte EXE aus `release\win-unpacked` und beobachte die Konsole.
-- Es sollte eine Zeile erscheinen: `App-Icon verwendet: <Pfad>`.
-  - Erwartet ist ein Pfad außerhalb des ASAR, z. B. `...\resources\app.asar.unpacked\images\icon.ico` oder `%AppData%\Lumberjack\assets\app-icon.ico`.
-  - Falls der Pfad in `app.asar\images\icon.ico` liegt, wird automatisch extrahiert und ein externer Pfad verwendet.
-
-4. Keine laufende EXE beim Bauen
-
-- Eine geöffnete `Lumberjack.exe` kann den Build sperren und Aktualisierungen verhindern.
-
-```cmd
-taskkill /IM Lumberjack.exe /F
-npm run build:zip:x64
-```
-
-5. Multi-Size ICO sicherstellen
-
-- Wenn Explorer/Taskleiste das Icon weiterhin nicht sauber zeigen, ist oft die ICO-Datei unvollständig.
-- Erzeuge `images/icon.ico` mit `npm run icon:generate` neu und baue erneut.
-
-6. Dev vs. Paket
-
-- Im Dev-Start (npm run dev) zeigt die Taskleiste in der Regel das Electron-Icon, weil der Prozess `electron.exe` heißt. Für einen verlässlichen Test immer die gepackte EXE starten.
-
-7. Konfiguration querchecken
-
-- `release/builder-effective-config.yaml` sollte enthalten:
-  - `directories.buildResources: images`
-  - `win.icon: icon.ico`
-  - `appId: de.hhla.lumberjack`
+6. **Konfiguration prüfen**
+   - `release/build/builder-effective-config.yaml` sollte enthalten:
+     - `directories.buildResources: assets`
+     - `appId: de.hhla.lumberjack`
 
 ## Performance
 
