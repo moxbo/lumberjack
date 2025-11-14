@@ -1438,7 +1438,7 @@ function createWindow(opts: { makePrimary?: boolean } = {}): BrowserWindow {
           })()
         : {}),
     webPreferences: {
-      preload: path.join(app.getAppPath(), "preload.cjs"),
+      preload: path.join(app.getAppPath(), "dist", "preload", "preload.js"),
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: false,
@@ -1773,12 +1773,15 @@ function createWindow(opts: { makePrimary?: boolean } = {}): BrowserWindow {
     } else {
       const resPath = process.resourcesPath || "";
       const distCandidates = [
+        path.join(__dirname, "..", "renderer", "index.html"),
+        path.join(app.getAppPath(), "dist", "renderer", "index.html"),
+        path.join(process.cwd(), "dist", "renderer", "index.html"),
+        path.join(resPath, "app.asar.unpacked", "dist", "renderer", "index.html"),
+        path.join(resPath, "app.asar", "dist", "renderer", "index.html"),
+        path.join(resPath, "dist", "renderer", "index.html"),
+        // Legacy paths for backward compatibility
         path.join(__dirname, "dist", "index.html"),
         path.join(app.getAppPath(), "dist", "index.html"),
-        path.join(process.cwd(), "dist", "index.html"),
-        path.join(resPath, "app.asar.unpacked", "dist", "index.html"),
-        path.join(resPath, "app.asar", "dist", "index.html"),
-        path.join(resPath, "dist", "index.html"),
       ];
       let loaded = false;
       for (const candidate of distCandidates) {

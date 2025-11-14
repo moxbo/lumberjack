@@ -6,9 +6,10 @@
   "type": "module",
   "scripts": {
     "prebuild": "esbuild src/main/parsers.ts src/utils/settings.ts --outdir=src --out-extension:.js=.cjs --format=cjs --platform=node && npm run build:main && npm run build:preload",
-    "build:main": "esbuild src/main/main.ts --bundle --outfile=dist-main/main.cjs --platform=node --format=cjs --external:electron --external:electron-log/main && esbuild src/main/ipcHandlers.ts --bundle --outfile=dist-main/ipcHandlers.cjs --platform=node --format=cjs --external:electron --external:electron-log/main",
-    "build:preload": "esbuild preload.ts --outfile=preload.cjs --bundle --platform=node --format=cjs --external:electron",
-    "build:renderer": "vite build",
+    "build:main": "esbuild src/main/main.ts --bundle --outfile=release/app/dist/main/main.js --platform=node --format=cjs --external:electron --external:electron-log/main && esbuild src/main/ipcHandlers.ts --bundle --outfile=release/app/dist/main/ipcHandlers.js --platform=node --format=cjs --external:electron --external:electron-log/main",
+    "build:preload": "esbuild preload.ts --outfile=release/app/dist/preload/preload.js --bundle --platform=node --format=cjs --external:electron",
+    "build:renderer": "vite build --outDir release/app/dist/renderer",
+    "build:prod": "npm run prebuild && npm run build:renderer",
     "start": "npm run prebuild && npm run build:renderer && electron .",
     "dev": "npm run prebuild && concurrently -k -s first -n \"VITE,ELECTRON\" -c \"cyan,magenta\" \"cross-env NODE_ENV=development vite --open=false\" \"wait-on http://localhost:5173 && cross-env NODE_ENV=development VITE_DEV_SERVER_URL=http://localhost:5173 electron .\"",
     "test": "tsx ./scripts/smoke-parse.ts && tsx ./scripts/test-msg-filter.ts && node ./scripts/verify-mdc-flow.mjs && tsx ./scripts/test-elastic-indexer.ts && tsx ./scripts/test-log-data-store.ts && tsx ./scripts/test-tcp-socket-cleanup.ts && tsx ./scripts/test-http-poller-memory.ts && tsx ./scripts/test-robustness-features.ts && tsx ./scripts/test-adaptive-batch.ts && tsx ./scripts/test-stability-services.ts && tsx ./scripts/test-new-services.ts",
@@ -18,10 +19,10 @@
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "icon:generate": "tsx ./scripts/make-icon.ts",
-    "build:x64": "npm run prebuild && npm run build:renderer && cross-env CSC_IDENTITY_AUTO_DISCOVERY=false electron-builder --win nsis --x64",
-    "build:portable": "npm run prebuild && npm run build:renderer && cross-env CSC_IDENTITY_AUTO_DISCOVERY=false electron-builder --win portable",
-    "build:portable:x64": "npm run prebuild && npm run build:renderer && cross-env CSC_IDENTITY_AUTO_DISCOVERY=false electron-builder --win portable --x64",
-    "build:mac:dmg": "npm run prebuild && npm run build:renderer && cross-env ELECTRON_BUILDER_DISABLE_PUBLISH=true CSC_IDENTITY_AUTO_DISCOVERY=false electron-builder --mac dmg --publish never"
+    "build:x64": "npm run build:prod && cross-env CSC_IDENTITY_AUTO_DISCOVERY=false electron-builder --win nsis --x64",
+    "build:portable": "npm run build:prod && cross-env CSC_IDENTITY_AUTO_DISCOVERY=false electron-builder --win portable",
+    "build:portable:x64": "npm run build:prod && cross-env CSC_IDENTITY_AUTO_DISCOVERY=false electron-builder --win portable --x64",
+    "build:mac:dmg": "npm run build:prod && cross-env ELECTRON_BUILDER_DISABLE_PUBLISH=true CSC_IDENTITY_AUTO_DISCOVERY=false electron-builder --mac dmg --publish never"
   },
   "author": {
     "name": "Bohm, Moritz",
@@ -67,33 +68,17 @@
     "appId": "de.hhla.lumberjack",
     "productName": "Lumberjack",
     "directories": {
-      "output": "release",
-      "buildResources": "images"
+      "app": "release/app",
+      "buildResources": "assets",
+      "output": "release/build"
     },
-    "icon": "images/icon.ico",
     "files": [
       "dist/**/*",
-      "dist-main/**/*",
-      "!dist-main/**/*.js",
-      "preload.cjs",
-      "src/**/*.ts",
-      "src/**/*.tsx",
-      "src/**/*.js",
-      "src/**/*.cjs",
-      "index.html",
-      "styles.css",
-      "package.json",
-      "images/**"
+      "package.json"
     ],
     "asar": true,
     "asarUnpack": [
-      "images/**"
-    ],
-    "extraResources": [
-      {
-        "from": "images/icon.ico",
-        "to": "images/icon.ico"
-      }
+      "**/*.node"
     ],
     "electronVersion": "38.4.0",
     "electronDist": "node_modules/electron/dist",
@@ -116,13 +101,10 @@
       ],
       "signAndEditExecutable": false,
       "forceCodeSigning": false,
-      "signExts": [],
-      "icon": "images/icon.ico"
+      "signExts": []
     },
     "nsis": {
       "oneClick": true,
-      "installerIcon": "images/icon.ico",
-      "uninstallerIcon": "images/icon.ico",
       "createDesktopShortcut": true,
       "shortcutName": "Lumberjack"
     },
@@ -132,7 +114,6 @@
         "zip"
       ],
       "category": "public.app-category.developer-tools",
-      "icon": "images/icon.icns",
       "identity": null
     }
   },

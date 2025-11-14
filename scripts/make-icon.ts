@@ -1,7 +1,7 @@
 /*
-  Erzeugt images/icon.ico aus einer hochauflösenden PNG als Multi-Size-ICO
+  Erzeugt assets/icon.ico aus einer hochauflösenden PNG als Multi-Size-ICO
   (Größen: 256,128,64,48,32,16) mit sharp + png-to-ico.
-  Zusätzlich (unter macOS) wird images/icon.icns erzeugt, indem eine .iconset
+  Zusätzlich (unter macOS) wird assets/icon.icns erzeugt, indem eine .iconset
   aus mehreren PNG-Größen gebaut und mit `iconutil` konvertiert wird.
 */
 import path from "path";
@@ -27,6 +27,10 @@ await (async () => {
   try {
     const baseDir = path.join(__dirname, "..");
     const imagesDir = path.join(baseDir, "images");
+    const assetsDir = path.join(baseDir, "assets");
+
+    // Ensure assets directory exists
+    fs.mkdirSync(assetsDir, { recursive: true });
 
     const srcPng = path.join(imagesDir, "lumberjack_v4_dark_1024.png");
     if (!fs.existsSync(srcPng)) {
@@ -36,7 +40,7 @@ await (async () => {
 
     // ========== ICO (Windows) ==========
     const sizesIco = [256, 128, 64, 48, 32, 16];
-    const tmpDir = path.join(imagesDir, ".tmp-icons");
+    const tmpDir = path.join(assetsDir, ".tmp-icons");
     fs.mkdirSync(tmpDir, { recursive: true });
 
     const tmpPngs: string[] = [];
@@ -51,7 +55,7 @@ await (async () => {
       tmpPngs.push(out);
     }
 
-    const outIco = path.join(imagesDir, "icon.ico");
+    const outIco = path.join(assetsDir, "icon.ico");
     try {
       const buf = await (pngToIco as any)(tmpPngs);
       fs.writeFileSync(outIco, buf);
@@ -72,7 +76,7 @@ await (async () => {
 
     // ========== ICNS (macOS) ==========
     if (process.platform === "darwin") {
-      const iconsetDir = path.join(imagesDir, "icon.iconset");
+      const iconsetDir = path.join(assetsDir, "icon.iconset");
       // ggf. alten Ordner entfernen
       try {
         if (fs.existsSync(iconsetDir)) {
@@ -103,7 +107,7 @@ await (async () => {
           .toFile(out);
       }
 
-      const outIcns = path.join(imagesDir, "icon.icns");
+      const outIcns = path.join(assetsDir, "icon.icns");
       try {
         await new Promise<void>((resolve, reject) => {
           const child = cp.spawn("iconutil", [
