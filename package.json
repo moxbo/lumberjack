@@ -19,10 +19,11 @@
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "icon:generate": "tsx ./scripts/make-icon.ts",
-    "build:x64": "npm run build:prod && cross-env CSC_IDENTITY_AUTO_DISCOVERY=false electron-builder --win nsis --x64",
-    "build:portable": "npm run build:prod && cross-env CSC_IDENTITY_AUTO_DISCOVERY=false electron-builder --win portable",
-    "build:portable:x64": "npm run build:prod && cross-env CSC_IDENTITY_AUTO_DISCOVERY=false electron-builder --win portable --x64",
-    "build:mac:dmg": "npm run build:prod && cross-env ELECTRON_BUILDER_DISABLE_PUBLISH=true CSC_IDENTITY_AUTO_DISCOVERY=false electron-builder --mac dmg --publish never"
+    "prepack:app": "node scripts/prepare-release-metadata.cjs",
+    "build:x64": "npm run prepack:app && npm run build:prod && cross-env CSC_IDENTITY_AUTO_DISCOVERY=false electron-builder --win nsis --x64",
+    "build:portable": "npm run prepack:app && npm run build:prod && cross-env CSC_IDENTITY_AUTO_DISCOVERY=false electron-builder --win portable",
+    "build:portable:x64": "npm run prepack:app && npm run build:prod && cross-env CSC_IDENTITY_AUTO_DISCOVERY=false electron-builder --win portable --x64",
+    "build:mac:dmg": "npm run prepack:app && npm run build:prod && cross-env ELECTRON_BUILDER_DISABLE_PUBLISH=true CSC_IDENTITY_AUTO_DISCOVERY=false electron-builder --mac dmg --publish never"
   },
   "author": {
     "name": "Bohm, Moritz",
@@ -79,8 +80,6 @@
     "asarUnpack": [
       "**/*.node"
     ],
-    "electronVersion": "38.4.0",
-    "electronDist": "node_modules/electron/dist",
     "artifactName": "Lumberjack-${version}-${arch}.${ext}",
     "compression": "store",
     "publish": [],
