@@ -10,6 +10,7 @@
     "build:preload": "esbuild preload.ts --outfile=release/app/dist/preload/preload.js --bundle --platform=node --format=cjs --external:electron",
     "build:renderer": "vite build --outDir release/app/dist/renderer",
     "build:prod": "npm run prebuild && npm run build:renderer",
+    "build": "npm run prepack:app && npm run build:prod",
     "start": "npm run prebuild && npm run build:renderer && electron .",
     "dev": "npm run prebuild && concurrently -k -s first -n \"VITE,ELECTRON\" -c \"cyan,magenta\" \"cross-env NODE_ENV=development vite --open=false\" \"wait-on http://localhost:5173 && cross-env NODE_ENV=development VITE_DEV_SERVER_URL=http://localhost:5173 electron .\"",
     "test": "tsx ./scripts/smoke-parse.ts && tsx ./scripts/test-msg-filter.ts && node ./scripts/verify-mdc-flow.mjs && tsx ./scripts/test-elastic-indexer.ts && tsx ./scripts/test-log-data-store.ts && tsx ./scripts/test-tcp-socket-cleanup.ts && tsx ./scripts/test-http-poller-memory.ts && tsx ./scripts/test-robustness-features.ts && tsx ./scripts/test-adaptive-batch.ts && tsx ./scripts/test-stability-services.ts && tsx ./scripts/test-new-services.ts",
