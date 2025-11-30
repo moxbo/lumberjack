@@ -224,58 +224,36 @@ export interface DroppedFile {
 /**
  * Main API exposed to renderer via contextBridge
  */
-export interface ElectronAPI {
-  // Settings
+export type ElectronAPI = {
   settingsGet: () => Promise<SettingsResult>;
   settingsSet: (patch: Partial<Settings>) => Promise<SettingsResult>;
-
-  // Window title (session)
   windowTitleGet: () => Promise<WindowTitleResult>;
   windowTitleSet: (title: string) => Promise<Result<void>>;
-
-  // Per-window permissions (not persisted in Settings)
   windowPermsGet: () => Promise<WindowPermsResult>;
   windowPermsSet: (patch: { canTcpControl?: boolean }) => Promise<Result<void>>;
-
-  // Dialogs
   openFiles: () => Promise<string[]>;
   chooseLogFile: () => Promise<string>;
-
-  // Log parsing
   parsePaths: (paths: string[]) => Promise<ParseResult>;
   parseRawDrops: (files: DroppedFile[]) => Promise<ParseResult>;
-
-  // TCP operations
   tcpStart: (port: number) => void;
   tcpStop: () => void;
-
-  // HTTP operations
   httpLoadOnce: (url: string) => Promise<ParseResult>;
   httpStartPoll: (options: {
     url: string;
     intervalMs: number;
   }) => Promise<HttpPollResult>;
   httpStopPoll: (id: number) => Promise<Result<void>>;
-
-  // Elasticsearch
   elasticSearch: (options: ElasticSearchOptions) => Promise<ParseResult>;
   elasticClosePit: (sessionId: string) => Promise<Result<void>>;
-
-  // Event listeners
   onAppend: (callback: (entries: LogEntry[]) => void) => () => void;
   onTcpStatus: (callback: (status: TcpStatus) => void) => () => void;
   onMenu: (callback: (command: MenuCommand) => void) => () => void;
+  logError: (errorData: unknown) => Promise<Result<void>>;
+};
 
-  // Error logging from renderer to main process
-  logError: (errorData: Record<string, unknown>) => Promise<Result<void>>;
-}
-
-/**
- * Extend Window interface with our API
- */
 declare global {
   interface Window {
-    api: ElectronAPI;
-    electronAPI?: ElectronAPI; // Also support electronAPI for consistency
+    api?: ElectronAPI;
+    electronAPI?: ElectronAPI;
   }
 }

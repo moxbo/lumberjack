@@ -6,7 +6,8 @@
 import { ipcMain, dialog, BrowserWindow } from "electron";
 import log from "electron-log/main";
 import * as path from "path";
-import type {
+import { getSharedMainApi } from "./sharedMainApi";
+import {
   Settings,
   ElasticSearchOptions,
   ParseResult,
@@ -16,18 +17,17 @@ import type {
 import type { SettingsService } from "../services/SettingsService";
 import type { NetworkService } from "../services/NetworkService";
 
-/**
- * Register all IPC handlers
- */
 export function registerIpcHandlers(
   settingsService: SettingsService,
   networkService: NetworkService,
   getParsers: () => typeof import("./parsers.cjs"),
   getAdmZip: () => typeof import("adm-zip"),
 ): void {
-  // Helper: Fenstertitel gemäß Main-Logik aktualisieren (Primär vs. Default)
+  const sharedApi = getSharedMainApi();
+
   function updateWindowTitles(): void {
     try {
+      sharedApi.applyWindowTitles?.();
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const fn = (global as any)?.__applyWindowTitles;
       if (typeof fn === "function") fn();
@@ -41,6 +41,7 @@ export function registerIpcHandlers(
 
   function updateAppMenu(): void {
     try {
+      sharedApi.updateAppMenu?.();
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const upd = (global as any)?.__updateAppMenu;
       if (typeof upd === "function") upd();
@@ -52,15 +53,14 @@ export function registerIpcHandlers(
     }
   }
 
-  // Window title (per-window, session-scoped) handlers
   ipcMain.handle("windowTitle:get", (event) => {
     try {
-      const wc = event.sender;
-      const win = BrowserWindow.fromWebContents(wc);
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const getter = (global as any)?.__getWindowBaseTitle;
-      const title = typeof getter === "function" && win ? getter(win.id) : "";
-      return { ok: true, title: title || "" };
+      const win = BrowserWindow.fromWebContents(event.sender);
+      if (win) {
+        const title = sharedApi.getWindowBaseTitle?.(win.id) ?? "";
+        return { ok: true, title };
+      }
+      return { ok: true, title: "" };
     } catch (err) {
       log.error(
         "Error getting window title:",
@@ -75,12 +75,10 @@ export function registerIpcHandlers(
 
   ipcMain.handle("windowTitle:set", (event, title: string) => {
     try {
-      const wc = event.sender;
-      const win = BrowserWindow.fromWebContents(wc);
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const setter = (global as any)?.__setWindowBaseTitle;
-      if (typeof setter === "function" && win)
-        setter(win.id, String(title ?? ""));
+      const win = BrowserWindow.fromWebContents(event.sender);
+      if (win) {
+        sharedApi.setWindowBaseTitle?.(win.id, String(title ?? ""));
+      }
       updateWindowTitles();
       return { ok: true };
     } catch (err) {
@@ -95,15 +93,12 @@ export function registerIpcHandlers(
     }
   });
 
-  // Per-Window Permissions (e.g., TCP control)
   ipcMain.handle("windowPerms:get", (event) => {
     try {
-      const wc = event.sender;
-      const win = BrowserWindow.fromWebContents(wc);
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const getter = (global as any)?.__getWindowCanTcpControl;
-      const allowed =
-        typeof getter === "function" && win ? !!getter(win.id) : true;
+      const win = BrowserWindow.fromWebContents(event.sender);
+      const allowed = win
+        ? sharedApi.getWindowCanTcpControl?.(win.id) !== false
+        : true;
       return { ok: true, canTcpControl: allowed } as any;
     } catch (err) {
       log.error(
@@ -121,16 +116,9 @@ export function registerIpcHandlers(
     "windowPerms:set",
     (event, patch: { canTcpControl?: boolean }) => {
       try {
-        const wc = event.sender;
-        const win = BrowserWindow.fromWebContents(wc);
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const setter = (global as any)?.__setWindowCanTcpControl;
-        if (
-          win &&
-          typeof patch?.canTcpControl === "boolean" &&
-          typeof setter === "function"
-        ) {
-          setter(win.id, patch.canTcpControl);
+        const win = BrowserWindow.fromWebContents(event.sender);
+        if (win && typeof patch?.canTcpControl === "boolean") {
+          sharedApi.setWindowCanTcpControl?.(win.id, patch.canTcpControl);
           updateAppMenu();
         }
         return { ok: true } as any;
@@ -301,7 +289,9 @@ export function registerIpcHandlers(
           if (!name || !data) continue;
           if (ext === ".zip") {
             const buf = Buffer.from(data, enc === "base64" ? "base64" : "utf8");
-            const zip = new (ZipClass as typeof import("adm-zip"))(buf);
+            const zip = new (ZipClass as typeof import("adm-zip"))(
+              buf as Buffer,
+            );
             zip.getEntries().forEach((zEntry: Record<string, unknown>) => {
               const ename = String(zEntry.entryName || "");
               const eext = path.extname(ename).toLowerCase();
@@ -358,6 +348,7 @@ export function registerIpcHandlers(
         const allowed =
           win && typeof canFn === "function" ? !!canFn(win.id) : true;
         if (!allowed) {
+          if (win) sharedApi.setTcpOwnerWindowId?.(win.id);
           event.reply("tcp:status", {
             ok: false,
             message: "In diesem Fenster nicht erlaubt",
@@ -386,7 +377,6 @@ export function registerIpcHandlers(
         }
 
         // Titel und Menü aktualisieren
-        updateWindowTitles();
         updateAppMenu();
         setTimeout(updateWindowTitles, 50);
         setTimeout(updateWindowTitles, 200);
@@ -399,6 +389,7 @@ export function registerIpcHandlers(
           ok: false,
           message: err instanceof Error ? err.message : String(err),
         });
+        sharedApi.setTcpOwnerWindowId?.(null);
       }
     })().catch(() => {});
   });

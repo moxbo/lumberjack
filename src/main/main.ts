@@ -26,7 +26,7 @@ import { FeatureFlags } from "../services/FeatureFlags";
 import { ShutdownCoordinator } from "../services/ShutdownCoordinator";
 import { registerIpcHandlers } from "./ipcHandlers";
 import os from "node:os";
-
+import { getSharedMainApi } from "./sharedMainApi";
 // Environment
 const isDev =
   process.env.NODE_ENV === "development" ||
@@ -251,10 +251,69 @@ function setTcpOwnerWindowId(winId: number | null): void {
 function getTcpOwnerWindowId(): number | null {
   return tcpOwnerWindowId;
 }
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-(global as any).__setTcpOwnerWindowId = setTcpOwnerWindowId;
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-(global as any).__getTcpOwnerWindowId = getTcpOwnerWindowId;
+
+const lumberjackGlobals = globalThis as typeof globalThis & {
+  lumberjack?: {
+    setTcpOwnerWindowId?: (winId: number | null) => void;
+    getTcpOwnerWindowId?: () => number | null;
+    applyWindowTitles?: () => void;
+    getWindowBaseTitle?: (winId: number) => string;
+    setWindowBaseTitle?: (winId: number, title: string) => void;
+    getWindowCanTcpControl?: (winId: number) => boolean;
+    setWindowCanTcpControl?: (winId: number, allowed: boolean) => void;
+    updateAppMenu?: () => void;
+  };
+};
+if (!lumberjackGlobals.lumberjack) {
+  lumberjackGlobals.lumberjack = {};
+}
+const sharedApi = getSharedMainApi();
+sharedApi.getTcpOwnerWindowId = getTcpOwnerWindowId;
+sharedApi.applyWindowTitles = applyWindowTitles;
+sharedApi.getWindowBaseTitle = (winId: number) => {
+  try {
+    const w = BrowserWindow.fromId?.(winId);
+    if (w) return windowMeta.get(winId)?.baseTitle || "";
+  } catch (e) {
+    log.error(
+      "getWindowBaseTitle failed:",
+      e instanceof Error ? e.message : String(e),
+    );
+  }
+  return "";
+};
+sharedApi.setWindowBaseTitle = (winId: number, title: string) => {
+  try {
+    const w = BrowserWindow.fromId?.(winId);
+    if (w) setWindowBaseTitle(w, title);
+  } catch (e) {
+    log.error(
+      "setWindowBaseTitle failed:",
+      e instanceof Error ? e.message : String(e),
+    );
+  }
+};
+sharedApi.getWindowCanTcpControl = (winId: number) => {
+  try {
+    const w = BrowserWindow.fromId?.(winId);
+    return getWindowCanTcpControl(w);
+  } catch {
+    log.error("getWindowCanTcpControl failed");
+    return true;
+  }
+};
+sharedApi.setWindowCanTcpControl = (winId: number, allowed: boolean) => {
+  try {
+    const w = BrowserWindow.fromId?.(winId);
+    if (w) setWindowCanTcpControl(w, allowed);
+  } catch (e) {
+    log.error(
+      "setWindowCanTcpControl failed:",
+      e instanceof Error ? e.message : String(e),
+    );
+  }
+};
+sharedApi.updateAppMenu = updateMenu;
 
 function applyWindowTitles(): void {
   const tcp = networkService.getTcpStatus();
@@ -274,59 +333,10 @@ function applyWindowTitles(): void {
     }
   }
 }
+
 // Expose for ipcHandlers
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 (global as any).__applyWindowTitles = applyWindowTitles;
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-(global as any).__getWindowBaseTitle = (winId: number) => {
-  try {
-    const w = BrowserWindow.fromId?.(winId);
-    if (w) return windowMeta.get(winId)?.baseTitle || "";
-  } catch (e) {
-    log.error(
-      "__getWindowBaseTitle failed:",
-      e instanceof Error ? e.message : String(e),
-    );
-  }
-  return "";
-};
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-(global as any).__setWindowBaseTitle = (winId: number, title: string) => {
-  try {
-    const w = BrowserWindow.fromId?.(winId);
-    if (w) setWindowBaseTitle(w, title);
-  } catch (e) {
-    log.error(
-      "__setWindowBaseTitle failed:",
-      e instanceof Error ? e.message : String(e),
-    );
-  }
-};
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-(global as any).__getWindowCanTcpControl = (winId: number) => {
-  try {
-    const w = BrowserWindow.fromId?.(winId);
-    return getWindowCanTcpControl(w);
-  } catch {
-    log.error("__getWindowCanTcpControl failed");
-    return true;
-  }
-};
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-(global as any).__setWindowCanTcpControl = (
-  winId: number,
-  allowed: boolean,
-) => {
-  try {
-    const w = BrowserWindow.fromId?.(winId);
-    if (w) setWindowCanTcpControl(w, allowed);
-  } catch (e) {
-    log.error(
-      "__setWindowCanTcpControl failed:",
-      e instanceof Error ? e.message : String(e),
-    );
-  }
-};
 
 // Buffers with adaptive memory limits
 let MAX_PENDING_APPENDS = 5000;
@@ -1598,13 +1608,7 @@ function createWindow(opts: { makePrimary?: boolean } = {}): BrowserWindow {
               } else {
                 log.warn("[icon] macOS nativeImage is empty from buffer");
               }
-            } catch (bufferErr) {
-              log.warn(
-                "[icon] Error with createFromBuffer, trying createFromPath:",
-                bufferErr instanceof Error
-                  ? bufferErr.message
-                  : String(bufferErr),
-              );
+            } catch {
               // Fallback: Versuche mit Pfad
               const img = nativeImage.createFromPath(macIconPath);
               if (!img.isEmpty()) {
@@ -1656,39 +1660,22 @@ function createWindow(opts: { makePrimary?: boolean } = {}): BrowserWindow {
                 // Intentionally empty - ignore errors
               }
             } catch (pathErr) {
-              // Fallback: Try with nativeImage
-              try {
-                const iconBuffer = fs.readFileSync(iconPath);
-                const img = nativeImage.createFromBuffer(iconBuffer);
-                if (!img.isEmpty()) {
-                  win.setIcon(img);
-                  try {
-                    log.info?.(
-                      "[icon] BrowserWindow.setIcon applied via nativeImage buffer",
-                    );
-                  } catch {
-                    // Intentionally empty - ignore errors
-                  }
-                } else {
-                  try {
-                    log.warn(
-                      "[icon] nativeImage is empty from buffer for Windows",
-                    );
-                  } catch {
-                    // Intentionally empty - ignore errors
-                  }
-                }
-              } catch (bufferErr) {
+              const nativeImageResult = (() => {
                 try {
-                  log.warn?.(
-                    "[icon] BrowserWindow.setIcon failed:",
-                    pathErr instanceof Error
-                      ? pathErr.message
-                      : String(pathErr),
-                  );
+                  const iconBuffer = fs.readFileSync(iconPath);
+                  const img = nativeImage.createFromBuffer(iconBuffer);
+                  return img.isEmpty() ? null : img;
                 } catch {
-                  // Intentionally empty - ignore errors
+                  return null;
                 }
+              })();
+              if (nativeImageResult) {
+                win.setIcon(nativeImageResult);
+              } else {
+                log.warn?.(
+                  "[icon] BrowserWindow.setIcon failed:",
+                  pathErr instanceof Error ? pathErr.message : String(pathErr),
+                );
               }
             }
           } else {
@@ -1776,7 +1763,13 @@ function createWindow(opts: { makePrimary?: boolean } = {}): BrowserWindow {
         path.join(__dirname, "..", "renderer", "index.html"),
         path.join(app.getAppPath(), "dist", "renderer", "index.html"),
         path.join(process.cwd(), "dist", "renderer", "index.html"),
-        path.join(resPath, "app.asar.unpacked", "dist", "renderer", "index.html"),
+        path.join(
+          resPath,
+          "app.asar.unpacked",
+          "dist",
+          "renderer",
+          "index.html",
+        ),
         path.join(resPath, "app.asar", "dist", "renderer", "index.html"),
         path.join(resPath, "dist", "renderer", "index.html"),
         // Legacy paths for backward compatibility
@@ -2089,7 +2082,7 @@ try {
     try {
       exitSource = "uncaughtException";
       exitDetails = { origin, error: err?.stack || String(err) };
-      
+
       // Detect potential installer conflicts (Windows Node.js installer interference)
       const errorMsg = String(err?.message || "").toLowerCase();
       const errorCode = (err as NodeJS.ErrnoException)?.code;
@@ -2101,18 +2094,21 @@ try {
         errorCode === "EBUSY" ||
         errorCode === "EACCES" ||
         errorCode === "EPERM";
-      
+
       if (isInstallerConflict) {
-        log.warn("[installer-conflict] Potential installer interference detected", {
-          errorCode,
-          errorMessage: err?.message,
-          hint: "This may be caused by Node.js installer running simultaneously. See docs/NODE_INSTALLER_CONFLICT.md",
-        });
+        log.warn(
+          "[installer-conflict] Potential installer interference detected",
+          {
+            errorCode,
+            errorMessage: err?.message,
+            hint: "This may be caused by Node.js installer running simultaneously. See docs/NODE_INSTALLER_CONFLICT.md",
+          },
+        );
         console.warn(
           "[WARNUNG] Möglicher Installer-Konflikt erkannt. Dies kann durch gleichzeitige Node.js-Installation verursacht werden.",
         );
       }
-      
+
       log.error("[diag] uncaughtException", {
         origin,
         error: err?.stack || String(err),
@@ -2233,7 +2229,7 @@ try {
         quitConfirmed,
         hasDetails: !!exitDetails,
       });
-      if (exitDetails) {
+      if (code !== 0) {
         log.error("[diag] exit details:", exitDetails);
       }
       // Final flush attempt
@@ -2249,13 +2245,13 @@ try {
       try {
         exitSource = "child-process-gone";
         exitDetails = details as unknown as Record<string, unknown>;
-        
+
         // Check if this might be related to installer interference
         const isUnusualExit =
           details.exitCode !== 0 &&
           details.reason !== "clean-exit" &&
           details.reason !== "normal-termination";
-        
+
         if (isUnusualExit) {
           log.warn(
             "[installer-conflict] Child process crashed unexpectedly. This may indicate system interference.",
@@ -2267,7 +2263,7 @@ try {
             },
           );
         }
-        
+
         log.error("[diag] child-process-gone:", {
           type: details.type,
           reason: details.reason,
@@ -2401,13 +2397,7 @@ void app
               } else {
                 log.warn("[icon] macOS nativeImage is empty from buffer");
               }
-            } catch (bufferErr) {
-              log.warn(
-                "[icon] Error with createFromBuffer, trying createFromPath:",
-                bufferErr instanceof Error
-                  ? bufferErr.message
-                  : String(bufferErr),
-              );
+            } catch {
               // Fallback: Versuche mit Pfad
               const img = nativeImage.createFromPath(macIconPath);
               if (!img.isEmpty()) {

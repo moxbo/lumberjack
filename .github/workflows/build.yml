@@ -1,34 +1,135 @@
 name: Build/release
 
-on: push
+on:
+  push:
+    branches:
+      - '**'
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: 'Branch, Tag oder Commit, der gebaut werden soll'
+        required: false
+        default: main
+      release_tag:
+        description: 'Release-Tag (z. B. v1.2.3). Wenn leer, wird bei Tag-Push automatisch übernommen.'
+        required: false
+      prerelease:
+        description: 'Release als Pre-Release markieren'
+        required: false
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
 
 jobs:
-  release:
-    runs-on: ${{ matrix.os }}
+  prepare-release:
+    runs-on: ubuntu-latest
+    outputs:
+      should_release: ${{ steps.meta.outputs.should_release }}
+      release_tag: ${{ steps.meta.outputs.release_tag }}
+      prerelease: ${{ steps.meta.outputs.prerelease }}
+      checkout_ref: ${{ steps.meta.outputs.checkout_ref }}
+    steps:
+      - name: Parameter auswerten
+        id: meta
+        shell: bash
+        run: |
+          set -euo pipefail
+          event="${{ github.event_name }}"
+          ref="${{ github.ref }}"
+          input_ref="${{ github.event.inputs.ref }}"
+          input_tag="${{ github.event.inputs.release_tag }}"
+          input_prerelease="${{ github.event.inputs.prerelease }}"
 
+          checkout_ref="$ref"
+          should_release="false"
+          release_tag=""
+          prerelease="false"
+
+          if [[ "$event" == "workflow_dispatch" && -n "$input_ref" ]]; then
+            checkout_ref="$input_ref"
+          fi
+
+          if [[ "$ref" == refs/tags/* ]]; then
+            should_release="true"
+            release_tag="${ref#refs/tags/}"
+            checkout_ref="$ref"
+          elif [[ "$event" == "workflow_dispatch" && -n "$input_tag" ]]; then
+            should_release="true"
+            release_tag="$input_tag"
+            checkout_ref="$input_tag"
+          fi
+
+          if [[ "$should_release" == "true" ]]; then
+            if [[ "$release_tag" == *-* ]]; then
+              prerelease="true"
+            fi
+          fi
+          if [[ "$input_prerelease" == "true" ]]; then
+            prerelease="true"
+          fi
+
+          echo "should_release=$should_release" >> "$GITHUB_OUTPUT"
+          echo "release_tag=$release_tag" >> "$GITHUB_OUTPUT"
+          echo "prerelease=$prerelease" >> "$GITHUB_OUTPUT"
+          echo "checkout_ref=$checkout_ref" >> "$GITHUB_OUTPUT"
+
+  release:
+    needs: prepare-release
+    runs-on: ${{ matrix.os }}
     strategy:
       matrix:
         os: [macos-latest, windows-latest]
-
     steps:
-      - name: Check out Git repository
-        uses: actions/checkout@v1
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.prepare-release.outputs.checkout_ref }}
 
-      - name: Install Node.js, NPM and Yarn
-        uses: actions/setup-node@v1
+      - uses: actions/setup-node@v4
         with:
           node-version: 22
+          cache: npm
 
-      - name: Build/release Electron app
-        uses: samuelmeuli/action-electron-builder@v1
+      - run: npm ci
+
+      - uses: samuelmeuli/action-electron-builder@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
-          # GitHub token, automatically provided to the action
-          # (No need to define this secret in the repo settings)
-          github_token: ${{ secrets.github_token }}
-
-          # Build script to run before electron-builder
+          github_token: ${{ secrets.GITHUB_TOKEN }}
           build_script_name: build
+          release: ${{ needs.prepare-release.outputs.should_release == 'true' }}
 
-          # If the commit is tagged with a version (e.g. "v1.0.0"),
-          # release the app after building
-          release: ${{ startsWith(github.ref, 'refs/tags/v') }}
+  finalize-release:
+    needs: [prepare-release, release]
+    if: needs.prepare-release.outputs.should_release == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.prepare-release.outputs.checkout_ref }}
+
+      - name: Release automatisch vervollständigen
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          tag="${{ needs.prepare-release.outputs.release_tag }}"
+          prerelease="${{ needs.prepare-release.outputs.prerelease }}"
+          release_flag=""
+          if [[ "$prerelease" == "true" ]]; then
+            release_flag="--prerelease"
+          fi
+
+          if gh release view "$tag" >/dev/null 2>&1; then
+            gh release edit "$tag" --draft --title "$tag"
+          else
+            gh release create "$tag" --draft --title "$tag"
+          fi
+
+          notes=$(gh api repos/${GITHUB_REPOSITORY}/releases/generate-notes -f tag_name="$tag" --jq '.body')
+
+          gh release edit "$tag" --notes "$notes" $release_flag --draft=false
