@@ -11,6 +11,7 @@ import {
   nativeImage,
   type NativeImage,
 } from "electron";
+import { spawn } from "node:child_process";
 import * as path from "path";
 import * as fs from "fs";
 import log from "electron-log/main";
@@ -31,6 +32,9 @@ import { getSharedMainApi } from "./sharedMainApi";
 const isDev =
   process.env.NODE_ENV === "development" ||
   Boolean(process.env.VITE_DEV_SERVER_URL);
+const MULTI_INSTANCE_FLAG = "--multi-instance";
+const NEW_WINDOW_FLAG = "--new-window";
+const isMultiInstanceLaunch = process.argv.includes(MULTI_INSTANCE_FLAG);
 
 // Initialize logging as early as possible to catch startup crashes
 log.initialize();
@@ -1303,7 +1307,7 @@ function buildMenu(): void {
         {
           label: "Neues Fenster",
           accelerator: "CmdOrCtrl+N",
-          click: () => createWindow({ makePrimary: false }),
+          click: () => openWindowInNewProcess(),
         },
         { type: "separator" as const },
         {
@@ -2324,7 +2328,7 @@ try {
   // ignore handler setup errors
 }
 
-const gotLock = app.requestSingleInstanceLock();
+const gotLock = isMultiInstanceLaunch ? true : app.requestSingleInstanceLock();
 if (!gotLock) {
   try {
     log.warn(
@@ -2342,14 +2346,14 @@ if (!gotLock) {
     // ignore
   }
   app.exit(0);
-} else {
+} else if (!isMultiInstanceLaunch) {
   app.on("second-instance", (_event, argv) => {
     try {
       log.info("[diag] second-instance with argv:", argv);
     } catch {
       // ignore
     }
-    if (argv.some((a) => a === "--new-window")) {
+    if (argv.some((a) => a === NEW_WINDOW_FLAG)) {
       createWindow({ makePrimary: false });
       return;
     }
@@ -2360,181 +2364,42 @@ if (!gotLock) {
       win.focus();
     }
   });
+} else {
+  log.info("[multi-instance] Running without single instance lock");
 }
 
-void app
-  .whenReady()
-  .then(() => {
-    try {
-      // Enable crash dumps for native crashes
-      // This helps diagnose crashes that occur in native code (e.g., GPU, V8)
-      try {
-        const crashDumpPath = path.join(app.getPath("userData"), "crashes");
-        fs.mkdirSync(crashDumpPath, { recursive: true });
-        app.setPath("crashDumps", crashDumpPath);
-        log.info("[diag] Crash dumps enabled at:", crashDumpPath);
-      } catch (e) {
-        log.warn(
-          "[diag] Failed to configure crash dumps:",
-          e instanceof Error ? e.message : String(e),
-        );
-      }
-
-      if (process.platform === "darwin" && app.dock) {
-        const macIconPath = resolveMacIconPath();
-        if (macIconPath) {
-          try {
-            log.info("[icon] Attempting to load macOS icon from:", macIconPath);
-            try {
-              // Versuche, die Datei direkt als Buffer zu lesen und zu laden
-              const iconBuffer = fs.readFileSync(macIconPath);
-              const img = nativeImage.createFromBuffer(iconBuffer);
-              if (!img.isEmpty()) {
-                app.dock.setIcon(img);
-                log.info(
-                  "[icon] macOS dock icon set successfully via createFromBuffer",
-                );
-              } else {
-                log.warn("[icon] macOS nativeImage is empty from buffer");
-              }
-            } catch {
-              // Fallback: Versuche mit Pfad
-              const img = nativeImage.createFromPath(macIconPath);
-              if (!img.isEmpty()) {
-                app.dock.setIcon(img);
-                log.info("[icon] macOS dock icon set via createFromPath");
-              } else {
-                log.warn("[icon] macOS nativeImage is empty from path too");
-              }
-            }
-          } catch (e) {
-            log.warn(
-              "[icon] Failed to set dock icon:",
-              e instanceof Error ? e.message : String(e),
-            );
-          }
-        } else {
-          log.warn("[icon] No macOS icon path resolved in whenReady()");
-        }
-        try {
-          const dockMenu = Menu.buildFromTemplate([
-            {
-              label: "Neues Fenster",
-              click: () => createWindow({ makePrimary: false }),
-            },
-          ]);
-          app.dock.setMenu(dockMenu);
-        } catch (e) {
-          log.warn(
-            "[diag] Failed to set dock menu:",
-            e instanceof Error ? e.message : String(e),
-          );
-        }
-      }
-
-      createWindow({ makePrimary: true });
-
-      // Setup health monitoring with feature flags
-      try {
-        if (featureFlags.isEnabled("HEALTH_MONITORING")) {
-          // Register health checks
-          healthMonitor.registerCheck("memory-usage", async () => {
-            const usage = process.memoryUsage();
-            const limitMB = 1024; // 1GB limit
-            const heapUsedMB = usage.heapUsed / (1024 * 1024);
-            return heapUsedMB < limitMB;
-          });
-
-          healthMonitor.registerCheck("tcp-server", async () => {
-            if (!featureFlags.isEnabled("TCP_SERVER")) return true;
-            const status = networkService.getTcpStatus();
-            return status.running || status.activeConnections === 0;
-          });
-
-          healthMonitor.registerCheck("main-window", async () => {
-            return mainWindow !== null && !mainWindow.isDestroyed();
-          });
-
-          // Start monitoring every 60 seconds
-          healthMonitor.startMonitoring(60000);
-          log.info("[health-monitor] Health monitoring started");
-        }
-      } catch (e) {
-        log.warn(
-          "[health-monitor] Failed to start health monitoring:",
-          e instanceof Error ? e.message : String(e),
-        );
-        featureFlags.disable("HEALTH_MONITORING", "Startup failed");
-      }
-
-      // Register shutdown handlers
-      try {
-        shutdownCoordinator.register("health-monitor", async () => {
-          healthMonitor.stopMonitoring();
-        });
-
-        shutdownCoordinator.register("async-file-writer", async () => {
-          if (asyncFileWriter) {
-            await asyncFileWriter.flush();
-          }
-        });
-
-        shutdownCoordinator.register("network-service", async () => {
-          networkService.cleanup();
-        });
-
-        shutdownCoordinator.register("log-stream", async () => {
-          closeLogStream();
-        });
-
-        shutdownCoordinator.register("log-flush", async () => {
-          forceFlushLogs();
-        });
-
-        log.info("[shutdown] Shutdown coordinator initialized");
-      } catch (e) {
-        log.warn(
-          "[shutdown] Failed to register shutdown handlers:",
-          e instanceof Error ? e.message : String(e),
-        );
-      }
-
-      try {
-        app.on("browser-window-focus", () => updateMenu());
-        app.on("browser-window-blur", () => updateMenu());
-      } catch (e) {
-        log.warn(
-          "[diag] Failed to set window focus handlers:",
-          e instanceof Error ? e.message : String(e),
-        );
-      }
-
-      if (process.argv.some((a) => a === "--new-window")) {
-        createWindow({ makePrimary: false });
-      }
-    } catch (e) {
-      log.error(
-        "[diag] Error in app.whenReady handler:",
-        e instanceof Error ? e.stack : String(e),
-      );
-      // Try to create window anyway as last resort
-      try {
-        createWindow({ makePrimary: true });
-      } catch (e2) {
-        log.error(
-          "[diag] Critical: Failed to create initial window:",
-          e2 instanceof Error ? e2.stack : String(e2),
-        );
-      }
+// Open a new window in a separate process
+function openWindowInNewProcess(): void {
+  try {
+    const sanitizedArgs = process.argv
+      .slice(1)
+      .filter((arg) => arg !== MULTI_INSTANCE_FLAG && arg !== NEW_WINDOW_FLAG);
+    if (!sanitizedArgs.length && !app.isPackaged) {
+      const fallback = process.argv[1] || app.getAppPath();
+      sanitizedArgs.push(fallback);
     }
-  })
-  .catch((err) => {
-    log.error(
-      "[diag] app.whenReady() rejected:",
-      err instanceof Error ? err.stack : String(err),
+    const childArgs = [...sanitizedArgs, MULTI_INSTANCE_FLAG, NEW_WINDOW_FLAG];
+    const child = spawn(process.execPath, childArgs, {
+      cwd: process.cwd(),
+      detached: true,
+      stdio: "ignore",
+      windowsHide: false,
+      env: { ...process.env },
+    });
+    child.unref();
+    log.info("[multi-instance] Spawned new process", {
+      pid: child.pid,
+      args: childArgs,
+    });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    log.error("[multi-instance] Failed to spawn new process:", message);
+    dialog.showErrorBox(
+      "Neues Fenster fehlgeschlagen",
+      "Es konnte kein weiterer Prozess gestartet werden.\n\n" + message,
     );
-    // Don't exit - try to continue anyway
-  });
+  }
+}
 
 // Bestätigung bei Cmd+Q / Beenden-Menü (plattformübergreifend)
 // eslint-disable-next-line @typescript-eslint/no-misused-promises
