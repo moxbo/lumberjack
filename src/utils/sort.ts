@@ -30,7 +30,10 @@ function toMillisEx(ts: unknown): {
 } {
   if (ts == null) return { valid: false, ms: NaN, extra: 0 };
   try {
-    const d = new Date(ts);
+    // Ensure ts is a valid Date constructor argument
+    const dateArg =
+      typeof ts === "string" || typeof ts === "number" ? ts : String(ts);
+    const d = new Date(dateArg);
     const ms = d.getTime();
     if (!Number.isFinite(ms)) return { valid: false, ms: NaN, extra: 0 };
     const extra = extractFractionBeyondMs(ts);

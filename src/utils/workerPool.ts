@@ -253,7 +253,6 @@ class WorkerPool {
 }
 
 // Singleton helpers stored on globalThis to avoid module resolution quirks
-const _WP_KEY = "__ljWorkerPool__";
 
 export function getWorkerPool(): WorkerPool | null {
   const existing = (globalThis as { __ljWorkerPool__?: WorkerPool })

@@ -1,23 +1,37 @@
 import type { JSX } from "preact/jsx-runtime";
 
+// Cache für Level-Klassen (statisch, ändert sich nie)
+const LEVEL_CLASS_MAP: Record<string, string> = {
+  TRACE: "lev-trace",
+  DEBUG: "lev-debug",
+  INFO: "lev-info",
+  WARN: "lev-warn",
+  ERROR: "lev-error",
+  FATAL: "lev-fatal",
+};
+
 export function levelClass(level: string | null | undefined): string {
   const l = (level || "").toUpperCase();
-  return (
-    {
-      TRACE: "lev-trace",
-      DEBUG: "lev-debug",
-      INFO: "lev-info",
-      WARN: "lev-warn",
-      ERROR: "lev-error",
-      FATAL: "lev-fatal",
-    }[l] || "lev-unk"
-  );
+  return LEVEL_CLASS_MAP[l] || "lev-unk";
 }
+
+// Cache für Timestamp-Formatierung (begrenzte Größe)
+const timestampCache = new Map<string | number, string>();
+const MAX_TS_CACHE_SIZE = 1000;
 
 export function fmtTimestamp(
   ts: string | number | Date | null | undefined,
 ): string {
   if (!ts) return "-";
+
+  // Nur string/number cachen, Date-Objekte nicht
+  const cacheKey = typeof ts === "string" || typeof ts === "number" ? ts : null;
+
+  if (cacheKey !== null) {
+    const cached = timestampCache.get(cacheKey);
+    if (cached !== undefined) return cached;
+  }
+
   try {
     const d = new Date(ts);
     if (isNaN(d.getTime())) return String(ts);
@@ -28,33 +42,70 @@ export function fmtTimestamp(
     const minutes = String(d.getMinutes()).padStart(2, "0");
     const seconds = String(d.getSeconds()).padStart(2, "0");
     const ms = String(d.getMilliseconds()).padStart(3, "0");
-    return `${year}-${month}-${day} ${hours}:${minutes}:${seconds}.${ms}`;
+    const result = `${year}-${month}-${day} ${hours}:${minutes}:${seconds}.${ms}`;
+
+    // Cache das Ergebnis
+    if (cacheKey !== null) {
+      if (timestampCache.size >= MAX_TS_CACHE_SIZE) {
+        // Lösche die ersten 100 Einträge
+        const keysToDelete = Array.from(timestampCache.keys()).slice(0, 100);
+        for (const key of keysToDelete) {
+          timestampCache.delete(key);
+        }
+      }
+      timestampCache.set(cacheKey, result);
+    }
+
+    return result;
   } catch {
     return String(ts);
   }
 }
+
+// Funktion zum Leeren des Timestamp-Caches (beim Löschen der Logs aufrufen)
+export function clearTimestampCache(): void {
+  timestampCache.clear();
+}
+
+// Cache für computeTint (begrenzte Größe)
+const tintCache = new Map<string, string>();
+const MAX_TINT_CACHE_SIZE = 50;
 
 export function computeTint(
   color: string | null | undefined,
   alpha = 0.4,
 ): string {
   if (!color) return "";
+
+  const cacheKey = `${color}|${alpha}`;
+  const cached = tintCache.get(cacheKey);
+  if (cached !== undefined) return cached;
+
   const c = String(color).trim();
   const hexRaw = c.startsWith("#") ? c.slice(1) : "";
   const hex = String(hexRaw);
+  let result = c;
+
   if (hex.length === 3 && hex.length >= 3) {
     const r = parseInt(hex[0]! + hex[0]!, 16);
     const g = parseInt(hex[1]! + hex[1]!, 16);
     const b = parseInt(hex[2]! + hex[2]!, 16);
-    return `rgba(${r}, ${g}, ${b}, ${alpha})`;
-  }
-  if (hex.length === 6) {
+    result = `rgba(${r}, ${g}, ${b}, ${alpha})`;
+  } else if (hex.length === 6) {
     const r = parseInt(hex.substring(0, 2), 16);
     const g = parseInt(hex.substring(2, 4), 16);
     const b = parseInt(hex.substring(4, 6), 16);
-    return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+    result = `rgba(${r}, ${g}, ${b}, ${alpha})`;
   }
-  return c;
+
+  // Cache das Ergebnis
+  if (tintCache.size >= MAX_TINT_CACHE_SIZE) {
+    const firstKey = tintCache.keys().next().value;
+    if (firstKey) tintCache.delete(firstKey);
+  }
+  tintCache.set(cacheKey, result);
+
+  return result;
 }
 
 export function fmt(v: unknown): string {

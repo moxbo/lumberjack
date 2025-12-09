@@ -1,6 +1,6 @@
 import { createContext } from "preact";
 import { useContext, useState, useEffect } from "preact/hooks";
-import type { ComponentChildren } from "preact";
+import type { ComponentChildren, JSX } from "preact";
 import de from "../locales/de.json";
 import en from "../locales/en.json";
 
@@ -23,7 +23,7 @@ const I18nContext = createContext<I18nContextValue>({
   t: (key: string) => key,
 });
 
-export const useI18n = (): I18nContextType => useContext(I18nContext);
+export const useI18n = (): I18nContextValue => useContext(I18nContext);
 
 interface I18nProviderProps {
   children: ComponentChildren;
@@ -62,7 +62,7 @@ export function I18nProvider({
     }
     // Save to settings
     if (typeof window !== "undefined") {
-      const win = window as Record<string, unknown>;
+      const win = window as unknown as Record<string, unknown>;
       const api = win.api as
         | Record<string, (...args: unknown[]) => void>
         | undefined;

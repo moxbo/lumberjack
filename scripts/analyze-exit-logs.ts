@@ -61,6 +61,7 @@ function parseLogLine(line: string): LogEntry | null {
     if (!match) return null;
 
     const [, timestamp, level, message] = match;
+    if (!timestamp || !level || !message) return null;
     return { timestamp, level, message };
   } catch {
     return null;
@@ -96,7 +97,7 @@ function analyzeLogFile(logPath: string): void {
       exitEvents.push({
         timestamp: entry.timestamp,
         type: "exit",
-        exitCode: codeMatch ? parseInt(codeMatch[1], 10) : undefined,
+        exitCode: codeMatch?.[1] ? parseInt(codeMatch[1], 10) : undefined,
       });
     } else if (entry.message.includes("[diag] beforeExit")) {
       const codeMatch = entry.message.match(/code[:\s]+(\d+)/i);
@@ -104,8 +105,8 @@ function analyzeLogFile(logPath: string): void {
       exitEvents.push({
         timestamp: entry.timestamp,
         type: "beforeExit",
-        exitCode: codeMatch ? parseInt(codeMatch[1], 10) : undefined,
-        source: sourceMatch ? sourceMatch[1] : undefined,
+        exitCode: codeMatch?.[1] ? parseInt(codeMatch[1], 10) : undefined,
+        source: sourceMatch?.[1],
       });
     } else if (entry.message.includes("[diag] uncaughtException")) {
       exitEvents.push({

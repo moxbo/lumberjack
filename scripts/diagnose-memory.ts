@@ -299,7 +299,7 @@ function checkLogFiles(): void {
       const timestampMatch = lastLine.match(
         /(\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2})/,
       );
-      if (timestampMatch) {
+      if (timestampMatch?.[1]) {
         const lastLogTime = new Date(timestampMatch[1]);
         const now = new Date();
         const minutesAgo = (now.getTime() - lastLogTime.getTime()) / 1000 / 60;

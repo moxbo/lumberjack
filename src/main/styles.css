@@ -371,6 +371,9 @@ body {
   -ms-user-select: none;
   /* FIX: Stelle sicher, dass die Liste selbst interaktiv ist */
   pointer-events: auto;
+  /* Performance-Optimierungen für Scroll-Container */
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
 }
 
 /* Scrollbar komplett ausblenden (WebKit) */
@@ -478,9 +481,9 @@ body {
   min-height: 0;
   /* WICHTIG: Details-Panel MUSS interaktiv sein, aber nur für Events in sich selbst */
   pointer-events: auto; /* Details-Panel ist interaktiv */
-  /* FIX: Stelle sicher dass die Details nicht über der klickbaren Liste schwebt */
-  /* Verwende will-change für bessere Rendering-Performance */
-  will-change: contents;
+  /* Performance-Optimierungen für Details-Panel */
+  contain: layout style;
+  overscroll-behavior: contain;
 }
 
 /* Überdeckende Füllfläche entfernen – Scrollbar bleibt vollständig sichtbar */
@@ -502,6 +505,9 @@ body {
   padding: 0 8px 0 8px;
   background: var(--color-bg-paper);
   border-bottom: 1px solid var(--color-divider);
+  /* GPU-Beschleunigung für sticky-Header */
+  will-change: transform;
+  backface-visibility: hidden;
 }
 
 .list-header .cell {
@@ -547,6 +553,10 @@ body {
   cursor: pointer;
   user-select: none;
   transition: background-color 150ms cubic-bezier(0.4, 0, 0.2, 1);
+  /* Performance-Optimierungen für virtualisierte Listen */
+  contain: layout style paint;
+  content-visibility: auto;
+  contain-intrinsic-size: auto 36px;
 }
 
 .row:hover {
@@ -562,11 +572,16 @@ body {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  /* Performance: vermeide Layout-Thrashing */
+  contain: inline-size;
 }
 
 .col.ts {
   font-family: var(--font-family-mono), monospace;
   color: var(--color-text-secondary);
+  /* Tabular nums für gleichmäßige Breite der Ziffern */
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum" 1;
 }
 
 .col.lvl {
@@ -582,6 +597,14 @@ body {
   /* wichtig: kein äußeres Ellipsis, damit das innere Paket-Ellipsis greift */
   text-overflow: clip;
   overflow: hidden;
+}
+
+.col.msg {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  /* Flex-grow für restlichen Platz */
+  flex: 1;
 }
 
 /* Logger name split into package and class with left-ellipsis for package */
@@ -1204,3 +1227,104 @@ input[type="checkbox"] {
   z-index: var(--z-backdrop);
   pointer-events: none; /* darf UI nicht blockieren */
 }
+
+/* --- Virtualisierte MDC-Liste --- */
+.mdc-virtual-container {
+  border: 1px solid var(--color-divider);
+  border-radius: 8px;
+  background: rgba(0, 0, 0, 0.02);
+}
+
+:root[data-theme="dark"] .mdc-virtual-container {
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.mdc-grid-row,
+.mdc-grid-row-inline {
+  display: grid;
+  grid-template-columns: 140px 1fr auto;
+  gap: 6px 12px;
+  align-items: center;
+  padding: 4px 8px;
+  border-bottom: 1px solid var(--color-divider);
+}
+
+.mdc-grid-row:last-child,
+.mdc-grid-row-inline:last-child {
+  border-bottom: none;
+}
+
+.mdc-grid-row:hover,
+.mdc-grid-row-inline:hover {
+  background: var(--color-bg-hover);
+}
+
+/* --- Virtualisierter Stack-Trace --- */
+.stack-trace-virtual {
+  contain: strict;
+}
+
+.stack-trace-virtual::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+.stack-trace-virtual::-webkit-scrollbar-thumb {
+  background-color: rgba(0, 0, 0, 0.2);
+  border-radius: 4px;
+}
+
+.stack-trace-virtual::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+:root[data-theme="dark"] .stack-trace-virtual::-webkit-scrollbar-thumb {
+  background-color: rgba(255, 255, 255, 0.2);
+}
+
+/* --- Loading-Indikator für Lazy-Loading --- */
+.mdc-loading {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 12px;
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-sm);
+}
+
+.mdc-loading .spinner-small {
+  width: 14px;
+  height: 14px;
+  border: 2px solid var(--color-divider);
+  border-top-color: var(--color-primary);
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+
+/* --- Filter-Worker Loading State --- */
+.filter-loading {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  padding: 24px;
+  background: var(--glass-bg);
+  backdrop-filter: var(--glass-blur);
+  border-radius: 12px;
+  box-shadow: var(--shadow-lg);
+  z-index: 100;
+}
+
+.filter-loading .spinner-large {
+  width: 32px;
+  height: 32px;
+  border: 3px solid var(--color-divider);
+  border-top-color: var(--color-primary);
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+

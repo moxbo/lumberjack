@@ -109,7 +109,7 @@ export function getLogEntry(
   index: number,
 ): LogEntry | null {
   if (index < 0 || index >= store.size) return null;
-  return store.entries[index];
+  return store.entries[index] ?? null;
 }
 
 export function getLogEntrySlice(

@@ -240,7 +240,7 @@ export class ElasticIndexer {
           for (let i = 0; i < items.length; i++) {
             const it = items[i];
             const r = it?.create || it?.index || it?.update || it?.delete;
-            const status = r?.status;
+            const status = r?.status ?? 0;
             if (status === 201 || status === 200) {
               this.metrics.created++;
             } else if (status === 409) {

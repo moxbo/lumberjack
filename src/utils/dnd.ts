@@ -43,7 +43,7 @@ export class DragAndDropManager {
     if (this._handlers) return;
     const debug =
       typeof window !== "undefined" &&
-      !!(window as Record<string, unknown>).__DEBUG_DND__;
+      !!(window as unknown as Record<string, unknown>).__DEBUG_DND__;
 
     const onDragOverBlockAll = (e: DragEvent): void => {
       e.preventDefault();
@@ -54,9 +54,7 @@ export class DragAndDropManager {
       if (!dt) return false;
       if (debug) {
         try {
-          const types = Array.from(
-            (dt.types as unknown as ArrayLike<unknown>) || [],
-          );
+          const types = Array.from(dt.types || []);
           logger.log("[DnD] drag types:", types);
         } catch (e) {
           logger.warn("DnD: failed to log drag types:", e);
@@ -64,14 +62,11 @@ export class DragAndDropManager {
       }
       // DataTransfer.types ist array-ähnlich, iterierbar
       let hasFiles = false;
-      const types = dt.types as unknown as ArrayLike<unknown>;
-      if (
-        types &&
-        typeof (types as Record<string, unknown>).length === "number"
-      ) {
-        const len = (types as Record<string, unknown>).length as number;
+      const types = dt.types;
+      if (types && typeof types.length === "number") {
+        const len = types.length;
         for (let i = 0; i < len; i++) {
-          const t = (types as Record<string, unknown>)[i];
+          const t = types[i];
           if (
             t === "Files" ||
             t === "public.file-url" ||
@@ -189,7 +184,7 @@ export class DragAndDropManager {
         const dedup: string[] = [];
         for (let i = 0; i < out.length; i++) {
           const p = out[i];
-          if (!seen[p]) {
+          if (p && !seen[p]) {
             seen[p] = 1;
             dedup.push(p);
           }
@@ -221,8 +216,10 @@ export class DragAndDropManager {
                       : new Uint8Array();
                   // zu base64
                   let bin = "";
-                  for (let i = 0; i < buf.length; i++)
-                    bin += String.fromCharCode(buf[i]);
+                  for (let i = 0; i < buf.length; i++) {
+                    const byte = buf[i];
+                    if (byte !== undefined) bin += String.fromCharCode(byte);
+                  }
                   const b64 = btoa(bin);
                   resolve({ name, data: b64, encoding: "base64" });
                 } catch {
@@ -298,7 +295,7 @@ export class DragAndDropManager {
         const dedup: string[] = [];
         for (let i = 0; i < out.length; i++) {
           const p = out[i];
-          if (!seen[p]) {
+          if (p && !seen[p]) {
             seen[p] = 1;
             dedup.push(p);
           }

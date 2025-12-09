@@ -85,8 +85,9 @@ function runInteractiveMode(host: string, port: number): void {
       try {
         const [cmd, ...args] = input.trim().split(" ");
         const arg = args[0];
+        const command = cmd || "";
 
-        switch (cmd.toLowerCase()) {
+        switch (command.toLowerCase()) {
           case "send": {
             const count = parseInt(arg || "1", 10) || 1;
             console.log(

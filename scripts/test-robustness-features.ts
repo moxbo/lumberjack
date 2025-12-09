@@ -7,12 +7,14 @@
  * - TCP connection limit
  */
 
-import * as net from "net";
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
+import * as _net from "net";
 import * as http from "http";
 import { NetworkService } from "../src/services/NetworkService";
 import type { LogEntry } from "../src/types/ipc";
 
-function sleep(ms: number): Promise<void> {
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
+function _sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
@@ -110,7 +112,7 @@ async function testRobustnessFeatures(): Promise<void> {
   console.log("Test 4: Testing HTTP fetch timeout protection...");
 
   // Create a slow HTTP server
-  const slowServer = http.createServer((req, res) => {
+  const slowServer = http.createServer((_req, res) => {
     // Never send response - will trigger timeout
     setTimeout(() => {
       res.writeHead(200);
@@ -154,7 +156,7 @@ async function testRobustnessFeatures(): Promise<void> {
   console.log("\nTest 5: Testing HTTP response size limit...");
 
   // Create a server that sends large response
-  const largeServer = http.createServer((req, res) => {
+  const largeServer = http.createServer((_req, res) => {
     res.writeHead(200, { "content-type": "text/plain" });
     // Send 10MB of data
     const chunk = "x".repeat(1024 * 1024); // 1MB chunks
@@ -179,7 +181,7 @@ async function testRobustnessFeatures(): Promise<void> {
   console.log("  Fetching large response (10MB, should be accepted)...");
   try {
     const result = await networkService.httpLoadOnce(largeUrl);
-    if (result.ok && result.entries) {
+    if (result.ok && result.entries && result.entries[0]) {
       console.log(
         `✓ Large response handled correctly (${result.entries[0].message})`,
       );

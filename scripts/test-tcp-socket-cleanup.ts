@@ -85,7 +85,8 @@ async function testTcpSocketCleanup(): Promise<void> {
   if (receivedLogs.length !== 1) {
     throw new Error(`Expected 1 log entry, got ${receivedLogs.length}`);
   }
-  console.log(`✓ Received log entry: ${receivedLogs[0].message}\n`);
+  const firstLog = receivedLogs[0];
+  console.log(`✓ Received log entry: ${firstLog?.message}\n`);
 
   // Test 3: Disconnect client normally
   console.log("Test 3: Disconnecting client normally...");
@@ -154,7 +155,8 @@ async function testTcpSocketCleanup(): Promise<void> {
 
   // Test 6: Stop server with active connections
   console.log("Test 6: Stopping server with active connections...");
-  const client3 = net.createConnection({ port });
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  const _client3 = net.createConnection({ port });
   await sleep(100);
 
   const status6 = networkService.getTcpStatus();

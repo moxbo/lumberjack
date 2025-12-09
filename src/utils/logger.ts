@@ -20,30 +20,23 @@ let _backend: LogBackend = {
 try {
   // eslint-disable-next-line @typescript-eslint/no-floating-promises
   import("electron-log/renderer.js")
-    .then((mod: Record<string, unknown>) => {
+    .then((mod: unknown) => {
       try {
+        const modObj = mod as Record<string, unknown>;
         const el =
-          (mod.default as LogBackend | undefined) ||
-          (mod as LogBackend | undefined);
+          (modObj.default as LogBackend | undefined) ||
+          (modObj as unknown as LogBackend | undefined);
         if (el && typeof el === "object" && "error" in el) {
           // Configure transports defensively
           try {
-            const env =
-              (
-                import.meta as Record<
-                  string,
-                  Record<string, unknown> | undefined
-                >
-              )?.env || {};
+            const meta = import.meta as unknown as Record<string, unknown>;
+            const env = (meta?.env as Record<string, unknown>) || {};
             const lvl = String(
               (env.VITE_LOG_CONSOLE_LEVEL as string | undefined) ||
                 (env.LOG_CONSOLE_LEVEL as string | undefined) ||
                 "error",
             );
-            const transports = el as Record<
-              string,
-              Record<string, unknown> | undefined
-            >;
+            const transports = el as unknown as Record<string, unknown>;
             if (transports.console && typeof transports.console === "object") {
               const console_ = transports.console as Record<string, unknown>;
               console_.level = lvl;
@@ -52,11 +45,12 @@ try {
               const remote = transports.remote as Record<string, unknown>;
               remote.level = false;
             }
-            const isDev =
-              !!env?.DEV ||
-              (typeof process !== "undefined" &&
-                (process as Record<string, Record<string, string>>)?.env
-                  ?.NODE_ENV === "development");
+            const procObj =
+              typeof process !== "undefined"
+                ? (process as unknown as Record<string, unknown>)
+                : {};
+            const procEnv = (procObj?.env as Record<string, string>) || {};
+            const isDev = !!env?.DEV || procEnv?.NODE_ENV === "development";
             if (transports.file && typeof transports.file === "object") {
               const file = transports.file as Record<string, unknown>;
               file.level = isDev ? false : "silly";

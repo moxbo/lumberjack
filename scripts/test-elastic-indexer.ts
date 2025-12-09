@@ -29,7 +29,7 @@ function testDeterministicId() {
 
 async function test409HandlingSingle(): Promise<void> {
   const seen = new Set<string>();
-  const fetch = makeFetch((url, init) => {
+  const fetch = makeFetch((url, _init) => {
     if (url.includes("/_doc/")) {
       const id = decodeURIComponent(url.split("/").pop()!.split("?")[0]!);
       if (seen.has(id)) return { status: 409 };
@@ -41,7 +41,8 @@ async function test409HandlingSingle(): Promise<void> {
   const idx = new ElasticIndexer({
     baseUrl: "https://es",
     index: "logs",
-    transport: fetch,
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    transport: fetch as any,
   });
   const ev = { "@timestamp": "2025-01-01T00:00:00.000Z", message: "X" };
   const r1 = await idx.indexOne(ev);
@@ -61,8 +62,12 @@ async function testBulkPartialConflictsAndRetries(): Promise<void> {
         .split("\n");
       const items: any[] = [];
       for (let i = 0; i < lines.length; i += 2) {
-        const meta = JSON.parse(lines[i]);
-        const doc = JSON.parse(lines[i + 1]);
+        const metaLine = lines[i];
+        const docLine = lines[i + 1];
+        if (!metaLine || !docLine) continue;
+        const meta = JSON.parse(metaLine);
+        // eslint-disable-next-line @typescript-eslint/no-unused-vars
+        const _doc = JSON.parse(docLine);
         const id = meta.create?._id || meta.index?._id;
         if (!id) {
           items.push({ create: { status: 500 } });
@@ -82,7 +87,8 @@ async function testBulkPartialConflictsAndRetries(): Promise<void> {
   const idx = new ElasticIndexer({
     baseUrl: "https://es",
     index: "logs",
-    transport: fetch,
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    transport: fetch as any,
     maxRetries: 2,
     backoffBaseMs: 1,
     bulkSize: 2,

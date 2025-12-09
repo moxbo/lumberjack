@@ -126,7 +126,7 @@ class HighlightService {
   // Synchronous fallback formatting (simplified)
   private formatLogSync(
     message: string,
-    level?: string | null,
+    _level?: string | null,
     stackTrace?: string | null,
   ): { formattedMessage: string; formattedStackTrace?: string } {
     // Simple escaping for safety

@@ -8,7 +8,8 @@
 import { NetworkService } from "../src/services/NetworkService";
 import type { LogEntry } from "../src/types/ipc";
 
-function sleep(ms: number): Promise<void> {
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
+function _sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 

@@ -54,12 +54,10 @@ export default function DCFilterDialog(): preact.JSX.Element {
       const el = keyDDRef.current;
       const btnEl = keyBtnRef.current;
       const inputEl = keyInputRef.current;
+      const eventWithPath = e as unknown as { composedPath?: () => unknown[] };
       const path =
-        typeof (e as unknown as Record<string, unknown>).composedPath ===
-        "function"
-          ? (
-              e as unknown as Record<string, (...args: unknown[]) => unknown[]>
-            ).composedPath()
+        typeof eventWithPath.composedPath === "function"
+          ? eventWithPath.composedPath()
           : [];
       const tgt = e.target as Node | null;
       const isInside = (

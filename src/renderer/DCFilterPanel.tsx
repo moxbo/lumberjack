@@ -35,12 +35,10 @@ export default function DCFilterPanel(): preact.JSX.Element {
     function onDocClick(e: MouseEvent) {
       if (!ctx.open) return;
       const el = ctxRef.current;
+      const eventWithPath = e as unknown as { composedPath?: () => unknown[] };
       const path =
-        typeof (e as unknown as Record<string, unknown>).composedPath ===
-        "function"
-          ? ((
-              e as unknown as Record<string, (...args: unknown[]) => unknown[]>
-            ).composedPath() as unknown[])
+        typeof eventWithPath.composedPath === "function"
+          ? eventWithPath.composedPath()
           : [];
       const tgt = (e.target as Node) || null;
       if (

@@ -411,6 +411,9 @@ interface PitSession {
 }
 const pitSessions = new Map<string, PitSession>();
 
+// Type alias for HTTP response
+type HttpResponse = { status: number; text: string; json: unknown };
+
 // HTTP JSON request with timeout + keep-alive + streaming decompression
 async function httpJsonRequest(
   method: "POST" | "DELETE",

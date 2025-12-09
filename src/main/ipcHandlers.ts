@@ -289,9 +289,8 @@ export function registerIpcHandlers(
           if (!name || !data) continue;
           if (ext === ".zip") {
             const buf = Buffer.from(data, enc === "base64" ? "base64" : "utf8");
-            const zip = new (ZipClass as typeof import("adm-zip"))(
-              buf as Buffer,
-            );
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            const zip = new (ZipClass as any)(buf);
             zip.getEntries().forEach((zEntry: Record<string, unknown>) => {
               const ename = String(zEntry.entryName || "");
               const eext = path.extname(ename).toLowerCase();

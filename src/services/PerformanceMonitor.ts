@@ -47,7 +47,8 @@ export class PerformanceMonitor {
   private monitoringInterval: NodeJS.Timeout | null = null;
   private isMonitoring = false;
   private lastCpuUsage = process.cpuUsage();
-  private lastEventLoopCheck = Date.now();
+  // @ts-expect-error - Reserved for future use
+  private _lastEventLoopCheck = Date.now();
 
   /**
    * Take a performance snapshot
@@ -61,6 +62,9 @@ export class PerformanceMonitor {
     const start = Date.now();
     await new Promise((resolve) => setImmediate(resolve));
     const eventLoopLag = Date.now() - start;
+
+    const loadAvg = os.loadavg();
+    const cpuUsageValue = loadAvg[0] ?? 0;
 
     const snapshot: PerformanceSnapshot = {
       timestamp: Date.now(),
@@ -77,7 +81,7 @@ export class PerformanceMonitor {
       system: {
         totalMemory: os.totalmem(),
         freeMemory: os.freemem(),
-        cpuUsage: os.loadavg()[0], // 1-minute load average
+        cpuUsage: cpuUsageValue,
       },
       eventLoop: {
         lag: eventLoopLag,
@@ -166,9 +170,8 @@ export class PerformanceMonitor {
    * Get latest snapshot
    */
   getLatest(): PerformanceSnapshot | null {
-    return this.snapshots.length > 0
-      ? this.snapshots[this.snapshots.length - 1]
-      : null;
+    const lastIndex = this.snapshots.length - 1;
+    return lastIndex >= 0 ? (this.snapshots[lastIndex] ?? null) : null;
   }
 
   /**

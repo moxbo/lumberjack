@@ -118,9 +118,11 @@ const perfService = new PerformanceService();
 const settingsService = new SettingsService();
 const networkService = new NetworkService();
 const adaptiveBatchService = new AdaptiveBatchService();
-const healthMonitor = new HealthMonitor();
+// @ts-expect-error - Prepared for future use
+const _healthMonitor = new HealthMonitor();
 const loggingStrategy = new LoggingStrategy();
-const featureFlags = new FeatureFlags();
+// @ts-expect-error - Prepared for future use
+const _featureFlags = new FeatureFlags();
 const shutdownCoordinator = new ShutdownCoordinator();
 
 // Configure logging strategy based on environment
@@ -2251,10 +2253,11 @@ try {
         exitDetails = details as unknown as Record<string, unknown>;
 
         // Check if this might be related to installer interference
+        const reason = details.reason as string;
         const isUnusualExit =
           details.exitCode !== 0 &&
-          details.reason !== "clean-exit" &&
-          details.reason !== "normal-termination";
+          reason !== "clean-exit" &&
+          reason !== "normal-termination";
 
         if (isUnusualExit) {
           log.warn(

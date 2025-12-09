@@ -1,5 +1,5 @@
 // Enhanced log row component with memoization and optimizations
-import { memo } from "preact/compat";
+import { memo, useMemo } from "preact/compat";
 import type { JSX } from "preact/jsx-runtime";
 import {
   computeTint,
@@ -26,6 +26,55 @@ interface LogRowProps {
   compact?: boolean;
 }
 
+// Cache for highlighted messages to avoid repeated regex operations
+const highlightCache = new Map<string, string>();
+const MAX_CACHE_SIZE = 500;
+let lastSearchTerm = "";
+
+// Clear cache when search term changes significantly
+export function clearHighlightCache(): void {
+  highlightCache.clear();
+  lastSearchTerm = "";
+}
+
+function getCachedHighlight(
+  text: string,
+  search: string,
+  highlightFn: (text: string, search: string) => string,
+): string {
+  // If search term changed, consider clearing old entries
+  if (search !== lastSearchTerm) {
+    // Only clear if the new search is not a prefix of the old one
+    // This allows incremental typing to benefit from cache
+    if (
+      !search.startsWith(lastSearchTerm) &&
+      !lastSearchTerm.startsWith(search)
+    ) {
+      highlightCache.clear();
+    }
+    lastSearchTerm = search;
+  }
+
+  if (!search.trim()) return highlightFn(text, search);
+
+  const cacheKey = `${text}|${search}`;
+  const cached = highlightCache.get(cacheKey);
+  if (cached !== undefined) return cached;
+
+  // Evict oldest entries if cache is too large
+  if (highlightCache.size >= MAX_CACHE_SIZE) {
+    // Delete the first 50 entries to avoid repeated evictions
+    const keysToDelete = Array.from(highlightCache.keys()).slice(0, 50);
+    for (const key of keysToDelete) {
+      highlightCache.delete(key);
+    }
+  }
+
+  const result = highlightFn(text, search);
+  highlightCache.set(cacheKey, result);
+  return result;
+}
+
 const LogRowComponent = ({
   index,
   globalIdx,
@@ -41,18 +90,30 @@ const LogRowComponent = ({
   compact = false,
 }: LogRowProps): JSX.Element => {
   const rowCls = "row" + (isSelected ? " sel" : "");
-  const style = {
-    position: "absolute" as const,
-    top: 0,
-    left: 0,
-    right: 0,
-    transform: `translateY(${yOffset}px)`,
-    height: `${rowHeight}px`,
-    borderLeft: `4px solid ${markColor || "transparent"}`,
-    background: markColor ? computeTint(markColor, 0.12) : undefined,
-    // Enable content-visibility for better performance
-    contentVisibility: "auto" as const,
-  };
+
+  // Memoize style object to avoid recreation on every render
+  const style = useMemo(
+    () => ({
+      position: "absolute" as const,
+      top: 0,
+      left: 0,
+      right: 0,
+      transform: `translateY(${yOffset}px)`,
+      height: `${rowHeight}px`,
+      borderLeft: `4px solid ${markColor || "transparent"}`,
+      background: markColor ? computeTint(markColor, 0.12) : undefined,
+    }),
+    [yOffset, rowHeight, markColor],
+  );
+
+  // Memoize the message text
+  const messageText = getStr(entry, "message");
+
+  // Use cached highlight for better performance
+  const highlightedMessage = useMemo(
+    () => getCachedHighlight(messageText, search, highlightFn),
+    [messageText, search, highlightFn],
+  );
 
   return (
     <div
@@ -70,7 +131,7 @@ const LogRowComponent = ({
         );
       }}
       onContextMenu={(ev) => onContextMenu(ev as MouseEvent, globalIdx)}
-      title={getStr(entry, "message")}
+      title={messageText}
       data-marked={markColor ? "1" : "0"}
     >
       <div className="col ts">{fmtTimestamp(getTs(entry, "timestamp"))}</div>
@@ -87,7 +148,7 @@ const LogRowComponent = ({
       <div
         className="col msg"
         dangerouslySetInnerHTML={{
-          __html: highlightFn(getStr(entry, "message"), search),
+          __html: highlightedMessage,
         }}
       />
     </div>

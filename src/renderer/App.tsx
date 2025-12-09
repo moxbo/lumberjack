@@ -1,6 +1,12 @@
 /* eslint-disable */
 /* eslint-disable @typescript-eslint/no-unused-vars, @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-explicit-any, @typescript-eslint/no-base-to-string, @typescript-eslint/explicit-function-return-type, @typescript-eslint/no-misused-promises, no-empty, @typescript-eslint/no-unsafe-return, @typescript-eslint/no-unsafe-argument */
-import { useEffect, useMemo, useRef, useState } from "preact/hooks";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "preact/hooks";
 import { Fragment } from "preact";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { highlightAll } from "../utils/highlight";
@@ -18,7 +24,9 @@ import { TimeFilter } from "../store/timeFilter";
 import { createPortal, lazy, Suspense } from "preact/compat";
 import type { ElasticSearchOptions } from "../types/ipc";
 import { MDCListener } from "../store/mdcListener";
-import { LogRow } from "./LogRow";
+import { LogRow, clearHighlightCache } from "./LogRow";
+import { clearTimestampCache } from "../utils/format";
+import { useDebounce } from "../hooks/useDebounce";
 
 // Feste Basisfarben für Markierungen
 const BASE_MARK_COLORS = [
@@ -99,10 +107,11 @@ function computeTint(color: string | null | undefined, alpha = 0.4): string {
 function mergeSorted(prevSorted: any[], newSorted: any[]): any[] {
   if (newSorted.length === 0) return prevSorted;
   if (prevSorted.length === 0) return newSorted;
-  
+
   const result: any[] = [];
-  let i = 0, j = 0;
-  
+  let i = 0,
+    j = 0;
+
   while (i < prevSorted.length && j < newSorted.length) {
     if (compareByTimestampId(prevSorted[i], newSorted[j]) <= 0) {
       result.push(prevSorted[i]);
@@ -112,7 +121,7 @@ function mergeSorted(prevSorted: any[], newSorted: any[]): any[] {
       j++;
     }
   }
-  
+
   // Add remaining elements
   while (i < prevSorted.length) {
     result.push(prevSorted[i]);
@@ -122,7 +131,7 @@ function mergeSorted(prevSorted: any[], newSorted: any[]): any[] {
     result.push(newSorted[j]);
     j++;
   }
-  
+
   return result;
 }
 
@@ -174,6 +183,10 @@ export default function App() {
     message: "",
   });
   const [stdFiltersEnabled, setStdFiltersEnabled] = useState<boolean>(true);
+
+  // Debounced Filter-Werte für bessere Performance beim Tippen (200ms Verzögerung)
+  const debouncedSearch = useDebounce(search, 200);
+  const debouncedFilter = useDebounce(filter, 200);
 
   // NEU: Flüchtige Verlaufslisten (Session-only, keine Persistenz)
   const [fltHistSearch, setFltHistSearch] = useState<string[]>([]);
@@ -873,7 +886,7 @@ export default function App() {
     startW: 0,
   });
 
-  // Filtered indices
+  // Filtered indices - uses debounced filter values for better typing performance
   const filteredIdx = useMemo(() => {
     const out: number[] = [];
     let filterStats = {
@@ -898,15 +911,15 @@ export default function App() {
         continue;
       }
       if (stdFiltersEnabled) {
-        if (filter.level) {
+        if (debouncedFilter.level) {
           const lev = String(e.level || "").toUpperCase();
-          if (lev !== String(filter.level).toUpperCase()) {
+          if (lev !== String(debouncedFilter.level).toUpperCase()) {
             filterStats.rejectedByLevel++;
             continue;
           }
         }
-        if (filter.logger) {
-          const q = String(filter.logger || "").toLowerCase();
+        if (debouncedFilter.logger) {
+          const q = String(debouncedFilter.logger || "").toLowerCase();
           if (
             !String(e.logger || "")
               .toLowerCase()
@@ -916,8 +929,8 @@ export default function App() {
             continue;
           }
         }
-        if (filter.thread) {
-          const q = String(filter.thread || "").toLowerCase();
+        if (debouncedFilter.thread) {
+          const q = String(debouncedFilter.thread || "").toLowerCase();
           if (
             !String(e.thread || "")
               .toLowerCase()
@@ -927,8 +940,8 @@ export default function App() {
             continue;
           }
         }
-        if (filter.message) {
-          if (!msgMatches(e.message, filter.message)) {
+        if (debouncedFilter.message) {
+          if (!msgMatches(e.message, debouncedFilter.message)) {
             filterStats.rejectedByMessage++;
             continue;
           }
@@ -962,21 +975,32 @@ export default function App() {
     }
 
     // Reduced logging: only log filter stats when count changes significantly or all entries are filtered
-    if (process.env.NODE_ENV === 'development' && (filterStats.total % 5000 === 0 || (filterStats.passed === 0 && filterStats.total > 0))) {
+    if (
+      process.env.NODE_ENV === "development" &&
+      (filterStats.total % 5000 === 0 ||
+        (filterStats.passed === 0 && filterStats.total > 0))
+    ) {
       console.log("[filter-diag] Filter stats:", filterStats);
       if (filterStats.passed === 0 && filterStats.total > 0) {
         console.warn("[filter-diag] WARNING: All entries filtered out!", {
           total: filterStats.total,
           onlyMarked,
           stdFiltersEnabled,
-          filter,
+          debouncedFilter,
           dcFilterEnabled: (DiagnosticContextFilter as any).isEnabled?.(),
         });
       }
     }
 
     return out;
-  }, [entries, stdFiltersEnabled, filter, dcVersion, timeVersion, onlyMarked]);
+  }, [
+    entries,
+    stdFiltersEnabled,
+    debouncedFilter,
+    dcVersion,
+    timeVersion,
+    onlyMarked,
+  ]);
 
   const countTotal = entries.length;
   const countFiltered = filteredIdx.length;
@@ -987,7 +1011,13 @@ export default function App() {
     count: filteredIdx.length,
     getScrollElement: () => parentRef.current,
     estimateSize: () => rowHeight,
-    overscan: 10,
+    // Erhöhe overscan für glatteres Scrollen bei schnellem Scrollen
+    overscan: 15,
+    // Aktiviere getItemKey für besseres Re-Rendering
+    getItemKey: (index: number) => {
+      const globalIdx = filteredIdx[index];
+      return globalIdx !== undefined ? `row-${globalIdx}` : `row-temp-${index}`;
+    },
   } as any);
 
   // Get virtual items - this should update when filteredIdx changes
@@ -995,11 +1025,46 @@ export default function App() {
   const totalHeight = virtualizer.getTotalSize();
 
   // Reduced logging: only log when there's a significant change (e.g., every 1000 entries)
-  if (process.env.NODE_ENV === 'development' && filteredIdx.length % 1000 === 0) {
+  if (
+    process.env.NODE_ENV === "development" &&
+    filteredIdx.length % 1000 === 0
+  ) {
     console.log(
       `[virtualizer-diag] Rendering ${virtualItems.length} virtual items out of ${filteredIdx.length} filtered entries (total: ${entries.length})`,
     );
   }
+
+  // Stabile Callbacks für LogRow, um unnötige Re-Renders zu vermeiden
+  const handleRowSelect = useCallback(
+    (idx: number, shift: boolean, meta: boolean) => {
+      try {
+        toggleSelectIndex(idx, shift, meta);
+        try {
+          (parentRef.current as any)?.focus?.();
+        } catch {}
+      } catch (err) {
+        logger.error("onClick handler error:", err);
+      }
+    },
+    [toggleSelectIndex],
+  );
+
+  const handleRowContextMenu = useCallback(
+    (ev: MouseEvent, idx: number) => {
+      try {
+        openContextMenu(ev, idx);
+      } catch (err) {
+        logger.error("onContextMenu handler error:", err);
+      }
+    },
+    [openContextMenu],
+  );
+
+  // Stabilisierter Highlight-Callback
+  const stableHighlightFn = useCallback(
+    (text: string, searchTerm: string) => highlightAll(text, searchTerm),
+    [],
+  );
 
   function gotoListStart() {
     if (!filteredIdx.length) return;
@@ -1147,7 +1212,7 @@ export default function App() {
   }, [filteredIdx, entries]);
 
   const searchMatchIdx = useMemo(() => {
-    const s = String(search || "").trim();
+    const s = String(debouncedSearch || "").trim();
     if (!s) return [] as number[];
     const out: number[] = [];
     for (let vi = 0; vi < filteredIdx.length; vi++) {
@@ -1156,7 +1221,7 @@ export default function App() {
       if (msgMatches(e?.message, s)) out.push(vi);
     }
     return out;
-  }, [search, filteredIdx, entries]);
+  }, [debouncedSearch, filteredIdx, entries]);
 
   function gotoMarked(dir: number) {
     if (!markedIdx.length) return;
@@ -1896,6 +1961,9 @@ export default function App() {
     setEsBaseline(0);
     // Datei-Dedupe-Cache leeren
     fileSigCacheRef.current = new Map();
+    // Caches leeren für bessere Speicherfreigabe
+    clearHighlightCache();
+    clearTimestampCache();
     // PIT-Session schließen (best effort)
     (async () => {
       try {
@@ -3748,6 +3816,8 @@ export default function App() {
               position: "relative",
               /* FIX: Stelle sicher dass Events in virtualisierte Zeilen durchgeleitet werden */
               pointerEvents: "auto",
+              /* Performance: contain für besseres Layout-Verhalten */
+              contain: "strict",
             }}
           >
             {virtualItems.map((vi: any) => {
@@ -3763,8 +3833,8 @@ export default function App() {
               const y: number =
                 typeof vi?.start === "number" ? (vi.start as number) : 0;
               const key = (vi && vi.key) || `row-${globalIdx}`;
-              
-              // Use memoized LogRow component for better performance
+
+              // Use memoized LogRow component with stable callbacks for better performance
               return (
                 <LogRow
                   key={key}
@@ -3776,24 +3846,9 @@ export default function App() {
                   yOffset={y}
                   markColor={markColor}
                   search={search}
-                  onSelect={(idx, shift, meta) => {
-                    try {
-                      toggleSelectIndex(idx, shift, meta);
-                      try {
-                        (parentRef.current as any)?.focus?.();
-                      } catch {}
-                    } catch (err) {
-                      logger.error("onClick handler error:", err);
-                    }
-                  }}
-                  onContextMenu={(ev, idx) => {
-                    try {
-                      openContextMenu(ev, idx);
-                    } catch (err) {
-                      logger.error("onContextMenu handler error:", err);
-                    }
-                  }}
-                  highlightFn={highlightAll}
+                  onSelect={handleRowSelect}
+                  onContextMenu={handleRowContextMenu}
+                  highlightFn={stableHighlightFn}
                   t={t}
                 />
               );

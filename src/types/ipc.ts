@@ -253,7 +253,7 @@ export type ElectronAPI = {
 
 declare global {
   interface Window {
-    api?: ElectronAPI;
+    api: ElectronAPI;
     electronAPI?: ElectronAPI;
   }
 }
