@@ -11,6 +11,37 @@ import {
   nativeImage,
   type NativeImage,
 } from "electron";
+
+// ============================================================================
+// STARTUP OPTIMIZATIONS (must be before any other code)
+// ============================================================================
+
+// Track startup time for performance monitoring
+const processStartTime = Date.now();
+
+// GPU/Hardware Acceleration: Allow disabling for problematic systems (VMs, old drivers)
+// Users can set LUMBERJACK_DISABLE_GPU=1 to skip hardware acceleration
+if (process.env.LUMBERJACK_DISABLE_GPU === "1") {
+  app.disableHardwareAcceleration();
+  console.log(
+    "[startup] Hardware acceleration disabled via LUMBERJACK_DISABLE_GPU",
+  );
+}
+
+// V8 Optimizations for faster JavaScript execution
+// --turbo-fast-api-calls: Faster native API calls
+// --lite-mode: Reduced memory usage for faster startup (optional)
+if (!process.env.LUMBERJACK_DISABLE_V8_OPTS) {
+  app.commandLine.appendSwitch("js-flags", "--turbo-fast-api-calls");
+}
+
+// Disable Chromium features that slow down startup on Windows
+if (process.platform === "win32") {
+  // Disable background timer throttling for consistent performance
+  app.commandLine.appendSwitch("disable-background-timer-throttling");
+  // Disable renderer backgrounding to prevent slowdowns when window loses focus briefly during startup
+  app.commandLine.appendSwitch("disable-renderer-backgrounding");
+}
 import { spawn } from "node:child_process";
 import * as path from "path";
 import * as fs from "fs";
@@ -112,6 +143,7 @@ log.info("[diag] Application starting", {
   electronVersion: process.versions.electron,
   pid: process.pid,
   isDev,
+  startupElapsed: `${Date.now() - processStartTime}ms`,
   logPath:
     log.transports.file.level !== false
       ? log.transports.file.getFile().path
@@ -1096,6 +1128,7 @@ function createWindow(opts: { makePrimary?: boolean } = {}): BrowserWindow {
       sandbox: true, // Sandbox enabled for enhanced security
       webSecurity: true,
       allowRunningInsecureContent: false,
+      backgroundThrottling: false, // Prevents slowdown during startup when window briefly loses focus
     },
     show: false,
     backgroundColor: "#0f1113",
@@ -1228,6 +1261,15 @@ function createWindow(opts: { makePrimary?: boolean } = {}): BrowserWindow {
   });
 
   win.once("ready-to-show", () => {
+    // Log startup performance
+    const readyToShowTime = Date.now() - processStartTime;
+    log.info(`[PERF] Window ready-to-show: ${readyToShowTime}ms`);
+    if (readyToShowTime > 3000) {
+      log.warn(
+        `[PERF] Slow startup detected (${readyToShowTime}ms). Consider checking antivirus exclusions.`,
+      );
+    }
+
     if (!win.isVisible()) win.show();
 
     // macOS: Dock-Icon setzen
