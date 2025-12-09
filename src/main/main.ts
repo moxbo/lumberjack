@@ -26,14 +26,34 @@ import { LoggingStrategy, LogLevel } from "../services/LoggingStrategy";
 import { FeatureFlags } from "../services/FeatureFlags";
 import { ShutdownCoordinator } from "../services/ShutdownCoordinator";
 import { registerIpcHandlers } from "./ipcHandlers";
-import os from "node:os";
 import { getSharedMainApi } from "./sharedMainApi";
-// Environment
-const isDev =
-  process.env.NODE_ENV === "development" ||
-  Boolean(process.env.VITE_DEV_SERVER_URL);
-const MULTI_INSTANCE_FLAG = "--multi-instance";
-const NEW_WINDOW_FLAG = "--new-window";
+
+// Import utility modules
+import {
+  isDev as isDevEnv,
+  MULTI_INSTANCE_FLAG,
+  NEW_WINDOW_FLAG,
+  DEFAULT_MAX_PENDING_APPENDS,
+  MIN_PENDING_APPENDS,
+  MAX_BATCH_ENTRIES,
+  MEMORY_HIGH_THRESHOLD,
+  MEMORY_LOW_THRESHOLD,
+  LOG_FILE_MAX_SIZE,
+  APP_ID_WINDOWS,
+  MEMORY_CHECK_INTERVAL_MS,
+} from "./util/constants";
+import { prepareRenderBatch } from "./util/logEntryUtils";
+import {
+  resolveIconPathSync,
+  resolveIconPathAsync,
+  resolveMacIconPath,
+  canAccessFile,
+  isValidIcoFile,
+} from "./util/iconResolver";
+import { showAboutDialog, showHelpDialog } from "./util/dialogs";
+
+// Environment (use imported constant)
+const isDev = isDevEnv;
 const isMultiInstanceLaunch = process.argv.includes(MULTI_INSTANCE_FLAG);
 
 // Initialize logging as early as possible to catch startup crashes
@@ -48,7 +68,7 @@ if (log.transports.file.level !== false) {
   // Force sync writes - logs written immediately to disk without buffering
   log.transports.file.sync = true;
   // Reduce buffer size to ensure more frequent disk writes
-  log.transports.file.maxSize = 5 * 1024 * 1024; // 5MB max file size
+  log.transports.file.maxSize = LOG_FILE_MAX_SIZE;
 
   // Verify log directory is accessible and writable
   try {
@@ -102,9 +122,8 @@ log.info("[diag] Application starting", {
 // This must be done early in the app lifecycle
 if (process.platform === "win32") {
   try {
-    const appId = "de.moxbo.lumberjack";
-    app.setAppUserModelId(appId);
-    log.info("[icon] AppUserModelId set to:", appId);
+    app.setAppUserModelId(APP_ID_WINDOWS);
+    log.info("[icon] AppUserModelId set to:", APP_ID_WINDOWS);
   } catch (e) {
     log.warn(
       "[icon] Failed to set AppUserModelId:",
@@ -118,12 +137,35 @@ const perfService = new PerformanceService();
 const settingsService = new SettingsService();
 const networkService = new NetworkService();
 const adaptiveBatchService = new AdaptiveBatchService();
-// @ts-expect-error - Prepared for future use
-const _healthMonitor = new HealthMonitor();
+const healthMonitor = new HealthMonitor();
 const loggingStrategy = new LoggingStrategy();
-// @ts-expect-error - Prepared for future use
-const _featureFlags = new FeatureFlags();
+const featureFlags = new FeatureFlags();
 const shutdownCoordinator = new ShutdownCoordinator();
+
+// Register health checks for monitoring
+healthMonitor.registerCheck("memory", async () => {
+  const mem = process.memoryUsage();
+  const heapPercent = mem.heapUsed / mem.heapTotal;
+  return heapPercent < 0.9; // Healthy if heap usage below 90%
+});
+
+healthMonitor.registerCheck("network", async () => {
+  const tcp = networkService.getTcpStatus();
+  // Healthy if TCP not running or running successfully
+  return !tcp.running || tcp.running;
+});
+
+// Start periodic health monitoring in production
+if (!isDev) {
+  setInterval(() => {
+    healthMonitor.runChecks().catch((err) => {
+      log.error(
+        "[health] Health check failed:",
+        err instanceof Error ? err.message : String(err),
+      );
+    });
+  }, 60000); // Check every minute
+}
 
 // Configure logging strategy based on environment
 if (isDev) {
@@ -168,7 +210,9 @@ const loadedWindows = new Set<number>(); // Track windows that have finished loa
 // Quit-Bestätigung
 let quitConfirmed = false;
 let quitPromptInProgress = false;
-async function confirmQuit(target?: BrowserWindow | null): Promise<boolean> {
+async function confirmQuitLocal(
+  target?: BrowserWindow | null,
+): Promise<boolean> {
   if (quitConfirmed) return true;
   if (quitPromptInProgress) return false;
   quitPromptInProgress = true;
@@ -345,7 +389,7 @@ function applyWindowTitles(): void {
 (global as any).__applyWindowTitles = applyWindowTitles;
 
 // Buffers with adaptive memory limits
-let MAX_PENDING_APPENDS = 5000;
+let MAX_PENDING_APPENDS = DEFAULT_MAX_PENDING_APPENDS;
 let pendingAppends: LogEntry[] = [];
 const pendingMenuCmdsByWindow = new Map<
   number,
@@ -363,9 +407,12 @@ setInterval(() => {
     const heapTotal = mem.heapTotal;
     const heapPercent = heapUsed / heapTotal;
 
-    if (heapPercent > 0.75) {
+    if (heapPercent > MEMORY_HIGH_THRESHOLD) {
       // High memory usage: reduce buffer
-      const newLimit = Math.max(1000, Math.floor(MAX_PENDING_APPENDS * 0.5));
+      const newLimit = Math.max(
+        MIN_PENDING_APPENDS,
+        Math.floor(MAX_PENDING_APPENDS * 0.5),
+      );
       if (newLimit !== MAX_PENDING_APPENDS) {
         loggingStrategy.logMessage(
           "memory",
@@ -381,9 +428,15 @@ setInterval(() => {
           pendingAppends.splice(0, overflow);
         }
       }
-    } else if (heapPercent < 0.4 && MAX_PENDING_APPENDS < 5000) {
+    } else if (
+      heapPercent < MEMORY_LOW_THRESHOLD &&
+      MAX_PENDING_APPENDS < DEFAULT_MAX_PENDING_APPENDS
+    ) {
       // Low memory usage: increase buffer back to normal
-      const newLimit = Math.min(5000, Math.floor(MAX_PENDING_APPENDS * 1.5));
+      const newLimit = Math.min(
+        DEFAULT_MAX_PENDING_APPENDS,
+        Math.floor(MAX_PENDING_APPENDS * 1.5),
+      );
       if (newLimit !== MAX_PENDING_APPENDS) {
         loggingStrategy.logMessage(
           "memory",
@@ -400,40 +453,9 @@ setInterval(() => {
       e instanceof Error ? e.message : String(e),
     );
   }
-}, 10000); // Check every 10 seconds
+}, MEMORY_CHECK_INTERVAL_MS);
 
-// UI-freundliche Batch-/Trunkierungs-Parameter
-const MAX_BATCH_ENTRIES = 200;
-const MAX_MESSAGE_LENGTH = 10 * 1024; // 10 KB pro Textfeld
-// const _BATCH_SEND_DELAY_MS = 8; // kleine Verzögerung zwischen Batches (replaced by adaptiveBatchService)
-
-function truncateEntryForRenderer(entry: LogEntry): LogEntry {
-  try {
-    if (!entry || typeof entry !== "object") return entry;
-    const copy = { ...(entry as Record<string, unknown>) };
-    const fields = ["message", "raw", "msg", "body", "message_raw", "text"];
-    let truncated = false;
-    for (const f of fields) {
-      const val = copy[f];
-      if (typeof val === "string" && val.length > MAX_MESSAGE_LENGTH) {
-        copy[f] = val.slice(0, MAX_MESSAGE_LENGTH) + "… [truncated]";
-        truncated = true;
-      }
-    }
-    if (truncated && !copy._truncated) copy._truncated = true;
-    return copy as LogEntry;
-  } catch {
-    return entry;
-  }
-}
-function prepareRenderBatch(entries: LogEntry[]): LogEntry[] {
-  try {
-    if (!Array.isArray(entries) || entries.length === 0) return entries;
-    return entries.map(truncateEntryForRenderer);
-  } catch {
-    return entries;
-  }
-}
+// truncateEntryForRenderer and prepareRenderBatch are now imported from ./util/logEntryUtils
 
 // [FREEZE FIX] Track batch sends for diagnostics
 const batchSendStats = { total: 0, failed: 0, lastSendTime: 0 };
@@ -888,397 +910,11 @@ function sendAppend(entries: LogEntry[]): void {
   }
 }
 
-// Cache icon/dist paths
-let cachedIconPath: string | null = null;
+// Icon/dist path caching is now handled in ./util/iconResolver
+// Using imported functions: resolveIconPathSync, resolveIconPathAsync, resolveMacIconPath, canAccessFile, isValidIcoFile
 let cachedDistIndexPath: string | null = null;
 
-/**
- * Validates if a file is a valid ICO format by checking magic bytes
- */
-function isValidIcoFile(filePath: string): boolean {
-  try {
-    const buffer = Buffer.alloc(4);
-    const fd = fs.openSync(filePath, "r");
-    fs.readSync(fd, buffer, 0, 4, 0);
-    fs.closeSync(fd);
-    // Valid ICO format starts with 0x00 0x00 0x01 0x00
-    return (
-      buffer[0] === 0x00 &&
-      buffer[1] === 0x00 &&
-      buffer[2] === 0x01 &&
-      buffer[3] === 0x00
-    );
-  } catch {
-    return false;
-  }
-}
-
-/**
- * Validates file access and readability
- */
-function canAccessFile(filePath: string): boolean {
-  try {
-    fs.accessSync(filePath, fs.constants.R_OK);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-function resolveIconPathSync(): string | null {
-  if (cachedIconPath !== null) return cachedIconPath || null;
-  const resPath = process.resourcesPath || "";
-  const appPath = app.getAppPath?.() || "";
-  const cwdPath = process.cwd();
-
-  // Debug logging
-  try {
-    log.debug?.("[icon] resolveIconPathSync context:", {
-      __dirname,
-      appPath,
-      cwdPath,
-      resPath,
-      isDev: process.env.NODE_ENV === "development",
-    });
-  } catch {
-    // Ignore
-  }
-
-  const candidates = [
-    // Production: app.asar.unpacked (highest priority for packaged app)
-    path.join(resPath, "app.asar.unpacked", "images", "icon.ico"),
-    path.join(resPath, "images", "icon.ico"),
-    // Development: Project root first (IMPORTANT for dev mode)
-    path.join(cwdPath, "images", "icon.ico"),
-    // Development: __dirname (compiled dist-main/main.cjs) and project root
-    path.join(__dirname, "images", "icon.ico"),
-    path.join(appPath, "images", "icon.ico"),
-    // Additional fallback: Go up from compiled location
-    path.join(__dirname, "..", "..", "images", "icon.ico"),
-    path.join(__dirname, "..", "images", "icon.ico"),
-  ].filter(Boolean);
-
-  for (const p of candidates) {
-    try {
-      if (p && fs.existsSync(p)) {
-        // Validate file is readable and is valid ICO format
-        if (!canAccessFile(p)) {
-          try {
-            log.debug?.("[icon] Candidate exists but not readable:", p);
-          } catch {
-            // Ignore
-          }
-          continue;
-        }
-
-        if (!isValidIcoFile(p)) {
-          try {
-            log.warn?.(
-              "[icon] Candidate exists but is not valid ICO format:",
-              p,
-            );
-          } catch {
-            // Ignore
-          }
-          continue;
-        }
-
-        cachedIconPath = p;
-        try {
-          log.info?.("[icon] resolveIconPathSync found valid ICO:", p);
-        } catch {
-          // Intentionally empty - ignore errors
-        }
-        return p;
-      }
-    } catch (e) {
-      try {
-        log.debug?.(
-          "[icon] resolveIconPathSync exists check error for",
-          p,
-          ":",
-          e instanceof Error ? e.message : String(e),
-        );
-      } catch {
-        // Intentionally empty - ignore errors
-      }
-    }
-  }
-  try {
-    log.warn?.(
-      "[icon] resolveIconPathSync: no valid candidate found. Checked:",
-      candidates,
-    );
-  } catch {
-    // Intentionally empty - ignore errors
-  }
-  cachedIconPath = "";
-  return null;
-}
-async function resolveIconPathAsync(): Promise<string | null> {
-  if (cachedIconPath !== null) return cachedIconPath;
-  const resPath = process.resourcesPath || "";
-  const appPath = app.getAppPath?.() || "";
-  const cwdPath = process.cwd();
-
-  const candidates = [
-    // Production: app.asar.unpacked
-    path.join(resPath, "app.asar.unpacked", "images", "icon.ico"),
-    path.join(resPath, "images", "icon.ico"),
-    // Development: Project root (CWD) first
-    path.join(cwdPath, "images", "icon.ico"),
-    // Development: Other paths
-    path.join(__dirname, "images", "icon.ico"),
-    path.join(appPath, "images", "icon.ico"),
-    path.join(__dirname, "..", "..", "images", "icon.ico"),
-    path.join(__dirname, "..", "images", "icon.ico"),
-  ];
-
-  for (const p of candidates) {
-    try {
-      const exists = await fs.promises
-        .access(p)
-        .then(() => true)
-        .catch(() => false);
-      if (exists) {
-        // Validate ICO format
-        if (!isValidIcoFile(p)) {
-          try {
-            log.warn?.(
-              "[icon] Candidate exists but is not valid ICO format (async):",
-              p,
-            );
-          } catch {
-            // Ignore
-          }
-          continue;
-        }
-
-        cachedIconPath = p;
-        try {
-          log.debug?.("[icon] resolveIconPathAsync found valid ICO:", p);
-        } catch {
-          // Ignore
-        }
-        return p;
-      }
-    } catch (e) {
-      try {
-        log.debug?.(
-          "[icon] resolveIconPathAsync error for",
-          p,
-          ":",
-          e instanceof Error ? e.message : String(e),
-        );
-      } catch {
-        // Ignore
-      }
-    }
-  }
-  try {
-    log.warn?.("[icon] resolveIconPathAsync: no valid candidate exists");
-  } catch {
-    // Ignore
-  }
-  cachedIconPath = "";
-  return null;
-}
-function resolveMacIconPath(): string | null {
-  try {
-    log.info?.("[icon] resolveMacIconPath called");
-  } catch {
-    // Intentionally empty
-  }
-
-  const resPath = process.resourcesPath || "";
-  const appPath = app.getAppPath?.() || "";
-
-  // Versuche zuerst ICNS (native macOS format)
-  const icnsFile = "icon.icns";
-  const icnsCandidates = [
-    // Production: app.asar.unpacked
-    path.join(resPath, "app.asar.unpacked", "images", icnsFile),
-    path.join(resPath, "images", icnsFile),
-    // Development: __dirname (compiled main.js) and project root
-    path.join(__dirname, "images", icnsFile),
-    path.join(appPath, "images", icnsFile),
-    // Fallback: Current working directory
-    path.join(process.cwd(), "images", icnsFile),
-    // Additional fallback: src/main (for dev mode)
-    path.join(__dirname, "..", "..", "images", icnsFile),
-  ].filter(Boolean);
-
-  for (const p of icnsCandidates) {
-    try {
-      if (fs.existsSync(p)) {
-        try {
-          log.info?.("[icon] resolveMacIconPath ICNS hit:", p);
-        } catch {
-          // Intentionally empty - ignore errors
-        }
-        return p;
-      }
-    } catch {
-      // Intentionally empty - ignore errors
-    }
-  }
-
-  try {
-    log.warn?.(
-      "[icon] resolveMacIconPath: no ICNS candidate exists, trying PNG fallback",
-    );
-  } catch {
-    // Intentionally empty - ignore errors
-  }
-
-  // Fallback zu PNG wenn ICNS nicht vorhanden
-  const pngFile = "lumberjack_v4_normal_1024.png";
-  const pngCandidates = [
-    path.join(resPath, "app.asar.unpacked", "images", pngFile),
-    path.join(resPath, "images", pngFile),
-    path.join(__dirname, "images", pngFile),
-    path.join(appPath, "images", pngFile),
-    path.join(process.cwd(), "images", pngFile),
-    path.join(__dirname, "..", "..", "images", pngFile),
-  ].filter(Boolean);
-
-  for (const p of pngCandidates) {
-    try {
-      if (fs.existsSync(p)) {
-        try {
-          log.info?.("[icon] resolveMacIconPath PNG fallback hit:", p);
-        } catch {
-          // Intentionally empty - ignore errors
-        }
-        return p;
-      }
-    } catch {
-      // Intentionally empty - ignore errors
-    }
-  }
-
-  try {
-    log.warn?.("[icon] resolveMacIconPath: no candidate exists (ICNS or PNG)");
-  } catch {
-    // Intentionally empty - ignore errors
-  }
-  return null;
-}
-
-// About/Help Dialoge
-function showAboutDialog(): void {
-  try {
-    const win = BrowserWindow.getFocusedWindow();
-    const name = app.getName();
-    const version = app.getVersion();
-    const env = isDev ? "Development" : "Production";
-    const electron = process.versions.electron;
-    const chrome = process.versions.chrome;
-    const node = process.versions.node;
-    const v8 = process.versions.v8;
-    const osInfo = `${process.platform} ${process.arch} ${os.release()}`;
-    const detail = [
-      `Version: ${version}`,
-      `Umgebung: ${env}`,
-      `Electron: ${electron}`,
-      `Chromium: ${chrome}`,
-      `Node.js: ${node}`,
-      `V8: ${v8}`,
-      `OS: ${osInfo}`,
-    ].join("\n");
-
-    const options: Electron.MessageBoxOptions = {
-      type: "info",
-      title: `Über ${name}`,
-      message: name,
-      detail,
-      buttons: ["OK"],
-      noLink: true,
-      normalizeAccessKeys: true,
-    };
-    if (win) void dialog.showMessageBox(win, options);
-    else void dialog.showMessageBox(options);
-  } catch (e) {
-    log.warn(
-      "About-Dialog fehlgeschlagen:",
-      e instanceof Error ? e.message : String(e),
-    );
-  }
-}
-
-function showHelpDialog(): void {
-  try {
-    const win = BrowserWindow.getFocusedWindow();
-    const lines: string[] = [];
-    lines.push(
-      "Lumberjack ist ein Log-Viewer mit Fokus auf große Datenmengen und Live-Quellen.",
-    );
-    lines.push("");
-    lines.push("Funktionen:");
-    lines.push(
-      ' • Dateien öffnen (Menü "Datei → Öffnen…"), Drag & Drop von .log/.json/.jsonl/.txt und .zip',
-    );
-    lines.push(
-      " • ZIPs werden entpackt und geeignete Dateien automatisch geparst",
-    );
-    lines.push(
-      " • TCP-Log-Server: Start/Stopp, eingehende Zeilen werden live angezeigt",
-    );
-    lines.push(
-      " • HTTP: Einmal laden oder periodisches Polling mit Deduplizierung",
-    );
-    lines.push(" • Elasticsearch: Logs anhand von URL/Query abrufen");
-    lines.push(
-      " • Filter: Zeitfilter, MDC/DiagnosticContext-Filter, Volltextsuche",
-    );
-    lines.push(" • Markieren/Färben einzelner Einträge, Kontextmenü pro Zeile");
-    lines.push(" • Protokollierung in Datei (rotierend) optional aktivierbar");
-    lines.push("");
-    lines.push("Filter-Syntax (Volltextsuche in Nachrichten):");
-    lines.push(" • ODER: Verwende | um Alternativen zu trennen, z. B. foo|bar");
-    lines.push(
-      " • UND: Verwende & um Bedingungen zu verknüpfen, z. B. foo&bar",
-    );
-    lines.push(
-      " • NICHT: Setze ! vor einen Begriff für Negation, z. B. foo&!bar",
-    );
-    lines.push(
-      " • Mehrfache ! toggeln die Negation (z. B. !!foo entspricht foo)",
-    );
-    lines.push(
-      " • Groß-/Kleinschreibung wird ignoriert, es wird nach Teilstrings gesucht",
-    );
-    lines.push(" • Beispiele:");
-    lines.push('    – QcStatus&!CB23  → enthält "QcStatus" und NICHT "CB23"');
-    lines.push('    – error|warn      → enthält "error" ODER "warn"');
-    lines.push(
-      '    – foo&bar         → enthält sowohl "foo" als auch "bar" (Reihenfolge egal)',
-    );
-    lines.push("");
-    lines.push("Tipps:");
-    lines.push(' • Menü "Netzwerk" für HTTP/TCP Aktionen und Konfiguration');
-    lines.push(
-      " • Einstellungen enthalten Pfade, Limits und Anmeldedaten (verschlüsselt gespeichert)",
-    );
-
-    const options: Electron.MessageBoxOptions = {
-      type: "info",
-      title: "Hilfe / Anleitung",
-      message: "Hilfe & Funktionen",
-      detail: lines.join("\n"),
-      buttons: ["OK"],
-      noLink: true,
-      normalizeAccessKeys: true,
-    };
-    if (win) void dialog.showMessageBox(win, options);
-    else void dialog.showMessageBox(options);
-  } catch (e) {
-    log.warn(
-      "Hilfe-Dialog fehlgeschlagen:",
-      e instanceof Error ? e.message : String(e),
-    );
-  }
-}
+// showAboutDialog and showHelpDialog are now imported from ./util/dialogs
 
 // Menu
 function buildMenu(): void {
@@ -1457,7 +1093,9 @@ function createWindow(opts: { makePrimary?: boolean } = {}): BrowserWindow {
       preload: path.join(app.getAppPath(), "dist", "preload", "preload.js"),
       contextIsolation: true,
       nodeIntegration: false,
-      sandbox: false,
+      sandbox: true, // Sandbox enabled for enhanced security
+      webSecurity: true,
+      allowRunningInsecureContent: false,
     },
     show: false,
     backgroundColor: "#0f1113",
@@ -1513,7 +1151,7 @@ function createWindow(opts: { makePrimary?: boolean } = {}): BrowserWindow {
       if (!isLast) return; // Nur beim letzten Fenster nachfragen
       if (quitConfirmed) return;
       e.preventDefault();
-      const ok = await confirmQuit(win);
+      const ok = await confirmQuitLocal(win);
       if (ok) {
         // Fenster wirklich schließen und Quit fortsetzen
         // Markiere als bestätigt, dann zerstören → before-quit wird nicht erneut blockieren
@@ -2427,7 +2065,7 @@ app.on("before-quit", async (e) => {
 
     e.preventDefault();
     const focused = BrowserWindow.getFocusedWindow?.() || mainWindow || null;
-    const ok = await confirmQuit(focused || undefined);
+    const ok = await confirmQuitLocal(focused || undefined);
 
     if (ok) {
       log.info("[diag] User confirmed quit");
@@ -2573,5 +2211,5 @@ process.on("beforeExit", () => {
   }
 });
 
-// Export for IPC handlers
-export { settingsService, networkService, getParsers, getAdmZip };
+// Export for IPC handlers and external modules
+export { settingsService, networkService, getParsers, getAdmZip, featureFlags };

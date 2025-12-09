@@ -13,6 +13,8 @@ import {
   ParseResult,
   SettingsResult,
   DroppedFile,
+  WindowPermsResult,
+  Result,
 } from "../types/ipc";
 import type { SettingsService } from "../services/SettingsService";
 import type { NetworkService } from "../services/NetworkService";
@@ -93,13 +95,13 @@ export function registerIpcHandlers(
     }
   });
 
-  ipcMain.handle("windowPerms:get", (event) => {
+  ipcMain.handle("windowPerms:get", (event): WindowPermsResult => {
     try {
       const win = BrowserWindow.fromWebContents(event.sender);
       const allowed = win
         ? sharedApi.getWindowCanTcpControl?.(win.id) !== false
         : true;
-      return { ok: true, canTcpControl: allowed } as any;
+      return { ok: true, canTcpControl: allowed };
     } catch (err) {
       log.error(
         "Error getting window perms:",
@@ -108,20 +110,20 @@ export function registerIpcHandlers(
       return {
         ok: false,
         error: err instanceof Error ? err.message : String(err),
-      } as any;
+      };
     }
   });
 
   ipcMain.handle(
     "windowPerms:set",
-    (event, patch: { canTcpControl?: boolean }) => {
+    (event, patch: { canTcpControl?: boolean }): Result<void> => {
       try {
         const win = BrowserWindow.fromWebContents(event.sender);
         if (win && typeof patch?.canTcpControl === "boolean") {
           sharedApi.setWindowCanTcpControl?.(win.id, patch.canTcpControl);
           updateAppMenu();
         }
-        return { ok: true } as any;
+        return { ok: true };
       } catch (err) {
         log.error(
           "Error setting window perms:",
@@ -130,7 +132,7 @@ export function registerIpcHandlers(
         return {
           ok: false,
           error: err instanceof Error ? err.message : String(err),
-        } as any;
+        };
       }
     },
   );

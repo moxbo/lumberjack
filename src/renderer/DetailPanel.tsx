@@ -17,6 +17,26 @@ interface DetailPanelProps {
   markColor?: string;
 }
 
+/**
+ * Get the full message from an entry, preferring _fullMessage if available
+ */
+function getFullMessage(entry: Record<string, unknown>): string {
+  // Check for preserved full message (when truncated)
+  const fullMessage = entry._fullMessage;
+  if (typeof fullMessage === "string" && fullMessage.length > 0) {
+    return fullMessage;
+  }
+  // Fall back to regular message
+  return getStr(entry, "message");
+}
+
+/**
+ * Check if entry was truncated
+ */
+function isTruncated(entry: Record<string, unknown>): boolean {
+  return entry._truncated === true || typeof entry._fullMessage === "string";
+}
+
 export function DetailPanel({
   entry,
   search,
@@ -26,6 +46,7 @@ export function DetailPanel({
 }: DetailPanelProps): JSX.Element {
   const [stackExpanded, setStackExpanded] = useState(false);
   const [mdcExpanded, setMdcExpanded] = useState(false);
+  const [messageExpanded, setMessageExpanded] = useState(false);
 
   if (!entry) {
     return (
@@ -83,11 +104,44 @@ export function DetailPanel({
       <div className="section-sep" />
 
       <div className="kv full">
-        <span>{t("details.message")}</span>
+        <span>
+          {t("details.message")}
+          {isTruncated(entry) && (
+            <button
+              onClick={() => setMessageExpanded(!messageExpanded)}
+              style={{
+                marginLeft: "8px",
+                padding: "2px 8px",
+                fontSize: "11px",
+                cursor: "pointer",
+                background: "var(--color-bg-secondary)",
+                border: "1px solid var(--color-border)",
+                borderRadius: "4px",
+                color: "var(--color-text-secondary)",
+              }}
+              title={
+                messageExpanded
+                  ? "Nachricht kürzen"
+                  : "Vollständige Nachricht anzeigen"
+              }
+            >
+              {messageExpanded ? "▼ Gekürzt" : "▶ Vollständig"}
+            </button>
+          )}
+        </span>
         <pre
           id="dMessage"
+          style={{
+            maxHeight: messageExpanded ? "none" : "400px",
+            overflow: messageExpanded ? "visible" : "auto",
+          }}
           dangerouslySetInnerHTML={{
-            __html: highlightFn(getStr(entry, "message"), search),
+            __html: highlightFn(
+              messageExpanded
+                ? getFullMessage(entry)
+                : getStr(entry, "message"),
+              search,
+            ),
           }}
         />
       </div>

@@ -40,6 +40,14 @@ spec/.hash
 # Eslint Cache
 .eslintcache*
 
+# Generated build files
+src/main/parsers.cjs
+src/main/parsers.js
+src/main/preload.js
+src/utils/settings.cjs
+dist-main/
+release/app/dist/
+
 # Generated native addon files
 /spec/fixtures/native-addon/echo/build/
 

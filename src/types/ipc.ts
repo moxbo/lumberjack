@@ -13,6 +13,10 @@ export interface LogEntry {
   logger?: string | null;
   thread?: string | null;
   message: string;
+  /** Original full message before truncation (only set if truncated) */
+  _fullMessage?: string;
+  /** Flag indicating this entry was truncated for display */
+  _truncated?: boolean;
   traceId?: string | null;
   spanId?: string | null;
   stackTrace?: string | null;
@@ -73,6 +77,12 @@ export interface Settings {
   colTs?: number;
   colLvl?: number;
   colLogger?: number;
+
+  // Message display settings
+  /** Maximum message length in list view before truncation (default: 10240 = 10KB) */
+  messageTruncateLength?: number;
+  /** Show full messages in detail panel by default */
+  detailShowFullMessage?: boolean;
 
   // Markierungen
   marksMap?: Record<string, string>; // signature -> color

@@ -8,8 +8,8 @@ function toStringSafe(v: unknown): string {
 }
 
 export function escapeHtml(s: unknown): string {
-  // Avoid String.prototype.replaceAll to stay compatible with ES2020 typings
   const str = toStringSafe(s);
+  // Using standard replace with regex for HTML escape characters
   return str.replace(/[&<>]/g, (ch) =>
     ch === "&" ? "&amp;" : ch === "<" ? "&lt;" : "&gt;",
   );

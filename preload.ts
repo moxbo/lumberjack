@@ -121,7 +121,7 @@ const api: ElectronAPI = {
   },
 
   // Error logging from renderer to main process
-  logError: (errorData: any): Promise<Result<void>> =>
+  logError: (errorData: unknown): Promise<Result<void>> =>
     ipcRenderer.invoke("logError", errorData),
 };
 

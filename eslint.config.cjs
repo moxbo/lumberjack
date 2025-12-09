@@ -29,7 +29,7 @@ module.exports = defineConfig([
     files: ["**/*.ts", "**/*.tsx"],
     languageOptions: {
       parser: tsParser,
-      ecmaVersion: 2020,
+      ecmaVersion: 2022,
       sourceType: "module",
 
       parserOptions: {
