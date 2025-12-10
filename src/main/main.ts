@@ -92,7 +92,8 @@ log.initialize();
 
 // Configure log levels
 log.transports.console.level = "debug";
-log.transports.file.level = isDev ? false : "silly";
+// In production, only log info and above to file (not debug/silly)
+log.transports.file.level = isDev ? false : "info";
 
 // Configure file transport for immediate writes to prevent data loss on crashes
 if (log.transports.file.level !== false) {
@@ -209,18 +210,16 @@ if (isDev) {
 }
 
 // Lazy modules
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
+
 let AdmZip: typeof import("adm-zip") | null = null;
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
+
 function getAdmZip(): typeof import("adm-zip") {
   if (!AdmZip) {
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
     AdmZip = require("adm-zip") as typeof import("adm-zip");
   }
   return AdmZip as typeof import("adm-zip");
 }
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
 let parsers: typeof import("./parsers.cjs") | null = null;
 function getParsers(): typeof import("./parsers.cjs") {
   if (!parsers) {
@@ -1354,7 +1353,6 @@ function createWindow(opts: { makePrimary?: boolean } = {}): BrowserWindow {
     }
 
     if (process.platform === "win32") {
-      // eslint-disable-next-line @typescript-eslint/no-misused-promises
       setImmediate(async () => {
         try {
           const iconPath = await resolveIconPathAsync();
@@ -1693,7 +1691,7 @@ try {
 
 // Fallback: react to tcp:status broadcasts
 try {
-  // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment,@typescript-eslint/no-require-imports
+  // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
   const { ipcMain } = require("electron");
   // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
   ipcMain.on("tcp:status", () => {
@@ -2125,7 +2123,7 @@ function openWindowInNewProcess(): void {
 }
 
 // Bestätigung bei Cmd+Q / Beenden-Menü (plattformübergreifend)
-// eslint-disable-next-line @typescript-eslint/no-misused-promises
+
 app.on("before-quit", async (e) => {
   try {
     log.info("[diag] before-quit fired; quitConfirmed=", quitConfirmed);
