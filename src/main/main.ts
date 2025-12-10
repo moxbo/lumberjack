@@ -2304,16 +2304,7 @@ app
   .then(() => {
     log.info("[diag] app.whenReady() fired - creating initial window");
 
-    // Register IPC handlers before creating window
-    try {
-      registerIpcHandlers();
-      log.info("[diag] IPC handlers registered successfully");
-    } catch (err) {
-      log.error(
-        "[diag] Failed to register IPC handlers:",
-        err instanceof Error ? err.message : String(err),
-      );
-    }
+    // IPC handlers are already registered at module load time (line ~1685)
 
     // Create the main window
     try {
