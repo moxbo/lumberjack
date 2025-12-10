@@ -700,6 +700,10 @@ body {
   font-size: 12px;
   text-align: center;
   justify-self: center;
+  overflow: visible;
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
 
 .col.logger {
@@ -801,6 +805,14 @@ body {
 .lev-fatal {
   color: var(--color-level-fatal);
   background: var(--level-bg-fatal);
+  border-radius: 4px;
+  padding: 2px 8px;
+  display: inline-block;
+}
+
+.lev-unk {
+  color: var(--color-text-secondary);
+  background: var(--color-bg-hover);
   border-radius: 4px;
   padding: 2px 8px;
   display: inline-block;

@@ -136,8 +136,8 @@ const LogRowComponent = ({
     >
       <div className="col ts">{fmtTimestamp(getTs(entry, "timestamp"))}</div>
       <div className="col lvl">
-        <span className={levelClass(getStr(entry, "level"))}>
-          {getStr(entry, "level")}
+        <span className={levelClass(entry.level as string | null | undefined)}>
+          {entry.level ? String(entry.level) : ""}
         </span>
       </div>
       {!compact && (
