@@ -3829,14 +3829,17 @@ export default function App() {
               style={{ marginLeft: "6px" }}
               title="Geladene ES-Ergebnisse"
             >
-              Geladen: {esLoaded} von {esTotal}
+              {t("toolbar.elasticLoaded", {
+                loaded: String(esLoaded),
+                total: String(esTotal),
+              })}
             </span>
           )}
         </div>
         <div className="section">
           {busy && (
             <span className="busy">
-              <span className="spinner"></span>Lädt…
+              <span className="spinner"></span>{t("toolbar.busy")}
             </span>
           )}
           <span id="tcpStatus" className="status">
@@ -3991,7 +3994,7 @@ export default function App() {
                   {t("details.noSelection")}
                 </div>
                 <div className="details-empty-hint">
-                  Wähle einen Eintrag aus der Liste, um Details anzuzeigen.
+                  {t("details.emptyHint")}
                 </div>
               </div>
             )}

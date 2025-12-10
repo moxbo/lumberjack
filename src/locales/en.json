@@ -66,6 +66,7 @@
   },
   "details": {
     "noSelection": "No selection",
+    "emptyHint": "Select an entry from the list to view details.",
     "time": "Time",
     "logger": "Logger",
     "level": "Level",
