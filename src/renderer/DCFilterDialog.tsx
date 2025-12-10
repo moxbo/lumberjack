@@ -448,6 +448,28 @@ export default function DCFilterDialog(): preact.JSX.Element {
       </div>
 
       {/* Tabelle: Horizontal scrollfähig, Sticky Header */}
+      {/* Quick-Add Sektion für häufig verwendete Keys */}
+      {keys.length > 0 && rows.length === 0 && (
+        <div class="quick-add-section" style="margin-top:12px;">
+          <div class="section-label">
+            Schnellauswahl - Klicke auf einen Key um ihn hinzuzufügen:
+          </div>
+          {keys.slice(0, 8).map((k) => (
+            <button
+              key={k}
+              class="quick-add-btn"
+              onClick={() => {
+                setSelectedKey(k);
+                DiagnosticContextFilter.addMdcEntry(k, "");
+              }}
+              title={`${k} hinzufügen (alle Werte)`}
+            >
+              + {k}
+            </button>
+          ))}
+        </div>
+      )}
+
       <div class="table-wrap" style="margin-top:8px;">
         <table class="data-table">
           <thead>
@@ -508,15 +530,51 @@ export default function DCFilterDialog(): preact.JSX.Element {
                 </tr>
               );
             })}
-            {rows.length === 0 && (
+            {rows.length === 0 && keys.length === 0 && (
               <tr>
-                <td colSpan={3} style="padding:8px; color:#777;">
-                  Keine Einträge
+                <td colSpan={3}>
+                  <div class="empty-state" style="padding:40px 20px;">
+                    <div class="empty-state-icon">📋</div>
+                    <div class="empty-state-title">
+                      Keine MDC-Keys verfügbar
+                    </div>
+                    <div class="empty-state-description">
+                      Lade zunächst Log-Einträge mit MDC-Daten (Mapped
+                      Diagnostic Context), um hier Filter hinzufügen zu können.
+                    </div>
+                  </div>
+                </td>
+              </tr>
+            )}
+            {rows.length === 0 && keys.length > 0 && (
+              <tr>
+                <td colSpan={3}>
+                  <div class="empty-state" style="padding:30px 20px;">
+                    <div class="empty-state-icon">🔍</div>
+                    <div class="empty-state-title">
+                      Noch keine Filter definiert
+                    </div>
+                    <div class="empty-state-description">
+                      Wähle oben einen MDC-Key aus oder nutze die
+                      Schnellauswahl, um Filter hinzuzufügen.
+                    </div>
+                  </div>
                 </td>
               </tr>
             )}
           </tbody>
         </table>
+      </div>
+
+      {/* Keyboard Hints */}
+      <div class="keyboard-hints" style="margin-top:12px;">
+        <span class="hint">
+          <kbd>Ctrl</kbd>/<kbd>⌘</kbd>+Klick: Mehrfachauswahl
+        </span>
+        <span class="hint">
+          <kbd>Shift</kbd>+Klick: Bereichsauswahl
+        </span>
+        <span class="hint">Rechtsklick: Kontextmenü</span>
       </div>
 
       {/* Kontextmenü */}
@@ -548,19 +606,25 @@ export default function DCFilterDialog(): preact.JSX.Element {
       {showValues && (
         <div class="modal-backdrop" onClick={() => setShowValues(false)}>
           <div class="modal" onClick={(e) => e.stopPropagation()}>
-            <h3>Bekannte Werte</h3>
-            <div style="max-height:260px; overflow:auto; border:1px solid #eee;">
+            <h3>Bekannte Werte für "{selectedKey}"</h3>
+            <div style="max-height:260px; overflow:auto; border:1px solid var(--color-divider); border-radius:8px;">
               {values.length === 0 && (
-                <div style="padding:8px; color:#777;">
-                  Keine bekannten Werte
+                <div class="empty-state" style="padding:30px 20px;">
+                  <div class="empty-state-icon">📭</div>
+                  <div class="empty-state-title">Keine bekannten Werte</div>
+                  <div class="empty-state-description">
+                    Für diesen Key wurden noch keine Werte in den geladenen Logs
+                    gefunden.
+                  </div>
                 </div>
               )}
               {values.map((v) => (
                 <div
-                  class="item"
-                  style="padding:6px 8px; border-bottom:1px solid #f0f0f0; cursor:pointer;"
+                  class="autocomplete-item"
                   onClick={() => chooseValue(v)}
+                  title={`Wert "${v}" hinzufügen`}
                 >
+                  <span style="opacity:0.5;">→</span>
                   {v}
                 </div>
               ))}

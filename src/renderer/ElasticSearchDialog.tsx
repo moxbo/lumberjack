@@ -42,6 +42,19 @@ export default function ElasticSearchDialog(props: any) {
   const [showAppList, setShowAppList] = useState(false);
   const [showEnvList, setShowEnvList] = useState(false);
 
+  // Progressive Disclosure: Sektionen ausklappbar
+  const [expandedSections, setExpandedSections] = useState<
+    Record<string, boolean>
+  >({
+    time: true, // Zeit-Optionen standardmäßig offen
+    search: true, // Suchfelder standardmäßig offen
+    advanced: false, // Erweiterte Optionen standardmäßig zu
+  });
+
+  const toggleSection = (key: string) => {
+    setExpandedSections((prev) => ({ ...prev, [key]: !prev[key] }));
+  };
+
   useEffect(() => {
     function onDocClick() {
       setShowIdxList(false);
@@ -192,11 +205,22 @@ export default function ElasticSearchDialog(props: any) {
 
   return (
     <div className="modal-backdrop" onClick={onClose}>
-      <div className="modal" onClick={(e) => e.stopPropagation()}>
-        <h3>Elastic-Search</h3>
+      <div
+        className="modal"
+        onClick={(e) => e.stopPropagation()}
+        style={{ maxWidth: "600px" }}
+      >
+        <h3>🔍 Elasticsearch-Suche</h3>
 
-        {/* Laden: Anhängen oder Ersetzen */}
-        <div className="kv">
+        {/* Quick Options - immer sichtbar */}
+        <div
+          style={{
+            display: "flex",
+            gap: "16px",
+            marginBottom: "16px",
+            flexWrap: "wrap",
+          }}
+        >
           <label style={{ display: "flex", alignItems: "center", gap: "8px" }}>
             <input
               type="checkbox"
@@ -209,386 +233,490 @@ export default function ElasticSearchDialog(props: any) {
                 })
               }
             />
-            <span>Anhängen (deaktiviert = Ersetzen)</span>
+            <span>An bestehende Logs anhängen</span>
           </label>
         </div>
 
-        {/* Modus-Auswahl */}
-        <div className="kv">
-          <span>Modus</span>
-          <div style={{ display: "flex", gap: "12px", alignItems: "center" }}>
-            <label
-              style={{
-                display: "inline-flex",
-                alignItems: "center",
-                gap: "6px",
-              }}
-            >
-              <input
-                type="radio"
-                name="esMode"
-                value="relative"
-                checked={isRel}
-                onChange={() => setForm({ ...form, mode: "relative" })}
-              />
-              <span>Relativ</span>
-            </label>
-            <label
-              style={{
-                display: "inline-flex",
-                alignItems: "center",
-                gap: "6px",
-              }}
-            >
-              <input
-                type="radio"
-                name="esMode"
-                value="absolute"
-                checked={isAbs}
-                onChange={() => setForm({ ...form, mode: "absolute" })}
-              />
-              <span>Absolut</span>
-            </label>
-          </div>
-        </div>
-
-        {/* Dauer (relativ) */}
+        {/* Sektion: Zeitraum */}
         <div
-          className="kv"
-          aria-disabled={!isRel}
-          style={isRel ? undefined : { opacity: 0.5 }}
+          className={`es-dialog-section ${expandedSections.time ? "" : "collapsed"}`}
         >
-          <span>Dauer (relativ)</span>
           <div
-            style={{
-              display: "grid",
-              gridTemplateColumns: "1fr auto auto auto auto",
-              gap: "6px",
-            }}
+            className={`es-dialog-section-header ${expandedSections.time ? "expanded" : ""}`}
+            onClick={() => toggleSection("time")}
           >
-            <input
-              type="text"
-              value={form.duration}
-              onInput={(e) =>
-                setForm({ ...form, duration: e.currentTarget.value })
-              }
-              placeholder="z. B. 5m, 15m, 1h, 24h"
-              disabled={!isRel}
-            />
-            <button
-              type="button"
-              onClick={() => setForm({ ...form, duration: "5m" })}
-              disabled={!isRel}
-            >
-              5m
-            </button>
-            <button
-              type="button"
-              onClick={() => setForm({ ...form, duration: "15m" })}
-              disabled={!isRel}
-            >
-              15m
-            </button>
-            <button
-              type="button"
-              onClick={() => setForm({ ...form, duration: "1h" })}
-              disabled={!isRel}
-            >
-              1h
-            </button>
-            <button
-              type="button"
-              onClick={() => setForm({ ...form, duration: "24h" })}
-              disabled={!isRel}
-            >
-              24h
-            </button>
+            <h4>
+              ⏱️ Zeitraum
+              {(form.duration || form.from || form.to) && (
+                <span className="section-filled-badge">Konfiguriert</span>
+              )}
+            </h4>
+            <span className="expand-icon">▼</span>
+          </div>
+          <div className="es-dialog-section-content">
+            {/* Modus-Auswahl */}
+            <div className="kv">
+              <span>Modus</span>
+              <div
+                style={{ display: "flex", gap: "12px", alignItems: "center" }}
+              >
+                <label
+                  style={{
+                    display: "inline-flex",
+                    alignItems: "center",
+                    gap: "6px",
+                  }}
+                >
+                  <input
+                    type="radio"
+                    name="esMode"
+                    value="relative"
+                    checked={isRel}
+                    onChange={() => setForm({ ...form, mode: "relative" })}
+                  />
+                  <span>Relativ</span>
+                </label>
+                <label
+                  style={{
+                    display: "inline-flex",
+                    alignItems: "center",
+                    gap: "6px",
+                  }}
+                >
+                  <input
+                    type="radio"
+                    name="esMode"
+                    value="absolute"
+                    checked={isAbs}
+                    onChange={() => setForm({ ...form, mode: "absolute" })}
+                  />
+                  <span>Absolut</span>
+                </label>
+              </div>
+            </div>
+
+            {/* Dauer (relativ) */}
+            {isRel && (
+              <div className="kv">
+                <span>Dauer</span>
+                <div style={{ display: "flex", gap: "6px", flexWrap: "wrap" }}>
+                  {["5m", "15m", "1h", "6h", "24h"].map((d) => (
+                    <button
+                      key={d}
+                      type="button"
+                      onClick={() => setForm({ ...form, duration: d })}
+                      style={
+                        form.duration === d
+                          ? {
+                              background: "var(--accent-gradient)",
+                              color: "white",
+                              borderColor: "transparent",
+                            }
+                          : {}
+                      }
+                    >
+                      {d}
+                    </button>
+                  ))}
+                  <input
+                    type="text"
+                    value={form.duration}
+                    onInput={(e) =>
+                      setForm({ ...form, duration: e.currentTarget.value })
+                    }
+                    placeholder="z.B. 30m"
+                    style={{ width: "80px" }}
+                  />
+                </div>
+              </div>
+            )}
+
+            {/* Absolute Zeitfenster */}
+            {isAbs && (
+              <>
+                <div className="kv">
+                  <span>Von</span>
+                  <input
+                    type="datetime-local"
+                    value={form.from}
+                    onInput={(e) =>
+                      setForm({ ...form, from: e.currentTarget.value })
+                    }
+                  />
+                </div>
+                <div className="kv">
+                  <span>Bis</span>
+                  <input
+                    type="datetime-local"
+                    value={form.to}
+                    onInput={(e) =>
+                      setForm({ ...form, to: e.currentTarget.value })
+                    }
+                  />
+                </div>
+                {(firstTs || lastTs) && (
+                  <div className="kv">
+                    <span>Schnellauswahl</span>
+                    <div style={{ display: "flex", gap: "8px" }}>
+                      <button
+                        type="button"
+                        onClick={setOlderRange}
+                        disabled={!firstTs}
+                      >
+                        ◀ Ältere (bis {fmtHm(firstTs)})
+                      </button>
+                      <button
+                        type="button"
+                        onClick={setNewerRange}
+                        disabled={!lastTs}
+                      >
+                        Neuere (ab {fmtHm(lastTs)}) ▶
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </>
+            )}
           </div>
         </div>
 
-        {/* Absolute Zeitfenster */}
+        {/* Sektion: Suchkriterien */}
         <div
-          className="kv"
-          aria-disabled={!isAbs}
-          style={isAbs ? undefined : { opacity: 0.5 }}
+          className={`es-dialog-section ${expandedSections.search ? "" : "collapsed"}`}
         >
-          <span>Von (absolut)</span>
-          <input
-            type="datetime-local"
-            value={form.from}
-            onInput={(e) => setForm({ ...form, from: e.currentTarget.value })}
-            disabled={!isAbs}
-          />
-        </div>
-        <div
-          className="kv"
-          aria-disabled={!isAbs}
-          style={isAbs ? undefined : { opacity: 0.5 }}
-        >
-          <span>Bis (absolut)</span>
-          <input
-            type="datetime-local"
-            value={form.to}
-            onInput={(e) => setForm({ ...form, to: e.currentTarget.value })}
-            disabled={!isAbs}
-          />
-        </div>
-
-        {/* Nachladen Buttons */}
-        <div
-          className="kv"
-          aria-disabled={!isAbs}
-          style={isAbs ? undefined : { opacity: 0.5 }}
-        >
-          <span>Nachladen</span>
           <div
-            style={{
-              display: "flex",
-              gap: "8px",
-              flexWrap: "wrap",
-              alignItems: "center",
-            }}
+            className={`es-dialog-section-header ${expandedSections.search ? "expanded" : ""}`}
+            onClick={() => toggleSection("search")}
           >
-            <button
-              type="button"
-              onClick={setOlderRange}
-              disabled={!isAbs || !firstTs}
-              title="Lädt Einträge vor dem ersten sichtbaren Zeitstempel"
-            >
-              Ältere nachladen
-            </button>
-            <small style={{ color: "var(--color-text-secondary)" }}>
-              (bis {fmtHm(firstTs)})
-            </small>
-            <button
-              type="button"
-              onClick={setNewerRange}
-              disabled={!isAbs || !lastTs}
-              title="Lädt Einträge ab dem letzten sichtbaren Zeitstempel"
-            >
-              Neuere nachladen
-            </button>
-            <small style={{ color: "var(--color-text-secondary)" }}>
-              (ab {fmtHm(lastTs)})
-            </small>
+            <h4>
+              🎯 Suchkriterien
+              {(form.application_name ||
+                form.logger ||
+                form.level ||
+                form.environment) && (
+                <span className="section-filled-badge">Aktiv</span>
+              )}
+            </h4>
+            <span className="expand-icon">▼</span>
           </div>
-        </div>
+          <div className="es-dialog-section-content">
+            {/* Application Name */}
+            <div className="kv">
+              <span>Application</span>
+              <div style={{ position: "relative" }}>
+                <div
+                  style={{
+                    display: "grid",
+                    gridTemplateColumns: "1fr auto",
+                    gap: "6px",
+                  }}
+                >
+                  <input
+                    type="text"
+                    value={form.application_name}
+                    onInput={(e) =>
+                      setForm({
+                        ...form,
+                        application_name: e.currentTarget.value,
+                      })
+                    }
+                    placeholder="z.B. my-service"
+                    onClick={(e) => e.stopPropagation()}
+                  />
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setShowAppList((v) => !v);
+                      setShowIdxList(false);
+                      setShowEnvList(false);
+                    }}
+                    disabled={
+                      !Array.isArray(histAppName) || histAppName.length === 0
+                    }
+                  >
+                    ▼
+                  </button>
+                </div>
+                {showAppList && (
+                  <HistoryList
+                    items={Array.isArray(histAppName) ? histAppName : []}
+                    onPick={(v) => {
+                      setForm({ ...form, application_name: v });
+                      setShowAppList(false);
+                    }}
+                    style={{
+                      position: "absolute",
+                      top: "calc(100% + 4px)",
+                      left: 0,
+                      right: 0,
+                      marginTop: 0,
+                    }}
+                  />
+                )}
+              </div>
+            </div>
 
-        {/* Suchfelder */}
-        <div className="kv">
-          <span>Index</span>
-          <div style={{ position: "relative" }}>
-            <div
-              style={{
-                display: "grid",
-                gridTemplateColumns: "1fr auto",
-                gap: "6px",
-              }}
-            >
+            {/* Level */}
+            <div className="kv">
+              <span>Level</span>
+              <div style={{ display: "flex", gap: "6px", flexWrap: "wrap" }}>
+                <button
+                  type="button"
+                  onClick={() => setForm({ ...form, level: "" })}
+                  style={
+                    !form.level
+                      ? {
+                          background: "var(--accent-gradient)",
+                          color: "white",
+                          borderColor: "transparent",
+                        }
+                      : {}
+                  }
+                >
+                  Alle
+                </button>
+                {["ERROR", "WARN", "INFO", "DEBUG"].map((l) => (
+                  <button
+                    key={l}
+                    type="button"
+                    onClick={() => setForm({ ...form, level: l })}
+                    style={
+                      form.level === l
+                        ? {
+                            background: `var(--color-level-${l.toLowerCase()})`,
+                            color: "white",
+                            borderColor: "transparent",
+                          }
+                        : {}
+                    }
+                  >
+                    {l}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* Environment */}
+            <div className="kv">
+              <span>Environment</span>
+              <div style={{ position: "relative" }}>
+                <div
+                  style={{
+                    display: "grid",
+                    gridTemplateColumns: "1fr auto",
+                    gap: "6px",
+                  }}
+                >
+                  <input
+                    type="text"
+                    value={form.environment}
+                    onInput={(e) =>
+                      setForm({ ...form, environment: e.currentTarget.value })
+                    }
+                    placeholder="z.B. prod, stage"
+                    onClick={(e) => e.stopPropagation()}
+                  />
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setShowEnvList((v) => !v);
+                      setShowIdxList(false);
+                      setShowAppList(false);
+                    }}
+                    disabled={
+                      !Array.isArray(histEnvironment) ||
+                      histEnvironment.length === 0
+                    }
+                  >
+                    ▼
+                  </button>
+                </div>
+                {showEnvList && (
+                  <HistoryList
+                    items={
+                      Array.isArray(histEnvironment) ? histEnvironment : []
+                    }
+                    onPick={(v) => {
+                      setForm({ ...form, environment: v });
+                      setShowEnvList(false);
+                    }}
+                    style={{
+                      position: "absolute",
+                      top: "calc(100% + 4px)",
+                      left: 0,
+                      right: 0,
+                      marginTop: 0,
+                    }}
+                  />
+                )}
+              </div>
+            </div>
+
+            {/* Logger */}
+            <div className="kv">
+              <span>Logger</span>
               <input
                 type="text"
-                value={form.index}
+                value={form.logger}
                 onInput={(e) =>
-                  setForm({ ...form, index: e.currentTarget.value })
+                  setForm({ ...form, logger: e.currentTarget.value })
                 }
-                placeholder="z. B. logs-*, filebeat-* (leer = _all)"
-                onClick={(e) => e.stopPropagation()}
+                placeholder="Logger enthält…"
               />
-              <button
-                type="button"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  setShowIdxList((v) => !v);
-                  setShowAppList(false);
-                  setShowEnvList(false);
-                }}
-                disabled={!Array.isArray(histIndex) || histIndex.length === 0}
-                title="Alle gespeicherten Index-Werte anzeigen"
-              >
-                ▼
-              </button>
             </div>
-            {showIdxList && (
-              <HistoryList
-                items={Array.isArray(histIndex) ? histIndex : []}
-                onPick={(v) => {
-                  setForm({ ...form, index: v });
-                  setShowIdxList(false);
-                }}
-                style={{
-                  position: "absolute",
-                  top: "calc(100% + 4px)",
-                  left: 0,
-                  right: 0,
-                  marginTop: 0,
-                }}
-              />
-            )}
           </div>
         </div>
 
-        <div className="kv">
-          <label style={{ display: "flex", alignItems: "center", gap: "8px" }}>
-            <input
-              type="checkbox"
-              className="native-checkbox"
-              checked={!!form.allowInsecureTLS}
-              onChange={(e) =>
-                setForm({ ...form, allowInsecureTLS: e.currentTarget.checked })
-              }
-            />
-            <span>Unsicheres TLS erlauben (selbstsigniert)</span>
-          </label>
-        </div>
-
-        <div className="kv">
-          <span>Application Name</span>
-          <div style={{ position: "relative" }}>
-            <div
-              style={{
-                display: "grid",
-                gridTemplateColumns: "1fr auto",
-                gap: "6px",
-              }}
-            >
-              <input
-                type="text"
-                value={form.application_name}
-                onInput={(e) =>
-                  setForm({ ...form, application_name: e.currentTarget.value })
-                }
-                placeholder="z. B. my-service"
-                onClick={(e) => e.stopPropagation()}
-              />
-              <button
-                type="button"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  setShowAppList((v) => !v);
-                  setShowIdxList(false);
-                  setShowEnvList(false);
-                }}
-                disabled={
-                  !Array.isArray(histAppName) || histAppName.length === 0
-                }
-                title="Alle gespeicherten Application Names anzeigen"
-              >
-                ▼
-              </button>
-            </div>
-            {showAppList && (
-              <HistoryList
-                items={Array.isArray(histAppName) ? histAppName : []}
-                onPick={(v) => {
-                  setForm({ ...form, application_name: v });
-                  setShowAppList(false);
-                }}
-                style={{
-                  position: "absolute",
-                  top: "calc(100% + 4px)",
-                  left: 0,
-                  right: 0,
-                  marginTop: 0,
-                }}
-              />
-            )}
-          </div>
-        </div>
-
-        <div className="kv">
-          <span>Logger</span>
-          <input
-            type="text"
-            value={form.logger}
-            onInput={(e) => setForm({ ...form, logger: e.currentTarget.value })}
-            placeholder="Logger enthält…"
-          />
-        </div>
-
-        <div className="kv">
-          <span>Level</span>
-          <select
-            value={form.level}
-            onChange={(e) => setForm({ ...form, level: e.currentTarget.value })}
+        {/* Sektion: Erweiterte Optionen */}
+        <div
+          className={`es-dialog-section ${expandedSections.advanced ? "" : "collapsed"}`}
+        >
+          <div
+            className={`es-dialog-section-header ${expandedSections.advanced ? "expanded" : ""}`}
+            onClick={() => toggleSection("advanced")}
           >
-            <option value="">Alle</option>
-            {["TRACE", "DEBUG", "INFO", "WARN", "ERROR", "FATAL"].map((l) => (
-              <option key={l} value={l}>
-                {l}
-              </option>
-            ))}
-          </select>
-        </div>
-
-        <div className="kv">
-          <span>Environment</span>
-          <div style={{ position: "relative" }}>
-            <div
-              style={{
-                display: "grid",
-                gridTemplateColumns: "1fr auto",
-                gap: "6px",
-              }}
-            >
-              <input
-                type="text"
-                value={form.environment}
-                onInput={(e) =>
-                  setForm({ ...form, environment: e.currentTarget.value })
-                }
-                placeholder="z. B. prod, stage"
-                onClick={(e) => e.stopPropagation()}
-              />
-              <button
-                type="button"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  setShowEnvList((v) => !v);
-                  setShowIdxList(false);
-                  setShowAppList(false);
-                }}
-                disabled={
-                  !Array.isArray(histEnvironment) ||
-                  histEnvironment.length === 0
-                }
-                title="Alle gespeicherten Environment-Werte anzeigen"
-              >
-                ▼
-              </button>
-            </div>
-            {showEnvList && (
-              <HistoryList
-                items={Array.isArray(histEnvironment) ? histEnvironment : []}
-                onPick={(v) => {
-                  setForm({ ...form, environment: v });
-                  setShowEnvList(false);
-                }}
-                style={{
-                  position: "absolute",
-                  top: "calc(100% + 4px)",
-                  left: 0,
-                  right: 0,
-                  marginTop: 0,
-                }}
-              />
-            )}
+            <h4>
+              ⚙️ Erweiterte Optionen
+              {(form.index ||
+                form.allowInsecureTLS ||
+                form.environmentCase !== "original") && (
+                <span className="section-filled-badge">Angepasst</span>
+              )}
+            </h4>
+            <span className="expand-icon">▼</span>
           </div>
-        </div>
+          <div className="es-dialog-section-content">
+            {/* Index */}
+            <div className="kv">
+              <span>Index</span>
+              <div style={{ position: "relative" }}>
+                <div
+                  style={{
+                    display: "grid",
+                    gridTemplateColumns: "1fr auto",
+                    gap: "6px",
+                  }}
+                >
+                  <input
+                    type="text"
+                    value={form.index}
+                    onInput={(e) =>
+                      setForm({ ...form, index: e.currentTarget.value })
+                    }
+                    placeholder="z.B. logs-*, filebeat-* (leer = _all)"
+                    onClick={(e) => e.stopPropagation()}
+                  />
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setShowIdxList((v) => !v);
+                      setShowAppList(false);
+                      setShowEnvList(false);
+                    }}
+                    disabled={
+                      !Array.isArray(histIndex) || histIndex.length === 0
+                    }
+                  >
+                    ▼
+                  </button>
+                </div>
+                {showIdxList && (
+                  <HistoryList
+                    items={Array.isArray(histIndex) ? histIndex : []}
+                    onPick={(v) => {
+                      setForm({ ...form, index: v });
+                      setShowIdxList(false);
+                    }}
+                    style={{
+                      position: "absolute",
+                      top: "calc(100% + 4px)",
+                      left: 0,
+                      right: 0,
+                      marginTop: 0,
+                    }}
+                  />
+                )}
+              </div>
+            </div>
 
-        {/* NEW: Environment Case Handling */}
-        <div className="kv">
-          <span>Environment-Case</span>
-          <select
-            value={form.environmentCase}
-            onChange={(e) =>
-              setForm({ ...form, environmentCase: e.currentTarget.value })
-            }
-          >
-            <option value="original">Original</option>
-            <option value="lower">nach lowercase konvertieren</option>
-            <option value="upper">nach UPPERCASE konvertieren</option>
-            <option value="case-sensitive">Case-sensitiv suchen</option>
-          </select>
+            {/* Environment Case */}
+            <div className="kv">
+              <span>Environment-Case</span>
+              <select
+                value={form.environmentCase}
+                onChange={(e) =>
+                  setForm({ ...form, environmentCase: e.currentTarget.value })
+                }
+              >
+                <option value="original">Original</option>
+                <option value="lower">nach lowercase</option>
+                <option value="upper">nach UPPERCASE</option>
+                <option value="case-sensitive">Case-sensitiv</option>
+              </select>
+            </div>
+
+            {/* Sort */}
+            <div className="kv">
+              <span>Sortierung</span>
+              <div style={{ display: "flex", gap: "8px" }}>
+                <label
+                  style={{
+                    display: "inline-flex",
+                    alignItems: "center",
+                    gap: "4px",
+                  }}
+                >
+                  <input
+                    type="radio"
+                    name="esSort"
+                    value="asc"
+                    checked={form.sort === "asc"}
+                    onChange={() => setForm({ ...form, sort: "asc" })}
+                  />
+                  <span>Älteste zuerst</span>
+                </label>
+                <label
+                  style={{
+                    display: "inline-flex",
+                    alignItems: "center",
+                    gap: "4px",
+                  }}
+                >
+                  <input
+                    type="radio"
+                    name="esSort"
+                    value="desc"
+                    checked={form.sort === "desc"}
+                    onChange={() => setForm({ ...form, sort: "desc" })}
+                  />
+                  <span>Neueste zuerst</span>
+                </label>
+              </div>
+            </div>
+
+            {/* TLS */}
+            <div className="kv">
+              <label
+                style={{ display: "flex", alignItems: "center", gap: "8px" }}
+              >
+                <input
+                  type="checkbox"
+                  className="native-checkbox"
+                  checked={!!form.allowInsecureTLS}
+                  onChange={(e) =>
+                    setForm({
+                      ...form,
+                      allowInsecureTLS: e.currentTarget.checked,
+                    })
+                  }
+                />
+                <span>Unsicheres TLS erlauben (selbstsigniert)</span>
+              </label>
+            </div>
+          </div>
         </div>
 
         <div className="modal-actions">
@@ -596,8 +724,15 @@ export default function ElasticSearchDialog(props: any) {
             Leeren
           </button>
           <button onClick={onClose}>Abbrechen</button>
-          <button onClick={() => onApply({ ...form, enabled: true })}>
-            Suchen
+          <button
+            onClick={() => onApply({ ...form, enabled: true })}
+            style={{
+              background: "var(--accent-gradient)",
+              color: "white",
+              borderColor: "transparent",
+            }}
+          >
+            🔍 Suchen
           </button>
         </div>
       </div>

@@ -4,17 +4,43 @@
 //  - AND mit '&'
 //  - Negation mit '!' als Präfix (mehrfach erlaubt: '!!foo' == 'foo')
 //  - Klammern '(' und ')' zur Gruppierung
-//  - Case-insensitive Teilstring-Suche
+//  - Optional: Case-sensitive oder Regex-Modus
 // Beispiele:
 //  - foo&bar: message enthält foo UND bar
 //  - foo|bar: message enthält foo ODER bar
 //  - !bar: message enthält NICHT bar
 //  - xml&(CB|AGV): message enthält xml UND (CB ODER AGV)
-export function msgMatches(message: string, expr: string): boolean {
-  const m = String(message || "").toLowerCase();
-  const q = String(expr || "")
-    .toLowerCase()
-    .trim();
+
+export type SearchMode = "insensitive" | "sensitive" | "regex";
+
+export interface MsgMatchOptions {
+  mode?: SearchMode;
+}
+
+export function msgMatches(
+  message: string,
+  expr: string,
+  options?: MsgMatchOptions,
+): boolean {
+  const mode = options?.mode || "insensitive";
+  const rawMsg = String(message || "");
+  const rawExpr = String(expr || "").trim();
+
+  // Für Regex-Modus: gesamten Ausdruck als Regex behandeln (ohne AND/OR-Parsing)
+  if (mode === "regex") {
+    if (!rawExpr) return true;
+    try {
+      const re = new RegExp(rawExpr, "i"); // Regex ist immer case-insensitive
+      return re.test(rawMsg);
+    } catch {
+      // Ungültiger Regex: fallback auf einfache Suche
+      return rawMsg.toLowerCase().includes(rawExpr.toLowerCase());
+    }
+  }
+
+  // Für normale Modi: case-handling anwenden
+  const m = mode === "sensitive" ? rawMsg : rawMsg.toLowerCase();
+  const q = mode === "sensitive" ? rawExpr : rawExpr.toLowerCase();
   if (!q) return true;
 
   type TokType = "AND" | "OR" | "NOT" | "LPAREN" | "RPAREN" | "WORD";
@@ -134,8 +160,7 @@ export function msgMatches(message: string, expr: string): boolean {
     return left;
   }
 
-  const result = evalOr();
   // Optionale Rest-Token bis zum Ende überspringen (Robustheit gegen fehlende Klammern)
   // while (pos < tokens.length) pos++;
-  return result;
+  return evalOr();
 }

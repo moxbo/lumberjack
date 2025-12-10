@@ -1481,3 +1481,552 @@ input[type="checkbox"] {
   border-radius: 50%;
   animation: spin 0.8s linear infinite;
 }
+
+/* ============================================
+   NEUE UI-VERBESSERUNGEN
+   ============================================ */
+
+/* --- Ausklappbare Filter-Sektion --- */
+.toolbar-main {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px 16px;
+  align-items: center;
+  width: 100%;
+}
+
+.filter-section {
+  width: 100%;
+  overflow: hidden;
+  transition: max-height var(--transition-base), opacity var(--transition-base), padding var(--transition-base);
+}
+
+.filter-section.collapsed {
+  max-height: 0;
+  opacity: 0;
+  padding: 0;
+  pointer-events: none;
+}
+
+.filter-section.expanded {
+  max-height: 500px;
+  opacity: 1;
+  padding-top: 12px;
+  border-top: 1px solid var(--color-divider);
+  margin-top: 8px;
+}
+
+.filter-toggle-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  background: var(--color-bg-paper);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  cursor: pointer;
+  font-size: var(--font-size-sm);
+  font-weight: 500;
+  transition: all var(--transition-fast);
+}
+
+.filter-toggle-btn:hover {
+  background: var(--color-bg-hover);
+  border-color: var(--color-primary);
+}
+
+.filter-toggle-btn .chevron {
+  transition: transform var(--transition-fast);
+}
+
+.filter-toggle-btn.expanded .chevron {
+  transform: rotate(180deg);
+}
+
+.filter-toggle-btn .filter-count {
+  background: var(--accent-gradient);
+  color: white;
+  font-size: 11px;
+  padding: 2px 6px;
+  border-radius: var(--radius-full);
+  font-weight: 600;
+}
+
+/* --- Prominenteres Suchfeld --- */
+.search-wrapper {
+  position: relative;
+  display: flex;
+  align-items: center;
+  flex: 1;
+  max-width: 400px;
+  min-width: 280px;
+}
+
+.search-wrapper .search-icon {
+  position: absolute;
+  left: 12px;
+  color: var(--color-text-secondary);
+  font-size: 16px;
+  pointer-events: none;
+  z-index: 1;
+}
+
+.search-wrapper input {
+  width: 100%;
+  padding: 10px 80px 10px 38px;
+  font-size: var(--font-size-base);
+  border: 2px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  background: var(--color-bg-paper);
+  transition: all var(--transition-fast);
+}
+
+.search-wrapper input:focus {
+  border-color: var(--color-primary);
+  box-shadow: 0 0 0 3px rgba(10, 132, 255, 0.15);
+  outline: none;
+}
+
+.search-wrapper input::placeholder {
+  color: var(--color-text-disabled);
+}
+
+.search-wrapper .search-shortcut {
+  position: absolute;
+  right: 42px;
+  padding: 3px 8px;
+  background: var(--color-bg-hover);
+  border: 1px solid var(--color-divider);
+  border-radius: var(--radius-sm);
+  font-size: 11px;
+  font-family: var(--font-family-mono), monospace;
+  color: var(--color-text-secondary);
+  pointer-events: none;
+}
+
+.search-wrapper .search-clear {
+  position: absolute;
+  right: 10px;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: var(--color-text-secondary);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--radius-sm);
+  transition: all var(--transition-fast);
+}
+
+.search-wrapper .search-clear:hover {
+  background: var(--color-bg-hover);
+  color: var(--color-primary);
+}
+
+.search-wrapper .search-nav-btns {
+  position: absolute;
+  right: 40px;
+  display: flex;
+  gap: 2px;
+}
+
+.search-wrapper .search-nav-btns button {
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  min-width: unset;
+  font-size: 12px;
+}
+
+/* --- Aktive Filter als Chips --- */
+.active-filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  padding: 8px 0;
+}
+
+.filter-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  background: var(--accent-gradient);
+  color: white;
+  border-radius: var(--radius-full);
+  font-size: 12px;
+  font-weight: 500;
+  animation: chip-appear 0.2s ease-out;
+}
+
+@keyframes chip-appear {
+  from {
+    opacity: 0;
+    transform: scale(0.9);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+.filter-chip .chip-label {
+  opacity: 0.85;
+  font-weight: 400;
+}
+
+.filter-chip .chip-value {
+  max-width: 150px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.filter-chip .chip-remove {
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  border: none;
+  background: rgba(255, 255, 255, 0.2);
+  color: white;
+  border-radius: 50%;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 12px;
+  line-height: 1;
+  transition: background var(--transition-fast);
+}
+
+.filter-chip .chip-remove:hover {
+  background: rgba(255, 255, 255, 0.35);
+}
+
+/* Level-basierte Chip-Farben */
+.filter-chip.level-trace {
+  background: var(--color-level-trace);
+}
+.filter-chip.level-debug {
+  background: var(--color-level-debug);
+}
+.filter-chip.level-info {
+  background: var(--color-level-info);
+}
+.filter-chip.level-warn {
+  background: var(--color-level-warn);
+}
+.filter-chip.level-error {
+  background: var(--color-level-error);
+}
+.filter-chip.level-fatal {
+  background: var(--color-level-fatal);
+}
+
+/* DC Filter Chips */
+.filter-chip.dc-filter {
+  background: linear-gradient(135deg, #8b5cf6, #6366f1);
+}
+
+/* --- Vim-Style Keyboard Navigation Hinweise --- */
+.keyboard-hints {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  padding: 8px 12px;
+  background: var(--color-bg-hover);
+  border-radius: var(--radius-md);
+  font-size: 12px;
+  color: var(--color-text-secondary);
+}
+
+.keyboard-hints .hint {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.keyboard-hints kbd {
+  padding: 2px 6px;
+  background: var(--color-bg-paper);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  font-family: var(--font-family-mono), monospace;
+  font-size: 11px;
+  box-shadow: 0 1px 0 var(--color-divider);
+}
+
+/* --- Besseres Resize-Feedback --- */
+.divider.resizing {
+  background: var(--color-primary);
+  opacity: 0.5;
+}
+
+.divider:hover::before {
+  background: var(--color-primary);
+  width: 80px;
+}
+
+.divider.resizing::before {
+  background: white;
+  width: 100px;
+}
+
+/* Resize-Overlay für visuelles Feedback */
+.resize-indicator {
+  position: fixed;
+  left: 50%;
+  transform: translateX(-50%);
+  padding: 6px 12px;
+  background: var(--color-bg-paper);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  font-size: 12px;
+  font-family: var(--font-family-mono), monospace;
+  color: var(--color-text-primary);
+  box-shadow: var(--shadow-lg);
+  z-index: var(--z-dropdown);
+  pointer-events: none;
+}
+
+/* --- Verbesserte Empty States --- */
+.empty-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  padding: 40px 24px;
+  color: var(--color-text-secondary);
+}
+
+.empty-state-icon {
+  font-size: 56px;
+  margin-bottom: 16px;
+  opacity: 0.5;
+}
+
+.empty-state-title {
+  font-size: var(--font-size-lg);
+  font-weight: 600;
+  color: var(--color-text-primary);
+  margin-bottom: 8px;
+}
+
+.empty-state-description {
+  font-size: var(--font-size-sm);
+  max-width: 320px;
+  line-height: 1.6;
+  margin-bottom: 20px;
+}
+
+.empty-state-actions {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+  justify-content: center;
+}
+
+.empty-state-actions button {
+  padding: 10px 20px;
+}
+
+.empty-state-actions .primary-action {
+  background: var(--accent-gradient);
+  color: white;
+  border: none;
+}
+
+.empty-state-actions .primary-action:hover {
+  opacity: 0.9;
+}
+
+/* --- DC-Filter Dialog: Quick-Add Feature --- */
+.quick-add-section {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 12px;
+  background: var(--color-bg-hover);
+  border-radius: var(--radius-md);
+  margin-bottom: 16px;
+}
+
+.quick-add-section .section-label {
+  width: 100%;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--color-text-secondary);
+  margin-bottom: 4px;
+}
+
+.quick-add-btn {
+  padding: 6px 12px;
+  font-size: 12px;
+  background: var(--color-bg-paper);
+  border: 1px dashed var(--color-border);
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  transition: all var(--transition-fast);
+}
+
+.quick-add-btn:hover {
+  border-style: solid;
+  border-color: var(--color-primary);
+  background: rgba(10, 132, 255, 0.05);
+}
+
+/* --- Elasticsearch Dialog: Progressive Disclosure --- */
+.es-dialog-section {
+  border: 1px solid var(--color-divider);
+  border-radius: var(--radius-md);
+  margin-bottom: 12px;
+  overflow: hidden;
+}
+
+.es-dialog-section-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 16px;
+  background: var(--color-bg-hover);
+  cursor: pointer;
+  user-select: none;
+  transition: background var(--transition-fast);
+}
+
+.es-dialog-section-header:hover {
+  background: var(--color-bg-default);
+}
+
+.es-dialog-section-header h4 {
+  margin: 0;
+  font-size: var(--font-size-sm);
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.es-dialog-section-header .expand-icon {
+  transition: transform var(--transition-fast);
+}
+
+.es-dialog-section-header.expanded .expand-icon {
+  transform: rotate(180deg);
+}
+
+.es-dialog-section-content {
+  padding: 16px;
+  border-top: 1px solid var(--color-divider);
+}
+
+.es-dialog-section.collapsed .es-dialog-section-content {
+  display: none;
+}
+
+/* Optional Badge für ausgefüllte Felder */
+.section-filled-badge {
+  padding: 2px 8px;
+  background: var(--color-success);
+  color: white;
+  font-size: 10px;
+  font-weight: 600;
+  border-radius: var(--radius-full);
+}
+
+/* --- Tooltip-Verbesserungen --- */
+[data-tooltip] {
+  position: relative;
+}
+
+[data-tooltip]::after {
+  content: attr(data-tooltip);
+  position: absolute;
+  bottom: 100%;
+  left: 50%;
+  transform: translateX(-50%);
+  padding: 6px 10px;
+  background: var(--color-bg-paper);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  font-size: 12px;
+  white-space: nowrap;
+  box-shadow: var(--shadow-md);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity var(--transition-fast);
+  z-index: var(--z-dropdown);
+}
+
+[data-tooltip]:hover::after {
+  opacity: 1;
+}
+
+/* --- Autocomplete Dropdown Verbesserungen --- */
+.autocomplete-dropdown {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  right: 0;
+  margin-top: 4px;
+  background: var(--color-bg-paper);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-lg);
+  max-height: 240px;
+  overflow-y: auto;
+  z-index: var(--z-dropdown);
+}
+
+.autocomplete-item {
+  padding: 10px 12px;
+  cursor: pointer;
+  transition: background var(--transition-fast);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.autocomplete-item:hover,
+.autocomplete-item.highlighted {
+  background: var(--color-bg-hover);
+}
+
+.autocomplete-item.highlighted {
+  background: rgba(10, 132, 255, 0.1);
+}
+
+.autocomplete-item .match {
+  background: rgba(245, 158, 11, 0.3);
+  border-radius: 2px;
+}
+
+.autocomplete-empty {
+  padding: 16px;
+  text-align: center;
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-sm);
+}
+
+.autocomplete-hint {
+  padding: 8px 12px;
+  border-top: 1px solid var(--color-divider);
+  font-size: 11px;
+  color: var(--color-text-disabled);
+  display: flex;
+  gap: 12px;
+}
+
+.autocomplete-hint kbd {
+  padding: 1px 4px;
+  background: var(--color-bg-hover);
+  border: 1px solid var(--color-divider);
+  border-radius: 2px;
+  font-family: var(--font-family-mono), monospace;
+}
+

@@ -98,7 +98,7 @@ import {
   canAccessFile,
   isValidIcoFile,
 } from "./util/iconResolver";
-import { showAboutDialog, showHelpDialog } from "./util/dialogs";
+import { showAboutDialog } from "./util/dialogs";
 
 // Environment (use imported constant)
 const isDev = isDevEnv;
@@ -1102,7 +1102,15 @@ function buildMenu(): void {
       label: "Hilfe",
       submenu: [
         { label: "Über Lumberjack…", click: () => showAboutDialog() },
-        { label: "Hilfe / Anleitung…", click: () => showHelpDialog() },
+        {
+          label: "Hilfe / Anleitung…",
+          accelerator: "F1",
+          click: (_mi, win) =>
+            sendMenuCmd(
+              { type: "show-help" },
+              (win as BrowserWindow | null | undefined) || null,
+            ),
+        },
       ],
     },
   ];

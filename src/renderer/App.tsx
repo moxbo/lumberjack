@@ -10,7 +10,7 @@ import {
 import { Fragment } from "preact";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { highlightAll } from "../utils/highlight";
-import { msgMatches } from "../utils/msgFilter";
+import { msgMatches, SearchMode } from "../utils/msgFilter";
 import logger from "../utils/logger";
 import { rendererPerf } from "../utils/rendererPerf";
 import { useI18n } from "../utils/i18n";
@@ -109,11 +109,28 @@ function computeTint(color: string | null | undefined, alpha = 0.4): string {
   return c;
 }
 
+// Entry signature for deduplication (without _id, since that's assigned later)
+function entrySignatureForMerge(e: any): string {
+  if (!e) return "";
+  const ts = e?.timestamp != null ? String(e.timestamp) : "";
+  const lg = e?.logger != null ? String(e.logger) : "";
+  const msg = e?.message != null ? String(e.message) : "";
+  const src = e?.source != null ? String(e.source) : "";
+  return `${ts}|${lg}|${msg}|${src}`;
+}
+
 // Efficient merge function for sorted arrays - O(n+m) instead of O(n log n)
 // Assumes both prevSorted and newSorted are already sorted by compareByTimestampId
+// Now also deduplicates based on entry signature
 function mergeSorted(prevSorted: any[], newSorted: any[]): any[] {
   if (newSorted.length === 0) return prevSorted;
   if (prevSorted.length === 0) return newSorted;
+
+  // Build a Set of existing signatures for O(1) lookup
+  const existingSigs = new Set<string>();
+  for (const e of prevSorted) {
+    existingSigs.add(entrySignatureForMerge(e));
+  }
 
   const result: any[] = [];
   let i = 0,
@@ -124,18 +141,29 @@ function mergeSorted(prevSorted: any[], newSorted: any[]): any[] {
       result.push(prevSorted[i]);
       i++;
     } else {
-      result.push(newSorted[j]);
+      // Only add new entry if not a duplicate
+      const sig = entrySignatureForMerge(newSorted[j]);
+      if (!existingSigs.has(sig)) {
+        result.push(newSorted[j]);
+        existingSigs.add(sig);
+      }
       j++;
     }
   }
 
-  // Add remaining elements
+  // Add remaining elements from prevSorted
   while (i < prevSorted.length) {
     result.push(prevSorted[i]);
     i++;
   }
+
+  // Add remaining elements from newSorted (with dedup check)
   while (j < newSorted.length) {
-    result.push(newSorted[j]);
+    const sig = entrySignatureForMerge(newSorted[j]);
+    if (!existingSigs.has(sig)) {
+      result.push(newSorted[j]);
+      existingSigs.add(sig);
+    }
     j++;
   }
 
@@ -195,6 +223,8 @@ export default function App() {
   }
 
   const [search, setSearch] = useState<string>("");
+  const [searchMode, setSearchMode] = useState<SearchMode>("insensitive");
+  const [showSearchOptions, setShowSearchOptions] = useState<boolean>(false);
   const [filter, setFilter] = useState({
     level: "",
     logger: "",
@@ -213,6 +243,15 @@ export default function App() {
   const [fltHistLogger, setFltHistLogger] = useState<string[]>([]);
   const [fltHistThread, setFltHistThread] = useState<string[]>([]);
   const [fltHistMessage, setFltHistMessage] = useState<string[]>([]);
+
+  // NEU: Filter-Sektion ausklappbar
+  const [filtersExpanded, setFiltersExpanded] = useState<boolean>(false);
+
+  // NEU: Resize-Feedback State
+  const [resizeHeight, setResizeHeight] = useState<number | null>(null);
+
+  // Globaler Keyboard-Shortcut Ref für Suchfeld-Fokus
+  const searchInputRef = useRef<HTMLInputElement | null>(null);
   // NEU: Sichtbarkeit der Popover-Listen + Refs für Outside-Click
   const [showSearchHist, setShowSearchHist] = useState<boolean>(false);
   const [showLoggerHist, setShowLoggerHist] = useState<boolean>(false);
@@ -260,7 +299,8 @@ export default function App() {
     };
   }
   function updateVisiblePopoverPositions() {
-    if (showSearchHist) setSearchPos(computePosFor(searchHistRef.current));
+    // Für das Suchfeld verwenden wir jetzt searchInputRef statt searchHistRef
+    if (showSearchHist) setSearchPos(computePosFor(searchInputRef.current));
     if (showLoggerHist) setLoggerPos(computePosFor(loggerHistRef.current));
     if (showThreadHist) setThreadPos(computePosFor(threadHistRef.current));
     if (showMessageHist) setMessagePos(computePosFor(messageHistRef.current));
@@ -316,6 +356,7 @@ export default function App() {
     setShowLoggerHist(false);
     setShowThreadHist(false);
     setShowMessageHist(false);
+    setShowSearchOptions(false);
   }
   useEffect(() => {
     if (
@@ -562,8 +603,8 @@ export default function App() {
     }
   }
 
-  const [tcpStatus, setTcpStatus] = useState<string>("");
-  const [httpStatus, setHttpStatus] = useState<string>("");
+  const [tcpStatus, setTcpStatus] = useState<string>("TCP Port geschlossen");
+  const [httpStatus, setHttpStatus] = useState<string>("HTTP Polling inaktiv");
   const [httpPollId, setHttpPollId] = useState<number | null>(null);
   const [tcpPort, setTcpPort] = useState<number>(5000);
   const [canTcpControlWindow, setCanTcpControlWindow] = useState<boolean>(true);
@@ -991,7 +1032,11 @@ export default function App() {
           }
         }
         if (debouncedFilter.message) {
-          if (!msgMatches(e.message, debouncedFilter.message)) {
+          if (
+            !msgMatches(e.message, debouncedFilter.message, {
+              mode: searchMode,
+            })
+          ) {
             filterStats.rejectedByMessage++;
             continue;
           }
@@ -1050,6 +1095,7 @@ export default function App() {
     dcVersion,
     timeVersion,
     onlyMarked,
+    searchMode,
   ]);
 
   const countTotal = entries.length;
@@ -1063,7 +1109,7 @@ export default function App() {
     estimateSize: () => rowHeight,
     // Erhöhe overscan für glatteres Scrollen bei schnellem Scrollen
     overscan: 15,
-    // Aktiviere getItemKey für besseres Re-Rendering
+    // getItemKey für stabile Keys und besseres Re-Rendering (ignoriere IDE-Warnung - wird von useVirtualizer unterstützt)
     getItemKey: (index: number) => {
       const globalIdx = filteredIdx[index];
       return globalIdx !== undefined ? `row-${globalIdx}` : `row-temp-${index}`;
@@ -1268,10 +1314,10 @@ export default function App() {
     for (let vi = 0; vi < filteredIdx.length; vi++) {
       const idx = filteredIdx[vi]!;
       const e = entries[idx];
-      if (msgMatches(e?.message, s)) out.push(vi);
+      if (msgMatches(e?.message, s, { mode: searchMode })) out.push(vi);
     }
     return out;
-  }, [debouncedSearch, filteredIdx, entries]);
+  }, [debouncedSearch, filteredIdx, entries, searchMode]);
 
   function gotoMarked(dir: number) {
     if (!markedIdx.length) return;
@@ -1389,10 +1435,14 @@ export default function App() {
     // For small batches or Elastic queries, process directly
     // For large TCP streams, queue to prevent overload
     const isElasticBatch = newEntries.some(
-      (e) => typeof e?.source === "string" && e.source.startsWith("elastic://")
+      (e) => typeof e?.source === "string" && e.source.startsWith("elastic://"),
     );
 
-    if (newEntries.length <= 500 || isElasticBatch || options?.ignoreExistingForElastic) {
+    if (
+      newEntries.length <= 500 ||
+      isElasticBatch ||
+      options?.ignoreExistingForElastic
+    ) {
       // Small batch or Elastic: process immediately
       appendEntriesInternal(newEntries, options);
     } else {
@@ -1684,12 +1734,32 @@ export default function App() {
     // Nur reagieren, wenn Fokus auf der Liste liegt
     // preventDefault stoppt Textcursor in Inputs außerhalb nicht, da wir nur bei Fokus der Liste sind
     try {
+      // Standard Arrow Keys
       if (e.key === "ArrowDown") {
         e.preventDefault();
         moveSelectionBy(1, !!(e as any).shiftKey);
       } else if (e.key === "ArrowUp") {
         e.preventDefault();
         moveSelectionBy(-1, !!(e as any).shiftKey);
+      }
+      // Vim-Style Navigation
+      else if (e.key === "j" && !e.ctrlKey && !e.metaKey && !e.altKey) {
+        e.preventDefault();
+        moveSelectionBy(1, !!(e as any).shiftKey);
+      } else if (e.key === "k" && !e.ctrlKey && !e.metaKey && !e.altKey) {
+        e.preventDefault();
+        moveSelectionBy(-1, !!(e as any).shiftKey);
+      }
+      // gg = go to start (double g)
+      else if (e.key === "g" && !e.ctrlKey && !e.metaKey) {
+        // Für doppeltes g müsste man State tracken, hier vereinfacht: g = start
+        e.preventDefault();
+        gotoListStart();
+      }
+      // G = go to end
+      else if (e.key === "G" && !e.ctrlKey && !e.metaKey) {
+        e.preventDefault();
+        gotoListEnd();
       } else if (e.key === "End") {
         e.preventDefault();
         gotoListEnd();
@@ -1699,6 +1769,16 @@ export default function App() {
       } else if (e.key === "Escape") {
         e.preventDefault();
         setSelected(new Set());
+      }
+      // n = nächster Suchtreffer
+      else if (e.key === "n" && !e.ctrlKey && !e.metaKey && !e.altKey) {
+        e.preventDefault();
+        gotoSearchMatch(1);
+      }
+      // N = vorheriger Suchtreffer
+      else if (e.key === "N" && !e.ctrlKey && !e.metaKey && !e.altKey) {
+        e.preventDefault();
+        gotoSearchMatch(-1);
       }
     } catch (err) {
       logger.warn("Error in onListKeyDown:", err);
@@ -1728,6 +1808,7 @@ export default function App() {
   }
 
   const [showTitleDlg, setShowTitleDlg] = useState<boolean>(false);
+  const [showHelpDlg, setShowHelpDlg] = useState<boolean>(false);
   const [titleInput, setTitleInput] = useState<string>("Lumberjack");
   async function openSetWindowTitleDialog() {
     try {
@@ -1777,8 +1858,7 @@ export default function App() {
         if (typeof r.httpUrl === "string") setHttpUrl(r.httpUrl);
         // Support both httpPollInterval (persisted) and httpInterval (legacy)
         const interval = r.httpPollInterval ?? r.httpInterval;
-        if (interval != null)
-          setHttpInterval(Number(interval) || 5000);
+        if (interval != null) setHttpInterval(Number(interval) || 5000);
         // Entfernt: Laden einer persistierten Logger-Historie, damit Verlauf nur temporär ist
         // if (Array.isArray(r.histLogger)) setHistLogger(r.histLogger);
         if (Array.isArray(r.histAppName)) setHistAppName(r.histAppName);
@@ -1883,7 +1963,8 @@ export default function App() {
             applyThemeMode(mode);
           }
           if (typeof r.follow === "boolean") setFollow(!!r.follow);
-          if (typeof r.followSmooth === "boolean") setFollowSmooth(!!r.followSmooth);
+          if (typeof r.followSmooth === "boolean")
+            setFollowSmooth(!!r.followSmooth);
 
           // Load all form values from settings
           if (r.tcpPort != null) {
@@ -1928,7 +2009,10 @@ export default function App() {
             setElasticUser(curElasticUser);
           }
           if (r.elasticMaxParallel != null) {
-            curElasticMaxParallel = Math.max(1, Number(r.elasticMaxParallel) || 1);
+            curElasticMaxParallel = Math.max(
+              1,
+              Number(r.elasticMaxParallel) || 1,
+            );
             setElasticMaxParallel(curElasticMaxParallel);
           }
           if (typeof r.elasticPassEnc === "string") {
@@ -2111,6 +2195,10 @@ export default function App() {
                 await openSetWindowTitleDialog();
                 break;
               }
+              case "show-help": {
+                setShowHelpDlg(true);
+                break;
+              }
               default:
                 break;
             }
@@ -2278,7 +2366,7 @@ export default function App() {
     }
   }
 
-  // Divider Drag
+  // Divider Drag mit Resize-Feedback
   useEffect(() => {
     function onMouseMove(e: MouseEvent) {
       if (!dividerStateRef.current._resizing) return;
@@ -2305,11 +2393,17 @@ export default function App() {
         "--detail-height",
         `${Math.round(newH)}px`,
       );
+      // NEU: Resize-Feedback aktualisieren
+      setResizeHeight(Math.round(newH));
     }
     async function onMouseUp() {
       dividerStateRef.current._resizing = false;
       document.body.style.userSelect = "";
       document.body.style.cursor = "";
+      // NEU: Resize-Feedback ausblenden
+      setResizeHeight(null);
+      // NEU: Resizing-Klasse entfernen
+      dividerElRef.current?.classList.remove("resizing");
       window.removeEventListener("mousemove", onMouseMove);
       window.removeEventListener("mouseup", onMouseUp);
       try {
@@ -2329,6 +2423,10 @@ export default function App() {
       dividerStateRef.current._startH = Number(h.replace("px", "")) || 300;
       document.body.style.userSelect = "none";
       document.body.style.cursor = "row-resize";
+      // NEU: Resizing-Klasse hinzufügen für visuelles Feedback
+      dividerElRef.current?.classList.add("resizing");
+      // NEU: Initiales Resize-Feedback
+      setResizeHeight(dividerStateRef.current._startH);
       window.addEventListener("mousemove", onMouseMove);
       window.addEventListener("mouseup", onMouseUp);
     }
@@ -2409,6 +2507,52 @@ export default function App() {
       logger.warn("MDCListener.startListening failed:", e as any);
     }
   }, []);
+
+  // Globaler Keyboard-Handler für Shortcuts
+  useEffect(() => {
+    function onGlobalKeyDown(e: KeyboardEvent) {
+      const isMac = navigator.platform.toUpperCase().indexOf("MAC") >= 0;
+      const cmdOrCtrl = isMac ? e.metaKey : e.ctrlKey;
+
+      // Cmd/Ctrl+F = Fokus auf Suchfeld
+      if (cmdOrCtrl && e.key.toLowerCase() === "f" && !e.shiftKey) {
+        e.preventDefault();
+        searchInputRef.current?.focus();
+        searchInputRef.current?.select();
+      }
+      // Cmd/Ctrl+Shift+F = Filter-Bereich öffnen/schließen
+      else if (cmdOrCtrl && e.key.toLowerCase() === "f" && e.shiftKey) {
+        e.preventDefault();
+        setFiltersExpanded((prev) => !prev);
+      }
+      // Escape im Suchfeld = Suchfeld leeren und fokus zur Liste
+      else if (
+        e.key === "Escape" &&
+        document.activeElement === searchInputRef.current
+      ) {
+        e.preventDefault();
+        if (search) {
+          setSearch("");
+        } else {
+          try {
+            (parentRef.current as any)?.focus?.();
+          } catch {}
+        }
+      }
+      // Escape bei offenem Hilfe-Dialog = Dialog schließen
+      else if (e.key === "Escape" && showHelpDlg) {
+        e.preventDefault();
+        setShowHelpDlg(false);
+      }
+      // F1 = Hilfe öffnen
+      else if (e.key === "F1") {
+        e.preventDefault();
+        setShowHelpDlg(true);
+      }
+    }
+    window.addEventListener("keydown", onGlobalKeyDown);
+    return () => window.removeEventListener("keydown", onGlobalKeyDown);
+  }, [search, showHelpDlg]);
 
   // Track when the component has fully mounted and is interactive
   useEffect(() => {
@@ -3409,24 +3553,33 @@ export default function App() {
           </button>
         </div>
         <div className="section">
-          <label>{t("toolbar.search")}</label>
-          <div
-            ref={searchHistRef as any}
-            style={{
-              display: "inline-flex",
-              alignItems: "center",
-              gap: "6px",
-              position: "relative",
-            }}
+          <button
+            onClick={() => setShowDcDialog(true)}
+            title={t("toolbar.dcFilterTooltip")}
           >
+            {t("toolbar.dcFilter")}
+          </button>
+          <button
+            disabled={esBusy}
+            onClick={openTimeFilterDialog}
+            title={t("toolbar.elasticSearchTooltip")}
+          >
+            {t("toolbar.elasticSearch")}
+          </button>
+        </div>
+        <div className="section">
+          <div className="search-wrapper">
             <input
               id="searchText"
-              type="text"
+              ref={searchInputRef as any}
+              type="search"
               value={search}
               onInput={(e) => setSearch(e.currentTarget.value)}
               onKeyDown={(e) => {
-                if ((e as any).key === "Enter")
+                if ((e as any).key === "Enter") {
                   addFilterHistory("search", (e.currentTarget as any).value);
+                  gotoSearchMatch(1);
+                }
                 if ((e as any).key === "ArrowDown") setShowSearchHist(true);
                 const key = (e as any).key?.toLowerCase?.() || "";
                 if (key === "a" && ((e as any).ctrlKey || (e as any).metaKey)) {
@@ -3438,30 +3591,170 @@ export default function App() {
               }}
               onFocus={() => setShowSearchHist(true)}
               onBlur={(e) => addFilterHistory("search", e.currentTarget.value)}
-              placeholder={t("toolbar.searchPlaceholder")}
-              style={{ minWidth: "260px", paddingRight: "26px" }}
+              placeholder="Suchen… (foo&bar, foo|bar, !foo)"
             />
+          </div>
+          {/* Such-Optionen Button mit Dropdown */}
+          <div style={{ position: "relative" }} id="searchModeBtn">
             <button
-              type="button"
-              title={
-                showSearchHist
-                  ? t("toolbar.searchHistoryHide")
-                  : t("toolbar.searchHistoryShow")
-              }
-              onClick={() => setShowSearchHist((v) => !v)}
+              onClick={(_) => {
+                setShowSearchOptions(!showSearchOptions);
+              }}
+              title="Suchmodus"
               style={{
-                position: "absolute",
-                right: "6px",
-                top: "50%",
-                transform: "translateY(-50%)",
-                height: "22px",
-                minWidth: "22px",
-                padding: "0 4px",
+                padding: "6px 10px",
+                minWidth: "unset",
+                background:
+                  searchMode !== "insensitive"
+                    ? "var(--accent-gradient)"
+                    : undefined,
+                color: searchMode !== "insensitive" ? "white" : undefined,
+                borderColor:
+                  searchMode !== "insensitive" ? "transparent" : undefined,
               }}
             >
-              ▾
+              {searchMode === "insensitive" && "Aa ▾"}
+              {searchMode === "sensitive" && "Aa ▾"}
+              {searchMode === "regex" && ".* ▾"}
             </button>
+            {showSearchOptions &&
+              createPortal(
+                <div
+                  style={{
+                    position: "fixed",
+                    top: (() => {
+                      const btn = document.getElementById("searchModeBtn");
+                      if (btn) {
+                        const rect = btn.getBoundingClientRect();
+                        return rect.bottom + 4 + "px";
+                      }
+                      return "60px";
+                    })(),
+                    left: (() => {
+                      const btn = document.getElementById("searchModeBtn");
+                      if (btn) {
+                        const rect = btn.getBoundingClientRect();
+                        return Math.max(0, rect.right - 180) + "px";
+                      }
+                      return "auto";
+                    })(),
+                    background: "var(--color-bg-paper)",
+                    border: "1px solid var(--color-border)",
+                    borderRadius: "8px",
+                    boxShadow: "0 8px 32px rgba(0,0,0,0.25)",
+                    zIndex: 999999,
+                    minWidth: "180px",
+                    overflow: "hidden",
+                  }}
+                  onClick={(e) => e.stopPropagation()}
+                >
+                  <div
+                    style={{
+                      padding: "8px 12px",
+                      cursor: "pointer",
+                      background:
+                        searchMode === "insensitive"
+                          ? "var(--color-bg-hover)"
+                          : undefined,
+                      display: "flex",
+                      alignItems: "center",
+                      gap: "8px",
+                    }}
+                    onClick={() => {
+                      setSearchMode("insensitive");
+                      setShowSearchOptions(false);
+                    }}
+                  >
+                    <span style={{ width: "20px" }}>
+                      {searchMode === "insensitive" ? "✓" : ""}
+                    </span>
+                    <div>
+                      <div style={{ fontWeight: "500" }}>Aa ignorieren</div>
+                      <div
+                        style={{
+                          fontSize: "11px",
+                          color: "var(--color-text-secondary)",
+                        }}
+                      >
+                        Case-insensitiv
+                      </div>
+                    </div>
+                  </div>
+                  <div
+                    style={{
+                      padding: "8px 12px",
+                      cursor: "pointer",
+                      background:
+                        searchMode === "sensitive"
+                          ? "var(--color-bg-hover)"
+                          : undefined,
+                      display: "flex",
+                      alignItems: "center",
+                      gap: "8px",
+                    }}
+                    onClick={() => {
+                      setSearchMode("sensitive");
+                      setShowSearchOptions(false);
+                    }}
+                  >
+                    <span style={{ width: "20px" }}>
+                      {searchMode === "sensitive" ? "✓" : ""}
+                    </span>
+                    <div>
+                      <div style={{ fontWeight: "500" }}>Aa beachten</div>
+                      <div
+                        style={{
+                          fontSize: "11px",
+                          color: "var(--color-text-secondary)",
+                        }}
+                      >
+                        Case-sensitiv
+                      </div>
+                    </div>
+                  </div>
+                  <div
+                    style={{
+                      padding: "8px 12px",
+                      cursor: "pointer",
+                      background:
+                        searchMode === "regex"
+                          ? "var(--color-bg-hover)"
+                          : undefined,
+                      display: "flex",
+                      alignItems: "center",
+                      gap: "8px",
+                    }}
+                    onClick={() => {
+                      setSearchMode("regex");
+                      setShowSearchOptions(false);
+                    }}
+                  >
+                    <span style={{ width: "20px" }}>
+                      {searchMode === "regex" ? "✓" : ""}
+                    </span>
+                    <div>
+                      <div style={{ fontWeight: "500" }}>Regex</div>
+                      <div
+                        style={{
+                          fontSize: "11px",
+                          color: "var(--color-text-secondary)",
+                        }}
+                      >
+                        Regulärer Ausdruck
+                      </div>
+                    </div>
+                  </div>
+                </div>,
+                document.body,
+              )}
           </div>
+          <div
+            ref={searchHistRef as any}
+            style={{
+              display: "none", // Versteckt, da wir die Ref noch für Positionierung brauchen
+              position: "relative",
+            }}
+          />
           {showSearchHist &&
             fltHistSearch.length > 0 &&
             searchPos &&
@@ -3469,25 +3762,18 @@ export default function App() {
               <div
                 ref={searchPopRef as any}
                 role="listbox"
+                className="autocomplete-dropdown"
                 style={{
                   position: "fixed",
                   left: searchPos.left + "px",
                   top: searchPos.top + "px",
-                  width: searchPos.width + "px",
-                  background: "var(--color-bg, #fff)",
-                  border: "1px solid #cfcfcf",
-                  borderRadius: "6px",
-                  padding: "4px",
-                  zIndex: 200000,
-                  maxHeight: "220px",
-                  overflowY: "auto",
-                  boxShadow: "0 8px 28px rgba(0,0,0,0.2)",
+                  width: Math.max(searchPos.width, 300) + "px",
                 }}
               >
                 {fltHistSearch.map((v, i) => (
                   <div
                     key={i}
-                    style={{ padding: "4px 6px", cursor: "pointer" }}
+                    className="autocomplete-item"
                     onClick={() => {
                       setSearch(v);
                       addFilterHistory("search", v);
@@ -3496,23 +3782,47 @@ export default function App() {
                     onMouseDown={(e) => e.preventDefault()}
                     title={v}
                   >
+                    <span>🕐</span>
                     {v}
                   </div>
                 ))}
+                <div className="autocomplete-hint">
+                  <span>
+                    <kbd>↑↓</kbd> Navigation
+                  </span>
+                  <span>
+                    <kbd>Enter</kbd> Auswählen
+                  </span>
+                  <span>
+                    <kbd>Esc</kbd> Schließen
+                  </span>
+                </div>
               </div>,
               document.body,
             )}
           <button
             id="btnPrevMatch"
-            title={t("toolbar.prevMatch")}
+            title={`${t("toolbar.prevMatch")} (Shift+N)`}
             disabled={!search.trim() || searchMatchIdx.length === 0}
             onClick={() => gotoSearchMatch(-1)}
           >
             ◀
           </button>
+          <span
+            style={{
+              fontSize: "11px",
+              color: "var(--color-text-secondary)",
+              minWidth: "40px",
+              textAlign: "center",
+            }}
+          >
+            {search.trim() && searchMatchIdx.length > 0
+              ? `${searchMatchIdx.length}`
+              : ""}
+          </span>
           <button
             id="btnNextMatch"
-            title={t("toolbar.nextMatch")}
+            title={`${t("toolbar.nextMatch")} (N)`}
             disabled={!search.trim() || searchMatchIdx.length === 0}
             onClick={() => gotoSearchMatch(1)}
           >
@@ -3520,354 +3830,544 @@ export default function App() {
           </button>
         </div>
         <div className="section">
-          <label>
-            <input
-              type="checkbox"
-              className="native-checkbox"
-              checked={stdFiltersEnabled}
-              onChange={(e) => setStdFiltersEnabled(e.currentTarget.checked)}
-            />{" "}
-            {t("toolbar.filterActive")}
-          </label>
-          <label>{t("toolbar.level")}</label>
-          <select
-            id="filterLevel"
-            value={filter.level}
-            onChange={(e) =>
-              setFilter({ ...filter, level: e.currentTarget.value })
-            }
-            disabled={!stdFiltersEnabled}
-          >
-            <option value="">{t("toolbar.levelAll")}</option>
-            {["TRACE", "DEBUG", "INFO", "WARN", "ERROR", "FATAL"].map((l) => (
-              <option key={l} value={l}>
-                {l}
-              </option>
-            ))}
-          </select>
-          <label>{t("toolbar.logger")}</label>
-          <div
-            ref={loggerHistRef as any}
-            style={{
-              display: "inline-flex",
-              alignItems: "center",
-              gap: "6px",
-              position: "relative",
-            }}
-          >
-            <input
-              id="filterLogger"
-              type="text"
-              value={filter.logger}
-              onInput={(e) =>
-                setFilter({ ...filter, logger: e.currentTarget.value })
-              }
-              onKeyDown={(e) => {
-                if ((e as any).key === "Enter")
-                  addFilterHistory("logger", (e.currentTarget as any).value);
-                if ((e as any).key === "ArrowDown") setShowLoggerHist(true);
-                const key = (e as any).key?.toLowerCase?.() || "";
-                if (key === "a" && ((e as any).ctrlKey || (e as any).metaKey)) {
-                  e.preventDefault();
-                  try {
-                    (e.currentTarget as HTMLInputElement).select();
-                  } catch {}
-                }
-              }}
-              onFocus={() => setShowLoggerHist(true)}
-              onBlur={(e) => addFilterHistory("logger", e.currentTarget.value)}
-              placeholder={t("toolbar.loggerPlaceholder")}
-              disabled={!stdFiltersEnabled}
-              style={{ minWidth: "180px", paddingRight: "26px" }}
-            />
-            <button
-              type="button"
-              title={
-                showLoggerHist
-                  ? t("toolbar.searchHistoryHide")
-                  : t("toolbar.searchHistoryShow")
-              }
-              onClick={() => setShowLoggerHist((v) => !v)}
-              disabled={!stdFiltersEnabled}
-              style={{
-                position: "absolute",
-                right: "6px",
-                top: "50%",
-                transform: "translateY(-50%)",
-                height: "22px",
-                minWidth: "22px",
-                padding: "0 4px",
-              }}
-            >
-              ▾
-            </button>
-          </div>
-          {showLoggerHist &&
-            fltHistLogger.length > 0 &&
-            loggerPos &&
-            createPortal(
-              <div
-                ref={loggerPopRef as any}
-                role="listbox"
-                style={{
-                  position: "fixed",
-                  left: loggerPos.left + "px",
-                  top: loggerPos.top + "px",
-                  width: loggerPos.width + "px",
-                  background: "var(--color-bg, #fff)",
-                  border: "1px solid #cfcfcf",
-                  borderRadius: "6px",
-                  padding: "4px",
-                  zIndex: 200000,
-                  maxHeight: "220px",
-                  overflowY: "auto",
-                  boxShadow: "0 8px 28px rgba(0,0,0,0.2)",
-                }}
-              >
-                {fltHistLogger.map((v, i) => (
-                  <div
-                    key={i}
-                    style={{ padding: "4px 6px", cursor: "pointer" }}
-                    onClick={() => {
-                      setFilter({ ...filter, logger: v });
-                      addFilterHistory("logger", v);
-                      setShowLoggerHist(false);
-                    }}
-                    onMouseDown={(e) => e.preventDefault()}
-                    title={v}
-                  >
-                    {v}
-                  </div>
-                ))}
-              </div>,
-              document.body,
-            )}
-          <label>{t("toolbar.thread")}</label>
-          <div
-            ref={threadHistRef as any}
-            style={{
-              display: "inline-flex",
-              alignItems: "center",
-              gap: "6px",
-              position: "relative",
-            }}
-          >
-            <input
-              id="filterThread"
-              type="text"
-              value={filter.thread}
-              onInput={(e) =>
-                setFilter({ ...filter, thread: e.currentTarget.value })
-              }
-              onKeyDown={(e) => {
-                if ((e as any).key === "Enter")
-                  addFilterHistory("thread", (e.currentTarget as any).value);
-                if ((e as any).key === "ArrowDown") setShowThreadHist(true);
-                const key = (e as any).key?.toLowerCase?.() || "";
-                if (key === "a" && ((e as any).ctrlKey || (e as any).metaKey)) {
-                  e.preventDefault();
-                  try {
-                    (e.currentTarget as HTMLInputElement).select();
-                  } catch {}
-                }
-              }}
-              onFocus={() => setShowThreadHist(true)}
-              onBlur={(e) => addFilterHistory("thread", e.currentTarget.value)}
-              placeholder={t("toolbar.threadPlaceholder")}
-              disabled={!stdFiltersEnabled}
-              style={{ minWidth: "160px", paddingRight: "26px" }}
-            />
-            <button
-              type="button"
-              title={
-                showThreadHist
-                  ? t("toolbar.searchHistoryHide")
-                  : t("toolbar.searchHistoryShow")
-              }
-              onClick={() => setShowThreadHist((v) => !v)}
-              disabled={!stdFiltersEnabled}
-              style={{
-                position: "absolute",
-                right: "6px",
-                top: "50%",
-                transform: "translateY(-50%)",
-                height: "22px",
-                minWidth: "22px",
-                padding: "0 4px",
-              }}
-            >
-              ▾
-            </button>
-          </div>
-          {showThreadHist &&
-            fltHistThread.length > 0 &&
-            threadPos &&
-            createPortal(
-              <div
-                ref={threadPopRef as any}
-                role="listbox"
-                style={{
-                  position: "fixed",
-                  left: threadPos.left + "px",
-                  top: threadPos.top + "px",
-                  width: threadPos.width + "px",
-                  background: "var(--color-bg, #fff)",
-                  border: "1px solid #cfcfcf",
-                  borderRadius: "6px",
-                  padding: "4px",
-                  zIndex: 200000,
-                  maxHeight: "220px",
-                  overflowY: "auto",
-                  boxShadow: "0 8px 28px rgba(0,0,0,0.2)",
-                }}
-              >
-                {fltHistThread.map((v, i) => (
-                  <div
-                    key={i}
-                    style={{ padding: "4px 6px", cursor: "pointer" }}
-                    onClick={() => {
-                      setFilter({ ...filter, thread: v });
-                      addFilterHistory("thread", v);
-                      setShowThreadHist(false);
-                    }}
-                    onMouseDown={(e) => e.preventDefault()}
-                    title={v}
-                  >
-                    {v}
-                  </div>
-                ))}
-              </div>,
-              document.body,
-            )}
-          <label>{t("toolbar.message")}</label>
-          <div
-            ref={messageHistRef as any}
-            style={{
-              display: "inline-flex",
-              alignItems: "center",
-              gap: "6px",
-              position: "relative",
-            }}
-          >
-            <input
-              id="filterMessage"
-              type="text"
-              value={filter.message}
-              onInput={(e) =>
-                setFilter({ ...filter, message: e.currentTarget.value })
-              }
-              onKeyDown={(e) => {
-                if ((e as any).key === "Enter")
-                  addFilterHistory("message", (e.currentTarget as any).value);
-                if ((e as any).key === "ArrowDown") setShowMessageHist(true);
-                const key = (e as any).key?.toLowerCase?.() || "";
-                if (key === "a" && ((e as any).ctrlKey || (e as any).metaKey)) {
-                  e.preventDefault();
-                  try {
-                    (e.currentTarget as HTMLInputElement).select();
-                  } catch {}
-                }
-              }}
-              onFocus={() => setShowMessageHist(true)}
-              onBlur={(e) => addFilterHistory("message", e.currentTarget.value)}
-              placeholder={t("toolbar.messagePlaceholder")}
-              disabled={!stdFiltersEnabled}
-              style={{ minWidth: "240px", paddingRight: "26px" }}
-            />
-            <button
-              type="button"
-              title={
-                showMessageHist
-                  ? t("toolbar.searchHistoryHide")
-                  : t("toolbar.searchHistoryShow")
-              }
-              onClick={() => setShowMessageHist((v) => !v)}
-              disabled={!stdFiltersEnabled}
-              style={{
-                position: "absolute",
-                right: "6px",
-                top: "50%",
-                transform: "translateY(-50%)",
-                height: "22px",
-                minWidth: "22px",
-                padding: "0 4px",
-              }}
-            >
-              ▾
-            </button>
-          </div>
-          {showMessageHist &&
-            fltHistMessage.length > 0 &&
-            messagePos &&
-            createPortal(
-              <div
-                ref={messagePopRef as any}
-                role="listbox"
-                style={{
-                  position: "fixed",
-                  left: messagePos.left + "px",
-                  top: messagePos.top + "px",
-                  width: messagePos.width + "px",
-                  background: "var(--color-bg, #fff)",
-                  border: "1px solid #cfcfcf",
-                  borderRadius: "6px",
-                  padding: "4px",
-                  zIndex: 200000,
-                  maxHeight: "220px",
-                  overflowY: "auto",
-                  boxShadow: "0 8px 28px rgba(0,0,0,0.2)",
-                }}
-              >
-                {fltHistMessage.map((v, i) => (
-                  <div
-                    key={i}
-                    style={{ padding: "4px 6px", cursor: "pointer" }}
-                    onClick={() => {
-                      setFilter({ ...filter, message: v });
-                      addFilterHistory("message", v);
-                      setShowMessageHist(false);
-                    }}
-                    onMouseDown={(e) => e.preventDefault()}
-                    title={v}
-                  >
-                    {v}
-                  </div>
-                ))}
-              </div>,
-              document.body,
-            )}
+          {busy && (
+            <span className="busy">
+              <span className="spinner"></span>
+              {t("toolbar.busy")}
+            </span>
+          )}
+          <span id="tcpStatus" className="status">
+            {tcpStatus}
+          </span>
+          <span id="httpStatus" className="status">
+            {httpStatus}
+          </span>
+          {nextPollIn && (
+            <span className="status" title="Nächster Poll in">
+              {nextPollIn}
+            </span>
+          )}
+        </div>
+        <div className="section" style={{ flex: 1, flexWrap: "wrap" }}>
+          {/* Filter Toggle Button */}
           <button
-            id="btnClearFilters"
-            onClick={() => {
-              setSearch("");
-              setFilter({
-                level: "",
-                logger: "",
-                thread: "",
-                service: "",
-                message: "",
-              });
-              setOnlyMarked(false);
-              try {
-                void window.api.settingsSet({ onlyMarked: false });
-              } catch {}
-              try {
-                (TimeFilter as any).reset?.();
-              } catch (e) {
-                logger.error("Resetting TimeFilter failed:", e);
-              }
-            }}
+            className={`filter-toggle-btn ${filtersExpanded ? "expanded" : ""}`}
+            onClick={() => setFiltersExpanded(!filtersExpanded)}
+            title="Filter ein-/ausblenden (⌘⇧F)"
           >
-            {t("toolbar.clearFilters")}
+            <span>🎛️ Filter</span>
+            <span className="chevron">▼</span>
           </button>
+          {/* Aktive Filter-Chips inline */}
+          {(() => {
+            const activeFilters: Array<{
+              type: string;
+              label: string;
+              value: string;
+              onRemove: () => void;
+              colorClass?: string;
+            }> = [];
+
+            if (filter.level && stdFiltersEnabled) {
+              activeFilters.push({
+                type: "level",
+                label: "",
+                value: filter.level,
+                colorClass: `level-${filter.level.toLowerCase()}`,
+                onRemove: () => setFilter({ ...filter, level: "" }),
+              });
+            }
+            if (filter.logger && stdFiltersEnabled) {
+              activeFilters.push({
+                type: "logger",
+                label: "Logger",
+                value: filter.logger,
+                onRemove: () => setFilter({ ...filter, logger: "" }),
+              });
+            }
+            if (filter.thread && stdFiltersEnabled) {
+              activeFilters.push({
+                type: "thread",
+                label: "Thread",
+                value: filter.thread,
+                onRemove: () => setFilter({ ...filter, thread: "" }),
+              });
+            }
+            if (filter.message && stdFiltersEnabled) {
+              activeFilters.push({
+                type: "message",
+                label: "Msg",
+                value:
+                  filter.message.length > 20
+                    ? filter.message.substring(0, 20) + "…"
+                    : filter.message,
+                onRemove: () => setFilter({ ...filter, message: "" }),
+              });
+            }
+            if (onlyMarked) {
+              activeFilters.push({
+                type: "marked",
+                label: "",
+                value: "Markierte",
+                onRemove: () => {
+                  setOnlyMarked(false);
+                  try {
+                    void window.api.settingsSet({ onlyMarked: false });
+                  } catch {}
+                },
+              });
+            }
+            const dcEntries = DiagnosticContextFilter.getDcEntries().filter(
+              (e) => e.active,
+            );
+            if (DiagnosticContextFilter.isEnabled() && dcEntries.length > 0) {
+              dcEntries.slice(0, 3).forEach((entry) => {
+                activeFilters.push({
+                  type: "dc",
+                  label: entry.key,
+                  value: entry.val || "*",
+                  colorClass: "dc-filter",
+                  onRemove: () =>
+                    DiagnosticContextFilter.deactivateMdcEntry(
+                      entry.key,
+                      entry.val,
+                    ),
+                });
+              });
+              if (dcEntries.length > 3) {
+                activeFilters.push({
+                  type: "dc-more",
+                  label: "",
+                  value: `+${dcEntries.length - 3}`,
+                  colorClass: "dc-filter",
+                  onRemove: () => {},
+                });
+              }
+            }
+
+            if (activeFilters.length === 0) return null;
+
+            return (
+              <>
+                {activeFilters.map((f, i) => (
+                  <span
+                    key={`${f.type}-${i}`}
+                    className={`filter-chip ${f.colorClass || ""}`}
+                  >
+                    {f.label && <span className="chip-label">{f.label}:</span>}
+                    <span className="chip-value" title={f.value}>
+                      {f.value}
+                    </span>
+                    {f.type !== "dc-more" && (
+                      <button
+                        className="chip-remove"
+                        onClick={f.onRemove}
+                        title="Filter entfernen"
+                      >
+                        ×
+                      </button>
+                    )}
+                  </span>
+                ))}
+                {activeFilters.length > 0 && (
+                  <button
+                    style={{
+                      fontSize: "11px",
+                      padding: "2px 6px",
+                      marginLeft: "4px",
+                    }}
+                    onClick={() => {
+                      setSearch("");
+                      setFilter({
+                        level: "",
+                        logger: "",
+                        thread: "",
+                        service: "",
+                        message: "",
+                      });
+                      setOnlyMarked(false);
+                      try {
+                        void window.api.settingsSet({ onlyMarked: false });
+                      } catch {}
+                      try {
+                        (TimeFilter as any).reset?.();
+                      } catch {}
+                      try {
+                        DiagnosticContextFilter.reset();
+                      } catch {}
+                    }}
+                    title="Alle Filter löschen"
+                  >
+                    ✕ Alle
+                  </button>
+                )}
+              </>
+            );
+          })()}
+        </div>
+        {/* Ausklappbare Filter-Sektion */}
+        <div
+          className={`filter-section ${filtersExpanded ? "expanded" : "collapsed"}`}
+        >
+          <div className="section" style={{ paddingTop: 0 }}>
+            <label>
+              <input
+                type="checkbox"
+                className="native-checkbox"
+                checked={stdFiltersEnabled}
+                onChange={(e) => setStdFiltersEnabled(e.currentTarget.checked)}
+              />{" "}
+              {t("toolbar.filterActive")}
+            </label>
+            <label>{t("toolbar.level")}</label>
+            <select
+              id="filterLevel"
+              value={filter.level}
+              onChange={(e) =>
+                setFilter({ ...filter, level: e.currentTarget.value })
+              }
+              disabled={!stdFiltersEnabled}
+            >
+              <option value="">{t("toolbar.levelAll")}</option>
+              {["TRACE", "DEBUG", "INFO", "WARN", "ERROR", "FATAL"].map((l) => (
+                <option key={l} value={l}>
+                  {l}
+                </option>
+              ))}
+            </select>
+            <label>{t("toolbar.logger")}</label>
+            <div
+              ref={loggerHistRef as any}
+              style={{
+                display: "inline-flex",
+                alignItems: "center",
+                gap: "6px",
+                position: "relative",
+              }}
+            >
+              <input
+                id="filterLogger"
+                type="text"
+                value={filter.logger}
+                onInput={(e) =>
+                  setFilter({ ...filter, logger: e.currentTarget.value })
+                }
+                onKeyDown={(e) => {
+                  if ((e as any).key === "Enter")
+                    addFilterHistory("logger", (e.currentTarget as any).value);
+                  if ((e as any).key === "ArrowDown") setShowLoggerHist(true);
+                  const key = (e as any).key?.toLowerCase?.() || "";
+                  if (
+                    key === "a" &&
+                    ((e as any).ctrlKey || (e as any).metaKey)
+                  ) {
+                    e.preventDefault();
+                    try {
+                      (e.currentTarget as HTMLInputElement).select();
+                    } catch {}
+                  }
+                }}
+                onFocus={() => setShowLoggerHist(true)}
+                onBlur={(e) =>
+                  addFilterHistory("logger", e.currentTarget.value)
+                }
+                placeholder={t("toolbar.loggerPlaceholder")}
+                disabled={!stdFiltersEnabled}
+                style={{ minWidth: "180px", paddingRight: "26px" }}
+              />
+              <button
+                type="button"
+                title={
+                  showLoggerHist
+                    ? t("toolbar.searchHistoryHide")
+                    : t("toolbar.searchHistoryShow")
+                }
+                onClick={() => setShowLoggerHist((v) => !v)}
+                disabled={!stdFiltersEnabled}
+                style={{
+                  position: "absolute",
+                  right: "6px",
+                  top: "50%",
+                  transform: "translateY(-50%)",
+                  height: "22px",
+                  minWidth: "22px",
+                  padding: "0 4px",
+                }}
+              >
+                ▾
+              </button>
+            </div>
+            {showLoggerHist &&
+              fltHistLogger.length > 0 &&
+              loggerPos &&
+              createPortal(
+                <div
+                  ref={loggerPopRef as any}
+                  role="listbox"
+                  style={{
+                    position: "fixed",
+                    left: loggerPos.left + "px",
+                    top: loggerPos.top + "px",
+                    width: loggerPos.width + "px",
+                    background: "var(--color-bg, #fff)",
+                    border: "1px solid #cfcfcf",
+                    borderRadius: "6px",
+                    padding: "4px",
+                    zIndex: 200000,
+                    maxHeight: "220px",
+                    overflowY: "auto",
+                    boxShadow: "0 8px 28px rgba(0,0,0,0.2)",
+                  }}
+                >
+                  {fltHistLogger.map((v, i) => (
+                    <div
+                      key={i}
+                      style={{ padding: "4px 6px", cursor: "pointer" }}
+                      onClick={() => {
+                        setFilter({ ...filter, logger: v });
+                        addFilterHistory("logger", v);
+                        setShowLoggerHist(false);
+                      }}
+                      onMouseDown={(e) => e.preventDefault()}
+                      title={v}
+                    >
+                      {v}
+                    </div>
+                  ))}
+                </div>,
+                document.body,
+              )}
+            <label>{t("toolbar.thread")}</label>
+            <div
+              ref={threadHistRef as any}
+              style={{
+                display: "inline-flex",
+                alignItems: "center",
+                gap: "6px",
+                position: "relative",
+              }}
+            >
+              <input
+                id="filterThread"
+                type="text"
+                value={filter.thread}
+                onInput={(e) =>
+                  setFilter({ ...filter, thread: e.currentTarget.value })
+                }
+                onKeyDown={(e) => {
+                  if ((e as any).key === "Enter")
+                    addFilterHistory("thread", (e.currentTarget as any).value);
+                  if ((e as any).key === "ArrowDown") setShowThreadHist(true);
+                  const key = (e as any).key?.toLowerCase?.() || "";
+                  if (
+                    key === "a" &&
+                    ((e as any).ctrlKey || (e as any).metaKey)
+                  ) {
+                    e.preventDefault();
+                    try {
+                      (e.currentTarget as HTMLInputElement).select();
+                    } catch {}
+                  }
+                }}
+                onFocus={() => setShowThreadHist(true)}
+                onBlur={(e) =>
+                  addFilterHistory("thread", e.currentTarget.value)
+                }
+                placeholder={t("toolbar.threadPlaceholder")}
+                disabled={!stdFiltersEnabled}
+                style={{ minWidth: "160px", paddingRight: "26px" }}
+              />
+              <button
+                type="button"
+                title={
+                  showThreadHist
+                    ? t("toolbar.searchHistoryHide")
+                    : t("toolbar.searchHistoryShow")
+                }
+                onClick={() => setShowThreadHist((v) => !v)}
+                disabled={!stdFiltersEnabled}
+                style={{
+                  position: "absolute",
+                  right: "6px",
+                  top: "50%",
+                  transform: "translateY(-50%)",
+                  height: "22px",
+                  minWidth: "22px",
+                  padding: "0 4px",
+                }}
+              >
+                ▾
+              </button>
+            </div>
+            {showThreadHist &&
+              fltHistThread.length > 0 &&
+              threadPos &&
+              createPortal(
+                <div
+                  ref={threadPopRef as any}
+                  role="listbox"
+                  style={{
+                    position: "fixed",
+                    left: threadPos.left + "px",
+                    top: threadPos.top + "px",
+                    width: threadPos.width + "px",
+                    background: "var(--color-bg, #fff)",
+                    border: "1px solid #cfcfcf",
+                    borderRadius: "6px",
+                    padding: "4px",
+                    zIndex: 200000,
+                    maxHeight: "220px",
+                    overflowY: "auto",
+                    boxShadow: "0 8px 28px rgba(0,0,0,0.2)",
+                  }}
+                >
+                  {fltHistThread.map((v, i) => (
+                    <div
+                      key={i}
+                      style={{ padding: "4px 6px", cursor: "pointer" }}
+                      onClick={() => {
+                        setFilter({ ...filter, thread: v });
+                        addFilterHistory("thread", v);
+                        setShowThreadHist(false);
+                      }}
+                      onMouseDown={(e) => e.preventDefault()}
+                      title={v}
+                    >
+                      {v}
+                    </div>
+                  ))}
+                </div>,
+                document.body,
+              )}
+            <label>{t("toolbar.message")}</label>
+            <div
+              ref={messageHistRef as any}
+              style={{
+                display: "inline-flex",
+                alignItems: "center",
+                gap: "6px",
+                position: "relative",
+              }}
+            >
+              <input
+                id="filterMessage"
+                type="text"
+                value={filter.message}
+                onInput={(e) =>
+                  setFilter({ ...filter, message: e.currentTarget.value })
+                }
+                onKeyDown={(e) => {
+                  if ((e as any).key === "Enter")
+                    addFilterHistory("message", (e.currentTarget as any).value);
+                  if ((e as any).key === "ArrowDown") setShowMessageHist(true);
+                  const key = (e as any).key?.toLowerCase?.() || "";
+                  if (
+                    key === "a" &&
+                    ((e as any).ctrlKey || (e as any).metaKey)
+                  ) {
+                    e.preventDefault();
+                    try {
+                      (e.currentTarget as HTMLInputElement).select();
+                    } catch {}
+                  }
+                }}
+                onFocus={() => setShowMessageHist(true)}
+                onBlur={(e) =>
+                  addFilterHistory("message", e.currentTarget.value)
+                }
+                placeholder={t("toolbar.messagePlaceholder")}
+                disabled={!stdFiltersEnabled}
+                style={{ minWidth: "240px", paddingRight: "26px" }}
+              />
+              <button
+                type="button"
+                title={
+                  showMessageHist
+                    ? t("toolbar.searchHistoryHide")
+                    : t("toolbar.searchHistoryShow")
+                }
+                onClick={() => setShowMessageHist((v) => !v)}
+                disabled={!stdFiltersEnabled}
+                style={{
+                  position: "absolute",
+                  right: "6px",
+                  top: "50%",
+                  transform: "translateY(-50%)",
+                  height: "22px",
+                  minWidth: "22px",
+                  padding: "0 4px",
+                }}
+              >
+                ▾
+              </button>
+            </div>
+            {showMessageHist &&
+              fltHistMessage.length > 0 &&
+              messagePos &&
+              createPortal(
+                <div
+                  ref={messagePopRef as any}
+                  role="listbox"
+                  style={{
+                    position: "fixed",
+                    left: messagePos.left + "px",
+                    top: messagePos.top + "px",
+                    width: messagePos.width + "px",
+                    background: "var(--color-bg, #fff)",
+                    border: "1px solid #cfcfcf",
+                    borderRadius: "6px",
+                    padding: "4px",
+                    zIndex: 200000,
+                    maxHeight: "220px",
+                    overflowY: "auto",
+                    boxShadow: "0 8px 28px rgba(0,0,0,0.2)",
+                  }}
+                >
+                  {fltHistMessage.map((v, i) => (
+                    <div
+                      key={i}
+                      style={{ padding: "4px 6px", cursor: "pointer" }}
+                      onClick={() => {
+                        setFilter({ ...filter, message: v });
+                        addFilterHistory("message", v);
+                        setShowMessageHist(false);
+                      }}
+                      onMouseDown={(e) => e.preventDefault()}
+                      title={v}
+                    >
+                      {v}
+                    </div>
+                  ))}
+                </div>,
+                document.body,
+              )}
+            <button
+              id="btnClearFilters"
+              onClick={() => {
+                setSearch("");
+                setFilter({
+                  level: "",
+                  logger: "",
+                  thread: "",
+                  service: "",
+                  message: "",
+                });
+                setOnlyMarked(false);
+                try {
+                  void window.api.settingsSet({ onlyMarked: false });
+                } catch {}
+                try {
+                  (TimeFilter as any).reset?.();
+                } catch (e) {
+                  logger.error("Resetting TimeFilter failed:", e);
+                }
+              }}
+            >
+              {t("toolbar.clearFilters")}
+            </button>
+          </div>
         </div>
         <div className="section">
-          <button
-            onClick={() => setShowDcDialog(true)}
-            title={t("toolbar.dcFilterTooltip")}
-          >
-            {t("toolbar.dcFilter")}
-          </button>
           {(() => {
             const entries = DiagnosticContextFilter.getDcEntries();
             const total = entries.length;
@@ -3882,7 +4382,6 @@ export default function App() {
                     ? t("toolbar.dcFilterActive", { count: String(active) })
                     : t("toolbar.dcFilterInactive", { count: String(total) })
                 }
-                style={{ marginLeft: "6px" }}
               >
                 {enabled
                   ? t("toolbar.dcFilterActive", { count: String(active) })
@@ -3890,15 +4389,6 @@ export default function App() {
               </span>
             );
           })()}
-        </div>
-        <div className="section">
-          <button
-            disabled={esBusy}
-            onClick={openTimeFilterDialog}
-            title={t("toolbar.elasticSearchTooltip")}
-          >
-            {t("toolbar.elasticSearch")}
-          </button>
           {(() => {
             try {
               const s = TimeFilter.getState();
@@ -3909,11 +4399,7 @@ export default function App() {
               );
               if (!show) return null;
               return (
-                <span
-                  className="status"
-                  style={{ marginLeft: "6px" }}
-                  title={t("toolbar.elasticActive")}
-                >
+                <span className="status" title={t("toolbar.elasticActive")}>
                   {t("toolbar.elasticActive")}
                 </span>
               );
@@ -3937,7 +4423,6 @@ export default function App() {
               onClick={async () => {
                 if (esBusy) return;
                 const token = esNextSearchAfter;
-                // Für Scroll gibt es keinen Token; wir laden fort, wenn eine Session aktiv ist
                 if (
                   !esPitSessionId &&
                   (!token || !Array.isArray(token) || token.length === 0)
@@ -3950,7 +4435,6 @@ export default function App() {
                     const mode = (f?.mode || "relative") as
                       | "relative"
                       | "absolute";
-                    // Verfügbare Slots vor dem Nachladen bestimmen
                     let available = Math.max(
                       0,
                       (elasticSize || 0) - esElasticCountAll,
@@ -4017,11 +4501,7 @@ export default function App() {
             </button>
           )}
           {esTotal != null && (
-            <span
-              className="status"
-              style={{ marginLeft: "6px" }}
-              title="Geladene ES-Ergebnisse"
-            >
+            <span className="status" title="Geladene ES-Ergebnisse">
               {t("toolbar.elasticLoaded", {
                 loaded: String(esLoaded),
                 total: String(esTotal),
@@ -4029,25 +4509,17 @@ export default function App() {
             </span>
           )}
         </div>
-        <div className="section">
-          {busy && (
-            <span className="busy">
-              <span className="spinner"></span>{t("toolbar.busy")}
-            </span>
-          )}
-          <span id="tcpStatus" className="status">
-            {tcpStatus}
-          </span>
-          <span id="httpStatus" className="status">
-            {httpStatus}
-          </span>
-          {nextPollIn && (
-            <span className="status" title="Nächster Poll in">
-              {nextPollIn}
-            </span>
-          )}
-        </div>
       </header>
+
+      {/* Resize-Indikator für Detail-Panel */}
+      {resizeHeight !== null && (
+        <div
+          className="resize-indicator"
+          style={{ bottom: resizeHeight + 20 + "px" }}
+        >
+          {resizeHeight}px
+        </div>
+      )}
 
       {/* Hauptlayout: Liste + Overlay-Details */}
       <div className="layout" ref={layoutRef}>
@@ -4342,6 +4814,357 @@ export default function App() {
           </div>
           <div className="item" onClick={copyTsMsg}>
             {t("contextMenu.copyTsMsg")}
+          </div>
+        </div>
+      )}
+
+      {/* Hilfe-Dialog */}
+      {showHelpDlg && (
+        <div className="modal-backdrop" onClick={() => setShowHelpDlg(false)}>
+          <div
+            className="modal"
+            onClick={(e) => e.stopPropagation()}
+            style={{
+              maxWidth: "700px",
+              maxHeight: "80vh",
+              display: "flex",
+              flexDirection: "column",
+            }}
+          >
+            <h3
+              style={{
+                margin: "0 0 16px 0",
+                display: "flex",
+                alignItems: "center",
+                gap: "8px",
+              }}
+            >
+              🪓 Lumberjack - Hilfe
+            </h3>
+            <div
+              style={{
+                flex: 1,
+                overflowY: "auto",
+                fontSize: "13px",
+                lineHeight: "1.6",
+              }}
+            >
+              <section style={{ marginBottom: "20px" }}>
+                <h4
+                  style={{
+                    color: "var(--color-primary)",
+                    marginBottom: "8px",
+                    borderBottom: "1px solid var(--color-divider)",
+                    paddingBottom: "4px",
+                  }}
+                >
+                  📋 Übersicht
+                </h4>
+                <p>
+                  Lumberjack ist ein Log-Viewer für große Datenmengen und
+                  Live-Quellen mit Fokus auf Performance.
+                </p>
+              </section>
+
+              <section style={{ marginBottom: "20px" }}>
+                <h4
+                  style={{
+                    color: "var(--color-primary)",
+                    marginBottom: "8px",
+                    borderBottom: "1px solid var(--color-divider)",
+                    paddingBottom: "4px",
+                  }}
+                >
+                  📁 Datenquellen
+                </h4>
+                <ul style={{ margin: "0", paddingLeft: "20px" }}>
+                  <li>
+                    <strong>Dateien:</strong> .log, .json, .jsonl, .txt und .zip
+                    (Drag & Drop oder Menü)
+                  </li>
+                  <li>
+                    <strong>HTTP:</strong> Einmaliges Laden oder periodisches
+                    Polling mit Deduplizierung
+                  </li>
+                  <li>
+                    <strong>TCP:</strong> Live-Log-Server für Echtzeit-Streams
+                  </li>
+                  <li>
+                    <strong>Elasticsearch:</strong> Logs aus ES-Clustern mit
+                    Zeitfilter
+                  </li>
+                </ul>
+              </section>
+
+              <section style={{ marginBottom: "20px" }}>
+                <h4
+                  style={{
+                    color: "var(--color-primary)",
+                    marginBottom: "8px",
+                    borderBottom: "1px solid var(--color-divider)",
+                    paddingBottom: "4px",
+                  }}
+                >
+                  🔍 Volltextsuche
+                </h4>
+                <p style={{ marginBottom: "8px" }}>
+                  Syntax für die Nachrichtensuche:
+                </p>
+                <table
+                  style={{
+                    width: "100%",
+                    borderCollapse: "collapse",
+                    fontSize: "12px",
+                  }}
+                >
+                  <tbody>
+                    <tr>
+                      <td
+                        style={{
+                          padding: "4px 8px",
+                          background: "var(--color-bg-hover)",
+                        }}
+                      >
+                        <code>foo|bar</code>
+                      </td>
+                      <td style={{ padding: "4px 8px" }}>
+                        ODER - enthält 'foo' oder 'bar'
+                      </td>
+                    </tr>
+                    <tr>
+                      <td
+                        style={{
+                          padding: "4px 8px",
+                          background: "var(--color-bg-hover)",
+                        }}
+                      >
+                        <code>foo&bar</code>
+                      </td>
+                      <td style={{ padding: "4px 8px" }}>
+                        UND - enthält 'foo' und 'bar'
+                      </td>
+                    </tr>
+                    <tr>
+                      <td
+                        style={{
+                          padding: "4px 8px",
+                          background: "var(--color-bg-hover)",
+                        }}
+                      >
+                        <code>!foo</code>
+                      </td>
+                      <td style={{ padding: "4px 8px" }}>
+                        NICHT - enthält nicht 'foo'
+                      </td>
+                    </tr>
+                    <tr>
+                      <td
+                        style={{
+                          padding: "4px 8px",
+                          background: "var(--color-bg-hover)",
+                        }}
+                      >
+                        <code>foo&!bar</code>
+                      </td>
+                      <td style={{ padding: "4px 8px" }}>
+                        Kombination - 'foo' aber nicht 'bar'
+                      </td>
+                    </tr>
+                  </tbody>
+                </table>
+                <p
+                  style={{
+                    marginTop: "8px",
+                    fontSize: "12px",
+                    color: "var(--color-text-secondary)",
+                  }}
+                >
+                  Suchmodus wählbar: Case-insensitiv (Standard), Case-sensitiv,
+                  Regex
+                </p>
+              </section>
+
+              <section style={{ marginBottom: "20px" }}>
+                <h4
+                  style={{
+                    color: "var(--color-primary)",
+                    marginBottom: "8px",
+                    borderBottom: "1px solid var(--color-divider)",
+                    paddingBottom: "4px",
+                  }}
+                >
+                  🎛️ Filter
+                </h4>
+                <ul style={{ margin: "0", paddingLeft: "20px" }}>
+                  <li>
+                    <strong>Level:</strong> TRACE, DEBUG, INFO, WARN, ERROR,
+                    FATAL
+                  </li>
+                  <li>
+                    <strong>Logger:</strong> Substring-Suche im Logger-Namen
+                  </li>
+                  <li>
+                    <strong>Thread:</strong> Filtern nach Thread-Name
+                  </li>
+                  <li>
+                    <strong>DC-Filter:</strong> MDC-Keys wie TraceID, SpanID
+                  </li>
+                </ul>
+              </section>
+
+              <section style={{ marginBottom: "20px" }}>
+                <h4
+                  style={{
+                    color: "var(--color-primary)",
+                    marginBottom: "8px",
+                    borderBottom: "1px solid var(--color-divider)",
+                    paddingBottom: "4px",
+                  }}
+                >
+                  ⌨️ Tastaturkürzel
+                </h4>
+                <table
+                  style={{
+                    width: "100%",
+                    borderCollapse: "collapse",
+                    fontSize: "12px",
+                  }}
+                >
+                  <tbody>
+                    <tr>
+                      <td
+                        style={{
+                          padding: "4px 8px",
+                          background: "var(--color-bg-hover)",
+                          width: "140px",
+                        }}
+                      >
+                        <kbd>⌘/Ctrl + F</kbd>
+                      </td>
+                      <td style={{ padding: "4px 8px" }}>
+                        Suchfeld fokussieren
+                      </td>
+                    </tr>
+                    <tr>
+                      <td
+                        style={{
+                          padding: "4px 8px",
+                          background: "var(--color-bg-hover)",
+                        }}
+                      >
+                        <kbd>⌘/Ctrl + ⇧ + F</kbd>
+                      </td>
+                      <td style={{ padding: "4px 8px" }}>
+                        Filter ein-/ausblenden
+                      </td>
+                    </tr>
+                    <tr>
+                      <td
+                        style={{
+                          padding: "4px 8px",
+                          background: "var(--color-bg-hover)",
+                        }}
+                      >
+                        <kbd>j / k</kbd>
+                      </td>
+                      <td style={{ padding: "4px 8px" }}>
+                        Navigation (Vim-Style)
+                      </td>
+                    </tr>
+                    <tr>
+                      <td
+                        style={{
+                          padding: "4px 8px",
+                          background: "var(--color-bg-hover)",
+                        }}
+                      >
+                        <kbd>g / G</kbd>
+                      </td>
+                      <td style={{ padding: "4px 8px" }}>Zum Anfang / Ende</td>
+                    </tr>
+                    <tr>
+                      <td
+                        style={{
+                          padding: "4px 8px",
+                          background: "var(--color-bg-hover)",
+                        }}
+                      >
+                        <kbd>n / N</kbd>
+                      </td>
+                      <td style={{ padding: "4px 8px" }}>
+                        Nächster / Vorheriger Treffer
+                      </td>
+                    </tr>
+                    <tr>
+                      <td
+                        style={{
+                          padding: "4px 8px",
+                          background: "var(--color-bg-hover)",
+                        }}
+                      >
+                        <kbd>↑ / ↓</kbd>
+                      </td>
+                      <td style={{ padding: "4px 8px" }}>
+                        Navigation (Standard)
+                      </td>
+                    </tr>
+                    <tr>
+                      <td
+                        style={{
+                          padding: "4px 8px",
+                          background: "var(--color-bg-hover)",
+                        }}
+                      >
+                        <kbd>Escape</kbd>
+                      </td>
+                      <td style={{ padding: "4px 8px" }}>
+                        Auswahl aufheben / Dialog schließen
+                      </td>
+                    </tr>
+                  </tbody>
+                </table>
+              </section>
+
+              <section>
+                <h4
+                  style={{
+                    color: "var(--color-primary)",
+                    marginBottom: "8px",
+                    borderBottom: "1px solid var(--color-divider)",
+                    paddingBottom: "4px",
+                  }}
+                >
+                  💡 Tipps
+                </h4>
+                <ul style={{ margin: "0", paddingLeft: "20px" }}>
+                  <li>
+                    Rechtsklick auf Zeilen für Kontextmenü (Markieren, Färben)
+                  </li>
+                  <li>Detail-Panel-Höhe per Drag anpassbar</li>
+                  <li>Spaltenbreiten durch Ziehen der Trenner anpassbar</li>
+                  <li>Aktive Filter werden als Chips angezeigt</li>
+                </ul>
+              </section>
+            </div>
+            <div
+              className="modal-actions"
+              style={{
+                marginTop: "16px",
+                paddingTop: "12px",
+                borderTop: "1px solid var(--color-divider)",
+              }}
+            >
+              <button
+                onClick={() => setShowHelpDlg(false)}
+                style={{
+                  background: "var(--accent-gradient)",
+                  color: "white",
+                  border: "none",
+                }}
+              >
+                Schließen
+              </button>
+            </div>
           </div>
         </div>
       )}
