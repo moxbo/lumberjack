@@ -456,7 +456,6 @@ export function registerIpcHandlers(
     },
   );
 
-  // eslint-disable-next-line @typescript-eslint/require-await
   ipcMain.handle("http:stopPoll", async (_event, id: number) => {
     return networkService.httpStopPoll(id);
   });

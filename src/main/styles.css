@@ -840,7 +840,6 @@ body {
   background: var(--color-bg-hover);
 }
 
-
 .context-menu .item.destructive:hover {
   background: rgba(239, 68, 68, 0.1);
 }
@@ -1128,7 +1127,6 @@ select:focus {
 input:not([type="checkbox"]):not([type="radio"])::placeholder {
   color: var(--color-text-disabled);
 }
-
 
 /* Checkboxen: harte Rücksetzung auf native Darstellung */
 input[type="checkbox"] {
@@ -1484,4 +1482,3 @@ input[type="checkbox"] {
   border-radius: 50%;
   animation: spin 0.8s linear infinite;
 }
-

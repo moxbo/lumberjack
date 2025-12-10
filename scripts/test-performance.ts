@@ -10,10 +10,11 @@ import { compareByTimestampId } from "../src/utils/sort";
 function mergeSorted(prevSorted: any[], newSorted: any[]): any[] {
   if (newSorted.length === 0) return prevSorted;
   if (prevSorted.length === 0) return newSorted;
-  
+
   const result: any[] = [];
-  let i = 0, j = 0;
-  
+  let i = 0,
+    j = 0;
+
   while (i < prevSorted.length && j < newSorted.length) {
     if (compareByTimestampId(prevSorted[i], newSorted[j]) <= 0) {
       result.push(prevSorted[i]);
@@ -23,7 +24,7 @@ function mergeSorted(prevSorted: any[], newSorted: any[]): any[] {
       j++;
     }
   }
-  
+
   // Add remaining elements
   while (i < prevSorted.length) {
     result.push(prevSorted[i]);
@@ -33,7 +34,7 @@ function mergeSorted(prevSorted: any[], newSorted: any[]): any[] {
     result.push(newSorted[j]);
     j++;
   }
-  
+
   return result;
 }
 
@@ -41,7 +42,7 @@ function mergeSorted(prevSorted: any[], newSorted: any[]): any[] {
 function generateEntries(count: number, startId: number): any[] {
   const entries: any[] = [];
   const startTime = Date.now() - count * 1000; // Entries spread over time
-  
+
   for (let i = 0; i < count; i++) {
     entries.push({
       _id: startId + i,
@@ -52,7 +53,7 @@ function generateEntries(count: number, startId: number): any[] {
       thread: `thread-${i % 4}`,
     });
   }
-  
+
   return entries;
 }
 
@@ -71,13 +72,13 @@ function benchmark(
   name: string,
   fn: (existing: any[], newEntries: any[]) => any[],
   existing: any[],
-  newEntries: any[]
+  newEntries: any[],
 ): number {
   const start = performance.now();
   const result = fn(existing, newEntries);
   const end = performance.now();
   const time = end - start;
-  
+
   console.log(`  ${name}: ${time.toFixed(2)}ms (${result.length} entries)`);
   return time;
 }
@@ -96,26 +97,38 @@ const scenarios = [
 
 for (const scenario of scenarios) {
   console.log(
-    `\nScenario: ${scenario.existing.toLocaleString()} existing + ${scenario.newBatch.toLocaleString()} new`
+    `\nScenario: ${scenario.existing.toLocaleString()} existing + ${scenario.newBatch.toLocaleString()} new`,
   );
-  
+
   // Generate test data
   const existing = generateEntries(scenario.existing, 0);
   existing.sort(compareByTimestampId);
   const newEntries = generateEntries(scenario.newBatch, scenario.existing);
-  
+
   // Benchmark both approaches
-  const oldTime = benchmark("Old approach (full sort)", oldApproach, existing, newEntries);
-  const newTime = benchmark("New approach (merge)", newApproach, existing, newEntries);
-  
-  const improvement = ((oldTime - newTime) / oldTime * 100).toFixed(1);
+  const oldTime = benchmark(
+    "Old approach (full sort)",
+    oldApproach,
+    existing,
+    newEntries,
+  );
+  const newTime = benchmark(
+    "New approach (merge)",
+    newApproach,
+    existing,
+    newEntries,
+  );
+
+  const improvement = (((oldTime - newTime) / oldTime) * 100).toFixed(1);
   const speedup = (oldTime / newTime).toFixed(1);
-  
+
   console.log(`  → Improvement: ${improvement}% faster (${speedup}x speedup)`);
 }
 
 console.log("\n✅ Performance test completed!");
 console.log("\nSummary:");
 console.log("- Merge approach is significantly faster for large datasets");
-console.log("- Performance scales better: O(m log m + n+m) vs O((n+m) log (n+m))");
+console.log(
+  "- Performance scales better: O(m log m + n+m) vs O((n+m) log (n+m))",
+);
 console.log("- Critical for maintaining responsiveness with 200k+ entries");

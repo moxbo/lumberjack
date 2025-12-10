@@ -1,5 +1,5 @@
 /* eslint-disable */
-/* eslint-disable @typescript-eslint/no-unused-vars, @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-explicit-any, @typescript-eslint/no-base-to-string, @typescript-eslint/explicit-function-return-type, @typescript-eslint/no-misused-promises, no-empty, @typescript-eslint/no-unsafe-return, @typescript-eslint/no-unsafe-argument */
+/* eslint-disable @typescript-eslint/no-unused-vars, @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-explicit-any, @typescript-eslint/no-base-to-string, @typescript-eslint/explicit-function-return-type, @typescript-eslint/no-unsafe-return, @typescript-eslint/no-unsafe-argument */
 import {
   useCallback,
   useEffect,
@@ -1354,7 +1354,10 @@ export default function App() {
     // HTTP-Quelle: source startet mit http:// oder https://
     const isHttpSource = (e: any) => {
       const s = e?.source;
-      return typeof s === "string" && (s.startsWith("http://") || s.startsWith("https://"));
+      return (
+        typeof s === "string" &&
+        (s.startsWith("http://") || s.startsWith("https://"))
+      );
     };
 
     // Bedarf für Dedupe bestimmen
@@ -1520,7 +1523,8 @@ export default function App() {
       // Memory safety: Trim oldest entries if we exceed the threshold
       // This prevents the renderer from running out of memory with large log volumes
       if (newState.length > TRIM_THRESHOLD_ENTRIES) {
-        const trimCount = newState.length - Math.floor(TRIM_THRESHOLD_ENTRIES * 0.8);
+        const trimCount =
+          newState.length - Math.floor(TRIM_THRESHOLD_ENTRIES * 0.8);
         console.warn(
           `[renderer-memory] Trimming ${trimCount} oldest entries (${newState.length} -> ${newState.length - trimCount}) to prevent memory overflow`,
         );

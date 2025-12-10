@@ -18,7 +18,6 @@ let _backend: LogBackend = {
 
 // Try to dynamically import electron-log/renderer; ignore failures
 try {
-  // eslint-disable-next-line @typescript-eslint/no-floating-promises
   import("electron-log/renderer.js")
     .then((mod: unknown) => {
       try {

@@ -49,7 +49,6 @@ let AdmZip: AdmZipConstructor | null = null;
 function getAdmZip(): AdmZipConstructor {
   if (!AdmZip) {
     try {
-      // eslint-disable-next-line @typescript-eslint/no-require-imports
       AdmZip = require("adm-zip") as AdmZipConstructor;
     } catch {
       const req = createRequire(path.join(process.cwd(), "package.json"));

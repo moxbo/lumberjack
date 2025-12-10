@@ -3,20 +3,20 @@ name: Build/release
 on:
   push:
     branches:
-      - '**'
+      - "**"
     tags:
-      - 'v*'
+      - "v*"
   workflow_dispatch:
     inputs:
       ref:
-        description: 'Branch, Tag oder Commit, der gebaut werden soll'
+        description: "Branch, Tag oder Commit, der gebaut werden soll"
         required: false
         default: main
       release_tag:
-        description: 'Release-Tag (z. B. v1.2.3). Wenn leer, wird bei Tag-Push automatisch übernommen.'
+        description: "Release-Tag (z. B. v1.2.3). Wenn leer, wird bei Tag-Push automatisch übernommen."
         required: false
       prerelease:
-        description: 'Release als Pre-Release markieren'
+        description: "Release als Pre-Release markieren"
         required: false
         type: boolean
         default: false
