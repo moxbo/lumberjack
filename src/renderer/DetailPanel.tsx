@@ -50,8 +50,12 @@ export function DetailPanel({
 
   if (!entry) {
     return (
-      <div style={{ color: "var(--color-text-secondary)" }}>
-        {t("details.noSelection")}
+      <div className="details-empty">
+        <div className="details-empty-icon">👆</div>
+        <div className="details-empty-title">{t("details.noSelection")}</div>
+        <div className="details-empty-hint">
+          Wähle einen Eintrag aus der Liste, um Details anzuzeigen.
+        </div>
       </div>
     );
   }

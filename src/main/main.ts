@@ -1122,7 +1122,29 @@ function createWindow(opts: { makePrimary?: boolean } = {}): BrowserWindow {
           })()
         : {}),
     webPreferences: {
-      preload: path.join(app.getAppPath(), "dist", "preload", "preload.js"),
+      preload: (() => {
+        // Try multiple preload paths
+        const candidates = [
+          path.join(
+            app.getAppPath(),
+            "release",
+            "app",
+            "dist",
+            "preload",
+            "preload.js",
+          ),
+          path.join(app.getAppPath(), "dist", "preload", "preload.js"),
+          path.join(__dirname, "..", "preload", "preload.js"),
+        ];
+        for (const p of candidates) {
+          try {
+            if (fs.existsSync(p)) return p;
+          } catch {
+            /* ignore */
+          }
+        }
+        return candidates[0]; // fallback
+      })(),
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: true, // Sandbox enabled for enhanced security
@@ -1446,9 +1468,27 @@ function createWindow(opts: { makePrimary?: boolean } = {}): BrowserWindow {
     } else {
       const resPath = process.resourcesPath || "";
       const distCandidates = [
+        // Primary paths for development (npm run start)
+        path.join(
+          app.getAppPath(),
+          "release",
+          "app",
+          "dist",
+          "renderer",
+          "index.html",
+        ),
         path.join(__dirname, "..", "renderer", "index.html"),
         path.join(app.getAppPath(), "dist", "renderer", "index.html"),
+        path.join(
+          process.cwd(),
+          "release",
+          "app",
+          "dist",
+          "renderer",
+          "index.html",
+        ),
         path.join(process.cwd(), "dist", "renderer", "index.html"),
+        // Production paths (packaged app)
         path.join(
           resPath,
           "app.asar.unpacked",
@@ -2255,3 +2295,48 @@ process.on("beforeExit", () => {
 
 // Export for IPC handlers and external modules
 export { settingsService, networkService, getParsers, getAdmZip, featureFlags };
+
+// ============================================================================
+// APP INITIALIZATION - Create the first window when Electron is ready
+// ============================================================================
+app
+  .whenReady()
+  .then(() => {
+    log.info("[diag] app.whenReady() fired - creating initial window");
+
+    // Register IPC handlers before creating window
+    try {
+      registerIpcHandlers();
+      log.info("[diag] IPC handlers registered successfully");
+    } catch (err) {
+      log.error(
+        "[diag] Failed to register IPC handlers:",
+        err instanceof Error ? err.message : String(err),
+      );
+    }
+
+    // Create the main window
+    try {
+      createWindow({ makePrimary: true });
+      log.info("[diag] Initial window created successfully");
+    } catch (err) {
+      log.error(
+        "[diag] Failed to create initial window:",
+        err instanceof Error ? err.stack : String(err),
+      );
+    }
+
+    // macOS: Re-create window when dock icon is clicked and no windows are open
+    app.on("activate", () => {
+      if (BrowserWindow.getAllWindows().length === 0) {
+        log.info("[diag] activate event - recreating window");
+        createWindow({ makePrimary: true });
+      }
+    });
+  })
+  .catch((err) => {
+    log.error(
+      "[diag] app.whenReady() failed:",
+      err instanceof Error ? err.stack : String(err),
+    );
+  });

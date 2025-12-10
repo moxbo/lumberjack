@@ -3853,9 +3853,23 @@ export default function App() {
                 />
               );
             })}
-            {countFiltered === 0 && (
-              <div style={{ padding: "10px", color: "#777" }}>
-                {t("list.noEntries")}
+            {countFiltered === 0 && entries.length === 0 && (
+              <div className="list-empty">
+                <div className="list-empty-icon">📋</div>
+                <div className="list-empty-title">Bereit für Logs</div>
+                <div className="list-empty-hint">
+                  Ziehe Log-Dateien hierher, starte den TCP-Server oder verbinde
+                  dich mit Elasticsearch.
+                </div>
+              </div>
+            )}
+            {countFiltered === 0 && entries.length > 0 && (
+              <div className="list-empty">
+                <div className="list-empty-icon">🔍</div>
+                <div className="list-empty-title">Keine Treffer</div>
+                <div className="list-empty-hint">
+                  Die aktiven Filter zeigen keine Ergebnisse.
+                </div>
               </div>
             )}
           </div>
@@ -3882,8 +3896,14 @@ export default function App() {
             }}
           >
             {!selectedEntry && (
-              <div style={{ color: "var(--color-text-secondary)" }}>
-                {t("details.noSelection")}
+              <div className="details-empty">
+                <div className="details-empty-icon">👆</div>
+                <div className="details-empty-title">
+                  {t("details.noSelection")}
+                </div>
+                <div className="details-empty-hint">
+                  Wähle einen Eintrag aus der Liste, um Details anzuzeigen.
+                </div>
               </div>
             )}
             {selectedEntry && (
