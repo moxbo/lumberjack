@@ -9,6 +9,51 @@ import { rendererPerf } from "../../utils/rendererPerf";
 // Mark when main.tsx starts executing
 rendererPerf.mark("main-tsx-start");
 
+// Global error handlers for renderer process stability diagnostics
+// These catch errors that escape the ErrorBoundary
+window.onerror = (message, source, lineno, colno, error) => {
+  const errorInfo = {
+    type: "window.onerror",
+    message: String(message),
+    source,
+    lineno,
+    colno,
+    stack: error?.stack,
+    timestamp: new Date().toISOString(),
+  };
+  console.error("[RENDERER CRASH] Uncaught error:", errorInfo);
+  logger.error("[RENDERER CRASH] Uncaught error:", errorInfo);
+  // Try to report to main process
+  try {
+    // @ts-expect-error - access window.api for IPC
+    window.api?.logRendererError?.(errorInfo);
+  } catch {
+    // Ignore if IPC unavailable
+  }
+  return false; // Allow default handling
+};
+
+window.onunhandledrejection = (event) => {
+  const reason = event.reason;
+  const errorInfo = {
+    type: "unhandledrejection",
+    reason:
+      reason instanceof Error
+        ? { message: reason.message, stack: reason.stack }
+        : String(reason),
+    timestamp: new Date().toISOString(),
+  };
+  console.error("[RENDERER CRASH] Unhandled rejection:", errorInfo);
+  logger.error("[RENDERER CRASH] Unhandled rejection:", errorInfo);
+  // Try to report to main process
+  try {
+    // @ts-expect-error - access window.api for IPC
+    window.api?.logRendererError?.(errorInfo);
+  } catch {
+    // Ignore if IPC unavailable
+  }
+};
+
 // Register service worker for caching static assets (deferred to avoid blocking startup)
 // Guard registration: service workers require a secure origin (https:// or localhost)
 // In Electron packaged apps the renderer is often loaded via file:// which can't register

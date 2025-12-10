@@ -40,6 +40,13 @@ const BASE_MARK_COLORS = [
   "#6B7280", // gray
 ];
 
+// Memory limits for renderer process stability
+// Maximum number of log entries to keep in memory
+// Beyond this, oldest entries are discarded (FIFO) to prevent crashes
+const MAX_RENDERER_ENTRIES = 200_000;
+// Threshold at which to start trimming (allows for burst handling)
+const TRIM_THRESHOLD_ENTRIES = MAX_RENDERER_ENTRIES * 0.9; // 180,000
+
 // Lazy-load DCFilterDialog as a component
 const DCFilterDialog = lazy(() => import("./DCFilterDialog"));
 const ElasticSearchDialog = lazy(() => import("./ElasticSearchDialog"));
@@ -151,6 +158,8 @@ export default function App() {
   }, [nextId]);
   // Leichtgewichtiger Dedupe-Cache für Datei-Quellen: source -> Set(signature)
   const fileSigCacheRef = useRef<Map<string, Set<string>>>(new Map());
+  // Dedupe-Cache für HTTP-Quellen: source -> Set(signature)
+  const httpSigCacheRef = useRef<Map<string, Set<string>>>(new Map());
   // Persistenz: Markierungen (signature -> color)
   const [marksMap, setMarksMap] = useState<Record<string, string>>({});
   const [onlyMarked, setOnlyMarked] = useState<boolean>(false);
@@ -1342,10 +1351,16 @@ export default function App() {
       const s = e?.source;
       return typeof s === "string" && !s.includes("://");
     };
+    // HTTP-Quelle: source startet mit http:// oder https://
+    const isHttpSource = (e: any) => {
+      const s = e?.source;
+      return typeof s === "string" && (s.startsWith("http://") || s.startsWith("https://"));
+    };
 
     // Bedarf für Dedupe bestimmen
     const needEsDedup = newEntries.some((e) => isElastic(e));
     const needFileDedup = newEntries.some((e) => isFileSource(e));
+    const needHttpDedup = newEntries.some((e) => isHttpSource(e));
 
     // Signatur-Set für bereits existierende ES-Einträge aufbauen (nur falls nötig)
     let existingEsSigs: Set<string> | null = null;
@@ -1371,9 +1386,25 @@ export default function App() {
       }
     }
 
-    // Batch-Deduplizierung: ES intern + Datei-Quelle pro source intern
+    // HTTP-Quelle: vorhandene Signaturen pro Quelle initialisieren, falls leer
+    if (needHttpDedup && httpSigCacheRef.current.size === 0 && entries.length) {
+      const map = httpSigCacheRef.current;
+      for (const e of entries) {
+        if (!isHttpSource(e)) continue;
+        const src = String(e.source);
+        let set = map.get(src);
+        if (!set) {
+          set = new Set<string>();
+          map.set(src, set);
+        }
+        set.add(entrySignature(e));
+      }
+    }
+
+    // Batch-Deduplizierung: ES intern + Datei-Quelle pro source intern + HTTP-Quelle pro source intern
     const batchEsSigs = new Set<string>();
     const batchFileSigsBySrc = new Map<string, Set<string>>();
+    const batchHttpSigsBySrc = new Map<string, Set<string>>();
     const accepted: any[] = [];
 
     for (const e of newEntries) {
@@ -1401,6 +1432,22 @@ export default function App() {
         if (!batchSet) {
           batchSet = new Set<string>();
           batchFileSigsBySrc.set(src, batchSet);
+        }
+        if (batchSet.has(sig)) continue;
+        batchSet.add(sig);
+        accepted.push(e);
+        continue;
+      }
+      // HTTP-Quellen-Dedupe (pro source)
+      if (needHttpDedup && isHttpSource(e)) {
+        const src = String(e.source || "");
+        const sig = entrySignature(e);
+        const existingSet = httpSigCacheRef.current.get(src);
+        if (existingSet && existingSet.has(sig)) continue;
+        let batchSet = batchHttpSigsBySrc.get(src);
+        if (!batchSet) {
+          batchSet = new Set<string>();
+          batchHttpSigsBySrc.set(src, batchSet);
         }
         if (batchSet.has(sig)) continue;
         batchSet.add(sig);
@@ -1438,6 +1485,21 @@ export default function App() {
       }
     }
 
+    // HTTP-Cache mit neu akzeptierten Einträgen aktualisieren
+    if (needHttpDedup) {
+      const map = httpSigCacheRef.current;
+      for (const n of toAdd) {
+        if (!isHttpSource(n)) continue;
+        const src = String(n.source || "");
+        let set = map.get(src);
+        if (!set) {
+          set = new Set<string>();
+          map.set(src, set);
+        }
+        set.add(entrySignature(n));
+      }
+    }
+
     console.log(
       `[renderer-diag] Adding ${toAdd.length} entries to state (after dedup from ${accepted.length})`,
     );
@@ -1453,7 +1515,19 @@ export default function App() {
     setEntries((prev) => {
       // Sort new entries only, then merge with existing sorted array - O(m log m + n+m) instead of O((n+m) log (n+m))
       const sortedNew = toAdd.slice().sort(compareByTimestampId as any);
-      const newState = mergeSorted(prev, sortedNew);
+      let newState = mergeSorted(prev, sortedNew);
+
+      // Memory safety: Trim oldest entries if we exceed the threshold
+      // This prevents the renderer from running out of memory with large log volumes
+      if (newState.length > TRIM_THRESHOLD_ENTRIES) {
+        const trimCount = newState.length - Math.floor(TRIM_THRESHOLD_ENTRIES * 0.8);
+        console.warn(
+          `[renderer-memory] Trimming ${trimCount} oldest entries (${newState.length} -> ${newState.length - trimCount}) to prevent memory overflow`,
+        );
+        // Remove oldest entries (beginning of sorted array)
+        newState = newState.slice(trimCount);
+      }
+
       console.log(
         `[renderer-diag] State updated: ${prev.length} -> ${newState.length} entries`,
       );
@@ -1755,7 +1829,18 @@ export default function App() {
     }
   }
 
+  // Refs to access current values without triggering useEffect re-runs
+  const httpPollIdRef = useRef<number | null>(httpPollId);
+  const tcpPortRef = useRef<number>(tcpPort);
+  useEffect(() => {
+    httpPollIdRef.current = httpPollId;
+  }, [httpPollId]);
+  useEffect(() => {
+    tcpPortRef.current = tcpPort;
+  }, [tcpPort]);
+
   // IPC listeners setup (deferred to not block rendering)
+  // IMPORTANT: This effect should only run ONCE on mount to avoid duplicate listeners
   useEffect(() => {
     rendererPerf.mark("ipc-setup-start");
     const offs: Array<() => void> = [];
@@ -1795,7 +1880,7 @@ export default function App() {
               }
               case "tcp-start": {
                 try {
-                  window.api.tcpStart(tcpPort);
+                  window.api.tcpStart(tcpPortRef.current);
                 } catch (e) {
                   logger.error("Fehler beim Starten des TCP-Servers:", e);
                 }
@@ -1818,7 +1903,7 @@ export default function App() {
                 break;
               }
               case "http-stop-poll": {
-                if (httpPollId != null) void httpMenuStopPoll();
+                if (httpPollIdRef.current != null) void httpMenuStopPoll();
                 break;
               }
               case "tcp-configure": {
@@ -1866,7 +1951,8 @@ export default function App() {
           logger.error("Failed to remove IPC listener:", e);
         }
     };
-  }, [httpPollId, tcpPort]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // Drag & Drop
   const [dragActive, setDragActive] = useState<boolean>(false);
@@ -1961,6 +2047,8 @@ export default function App() {
     setEsBaseline(0);
     // Datei-Dedupe-Cache leeren
     fileSigCacheRef.current = new Map();
+    // HTTP-Dedupe-Cache leeren
+    httpSigCacheRef.current = new Map();
     // Caches leeren für bessere Speicherfreigabe
     clearHighlightCache();
     clearTimestampCache();
@@ -2351,6 +2439,8 @@ export default function App() {
                         setNextId(1);
                         // Datei-Dedupe-Cache leeren, damit Files erneut geladen werden können
                         fileSigCacheRef.current = new Map();
+                        // HTTP-Dedupe-Cache leeren
+                        httpSigCacheRef.current = new Map();
                         // LoggingStore zurücksetzen (MDC etc.)
                         try {
                           (LoggingStore as any).reset();
@@ -3564,11 +3654,6 @@ export default function App() {
               try {
                 void window.api.settingsSet({ onlyMarked: false });
               } catch {}
-              try {
-                (DiagnosticContextFilter as any).reset?.();
-              } catch (e) {
-                logger.error("Resetting DiagnosticContextFilter failed:", e);
-              }
               try {
                 (TimeFilter as any).reset?.();
               } catch (e) {
