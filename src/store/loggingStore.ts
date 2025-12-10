@@ -111,6 +111,10 @@ export function computeMdcFromRaw(
 class LoggingStoreImpl {
   private _listeners = new Set<Listener>();
   private _events: LogEvent[] = [];
+  // Memory limit to prevent unbounded growth
+  // Set high enough for normal usage but prevents runaway memory consumption
+  private static readonly TRIM_THRESHOLD = 1_000_000;
+
   addLoggingStoreListener(listener: Listener) {
     if (listener && typeof listener === "object") {
       this._listeners.add(listener);
@@ -135,7 +139,24 @@ class LoggingStoreImpl {
         console.warn("computeMdcFromRaw failed:", err);
       }
     }
-    this._events.push(...events);
+
+    // Add events (use concat for better performance with large arrays)
+    if (events.length > 1000) {
+      this._events = this._events.concat(events);
+    } else {
+      this._events.push(...events);
+    }
+
+    // Trim if we exceed the threshold to prevent memory issues
+    if (this._events.length > LoggingStoreImpl.TRIM_THRESHOLD) {
+      const trimCount =
+        this._events.length - Math.floor(LoggingStoreImpl.TRIM_THRESHOLD * 0.8);
+      this._events = this._events.slice(trimCount);
+      console.warn(
+        `[LoggingStore] Trimmed ${trimCount} oldest events to prevent memory overflow`,
+      );
+    }
+
     for (const l of this._listeners) {
       try {
         l.loggingEventsAdded?.(events);

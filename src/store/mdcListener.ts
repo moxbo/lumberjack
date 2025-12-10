@@ -29,6 +29,9 @@ class MDCListenerImpl {
   private _started = false;
   private _em = new SimpleEmitter();
   public keys = new Map<string, Set<string>>(); // key -> Set(values)
+  // Memory limits to prevent unbounded growth
+  private static readonly MAX_KEYS = 1000;
+  private static readonly MAX_VALUES_PER_KEY = 10000;
   // No automatic subscription here. Call startListening() from app startup
   // (e.g. in App.jsx) to wire this listener after modules are initialized.
 
@@ -88,12 +91,24 @@ class MDCListenerImpl {
       for (const [k, v] of Object.entries(mdc)) {
         const ck = canonicalDcKey(k);
         if (!ck || typeof v !== "string") continue;
+
+        // Check key limit
         if (!this.keys.has(ck)) {
+          if (this.keys.size >= MDCListenerImpl.MAX_KEYS) {
+            // Skip new keys when at limit
+            continue;
+          }
           this.keys.set(ck, new Set());
           changed = true;
         }
+
         const set = this.keys.get(ck)!;
         if (!set.has(v)) {
+          // Check value limit per key
+          if (set.size >= MDCListenerImpl.MAX_VALUES_PER_KEY) {
+            // Skip new values when at limit for this key
+            continue;
+          }
           set.add(v);
           changed = true;
         }

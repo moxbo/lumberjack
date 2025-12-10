@@ -391,87 +391,67 @@ body {
   }
 }
 
-/* Layout grid */
+/* Layout grid - echte Trennung von Liste und Details */
 .layout {
-  /* war: grid mit drei Zeilen; jetzt relativer Container für Overlay-Details */
   flex: 1 1 auto;
   width: 100%;
   min-height: 0;
   overflow: hidden;
-  position: relative;
-  /* FIX: Stelle sicher, dass der Layout-Container und seine Kinder interaktiv sind */
+  display: flex;
+  flex-direction: column;
   pointer-events: auto;
 }
 
-/* Die Liste füllt weiterhin den verfügbaren Raum und scrollt */
+/* Die Liste füllt den verfügbaren Raum oberhalb des Detailbereichs */
 .list {
+  flex: 1 1 auto;
   overflow: auto;
-  /* volle Höhe für sichtbaren Blur-Hintergrund unter den Details */
-  height: 100%;
-  /* unten Platz, damit Inhalte nicht unter dem Overlay verschwinden */
-  padding-bottom: calc(var(--detail-height) + var(--divider-h));
-  /* Scrollbar unsichtbar, aber scrollen weiterhin möglich */
-  scrollbar-width: none; /* Firefox */
-  -ms-overflow-style: none; /* IE/Edge Legacy */
-  user-select: none; /* Standard-Textmarkierung in der Liste deaktivieren */
+  min-height: 0;
+  /* Sichtbare Scrollbar innerhalb der Liste */
+  scrollbar-width: thin; /* Firefox - dünne Scrollbar */
+  scrollbar-color: var(--color-text-disabled) transparent; /* Firefox */
+  user-select: none;
   -webkit-user-select: none;
   -ms-user-select: none;
-  /* FIX: Stelle sicher, dass die Liste selbst interaktiv ist */
   pointer-events: auto;
-  /* Performance-Optimierungen für Scroll-Container */
   overscroll-behavior: contain;
   -webkit-overflow-scrolling: touch;
 }
 
-/* Scrollbar komplett ausblenden (WebKit) */
+/* Sichtbare Scrollbar (WebKit/Chrome/Edge) */
 .list::-webkit-scrollbar {
-  width: 0;
-  height: 0;
-  display: none;
-}
-
-/* Sichtbare Scrollbar (WebKit/macOS) – deaktiviert
-.list::-webkit-scrollbar {
-  width: 12px;
-  height: 12px;
+  width: 10px;
+  height: 10px;
 }
 
 .list::-webkit-scrollbar-thumb {
-  background-color: rgba(0, 0, 0, 0.25);
-  border-radius: 8px;
-  border: 3px solid transparent;
+  background-color: var(--color-text-disabled);
+  border-radius: 5px;
+  border: 2px solid transparent;
   background-clip: content-box;
 }
 
 .list::-webkit-scrollbar-thumb:hover {
-  background-color: rgba(0, 0, 0, 0.35);
+  background-color: var(--color-text-secondary);
 }
 
 .list::-webkit-scrollbar-track {
   background: transparent;
 }
-*/
 
-/* Overlay-Container für Divider + Details als gläserisches Panel
-   liegt über der Liste und nutzt die variable --detail-height */
+/* Details-Wrapper: feste Höhe, enthält Divider und Details */
 .overlay {
-  position: absolute;
-  left: 0;
-  right: 0; /* keine Reservierung mehr für Scrollbar – volle Breite nutzen */
-  bottom: 0;
+  flex: 0 0 auto;
   height: calc(var(--detail-height) + var(--divider-h));
-  pointer-events: none; /* nur Kinder interaktiv machen */
-  z-index: 1010; /* sicher über der Liste */
-  /* FIX: Stelle sicher, dass Kinder mit pointer-events:auto auch interaktiv bleiben */
-  /* Verhindere, dass pointer-events:none Kinder blockiert */
+  display: flex;
+  flex-direction: column;
+  pointer-events: auto;
+  z-index: 1;
 }
 
 /* Divider: interaktiver Drag-Bereich mit Grifflinie */
 .divider {
-  position: absolute;
-  top: 0;
-  left: 0;
-  right: 0; /* Overlay lässt bereits Scrollbar-Platz, daher hier volle Breite */
+  flex: 0 0 var(--divider-h);
   height: var(--divider-h);
   cursor: row-resize;
   background: linear-gradient(
@@ -479,12 +459,13 @@ body {
     rgba(0, 0, 0, 0.06),
     rgba(0, 0, 0, 0.02)
   );
-  border-top: 1px solid var(--glass-border);
-  border-bottom: 1px solid var(--glass-border);
+  border-top: 1px solid var(--color-border);
+  border-bottom: 1px solid var(--color-border);
   box-shadow:
     0 -1px 0 rgba(0, 0, 0, 0.04) inset,
     0 1px 0 rgba(255, 255, 255, 0.04) inset;
-  pointer-events: auto; /* trotz Overlay klick-/drag-bar */
+  pointer-events: auto;
+  position: relative;
 }
 
 /* kleine Griff-Markierung in der Mitte */
@@ -504,28 +485,46 @@ body {
   background: rgba(255, 255, 255, 0.22);
 }
 
-/* Details panel als gläserisches Overlay über der Liste */
+/* Details panel - solider Hintergrund für klare Trennung von der Liste */
 .details {
-  position: absolute;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  top: var(--divider-h);
+  flex: 1 1 auto;
   overflow: auto;
-  background: var(--details-glass-bg);
+  /* Solider Hintergrund statt Glasmorphismus für bessere Trennung und Performance */
+  background: var(--color-bg-paper);
   background-image:
     linear-gradient(var(--details-tint), var(--details-tint)), none;
   background-blend-mode: overlay;
-  backdrop-filter: var(--glass-blur);
-  -webkit-backdrop-filter: var(--glass-blur);
-  z-index: 1;
-  border-top: 1px solid var(--glass-border);
-  box-shadow: 0 -8px 24px rgba(0, 0, 0, 0.08);
+  border-top: 1px solid var(--color-border);
+  box-shadow: 0 -4px 16px rgba(0, 0, 0, 0.1);
   padding: 20px 24px;
   min-height: 0;
   pointer-events: auto;
   contain: layout style;
   overscroll-behavior: contain;
+  /* Scrollbar-Styling für Details */
+  scrollbar-width: thin;
+  scrollbar-color: var(--color-text-disabled) transparent;
+}
+
+/* Scrollbar für Details (WebKit) */
+.details::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+.details::-webkit-scrollbar-thumb {
+  background-color: var(--color-text-disabled);
+  border-radius: 5px;
+  border: 2px solid transparent;
+  background-clip: content-box;
+}
+
+.details::-webkit-scrollbar-thumb:hover {
+  background-color: var(--color-text-secondary);
+}
+
+.details::-webkit-scrollbar-track {
+  background: transparent;
 }
 
 /* Empty state - friendly centered message */

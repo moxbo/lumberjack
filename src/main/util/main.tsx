@@ -9,6 +9,68 @@ import { rendererPerf } from "../../utils/rendererPerf";
 // Mark when main.tsx starts executing
 rendererPerf.mark("main-tsx-start");
 
+// Memory monitoring for crash diagnostics
+// Checks memory usage periodically and warns if it's getting critical
+const MEMORY_CHECK_INTERVAL = 5000; // 5 seconds
+const MEMORY_WARNING_THRESHOLD = 0.8; // 80% of JS heap limit
+let lastMemoryWarning = 0;
+
+function checkRendererMemory(): void {
+  try {
+    // @ts-expect-error - performance.memory is Chrome-specific
+    const memory = performance.memory;
+    if (memory) {
+      const usedHeap = memory.usedJSHeapSize as number;
+      const totalHeap = memory.jsHeapSizeLimit as number;
+      const usage = usedHeap / totalHeap;
+
+      // Log periodically for diagnostics
+      if (Date.now() - lastMemoryWarning > 30000) {
+        // Every 30 seconds
+        const usedMB = (usedHeap / 1024 / 1024).toFixed(1);
+        const totalMB = (totalHeap / 1024 / 1024).toFixed(1);
+        const pct = (usage * 100).toFixed(1);
+        console.warn(
+          `[renderer-memory] Heap: ${usedMB}MB / ${totalMB}MB (${pct}%)`,
+        );
+        lastMemoryWarning = Date.now();
+      }
+
+      if (usage > MEMORY_WARNING_THRESHOLD) {
+        const usedMB = (usedHeap / 1024 / 1024).toFixed(1);
+        const totalMB = (totalHeap / 1024 / 1024).toFixed(1);
+        const pct = (usage * 100).toFixed(1);
+        console.error(
+          `[RENDERER MEMORY CRITICAL] Usage at ${pct}% - crash may be imminent!`,
+          {
+            usedHeap: usedMB + "MB",
+            totalHeap: totalMB + "MB",
+            usage: pct + "%",
+          },
+        );
+        // Try to report to main process
+        try {
+          // @ts-expect-error - access window.api for IPC
+          window.api?.logRendererError?.({
+            type: "memory-critical",
+            usedHeap: usedMB,
+            totalHeap: totalMB,
+            usage: pct,
+            timestamp: new Date().toISOString(),
+          });
+        } catch {
+          // Ignore
+        }
+      }
+    }
+  } catch {
+    // Ignore errors in memory checking
+  }
+}
+
+// Start memory monitoring
+setInterval(checkRendererMemory, MEMORY_CHECK_INTERVAL);
+
 // Global error handlers for renderer process stability diagnostics
 // These catch errors that escape the ErrorBoundary
 window.onerror = (message, source, lineno, colno, error) => {

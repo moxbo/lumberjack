@@ -46,6 +46,7 @@ import { spawn } from "node:child_process";
 import * as path from "path";
 import * as fs from "fs";
 import log from "electron-log/main";
+import { crashReporter } from "electron";
 import type { LogEntry } from "../types/ipc";
 import { SettingsService } from "../services/SettingsService";
 import { NetworkService } from "../services/NetworkService";
@@ -54,6 +55,22 @@ import { AdaptiveBatchService } from "../services/AdaptiveBatchService";
 import { AsyncFileWriter } from "../services/AsyncFileWriter";
 import { HealthMonitor } from "../services/HealthMonitor";
 import { LoggingStrategy, LogLevel } from "../services/LoggingStrategy";
+
+// Initialize crash reporter early to capture crashes
+// Crash dumps are stored locally in app.getPath('crashDumps')
+try {
+  crashReporter.start({
+    submitURL: "", // No remote submission - local only
+    uploadToServer: false,
+    compress: false,
+  });
+  console.warn(
+    "[crash-reporter] Initialized, crashes will be saved to:",
+    app.getPath("crashDumps"),
+  );
+} catch (e) {
+  console.error("[crash-reporter] Failed to initialize:", e);
+}
 import { FeatureFlags } from "../services/FeatureFlags";
 import { ShutdownCoordinator } from "../services/ShutdownCoordinator";
 import { registerIpcHandlers } from "./ipcHandlers";
@@ -509,7 +526,7 @@ function sendBatchesAsyncTo(
       try {
         if (!wc || wc.isDestroyed?.()) {
           try {
-            log.debug("[freeze-diag] wc destroyed before batch send:", {
+            log.silly("[freeze-diag] wc destroyed before batch send:", {
               idx,
               batchCount,
             });
@@ -519,7 +536,8 @@ function sendBatchesAsyncTo(
           return;
         }
 
-        log.debug(
+        // Only log IPC batches at silly level (lowest) to avoid flooding console
+        log.silly(
           `[ipc-diag] Sending IPC batch on channel "${channel}": ${batch?.length || 0} entries`,
         );
         wc.send(channel, batch);
@@ -542,7 +560,7 @@ function sendBatchesAsyncTo(
           try {
             const elapsed = Date.now() - startTime;
             if (elapsed > 100) {
-              log.debug("[freeze-diag] batch send taking time:", {
+              log.silly("[freeze-diag] batch send taking time:", {
                 batchIdx: idx,
                 batchCount,
                 totalEntries,
@@ -761,16 +779,16 @@ function enqueueAppends(entries: LogEntry[]): void {
 }
 function flushPendingAppends(): void {
   if (!isRendererReady()) {
-    log.debug("[flush-diag] Renderer not ready, skipping flush");
+    log.silly("[flush-diag] Renderer not ready, skipping flush");
     return;
   }
   if (!pendingAppends.length) return;
   const wc = mainWindow?.webContents;
   if (!wc) {
-    log.debug("[flush-diag] No webContents, skipping flush");
+    log.silly("[flush-diag] No webContents, skipping flush");
     return;
   }
-  log.debug(
+  log.silly(
     `[flush-diag] Flushing ${pendingAppends.length} pending appends to main window`,
   );
   try {
@@ -781,10 +799,10 @@ function flushPendingAppends(): void {
     }
     // gestaffelt senden, damit der Event-Loop atmen kann
     sendBatchesAsyncTo(wc, "logs:append", batches);
-    log.debug(`[flush-diag] Sent ${batches.length} batches to main window`);
+    log.silly(`[flush-diag] Sent ${batches.length} batches to main window`);
   } catch (err) {
     // nicht leeren, damit später erneut versucht werden kann
-    log.debug(
+    log.silly(
       "[flush-diag] Error flushing, will retry:",
       err instanceof Error ? err.message : String(err),
     );
@@ -817,12 +835,12 @@ function enqueueAppendsFor(winId: number, entries: LogEntry[]): void {
 }
 function flushPendingAppendsFor(win: BrowserWindow): void {
   if (!isWindowReady(win)) {
-    log.debug(`[flush-diag] Window ${win.id} not ready, skipping flush`);
+    log.silly(`[flush-diag] Window ${win.id} not ready, skipping flush`);
     return;
   }
   const buf = pendingAppendsByWindow.get(win.id);
   if (!buf || !buf.length) return;
-  log.debug(
+  log.silly(
     `[flush-diag] Flushing ${buf.length} pending appends for window ${win.id}`,
   );
   const wc = win.webContents;
@@ -833,7 +851,7 @@ function flushPendingAppendsFor(win: BrowserWindow): void {
       batches.push(prepareRenderBatch(slice));
     }
     sendBatchesAsyncTo(wc, "logs:append", batches);
-    log.debug(
+    log.silly(
       `[flush-diag] Sent ${batches.length} batches to window ${win.id}`,
     );
   } catch (e) {
@@ -1727,7 +1745,7 @@ setInterval(() => {
     });
 
     if (flushTimerCount % 10 === 1 || hasPending || hasWindowPending) {
-      log.debug(
+      log.silly(
         `[flush-timer] Run #${flushTimerCount}: pendingAppends=${pendingAppends.length}, windows=${windows.size}, hasWindowPending=${hasWindowPending}`,
       );
     }
@@ -1748,7 +1766,7 @@ setInterval(() => {
   } catch (err) {
     // Ignore errors to prevent timer from being cancelled
     try {
-      log.debug(
+      log.silly(
         "[flush-timer] Periodic flush error (continuing):",
         err instanceof Error ? err.message : String(err),
       );

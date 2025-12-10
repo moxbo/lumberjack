@@ -42,10 +42,10 @@ const BASE_MARK_COLORS = [
 
 // Memory limits for renderer process stability
 // Maximum number of log entries to keep in memory
-// Beyond this, oldest entries are discarded (FIFO) to prevent crashes
-const MAX_RENDERER_ENTRIES = 200_000;
+// This is a safety limit - should rarely be hit in normal usage
+const MAX_RENDERER_ENTRIES = 1_000_000;
 // Threshold at which to start trimming (allows for burst handling)
-const TRIM_THRESHOLD_ENTRIES = MAX_RENDERER_ENTRIES * 0.9; // 180,000
+const TRIM_THRESHOLD_ENTRIES = MAX_RENDERER_ENTRIES * 0.95; // 950,000
 
 // Lazy-load DCFilterDialog as a component
 const DCFilterDialog = lazy(() => import("./DCFilterDialog"));
@@ -156,6 +156,17 @@ export default function App() {
   useEffect(() => {
     nextIdRef.current = nextId;
   }, [nextId]);
+
+  // IPC batching queue to prevent renderer overload
+  // Incoming entries are queued and processed in controlled intervals
+  const ipcQueueRef = useRef<any[]>([]);
+  const ipcProcessingRef = useRef<boolean>(false);
+  const ipcFlushTimerRef = useRef<number | null>(null);
+  // Max entries to process in one batch (prevents UI freeze)
+  const IPC_BATCH_SIZE = 5000;
+  // Min interval between processing batches (ms)
+  const IPC_PROCESS_INTERVAL = 50;
+
   // Leichtgewichtiger Dedupe-Cache für Datei-Quellen: source -> Set(signature)
   const fileSigCacheRef = useRef<Map<string, Set<string>>>(new Map());
   // Dedupe-Cache für HTTP-Quellen: source -> Set(signature)
@@ -595,23 +606,53 @@ export default function App() {
     interval: 5000,
   });
 
-  function openHttpLoadDialog() {
+  async function openHttpLoadDialog() {
+    let url = httpUrl;
     try {
-      setHttpLoadUrl(String(httpUrl || ""));
-    } catch {
-      setHttpLoadUrl("");
+      // Load fresh settings to ensure we have current httpUrl
+      if (window.api?.settingsGet) {
+        const result = await window.api.settingsGet();
+        if (result?.ok) {
+          const r = result.settings as any;
+          if (typeof r?.httpUrl === "string") {
+            url = r.httpUrl;
+            setHttpUrl(url);
+          }
+        }
+      }
+    } catch (e) {
+      logger.warn("Failed to load settings for HTTP load dialog:", e);
     }
+    setHttpLoadUrl(String(url || ""));
     setShowHttpLoadDlg(true);
   }
-  function openHttpPollDialog() {
+  async function openHttpPollDialog() {
+    let url = httpUrl;
+    let interval = httpInterval;
     try {
-      setHttpPollForm({
-        url: String(httpUrl || ""),
-        interval: Number(httpInterval || 5000),
-      });
-    } catch {
-      setHttpPollForm({ url: "", interval: 5000 });
+      // Load fresh settings to ensure we have current values
+      if (window.api?.settingsGet) {
+        const result = await window.api.settingsGet();
+        if (result?.ok) {
+          const r = result.settings as any;
+          if (typeof r?.httpUrl === "string") {
+            url = r.httpUrl;
+            setHttpUrl(url);
+          }
+          const int = r?.httpPollInterval ?? r?.httpInterval;
+          if (int != null) {
+            interval = Number(int) || 5000;
+            setHttpInterval(interval);
+          }
+        }
+      }
+    } catch (e) {
+      logger.warn("Failed to load settings for HTTP poll dialog:", e);
     }
+    setHttpPollForm({
+      url: String(url || ""),
+      interval: Number(interval || 5000),
+    });
     setShowHttpPollDlg(true);
   }
 
@@ -1326,7 +1367,11 @@ export default function App() {
     scrollToIndexCenter(targetVi);
   }
 
-  // Append entries helper
+  // Process queued entries - defined as a ref to avoid stale closure issues
+  const processIpcQueueRef = useRef<() => void>(() => {});
+
+  // Queue entries and schedule processing
+  // This prevents the renderer from being overwhelmed by rapid IPC messages
   function appendEntries(
     newEntries: any[],
     options?: { ignoreExistingForElastic?: boolean },
@@ -1338,6 +1383,49 @@ export default function App() {
       console.log(
         "[renderer-diag] appendEntries: rejecting - not array or empty",
       );
+      return;
+    }
+
+    // For small batches or Elastic queries, process directly
+    // For large TCP streams, queue to prevent overload
+    const isElasticBatch = newEntries.some(
+      (e) => typeof e?.source === "string" && e.source.startsWith("elastic://")
+    );
+
+    if (newEntries.length <= 500 || isElasticBatch || options?.ignoreExistingForElastic) {
+      // Small batch or Elastic: process immediately
+      appendEntriesInternal(newEntries, options);
+    } else {
+      // Large batch (likely TCP stream): queue for controlled processing
+      ipcQueueRef.current.push(...newEntries);
+      console.log(
+        `[renderer-memory] Queued ${newEntries.length} entries, total queued: ${ipcQueueRef.current.length}`,
+      );
+
+      // Limit queue size to prevent memory issues
+      const MAX_QUEUE_SIZE = 100_000;
+      if (ipcQueueRef.current.length > MAX_QUEUE_SIZE) {
+        const overflow = ipcQueueRef.current.length - MAX_QUEUE_SIZE;
+        ipcQueueRef.current.splice(0, overflow);
+        console.warn(
+          `[renderer-memory] Queue overflow, discarded ${overflow} oldest entries`,
+        );
+      }
+
+      // Start processing if not already running
+      if (!ipcFlushTimerRef.current && !ipcProcessingRef.current) {
+        // Use setTimeout to defer processing to next tick, ensuring processIpcQueue is defined
+        setTimeout(() => processIpcQueueRef.current(), 0);
+      }
+    }
+  }
+
+  // Internal append function that does the actual work
+  function appendEntriesInternal(
+    newEntries: any[],
+    options?: { ignoreExistingForElastic?: boolean },
+  ) {
+    if (!Array.isArray(newEntries) || newEntries.length === 0) {
       return;
     }
 
@@ -1540,6 +1628,42 @@ export default function App() {
     setNextId((prev) => prev + toAdd.length);
   }
 
+  // Process queued entries in controlled batches to prevent renderer overload
+  function processIpcQueue(): void {
+    if (ipcProcessingRef.current) return;
+    if (ipcQueueRef.current.length === 0) return;
+
+    ipcProcessingRef.current = true;
+
+    // Take a batch from the queue
+    const batch = ipcQueueRef.current.splice(0, IPC_BATCH_SIZE);
+    const remaining = ipcQueueRef.current.length;
+
+    if (remaining > 0) {
+      console.log(
+        `[renderer-memory] Processing batch of ${batch.length}, ${remaining} entries still queued`,
+      );
+    }
+
+    // Process this batch
+    appendEntriesInternal(batch);
+
+    ipcProcessingRef.current = false;
+
+    // Schedule next batch if there are more entries
+    if (ipcQueueRef.current.length > 0) {
+      if (ipcFlushTimerRef.current) {
+        clearTimeout(ipcFlushTimerRef.current);
+      }
+      ipcFlushTimerRef.current = window.setTimeout(() => {
+        ipcFlushTimerRef.current = null;
+        processIpcQueue();
+      }, IPC_PROCESS_INTERVAL);
+    }
+  }
+  // Keep ref in sync
+  processIpcQueueRef.current = processIpcQueue;
+
   // Hilfsfunktion: Anhängen mit Kappung auf verfügbare Slots
   function appendElasticCapped(
     batch: any[],
@@ -1651,8 +1775,10 @@ export default function App() {
         if (!r) return;
         if (r.tcpPort != null) setTcpPort(Number(r.tcpPort) || 5000);
         if (typeof r.httpUrl === "string") setHttpUrl(r.httpUrl);
-        if (r.httpInterval != null)
-          setHttpInterval(Number(r.httpInterval) || 5000);
+        // Support both httpPollInterval (persisted) and httpInterval (legacy)
+        const interval = r.httpPollInterval ?? r.httpInterval;
+        if (interval != null)
+          setHttpInterval(Number(interval) || 5000);
         // Entfernt: Laden einer persistierten Logger-Historie, damit Verlauf nur temporär ist
         // if (Array.isArray(r.histLogger)) setHistLogger(r.histLogger);
         if (Array.isArray(r.histAppName)) setHistAppName(r.histAppName);
@@ -1728,42 +1854,109 @@ export default function App() {
   async function openSettingsModal(
     initialTab?: "tcp" | "http" | "elastic" | "logging" | "appearance",
   ) {
+    // Load fresh settings from main process to ensure we have current values
     let curMode = themeMode;
+    let curTcpPort = tcpPort;
+    let curHttpUrl = httpUrl;
+    let curHttpInterval = httpInterval;
+    let curLogToFile = logToFile;
+    let curLogFilePath = logFilePath;
+    let curLogMaxBytes = logMaxBytes;
+    let curLogMaxBackups = logMaxBackups;
+    let curElasticUrl = elasticUrl;
+    let curElasticSize = elasticSize;
+    let curElasticUser = elasticUser;
+    let curElasticMaxParallel = elasticMaxParallel;
+
     try {
       if (window.api?.settingsGet) {
         const result = await window.api.settingsGet();
         const r = result?.ok ? (result.settings as any) : null;
-        if (r && typeof r.themeMode === "string") {
-          const mode = ["light", "dark", "system"].includes(r.themeMode)
-            ? r.themeMode
-            : "system";
-          curMode = mode;
-          setThemeMode(mode);
-          applyThemeMode(mode);
+        if (r) {
+          // Update local state AND form values from fresh settings
+          if (typeof r.themeMode === "string") {
+            const mode = ["light", "dark", "system"].includes(r.themeMode)
+              ? r.themeMode
+              : "system";
+            curMode = mode;
+            setThemeMode(mode);
+            applyThemeMode(mode);
+          }
+          if (typeof r.follow === "boolean") setFollow(!!r.follow);
+          if (typeof r.followSmooth === "boolean") setFollowSmooth(!!r.followSmooth);
+
+          // Load all form values from settings
+          if (r.tcpPort != null) {
+            curTcpPort = Number(r.tcpPort) || 5000;
+            setTcpPort(curTcpPort);
+          }
+          if (typeof r.httpUrl === "string") {
+            curHttpUrl = r.httpUrl;
+            setHttpUrl(curHttpUrl);
+          }
+          const interval = r.httpPollInterval ?? r.httpInterval;
+          if (interval != null) {
+            curHttpInterval = Number(interval) || 5000;
+            setHttpInterval(curHttpInterval);
+          }
+          if (typeof r.logToFile === "boolean") {
+            curLogToFile = r.logToFile;
+            setLogToFile(curLogToFile);
+          }
+          if (typeof r.logFilePath === "string") {
+            curLogFilePath = r.logFilePath;
+            setLogFilePath(curLogFilePath);
+          }
+          if (r.logMaxBytes != null) {
+            curLogMaxBytes = Number(r.logMaxBytes) || 5 * 1024 * 1024;
+            setLogMaxBytes(curLogMaxBytes);
+          }
+          if (r.logMaxBackups != null) {
+            curLogMaxBackups = Number(r.logMaxBackups) || 3;
+            setLogMaxBackups(curLogMaxBackups);
+          }
+          if (typeof r.elasticUrl === "string") {
+            curElasticUrl = r.elasticUrl;
+            setElasticUrl(curElasticUrl);
+          }
+          if (r.elasticSize != null) {
+            curElasticSize = Number(r.elasticSize) || 1000;
+            setElasticSize(curElasticSize);
+          }
+          if (typeof r.elasticUser === "string") {
+            curElasticUser = r.elasticUser;
+            setElasticUser(curElasticUser);
+          }
+          if (r.elasticMaxParallel != null) {
+            curElasticMaxParallel = Math.max(1, Number(r.elasticMaxParallel) || 1);
+            setElasticMaxParallel(curElasticMaxParallel);
+          }
+          if (typeof r.elasticPassEnc === "string") {
+            setElasticHasPass(!!r.elasticPassEnc.trim());
+          }
         }
-        if (r && typeof r.follow === "boolean") setFollow(!!r.follow);
-        if (r && typeof r.followSmooth === "boolean")
-          setFollowSmooth(!!r.followSmooth);
       }
-    } catch {}
+    } catch (e) {
+      logger.warn("Failed to load settings for modal:", e);
+    }
     setForm({
-      tcpPort,
-      httpUrl,
-      httpInterval,
-      logToFile,
-      logFilePath,
+      tcpPort: curTcpPort,
+      httpUrl: curHttpUrl,
+      httpInterval: curHttpInterval,
+      logToFile: curLogToFile,
+      logFilePath: curLogFilePath,
       logMaxMB: Math.max(
         1,
-        Math.round((logMaxBytes || 5 * 1024 * 1024) / (1024 * 1024)),
+        Math.round((curLogMaxBytes || 5 * 1024 * 1024) / (1024 * 1024)),
       ),
-      logMaxBackups,
+      logMaxBackups: curLogMaxBackups,
       themeMode: curMode,
-      elasticUrl,
-      elasticSize,
-      elasticUser,
+      elasticUrl: curElasticUrl,
+      elasticSize: curElasticSize,
+      elasticUser: curElasticUser,
       elasticPassNew: "",
       elasticPassClear: false,
-      elasticMaxParallel: elasticMaxParallel || 1,
+      elasticMaxParallel: curElasticMaxParallel || 1,
     });
     setSettingsTab(initialTab || "tcp");
     setShowSettings(true);
@@ -1786,7 +1979,7 @@ export default function App() {
     const patch: any = {
       tcpPort: port,
       httpUrl: String(form.httpUrl || "").trim(),
-      httpInterval: interval,
+      httpPollInterval: interval,
       logToFile: toFile,
       logFilePath: path,
       logMaxBytes: maxBytes,
@@ -2645,7 +2838,7 @@ export default function App() {
                     setHttpInterval(ms);
                     await window.api.settingsSet({
                       httpUrl: url,
-                      httpInterval: ms,
+                      httpPollInterval: ms,
                     } as any);
                     const r = await window.api.httpStartPoll({
                       url,

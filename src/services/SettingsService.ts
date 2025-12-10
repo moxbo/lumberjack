@@ -57,12 +57,23 @@ interface ValidationResult {
  */
 export class SettingsService {
   private settings: Settings;
-  private readonly settingsPath: string;
+  private _settingsPath: string | null = null;
   private loaded = false;
 
   constructor() {
     this.settings = { ...DEFAULT_SETTINGS };
-    this.settingsPath = this.resolveSettingsPath();
+  }
+
+  /**
+   * Get settings file path (lazy-resolved to ensure app is ready)
+   */
+  private get settingsPath(): string {
+    if (this._settingsPath) {
+      return this._settingsPath;
+    }
+    this._settingsPath = this.resolveSettingsPath();
+    log.info("[settings] Resolved settings path:", this._settingsPath);
+    return this._settingsPath;
   }
 
   /**
@@ -75,12 +86,19 @@ export class SettingsService {
     }
     try {
       if (app && typeof app.getPath === "function") {
-        return path.join(app.getPath("userData"), "settings.json");
+        const userDataPath = app.getPath("userData");
+        if (userDataPath) {
+          return path.join(userDataPath, "settings.json");
+        }
       }
-    } catch {
-      // ignore
+    } catch (err) {
+      log.warn(
+        "[settings] app.getPath('userData') failed:",
+        err instanceof Error ? err.message : String(err),
+      );
     }
     // Fallback für Nicht-Electron-Testkontexte
+    log.warn("[settings] Using fallback path (process.cwd)");
     return path.join(process.cwd(), ".test-settings", "settings.json");
   }
 
@@ -122,7 +140,9 @@ export class SettingsService {
    */
   loadSync(): void {
     try {
+      log.info("[settings] loadSync() called, path:", this.settingsPath);
       if (!fs.existsSync(this.settingsPath)) {
+        log.info("[settings] loadSync(): File not found, using defaults");
         this.loaded = true;
         return;
       }
@@ -130,11 +150,19 @@ export class SettingsService {
       const raw = fs.readFileSync(this.settingsPath, "utf8");
       const parsed = JSON.parse(raw) as Partial<Settings> &
         Record<string, unknown>;
+      log.info(
+        "[settings] loadSync(): parsed httpUrl:",
+        (parsed as any).httpUrl || "(empty)",
+      );
       // Entferne veraltete Schlüssel
       if ("windowTitle" in parsed) {
         delete (parsed as Record<string, unknown>)["windowTitle"];
       }
       this.settings = { ...DEFAULT_SETTINGS, ...parsed } as Settings;
+      log.info(
+        "[settings] loadSync(): merged httpUrl:",
+        this.settings.httpUrl || "(empty)",
+      );
       this.loaded = true;
     } catch (err) {
       log.error(
@@ -264,9 +292,17 @@ export class SettingsService {
    */
   get(): Settings {
     if (!this.loaded) {
+      log.info(
+        "[settings] get() called but not loaded yet, calling loadSync()",
+      );
       this.loadSync();
     }
-    return JSON.parse(JSON.stringify(this.settings)) as Settings;
+    const result = JSON.parse(JSON.stringify(this.settings)) as Settings;
+    log.debug(
+      "[settings] get() returning settings with httpUrl:",
+      result.httpUrl || "(empty)",
+    );
+    return result;
   }
 
   /**
