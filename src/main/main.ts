@@ -241,7 +241,11 @@ let parsers: typeof import("./parsers.cjs") | null = null;
 function getParsers(): typeof import("./parsers.cjs") {
   if (!parsers) {
     const appRoot = app.getAppPath();
-    const parserPath = path.join(appRoot, "src", "main", "parsers.cjs");
+    // In production (packaged), parsers.cjs is in dist/main/
+    // In development, it's built to src/main/
+    const parserPath = app.isPackaged
+      ? path.join(appRoot, "dist", "main", "parsers.cjs")
+      : path.join(appRoot, "src", "main", "parsers.cjs");
     // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
     parsers = require(parserPath) as typeof import("./parsers.cjs");
   }
@@ -1129,23 +1133,34 @@ function createWindow(opts: { makePrimary?: boolean } = {}): BrowserWindow {
   const { makePrimary } = opts;
   const settings = settingsService.get();
   const { width, height, x, y } = settings.windowBounds || {};
+
+  // Resolve icon path early and create nativeImage for reliable icon loading
+  const getWindowIcon = () => {
+    if (process.platform === "darwin") {
+      const iconPath = resolveMacIconPath();
+      if (iconPath) {
+        const icon = nativeImage.createFromPath(iconPath);
+        return !icon.isEmpty() ? { icon } : {};
+      }
+      return {};
+    } else if (process.platform === "win32") {
+      const iconPath = resolveIconPathSync();
+      if (iconPath) {
+        const icon = nativeImage.createFromPath(iconPath);
+        return !icon.isEmpty() ? { icon } : {};
+      }
+      return {};
+    }
+    return {};
+  };
+
   const win = new BrowserWindow({
     width: width || 1200,
     height: height || 800,
     ...(x != null && y != null ? { x, y } : {}),
     title: getDefaultBaseTitle(),
     // Icon bereits beim Erzeugen setzen (wichtig für Taskbar/Alt-Tab unter Windows und Dock auf macOS)
-    ...(process.platform === "darwin"
-      ? (() => {
-          const iconPath = resolveMacIconPath();
-          return iconPath ? { icon: iconPath } : {};
-        })()
-      : process.platform === "win32"
-        ? (() => {
-            const iconPath = resolveIconPathSync();
-            return iconPath ? { icon: iconPath } : {};
-          })()
-        : {}),
+    ...getWindowIcon(),
     webPreferences: {
       preload: (() => {
         // Try multiple preload paths
@@ -1191,11 +1206,20 @@ function createWindow(opts: { makePrimary?: boolean } = {}): BrowserWindow {
         try {
           // Validate file access before setting
           if (canAccessFile(iconPath) && isValidIcoFile(iconPath)) {
-            win.setIcon(iconPath);
-            log.info?.(
-              "[icon] Windows icon set immediately at window creation:",
-              iconPath,
-            );
+            // Use nativeImage for more reliable icon loading
+            const icon = nativeImage.createFromPath(iconPath);
+            if (!icon.isEmpty()) {
+              win.setIcon(icon);
+              log.info?.(
+                "[icon] Windows icon set immediately at window creation:",
+                iconPath,
+              );
+            } else {
+              log.warn?.(
+                "[icon] nativeImage is empty for path:",
+                iconPath,
+              );
+            }
           } else {
             log.warn?.(
               "[icon] Icon file exists but failed validation checks:",

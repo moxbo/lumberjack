@@ -5,7 +5,7 @@
   "main": "dist-main/main.cjs",
   "type": "module",
   "scripts": {
-    "prebuild": "esbuild src/main/parsers.ts src/utils/settings.ts --outdir=src --out-extension:.js=.cjs --format=cjs --platform=node && npm run build:main && npm run build:preload && npm run build:main-local",
+    "prebuild": "esbuild src/main/parsers.ts src/utils/settings.ts --outdir=src --out-extension:.js=.cjs --format=cjs --platform=node && esbuild src/main/parsers.ts --outfile=release/app/dist/main/parsers.cjs --format=cjs --platform=node && npm run build:main && npm run build:preload && npm run build:main-local",
     "build:main": "esbuild src/main/main.ts --bundle --outfile=release/app/dist/main/main.js --platform=node --format=cjs --external:electron --external:electron-log/main && esbuild src/main/ipcHandlers.ts --bundle --outfile=release/app/dist/main/ipcHandlers.js --platform=node --format=cjs --external:electron --external:electron-log/main",
     "build:main-local": "esbuild src/main/main.ts --bundle --outfile=dist-main/main.cjs --platform=node --format=cjs --external:electron --external:electron-log/main && esbuild src/main/ipcHandlers.ts --bundle --outfile=dist-main/ipcHandlers.cjs --platform=node --format=cjs --external:electron --external:electron-log/main",
     "build:preload": "esbuild preload.ts --outfile=release/app/dist/preload/preload.js --bundle --platform=node --format=cjs --external:electron",
@@ -54,6 +54,7 @@
     "playwright-electron": "^0.5.0",
     "png-to-ico": "^3.0.1",
     "prettier": "^3.6.2",
+    "rcedit": "^5.0.2",
     "sharp": "^0.34.5",
     "ts-node": "^10.9.2",
     "tsx": "^4.20.6",
@@ -70,6 +71,11 @@
   "build": {
     "appId": "de.hhla.lumberjack",
     "productName": "Lumberjack",
+    "afterPack": "./scripts/afterPack.cjs",
+    "extraMetadata": {
+      "name": "Lumberjack",
+      "description": "Lumberjack"
+    },
     "directories": {
       "app": "release/app",
       "buildResources": "assets",
@@ -77,11 +83,13 @@
     },
     "files": [
       "dist/**/*",
+      "images/**/*",
       "package.json"
     ],
     "asar": true,
     "asarUnpack": [
-      "**/*.node"
+      "**/*.node",
+      "images/**/*"
     ],
     "artifactName": "Lumberjack-${version}-${arch}.${ext}",
     "compression": "store",
@@ -91,6 +99,10 @@
       "en-US"
     ],
     "win": {
+      "icon": "assets/icon.ico",
+      "executableName": "Lumberjack",
+      "legalTrademarks": "",
+      "fileAssociations": [],
       "target": [
         {
           "target": "portable",
@@ -100,7 +112,7 @@
         },
         "nsis"
       ],
-      "signAndEditExecutable": false,
+      "signAndEditExecutable": true,
       "forceCodeSigning": false,
       "signExts": []
     },

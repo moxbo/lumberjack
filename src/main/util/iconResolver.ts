@@ -52,15 +52,21 @@ function getIconCandidates(filename: string): string[] {
   const appPath = app.getAppPath?.() || "";
   const cwdPath = process.cwd();
 
+  // For packaged apps, app.getAppPath() returns path to app.asar
+  // We need to check app.asar.unpacked for native resources like icons
+  const asarUnpackedPath = appPath.replace("app.asar", "app.asar.unpacked");
+
   return [
-    // Production: app.asar.unpacked (highest priority for packaged app)
+    // Production: app.asar.unpacked (highest priority for packaged app with asarUnpack)
+    path.join(asarUnpackedPath, "images", filename),
     path.join(resPath, "app.asar.unpacked", "images", filename),
+    // Production: Inside ASAR (fallback - may work for some use cases)
+    path.join(appPath, "images", filename),
     path.join(resPath, "images", filename),
     // Development: Project root first
     path.join(cwdPath, "images", filename),
     // Development: __dirname and project root
     path.join(__dirname, "images", filename),
-    path.join(appPath, "images", filename),
     // Additional fallback: Go up from compiled location
     path.join(__dirname, "..", "..", "images", filename),
     path.join(__dirname, "..", "images", filename),
@@ -75,9 +81,17 @@ export function resolveIconPathSync(): string | null {
 
   const candidates = getIconCandidates("icon.ico");
 
+  log.info?.("[icon] resolveIconPathSync searching in candidates:", candidates);
+  log.info?.("[icon] app.isPackaged:", app.isPackaged);
+  log.info?.("[icon] app.getAppPath():", app.getAppPath?.());
+  log.info?.("[icon] process.resourcesPath:", process.resourcesPath);
+
   for (const candidate of candidates) {
     try {
-      if (fs.existsSync(candidate)) {
+      const exists = fs.existsSync(candidate);
+      log.debug?.("[icon] Checking candidate:", candidate, "exists:", exists);
+
+      if (exists) {
         if (!canAccessFile(candidate)) {
           log.debug?.("[icon] Candidate exists but not readable:", candidate);
           continue;
