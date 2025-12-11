@@ -7,7 +7,6 @@ import {
   getStr,
   getTs,
   levelClass,
-  renderLoggerNameList,
 } from "../utils/format";
 
 interface LogRowProps {
@@ -140,11 +139,7 @@ const LogRowComponent = ({
           {entry.level ? String(entry.level) : ""}
         </span>
       </div>
-      {!compact && (
-        <div className="col logger">
-          {renderLoggerNameList(getStr(entry, "logger"))}
-        </div>
-      )}
+      {!compact && <div className="col logger">{getStr(entry, "logger")}</div>}
       <div
         className="col msg"
         dangerouslySetInnerHTML={{
