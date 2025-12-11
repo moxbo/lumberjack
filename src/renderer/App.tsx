@@ -3519,14 +3519,14 @@ export default function App() {
             onClick={() => gotoMarked(-1)}
             disabled={markedIdx.length === 0}
           >
-            ◀ {t("toolbar.prevMark")}
+            ▲ {t("toolbar.prevMark")}
           </button>
           <button
             title={t("toolbar.nextMarkTooltip")}
             onClick={() => gotoMarked(1)}
             disabled={markedIdx.length === 0}
           >
-            {t("toolbar.nextMark")} ▶
+            {t("toolbar.nextMark")} ▼
           </button>
           <button
             onClick={() =>
@@ -3806,7 +3806,7 @@ export default function App() {
             disabled={!search.trim() || searchMatchIdx.length === 0}
             onClick={() => gotoSearchMatch(-1)}
           >
-            ◀
+            ▲
           </button>
           <span
             style={{
@@ -3826,7 +3826,7 @@ export default function App() {
             disabled={!search.trim() || searchMatchIdx.length === 0}
             onClick={() => gotoSearchMatch(1)}
           >
-            ▶
+            ▼
           </button>
         </div>
         <div className="section">
