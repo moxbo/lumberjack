@@ -4,8 +4,31 @@ import preact from "@preact/preset-vite";
 export default defineConfig({
   plugins: [preact()],
   base: "./",
+  // Disable HMR to prevent Prefresh render loop issues
+  server: {
+    hmr: false,
+  },
+  // Disable preact/debug in development to prevent render limit errors
+  // The render limit in preact/debug is too strict for components with many hooks
+  define: {
+    // Prevent preact/debug from being included
+    "process.env.NODE_ENV": JSON.stringify(
+      process.env.NODE_ENV === "production" ? "production" : "development",
+    ),
+  },
+  optimizeDeps: {
+    // Exclude prefresh and preact/debug from optimization
+    exclude: ["@prefresh/core", "@prefresh/vite", "preact/debug"],
+  },
   resolve: {
     dedupe: ["preact", "preact/hooks", "preact/compat"],
+    alias: {
+      // Alias preact/debug to an empty module in development
+      // This prevents the "Too many re-renders" limit from triggering
+      ...(process.env.NODE_ENV !== "production" && {
+        "preact/debug": "preact",
+      }),
+    },
   },
   build: {
     // Optimize build for faster startup

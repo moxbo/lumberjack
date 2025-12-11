@@ -171,8 +171,12 @@ function mergeSorted(prevSorted: any[], newSorted: any[]): any[] {
 }
 
 export default function App() {
-  // Track component initialization
-  rendererPerf.mark("app-component-init");
+  // Track component initialization (only once via ref to avoid re-marking on every render)
+  const initMarkedRef = useRef(false);
+  if (!initMarkedRef.current) {
+    initMarkedRef.current = true;
+    rendererPerf.mark("app-component-init");
+  }
 
   // i18n hook
   const { t, locale, setLocale } = useI18n();
