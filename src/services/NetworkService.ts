@@ -67,9 +67,9 @@ export class NetworkService {
   private toEntry: EntryConverterFn | null = null;
 
   // Memory leak prevention constants
-  private static readonly MAX_BUFFER_SIZE = 1024 * 1024; // 1MB max buffer per socket
+  private static readonly MAX_BUFFER_SIZE = 10 * 1024 * 1024; // 10MB max buffer per socket
   private static readonly SOCKET_TIMEOUT_MS = 5 * 60 * 1000; // 5 minutes timeout
-  private static readonly MAX_LINE_LENGTH = 100 * 1024; // 100KB max line length
+  private static readonly MAX_LINE_LENGTH = 5 * 1024 * 1024; // 5MB max line length (will be truncated in renderer)
   private static readonly MAX_SEEN_ENTRIES = 10000; // Max deduplication entries per poller
 
   // Additional robustness constants
@@ -80,11 +80,105 @@ export class NetworkService {
   // Track active sockets for monitoring
   private activeSockets = new Set<net.Socket>();
 
+  // TCP batching for improved throughput
+  private static readonly TCP_BATCH_SIZE = 500; // Max entries per batch
+  private static readonly TCP_BATCH_INTERVAL_MS = 50; // Flush interval in ms
+  private tcpBatchQueue: LogEntry[] = [];
+  private tcpBatchTimer: NodeJS.Timeout | null = null;
+
+  // HTTP batching for improved throughput (similar to TCP)
+  private static readonly HTTP_BATCH_SIZE = 500; // Max entries per batch
+  private static readonly HTTP_BATCH_INTERVAL_MS = 50; // Flush interval in ms
+  private httpBatchQueue: LogEntry[] = [];
+  private httpBatchTimer: NodeJS.Timeout | null = null;
+
   /**
    * Set the log callback function
    */
   setLogCallback(callback: LogCallback): void {
     this.logCallback = callback;
+  }
+
+  /**
+   * Queue a TCP entry for batched sending
+   * This significantly improves throughput for high-volume TCP streams
+   */
+  private queueTcpEntry(entry: LogEntry): void {
+    this.tcpBatchQueue.push(entry);
+
+    // Flush immediately if batch is full
+    if (this.tcpBatchQueue.length >= NetworkService.TCP_BATCH_SIZE) {
+      this.flushTcpBatch();
+      return;
+    }
+
+    // Schedule flush if not already scheduled
+    if (!this.tcpBatchTimer) {
+      this.tcpBatchTimer = setTimeout(() => {
+        this.flushTcpBatch();
+      }, NetworkService.TCP_BATCH_INTERVAL_MS);
+    }
+  }
+
+  /**
+   * Flush the TCP batch queue
+   */
+  private flushTcpBatch(): void {
+    if (this.tcpBatchTimer) {
+      clearTimeout(this.tcpBatchTimer);
+      this.tcpBatchTimer = null;
+    }
+
+    if (this.tcpBatchQueue.length === 0) {
+      return;
+    }
+
+    const batch = this.tcpBatchQueue;
+    this.tcpBatchQueue = [];
+
+    log.debug(`[tcp] Flushing batch of ${batch.length} entries`);
+    this.sendLogs(batch);
+  }
+
+  /**
+   * Queue HTTP entries for batched sending
+   * This significantly improves throughput for high-volume HTTP responses
+   */
+  private queueHttpEntries(entries: LogEntry[]): void {
+    this.httpBatchQueue.push(...entries);
+
+    // Flush immediately if batch is full
+    if (this.httpBatchQueue.length >= NetworkService.HTTP_BATCH_SIZE) {
+      this.flushHttpBatch();
+      return;
+    }
+
+    // Schedule flush if not already scheduled
+    if (!this.httpBatchTimer) {
+      this.httpBatchTimer = setTimeout(() => {
+        this.flushHttpBatch();
+      }, NetworkService.HTTP_BATCH_INTERVAL_MS);
+    }
+  }
+
+  /**
+   * Flush the HTTP batch queue
+   */
+  private flushHttpBatch(): void {
+    if (this.httpBatchTimer) {
+      clearTimeout(this.httpBatchTimer);
+      this.httpBatchTimer = null;
+    }
+
+    if (this.httpBatchQueue.length === 0) {
+      return;
+    }
+
+    const batch = this.httpBatchQueue;
+    this.httpBatchQueue = [];
+
+    log.debug(`[http] Flushing batch of ${batch.length} entries`);
+    this.sendLogs(batch);
   }
 
   /**
@@ -220,7 +314,7 @@ export class NetworkService {
             }
 
             const entry = toEntry(obj, "", `tcp:${remoteAddr}:${remotePort}`);
-            this.sendLogs([entry]);
+            this.queueTcpEntry(entry);
           }
         } catch (err) {
           log.error(
@@ -337,6 +431,9 @@ export class NetworkService {
         running: false,
       });
     }
+
+    // Flush any pending batched entries before stopping
+    this.flushTcpBatch();
 
     return new Promise<TcpStatus>((resolve) => {
       // Close all active sockets first
@@ -540,7 +637,7 @@ export class NetworkService {
             : parseTextLines(url, text);
           const fresh = this.dedupeNewEntries(entries, seen);
           if (fresh.length) {
-            this.sendLogs(fresh);
+            this.queueHttpEntries(fresh);
           }
         } catch (err) {
           const message = err instanceof Error ? err.message : String(err);
@@ -578,6 +675,9 @@ export class NetworkService {
       return { ok: false, error: "Poller not found" };
     }
 
+    // Flush any pending batched entries before stopping
+    this.flushHttpBatch();
+
     clearInterval(poller.timer);
     this.httpPollers.delete(id);
     log.info(`HTTP poller ${id} stopped`);
@@ -589,6 +689,9 @@ export class NetworkService {
    * Stop all HTTP pollers
    */
   stopAllHttpPollers(): void {
+    // Flush any pending batched entries before stopping
+    this.flushHttpBatch();
+
     for (const poller of this.httpPollers.values()) {
       clearInterval(poller.timer);
     }
