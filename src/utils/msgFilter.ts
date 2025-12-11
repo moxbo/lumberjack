@@ -17,14 +17,22 @@ export interface MsgMatchOptions {
   mode?: SearchMode;
 }
 
+// Token-Typen außerhalb der Funktion für bessere Performance
+type TokType = "AND" | "OR" | "NOT" | "LPAREN" | "RPAREN" | "WORD";
+interface Token {
+  readonly t: TokType;
+  readonly v?: string;
+}
+
 export function msgMatches(
   message: string,
   expr: string,
   options?: MsgMatchOptions,
 ): boolean {
-  const mode = options?.mode || "insensitive";
-  const rawMsg = String(message || "");
-  const rawExpr = String(expr || "").trim();
+  const mode = options?.mode ?? "insensitive";
+  // Frühe Null-Checks
+  const rawMsg = message ?? "";
+  const rawExpr = (expr ?? "").trim();
 
   // Für Regex-Modus: gesamten Ausdruck als Regex behandeln (ohne AND/OR-Parsing)
   if (mode === "regex") {
@@ -42,9 +50,6 @@ export function msgMatches(
   const m = mode === "sensitive" ? rawMsg : rawMsg.toLowerCase();
   const q = mode === "sensitive" ? rawExpr : rawExpr.toLowerCase();
   if (!q) return true;
-
-  type TokType = "AND" | "OR" | "NOT" | "LPAREN" | "RPAREN" | "WORD";
-  type Token = { t: TokType; v?: string };
 
   // Tokenizer: zerlegt in Operatoren und Wörter; ignoriert Whitespace
   function tokenize(s: string): Token[] {
@@ -125,19 +130,57 @@ export function msgMatches(
     let left = evalNot();
     while (peek()?.t === "AND") {
       take();
-      const right = evalNot();
-      left = left && right;
+      // Echte Kurzschluss-Logik: wenn left=false, überspringen wir die Evaluation
       if (!left) {
-        // Kurzschluss: weitere AND-Komponenten konsumieren und ignorieren
-        while (peek()?.t === "AND") {
-          take();
-          // Konsumiere die nächste not-Komponente dennoch vollständig
-          void evalNot();
-        }
-        return false;
+        // Konsumiere Tokens aber werte nicht aus (schneller Pfad)
+        skipNotExpr();
+      } else {
+        left = evalNot();
       }
     }
     return left;
+  }
+
+  // Hilfsfunktion: Überspringt eine not-Expression ohne sie auszuwerten
+  function skipNotExpr(): void {
+    while (peek()?.t === "NOT") take();
+    skipPrimary();
+  }
+
+  // Hilfsfunktion: Überspringt eine primary-Expression ohne sie auszuwerten
+  function skipPrimary(): void {
+    const tk = peek();
+    if (!tk) return;
+    if (tk.t === "WORD") {
+      take();
+      return;
+    }
+    if (tk.t === "LPAREN") {
+      take(); // '('
+      skipOr();
+      if (peek()?.t === "RPAREN") take();
+      return;
+    }
+    // Unerwartetes Token überspringen
+    take();
+  }
+
+  // Hilfsfunktion: Überspringt eine and-Expression ohne sie auszuwerten
+  function skipAnd(): void {
+    skipNotExpr();
+    while (peek()?.t === "AND") {
+      take();
+      skipNotExpr();
+    }
+  }
+
+  // Hilfsfunktion: Überspringt eine or-Expression ohne sie auszuwerten
+  function skipOr(): void {
+    skipAnd();
+    while (peek()?.t === "OR") {
+      take();
+      skipAnd();
+    }
   }
 
   // or := and ('OR' and)*
@@ -145,16 +188,12 @@ export function msgMatches(
     let left = evalAnd();
     while (peek()?.t === "OR") {
       take();
-      const right = evalAnd();
-      left = left || right;
+      // Echte Kurzschluss-Logik: wenn left=true, überspringen wir die Evaluation
       if (left) {
-        // Kurzschluss: weitere OR-Komponenten konsumieren und ignorieren
-        while (peek()?.t === "OR") {
-          take();
-          // Konsumiere die nächste and-Komponente dennoch vollständig
-          void evalAnd();
-        }
-        return true;
+        // Konsumiere Tokens aber werte nicht aus (schneller Pfad)
+        skipAnd();
+      } else {
+        left = evalAnd();
       }
     }
     return left;
