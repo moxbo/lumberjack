@@ -27,6 +27,7 @@ export default function ElasticSearchDialog(props: any) {
       logger: "",
       level: "",
       environment: "",
+      message: "", // NEU: Message-Filter
       // NEW: environment case handling
       environmentCase: "original", // 'original' | 'lower' | 'upper' | 'case-sensitive'
       loadMode: "append", // geändert: Standard jetzt 'append' statt 'replace'
@@ -79,6 +80,7 @@ export default function ElasticSearchDialog(props: any) {
         logger: (base as any).logger || "",
         level: (base as any).level || "",
         environment: (base as any).environment || "",
+        message: (base as any).message || "",
         environmentCase: envCase,
         loadMode: (base as any).loadMode || "append", // geändert: Default beim Öffnen
         index: (base as any).index || "",
@@ -393,7 +395,8 @@ export default function ElasticSearchDialog(props: any) {
               {(form.application_name ||
                 form.logger ||
                 form.level ||
-                form.environment) && (
+                form.environment ||
+                form.message) && (
                 <span className="section-filled-badge">Aktiv</span>
               )}
             </h4>
@@ -565,6 +568,77 @@ export default function ElasticSearchDialog(props: any) {
                 }
                 placeholder="Logger enthält…"
               />
+            </div>
+
+            {/* Message Filter */}
+            <div className="kv">
+              <span>Message</span>
+              <div
+                style={{ display: "flex", flexDirection: "column", gap: "4px" }}
+              >
+                <input
+                  type="text"
+                  value={form.message}
+                  onInput={(e) =>
+                    setForm({ ...form, message: e.currentTarget.value })
+                  }
+                  placeholder="z.B. error, timeout, xml&(CB24|CB27)"
+                  style={{ width: "100%" }}
+                />
+                <span
+                  style={{
+                    fontSize: "11px",
+                    color: "var(--color-text-secondary)",
+                    lineHeight: "1.3",
+                  }}
+                >
+                  Einfache Begriffe werden serverseitig gefiltert. Erweiterte
+                  Syntax (
+                  <code
+                    style={{
+                      background: "var(--color-bg-hover)",
+                      padding: "1px 4px",
+                      borderRadius: "3px",
+                    }}
+                  >
+                    &
+                  </code>{" "}
+                  = UND,
+                  <code
+                    style={{
+                      background: "var(--color-bg-hover)",
+                      padding: "1px 4px",
+                      borderRadius: "3px",
+                      marginLeft: "4px",
+                    }}
+                  >
+                    |
+                  </code>{" "}
+                  = ODER,
+                  <code
+                    style={{
+                      background: "var(--color-bg-hover)",
+                      padding: "1px 4px",
+                      borderRadius: "3px",
+                      marginLeft: "4px",
+                    }}
+                  >
+                    !
+                  </code>{" "}
+                  = NICHT,
+                  <code
+                    style={{
+                      background: "var(--color-bg-hover)",
+                      padding: "1px 4px",
+                      borderRadius: "3px",
+                      marginLeft: "4px",
+                    }}
+                  >
+                    ()
+                  </code>
+                  ) wird nach dem Laden angewendet.
+                </span>
+              </div>
             </div>
           </div>
         </div>

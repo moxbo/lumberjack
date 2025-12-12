@@ -1735,18 +1735,32 @@ export default function App() {
   // Keep ref in sync
   processIpcQueueRef.current = processIpcQueue;
 
+  // Prüft, ob ein Message-Filter erweiterte Syntax enthält (& | ! ())
+  function hasAdvancedSyntax(filter: string): boolean {
+    const trimmed = (filter || "").trim();
+    return /[&|!()]/.test(trimmed);
+  }
+
   // Hilfsfunktion: Anhängen mit Kappung auf verfügbare Slots
   function appendElasticCapped(
     batch: any[],
     available: number,
-    options?: { ignoreExistingForElastic?: boolean },
+    options?: { ignoreExistingForElastic?: boolean; messageFilter?: string },
   ): number {
-    const take = Math.max(
-      0,
-      Math.min(available, Array.isArray(batch) ? batch.length : 0),
-    );
+    let filtered = Array.isArray(batch) ? batch : [];
+
+    // Client-seitige Message-Filterung für erweiterte Syntax
+    const msgFilter = options?.messageFilter?.trim();
+    if (msgFilter && hasAdvancedSyntax(msgFilter)) {
+      filtered = filtered.filter((entry) => {
+        const msg = entry?.message || "";
+        return msgMatches(msg, msgFilter);
+      });
+    }
+
+    const take = Math.max(0, Math.min(available, filtered.length));
     if (take <= 0) return 0;
-    appendEntries(batch.slice(0, take), options);
+    appendEntries(filtered.slice(0, take), options);
     return take;
   }
 
@@ -2759,6 +2773,7 @@ export default function App() {
                       logger: formVals.logger,
                       level: formVals.level,
                       environment: formVals.environment,
+                      message: formVals.message,
                       environmentCase: formVals.environmentCase || "original",
                       allowInsecureTLS: !!formVals.allowInsecureTLS,
                       // optionale PIT-Optimierungen
@@ -2825,12 +2840,14 @@ export default function App() {
                       }
 
                       // Anhängen mit Kappung
+                      const messageFilter = formVals.message || "";
                       if (Array.isArray(res.entries) && res.entries.length) {
                         const used = appendElasticCapped(
                           res.entries as any[],
                           available,
                           {
                             ignoreExistingForElastic: loadMode === "replace",
+                            messageFilter,
                           },
                         );
                         available = Math.max(0, available - used);
@@ -2860,6 +2877,7 @@ export default function App() {
                           const used2 = appendElasticCapped(
                             r2.entries as any[],
                             available,
+                            { messageFilter },
                           );
                           available = Math.max(0, available - used2);
                         }
@@ -4433,6 +4451,7 @@ export default function App() {
                       logger: f?.logger,
                       level: f?.level,
                       environment: f?.environment,
+                      message: f?.message,
                       environmentCase: f?.environmentCase || "original",
                       allowInsecureTLS: !!f?.allowInsecureTLS,
                       ...(token && Array.isArray(token) && token.length > 0
@@ -4440,12 +4459,14 @@ export default function App() {
                         : {}),
                       pitSessionId: esPitSessionId || undefined,
                     } as any;
+                    const messageFilter = f?.message || "";
                     const res = await window.api.elasticSearch(opts);
                     if (res?.ok) {
                       if (Array.isArray(res.entries) && res.entries.length) {
                         const used = appendElasticCapped(
                           res.entries as any[],
                           available,
+                          { messageFilter },
                         );
                         available = Math.max(0, available - used);
                       }
@@ -4987,6 +5008,119 @@ export default function App() {
                     <strong>DC-Filter:</strong> MDC-Keys wie TraceID, SpanID
                   </li>
                 </ul>
+              </section>
+
+              <section style={{ marginBottom: "20px" }}>
+                <h4
+                  style={{
+                    color: "var(--color-primary)",
+                    marginBottom: "8px",
+                    borderBottom: "1px solid var(--color-divider)",
+                    paddingBottom: "4px",
+                  }}
+                >
+                  🔎 Elasticsearch-Suche
+                </h4>
+                <p style={{ marginBottom: "8px" }}>
+                  Im Elasticsearch-Dialog kannst du nach verschiedenen Kriterien
+                  filtern:
+                </p>
+                <ul style={{ margin: "0 0 12px 0", paddingLeft: "20px" }}>
+                  <li>
+                    <strong>Application:</strong> Anwendungsname
+                  </li>
+                  <li>
+                    <strong>Level:</strong> ERROR, WARN, INFO, DEBUG
+                  </li>
+                  <li>
+                    <strong>Environment:</strong> prod, stage, dev
+                  </li>
+                  <li>
+                    <strong>Logger:</strong> Logger-Name (Substring)
+                  </li>
+                  <li>
+                    <strong>Message:</strong> Nachrichteninhalt mit erweiterter
+                    Syntax
+                  </li>
+                </ul>
+                <p style={{ marginBottom: "8px" }}>
+                  <strong>Message-Filter Syntax:</strong>
+                </p>
+                <table
+                  style={{
+                    width: "100%",
+                    borderCollapse: "collapse",
+                    fontSize: "12px",
+                    marginBottom: "8px",
+                  }}
+                >
+                  <tbody>
+                    <tr>
+                      <td
+                        style={{
+                          padding: "4px 8px",
+                          background: "var(--color-bg-hover)",
+                          width: "180px",
+                        }}
+                      >
+                        <code>error</code>
+                      </td>
+                      <td style={{ padding: "4px 8px" }}>
+                        Einfache Suche (serverseitig)
+                      </td>
+                    </tr>
+                    <tr>
+                      <td
+                        style={{
+                          padding: "4px 8px",
+                          background: "var(--color-bg-hover)",
+                        }}
+                      >
+                        <code>xml&amp;CB24</code>
+                      </td>
+                      <td style={{ padding: "4px 8px" }}>
+                        UND - enthält 'xml' und 'CB24'
+                      </td>
+                    </tr>
+                    <tr>
+                      <td
+                        style={{
+                          padding: "4px 8px",
+                          background: "var(--color-bg-hover)",
+                        }}
+                      >
+                        <code>xml&amp;(CB24|CB27)</code>
+                      </td>
+                      <td style={{ padding: "4px 8px" }}>
+                        Gruppierung - 'xml' und ('CB24' oder 'CB27')
+                      </td>
+                    </tr>
+                    <tr>
+                      <td
+                        style={{
+                          padding: "4px 8px",
+                          background: "var(--color-bg-hover)",
+                        }}
+                      >
+                        <code>error&amp;!timeout</code>
+                      </td>
+                      <td style={{ padding: "4px 8px" }}>
+                        NICHT - 'error' aber nicht 'timeout'
+                      </td>
+                    </tr>
+                  </tbody>
+                </table>
+                <p
+                  style={{
+                    fontSize: "11px",
+                    color: "var(--color-text-secondary)",
+                    margin: 0,
+                  }}
+                >
+                  💡 Einfache Begriffe werden serverseitig gefiltert
+                  (schneller). Erweiterte Syntax (&amp;, |, !, ()) wird
+                  client-seitig nach dem Laden angewendet.
+                </p>
               </section>
 
               <section style={{ marginBottom: "20px" }}>
