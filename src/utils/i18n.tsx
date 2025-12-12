@@ -1,5 +1,11 @@
 import { createContext } from "preact";
-import { useContext, useState, useEffect } from "preact/hooks";
+import {
+  useContext,
+  useState,
+  useEffect,
+  useCallback,
+  useMemo,
+} from "preact/hooks";
 import type { ComponentChildren, JSX } from "preact";
 import de from "../locales/de.json";
 import en from "../locales/en.json";
@@ -83,38 +89,46 @@ export function I18nProvider({
     }
   }, [locale]);
 
-  const t = (key: string, params?: Record<string, string | number>): string => {
-    const keys = key.split(".");
-    let value: unknown = translations[locale];
+  // Memoize the t function to prevent re-renders of all consumers
+  const t = useCallback(
+    (key: string, params?: Record<string, string | number>): string => {
+      const keys = key.split(".");
+      let value: unknown = translations[locale];
 
-    for (const k of keys) {
-      if (value && typeof value === "object" && k in value) {
-        value = (value as Record<string, unknown>)[k];
-      } else {
-        // Fallback to key if translation not found
+      for (const k of keys) {
+        if (value && typeof value === "object" && k in value) {
+          value = (value as Record<string, unknown>)[k];
+        } else {
+          // Fallback to key if translation not found
+          return key;
+        }
+      }
+
+      if (typeof value !== "string") {
         return key;
       }
-    }
 
-    if (typeof value !== "string") {
-      return key;
-    }
+      // Simple parameter replacement
+      if (params) {
+        return value.replace(/\{\{(\w+)\}\}/g, (_match, paramKey: string) => {
+          return params[paramKey] !== undefined
+            ? String(params[paramKey])
+            : _match;
+        });
+      }
 
-    // Simple parameter replacement
-    if (params) {
-      return value.replace(/\{\{(\w+)\}\}/g, (_match, paramKey: string) => {
-        return params[paramKey] !== undefined
-          ? String(params[paramKey])
-          : _match;
-      });
-    }
+      return value;
+    },
+    [locale],
+  );
 
-    return value;
-  };
+  // Memoize the context value to prevent unnecessary re-renders
+  const contextValue = useMemo(
+    () => ({ locale, setLocale, t }),
+    [locale, setLocale, t],
+  );
 
   return (
-    <I18nContext.Provider value={{ locale, setLocale, t }}>
-      {children}
-    </I18nContext.Provider>
+    <I18nContext.Provider value={contextValue}>{children}</I18nContext.Provider>
   );
 }

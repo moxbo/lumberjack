@@ -60,6 +60,7 @@ export default function App() {
     rendererPerf.mark("app-component-init");
   }
 
+
   // i18n hook
   const { t, locale, setLocale } = useI18n();
 
@@ -808,6 +809,19 @@ export default function App() {
 
   // Refs/Layout/Virtualizer
   const parentRef = useRef<HTMLDivElement | null>(null);
+  const [isParentMounted, setIsParentMounted] = useState(false);
+
+  // Track when parent element is mounted - use a layout effect to set this ASAP
+  useEffect(() => {
+    // Small delay to ensure ref is set after first render
+    const timer = setTimeout(() => {
+      if (parentRef.current && !isParentMounted) {
+        setIsParentMounted(true);
+      }
+    }, 0);
+    return () => clearTimeout(timer);
+  }, []); // Only run once on mount
+
   const layoutRef = useRef<HTMLDivElement | null>(null);
   const dividerElRef = useRef<HTMLElement | null>(null);
   const dividerStateRef = useRef<{
@@ -955,32 +969,42 @@ export default function App() {
   const countSelected = selected.size;
 
   const rowHeight = 36;
+
+  // TEMPORARY: Disable virtualizer to test if it's causing the render loop
+  // Memoize getScrollElement callback to prevent virtualizer from re-initializing
+  const getScrollElement = useCallback(() => parentRef.current, []);
+
+  // Memoize estimateSize to prevent re-initialization
+  const estimateSize = useCallback(() => rowHeight, []);
+
+  // Memoize getItemKey to prevent re-initialization
+  const getItemKey = useCallback((index: number) => {
+    const globalIdx = filteredIdx[index];
+    return globalIdx !== undefined ? `row-${globalIdx}` : `row-temp-${index}`;
+  }, [filteredIdx]);
+
+  // Only create virtualizer if we have a scroll element to prevent initialization issues
+  const hasScrollElement = parentRef.current !== null;
+
   const virtualizer = useVirtualizer({
-    count: filteredIdx.length,
-    getScrollElement: () => parentRef.current,
-    estimateSize: () => rowHeight,
+    count: hasScrollElement ? filteredIdx.length : 0,
+    getScrollElement,
+    estimateSize,
     // Erhöhe overscan für glatteres Scrollen bei schnellem Scrollen
     overscan: 15,
-    // getItemKey für stabile Keys und besseres Re-Rendering (ignoriere IDE-Warnung - wird von useVirtualizer unterstützt)
-    getItemKey: (index: number) => {
-      const globalIdx = filteredIdx[index];
-      return globalIdx !== undefined ? `row-${globalIdx}` : `row-temp-${index}`;
-    },
+    // getItemKey für stabile Keys und besseres Re-Rendering
+    getItemKey,
+    // CRITICAL: Disable automatic measurement which can cause render loops
+    measureElement: undefined,
   } as any);
 
-  // Get virtual items - this should update when filteredIdx changes
-  const virtualItems = virtualizer.getVirtualItems();
-  const totalHeight = virtualizer.getTotalSize();
+  // Get virtual items - memoized to prevent render loops
+  // Note: virtualItems changes when scroll position changes, which is expected
+  const virtualItems = hasScrollElement ? virtualizer.getVirtualItems() : [];
+  const totalHeight = hasScrollElement ? virtualizer.getTotalSize() : 0;
 
-  // Reduced logging: only log when there's a significant change (e.g., every 1000 entries)
-  if (
-    process.env.NODE_ENV === "development" &&
-    filteredIdx.length % 1000 === 0
-  ) {
-    console.log(
-      `[virtualizer-diag] Rendering ${virtualItems.length} virtual items out of ${filteredIdx.length} filtered entries (total: ${entries.length})`,
-    );
-  }
+  // Diagnostic logging removed - was causing render loops and performance issues on Windows
+  // The logging condition (filteredIdx.length % 1000 === 0) fires on every render when length is 0
 
   // Stabile Callbacks für LogRow, um unnötige Re-Renders zu vermeiden
   const handleRowSelect = useCallback(

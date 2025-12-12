@@ -25,7 +25,8 @@ export default defineConfig({
     alias: {
       // Alias preact/debug to an empty module in development
       // This prevents the "Too many re-renders" limit from triggering
-      ...(process.env.NODE_ENV !== "production" && {
+      // Always apply in non-production to avoid render loop issues on Windows
+      ...((process.env.NODE_ENV !== "production" || !process.env.NODE_ENV) && {
         "preact/debug": "preact",
       }),
     },
