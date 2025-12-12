@@ -274,9 +274,9 @@ body {
   flex: 0 0 auto;
   display: flex;
   flex-wrap: wrap;
-  gap: 12px 16px;
+  gap: 8px 12px;
   align-items: center;
-  padding: 12px 20px;
+  padding: 8px 16px;
   background: var(--glass-bg);
   backdrop-filter: var(--glass-blur);
   -webkit-backdrop-filter: var(--glass-blur);
@@ -290,18 +290,18 @@ body {
 .toolbar .section {
   display: inline-flex;
   align-items: center;
-  gap: 8px;
+  gap: 6px;
   flex-wrap: wrap;
-  padding: 4px 0;
+  padding: 2px 0;
 }
 
 /* Separator zwischen Sections - nur visuell */
 .toolbar .section:not(:last-child)::after {
   content: "";
   width: 1px;
-  height: 24px;
+  height: 20px;
   background: var(--color-divider);
-  margin-left: 8px;
+  margin-left: 6px;
 }
 
 .toolbar label {
@@ -322,16 +322,24 @@ body {
   border-radius: var(--radius-full);
 }
 
-/* Stats/Counts mit Pill-Design */
+/* Aktiver Status (TCP/HTTP läuft) */
+.toolbar .status-active {
+  background: linear-gradient(135deg, rgba(16, 185, 129, 0.15), rgba(16, 185, 129, 0.08));
+  color: var(--color-text-primary);
+  border: 1px solid rgba(16, 185, 129, 0.3);
+  font-weight: 500;
+}
+
+/* Stats/Counts mit Pill-Design - kompakter */
 .toolbar .counts {
   display: inline-flex;
   align-items: center;
-  gap: 12px;
-  padding: 6px 14px;
+  gap: 8px;
+  padding: 4px 10px;
   background: var(--color-bg-paper);
   border: 1px solid var(--color-border);
   border-radius: var(--radius-lg);
-  font-size: var(--font-size-sm);
+  font-size: 11px;
   color: var(--color-text-secondary);
 }
 
@@ -355,12 +363,12 @@ body {
 
 /* Toolbar inputs - kompakter */
 .toolbar input:not([type="checkbox"]):not([type="radio"]) {
-  padding: 6px 10px;
-  font-size: var(--font-size-sm);
+  padding: 4px 8px;
+  font-size: 12px;
   border: 1px solid var(--color-border);
   border-radius: var(--radius-md);
   background: var(--color-bg-paper);
-  min-width: 120px;
+  min-width: 100px;
 }
 
 .toolbar input:focus {
@@ -369,11 +377,95 @@ body {
 }
 
 .toolbar select {
-  padding: 6px 10px;
-  font-size: var(--font-size-sm);
+  padding: 4px 8px;
+  font-size: 12px;
   border: 1px solid var(--color-border);
   border-radius: var(--radius-md);
   background: var(--color-bg-paper);
+}
+
+/* Kompakte Toolbar-Buttons */
+.toolbar button {
+  padding: 4px 10px;
+  font-size: 12px;
+}
+
+/* Kompakte Button-Gruppen für Navigation */
+.btn-group {
+  display: inline-flex;
+  align-items: center;
+  background: var(--color-bg-paper);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+}
+
+.btn-group .btn-icon {
+  padding: 4px 8px;
+  min-width: 28px;
+  height: 28px;
+  border: none;
+  border-radius: 0;
+  background: transparent;
+  font-size: 14px;
+  line-height: 1;
+  cursor: pointer;
+  transition: background var(--transition-fast);
+}
+
+.btn-group .btn-icon:hover:not(:disabled) {
+  background: var(--color-bg-hover);
+}
+
+.btn-group .btn-icon:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.btn-group .btn-icon:not(:last-child) {
+  border-right: 1px solid var(--color-border);
+}
+
+/* Badge für Zähler (z.B. Markierungen) */
+.badge-count {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--color-primary-contrast);
+  background: var(--accent-gradient);
+  border-radius: var(--radius-full);
+  margin-left: 4px;
+}
+
+/* Einzelne Icon-Buttons außerhalb von Gruppen */
+.btn-icon-single {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 6px;
+  min-width: 32px;
+  height: 32px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-bg-paper);
+  font-size: 14px;
+  cursor: pointer;
+  transition: all var(--transition-fast);
+}
+
+.btn-icon-single:hover:not(:disabled) {
+  background: var(--color-bg-hover);
+  border-color: var(--color-primary);
+}
+
+.btn-icon-single:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
 }
 
 .spinner {
@@ -1513,21 +1605,59 @@ input[type="checkbox"] {
 .filter-section.expanded {
   max-height: 500px;
   opacity: 1;
-  padding-top: 12px;
+  padding-top: 8px;
   border-top: 1px solid var(--color-divider);
-  margin-top: 8px;
+  margin-top: 6px;
+}
+
+/* Kompaktere Filter-Inputs in der Sektion */
+.filter-section .section {
+  flex-wrap: nowrap;
+  gap: 6px;
+}
+
+.filter-section label {
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.filter-section input[type="text"] {
+  min-width: 100px;
+  max-width: 150px;
+  padding: 4px 8px;
+  font-size: 12px;
+}
+
+.filter-section select {
+  padding: 4px 6px;
+  font-size: 12px;
+  min-width: 70px;
+}
+
+.filter-section button {
+  padding: 4px 10px;
+  font-size: 12px;
+}
+
+/* Vertikale Trennlinien in der Filter-Sektion */
+.filter-section .filter-divider {
+  width: 1px;
+  height: 24px;
+  background: var(--color-border);
+  margin: 0 4px;
+  flex-shrink: 0;
 }
 
 .filter-toggle-btn {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
-  padding: 6px 12px;
+  gap: 4px;
+  padding: 4px 10px;
   background: var(--color-bg-paper);
   border: 1px solid var(--color-border);
   border-radius: var(--radius-lg);
   cursor: pointer;
-  font-size: var(--font-size-sm);
+  font-size: 12px;
   font-weight: 500;
   transition: all var(--transition-fast);
 }
@@ -1560,24 +1690,24 @@ input[type="checkbox"] {
   display: flex;
   align-items: center;
   flex: 1;
-  max-width: 400px;
-  min-width: 280px;
+  max-width: 320px;
+  min-width: 200px;
 }
 
 .search-wrapper .search-icon {
   position: absolute;
-  left: 12px;
+  left: 10px;
   color: var(--color-text-secondary);
-  font-size: 16px;
+  font-size: 14px;
   pointer-events: none;
   z-index: 1;
 }
 
 .search-wrapper input {
   width: 100%;
-  padding: 10px 80px 10px 38px;
-  font-size: var(--font-size-base);
-  border: 2px solid var(--color-border);
+  padding: 6px 60px 6px 32px;
+  font-size: 12px;
+  border: 1px solid var(--color-border);
   border-radius: var(--radius-lg);
   background: var(--color-bg-paper);
   transition: all var(--transition-fast);

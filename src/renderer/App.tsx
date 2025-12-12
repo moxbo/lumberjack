@@ -211,7 +211,6 @@ export default function App() {
 
   // Follow-Modus
   const [follow, setFollow] = useState<boolean>(false);
-  const [followSmooth, setFollowSmooth] = useState<boolean>(false);
 
   // Theme Mode
   const [themeMode, setThemeMode] = useState<"system" | "light" | "dark">(
@@ -1195,6 +1194,24 @@ export default function App() {
   function scrollToIndexCenter(viIndex: number) {
     const parent = parentRef.current as HTMLDivElement | null;
     if (!parent) return;
+
+    // Versuche das Zeilen-Element direkt zu finden und scrollIntoView zu nutzen
+    const rowEl = parent.querySelector(
+      `[data-vi="${viIndex}"]`,
+    ) as HTMLElement | null;
+    if (rowEl) {
+      try {
+        rowEl.scrollIntoView({
+          behavior: "smooth",
+          block: "center",
+        });
+        return;
+      } catch {
+        // Fallback zur manuellen Berechnung
+      }
+    }
+
+    // Fallback: Manuelle Berechnung
     // Header innerhalb der Scroll-List ermitteln
     const headerEl = parent.querySelector(".list-header") as HTMLElement | null;
     const headerH = headerEl ? headerEl.offsetHeight : 0;
@@ -1222,7 +1239,7 @@ export default function App() {
     try {
       parent.scrollTo({
         top,
-        behavior: (followSmooth ? "smooth" : "auto") as ScrollBehavior,
+        behavior: "smooth" as ScrollBehavior,
       });
     } catch {
       parent.scrollTop = top;
@@ -1884,8 +1901,7 @@ export default function App() {
           applyThemeMode(mode);
         }
         if (typeof r.follow === "boolean") setFollow(!!r.follow);
-        if (typeof r.followSmooth === "boolean")
-          setFollowSmooth(!!r.followSmooth);
+        // followSmooth ist immer true, wird nicht aus Settings geladen
         const root = document.documentElement;
         const detail = Number(r.detailHeight || 0);
         if (detail)
@@ -1967,8 +1983,7 @@ export default function App() {
             applyThemeMode(mode);
           }
           if (typeof r.follow === "boolean") setFollow(!!r.follow);
-          if (typeof r.followSmooth === "boolean")
-            setFollowSmooth(!!r.followSmooth);
+          // followSmooth ist immer true, wird nicht aus Settings geladen
 
           // Load all form values from settings
           if (r.tcpPort != null) {
@@ -2201,6 +2216,18 @@ export default function App() {
               }
               case "show-help": {
                 setShowHelpDlg(true);
+                break;
+              }
+              case "toggle-follow": {
+                setFollow((prev) => {
+                  const newVal = !prev;
+                  try {
+                    void window.api.settingsSet({ follow: newVal } as any);
+                  } catch (err) {
+                    logger.warn("Persisting follow flag failed:", err);
+                  }
+                  return newVal;
+                });
                 break;
               }
               default:
@@ -3446,130 +3473,53 @@ export default function App() {
           <button onClick={clearLogs} disabled={entries.length === 0}>
             {t("toolbar.clearLogs")}
           </button>
-          <label
-            style={{
-              marginLeft: "10px",
-              display: "inline-flex",
-              alignItems: "center",
-              gap: "6px",
-            }}
-            title={t("toolbar.followTooltip")}
-          >
-            <input
-              type="checkbox"
-              className="native-checkbox"
-              checked={follow}
-              onChange={async (e) => {
-                const v = e.currentTarget.checked;
-                setFollow(v);
-                try {
-                  await window.api.settingsSet({ follow: v } as any);
-                } catch (err) {
-                  logger.warn("Persisting follow flag failed:", err as any);
-                }
-              }}
-            />
-            <span>{t("toolbar.follow")}</span>
-          </label>
-          <label
-            style={{
-              marginLeft: "8px",
-              display: "inline-flex",
-              alignItems: "center",
-              gap: "6px",
-            }}
-            title={t("toolbar.followSmoothTooltip")}
-          >
-            <input
-              type="checkbox"
-              className="native-checkbox"
-              checked={followSmooth}
-              onChange={async (e) => {
-                const v = e.currentTarget.checked;
-                setFollowSmooth(v);
-                try {
-                  await window.api.settingsSet({ followSmooth: v } as any);
-                } catch (err) {
-                  logger.warn(
-                    "Persisting followSmooth flag failed:",
-                    err as any,
-                  );
-                }
-              }}
-              disabled={!follow}
-            />
-            <span>{t("toolbar.followSmooth")}</span>
-          </label>
         </div>
-        <div className="section">
-          <button
-            title={t("toolbar.gotoStartTooltip")}
-            onClick={gotoListStart}
-            disabled={countFiltered === 0}
-          >
-            ⬆ {t("toolbar.gotoStart")}
-          </button>
-          <button
-            title={t("toolbar.gotoEndTooltip")}
-            onClick={gotoListEnd}
-            disabled={countFiltered === 0}
-          >
-            {t("toolbar.gotoEnd")} ⬇
-          </button>
-        </div>
-        <div className="section">
-          <button
-            title={t("toolbar.prevMarkTooltip")}
-            onClick={() => gotoMarked(-1)}
-            disabled={markedIdx.length === 0}
-          >
-            ▲ {t("toolbar.prevMark")}
-          </button>
-          <button
-            title={t("toolbar.nextMarkTooltip")}
-            onClick={() => gotoMarked(1)}
-            disabled={markedIdx.length === 0}
-          >
-            {t("toolbar.nextMark")} ▼
-          </button>
-          <button
-            onClick={() =>
-              setOnlyMarked((v) => {
-                const nv = !v;
-                try {
-                  void window.api.settingsSet({ onlyMarked: nv });
-                } catch (e) {
-                  logger.error("Persisting onlyMarked setting failed:", e);
-                }
-                return nv;
-              })
-            }
-            disabled={!onlyMarked && markedIdx.length === 0}
-            title={
-              !onlyMarked && markedIdx.length === 0
-                ? t("toolbar.toggleMarkedDisabled")
-                : t("toolbar.toggleMarkedTooltip")
-            }
-          >
-            {onlyMarked
-              ? t("toolbar.toggleMarkedOn")
-              : t("toolbar.toggleMarkedOff")}
-          </button>
-        </div>
-        <div className="section">
-          <button
-            onClick={() => setShowDcDialog(true)}
-            title={t("toolbar.dcFilterTooltip")}
-          >
-            {t("toolbar.dcFilter")}
-          </button>
-          <button
-            disabled={esBusy}
-            onClick={openTimeFilterDialog}
-            title={t("toolbar.elasticSearchTooltip")}
-          >
-            {t("toolbar.elasticSearch")}
-          </button>
+        {/* Kompakte Navigation & Markierungen */}
+        <div className="section" style={{ gap: "4px" }}>
+          <div className="btn-group" title="Navigation">
+            <button
+              className="btn-icon"
+              title={t("toolbar.gotoStartTooltip")}
+              onClick={gotoListStart}
+              disabled={countFiltered === 0}
+            >
+              ⏫
+            </button>
+            <button
+              className="btn-icon"
+              title={t("toolbar.gotoEndTooltip")}
+              onClick={gotoListEnd}
+              disabled={countFiltered === 0}
+            >
+              ⏬
+            </button>
+          </div>
+          <div className="btn-group" title="Markierungen">
+            <button
+              className="btn-icon"
+              title={t("toolbar.prevMarkTooltip")}
+              onClick={() => gotoMarked(-1)}
+              disabled={markedIdx.length === 0}
+            >
+              🔺
+            </button>
+            <button
+              className="btn-icon"
+              title={t("toolbar.nextMarkTooltip")}
+              onClick={() => gotoMarked(1)}
+              disabled={markedIdx.length === 0}
+            >
+              🔻
+            </button>
+            {markedIdx.length > 0 && (
+              <span
+                className="badge-count"
+                title={`${markedIdx.length} Markierungen`}
+              >
+                {markedIdx.length}
+              </span>
+            )}
+          </div>
         </div>
         <div className="section">
           <div className="search-wrapper">
@@ -3816,12 +3766,24 @@ export default function App() {
             style={{
               fontSize: "11px",
               color: "var(--color-text-secondary)",
-              minWidth: "40px",
+              minWidth: "50px",
               textAlign: "center",
             }}
           >
             {search.trim() && searchMatchIdx.length > 0
-              ? `${searchMatchIdx.length}`
+              ? (() => {
+                  // Berechne aktuellen Treffer-Index
+                  const curVi =
+                    selectedOneIdx != null
+                      ? filteredIdx.indexOf(selectedOneIdx)
+                      : -1;
+                  const currentMatchPos =
+                    curVi >= 0 ? searchMatchIdx.indexOf(curVi) : -1;
+                  if (currentMatchPos >= 0) {
+                    return `${currentMatchPos + 1}/${searchMatchIdx.length}`;
+                  }
+                  return `–/${searchMatchIdx.length}`;
+                })()
               : ""}
           </span>
           <button
@@ -3840,12 +3802,18 @@ export default function App() {
               {t("toolbar.busy")}
             </span>
           )}
-          <span id="tcpStatus" className="status">
-            {tcpStatus}
-          </span>
-          <span id="httpStatus" className="status">
-            {httpStatus}
-          </span>
+          {/* TCP Status - nur anzeigen wenn aktiv */}
+          {tcpStatus && !tcpStatus.includes("geschlossen") && (
+            <span id="tcpStatus" className="status status-active">
+              🟢 {tcpStatus}
+            </span>
+          )}
+          {/* HTTP Status - nur anzeigen wenn aktiv */}
+          {httpStatus && !httpStatus.includes("inaktiv") && (
+            <span id="httpStatus" className="status status-active">
+              🟢 {httpStatus}
+            </span>
+          )}
           {nextPollIn && (
             <span className="status" title="Nächster Poll in">
               {nextPollIn}
@@ -4045,7 +4013,6 @@ export default function App() {
               style={{
                 display: "inline-flex",
                 alignItems: "center",
-                gap: "6px",
                 position: "relative",
               }}
             >
@@ -4077,29 +4044,8 @@ export default function App() {
                 }
                 placeholder={t("toolbar.loggerPlaceholder")}
                 disabled={!stdFiltersEnabled}
-                style={{ minWidth: "180px", paddingRight: "26px" }}
+                style={{ minWidth: "150px" }}
               />
-              <button
-                type="button"
-                title={
-                  showLoggerHist
-                    ? t("toolbar.searchHistoryHide")
-                    : t("toolbar.searchHistoryShow")
-                }
-                onClick={() => setShowLoggerHist((v) => !v)}
-                disabled={!stdFiltersEnabled}
-                style={{
-                  position: "absolute",
-                  right: "6px",
-                  top: "50%",
-                  transform: "translateY(-50%)",
-                  height: "22px",
-                  minWidth: "22px",
-                  padding: "0 4px",
-                }}
-              >
-                ▾
-              </button>
             </div>
             {showLoggerHist &&
               fltHistLogger.length > 0 &&
@@ -4108,25 +4054,18 @@ export default function App() {
                 <div
                   ref={loggerPopRef as any}
                   role="listbox"
+                  className="autocomplete-dropdown"
                   style={{
                     position: "fixed",
                     left: loggerPos.left + "px",
                     top: loggerPos.top + "px",
-                    width: loggerPos.width + "px",
-                    background: "var(--color-bg, #fff)",
-                    border: "1px solid #cfcfcf",
-                    borderRadius: "6px",
-                    padding: "4px",
-                    zIndex: 200000,
-                    maxHeight: "220px",
-                    overflowY: "auto",
-                    boxShadow: "0 8px 28px rgba(0,0,0,0.2)",
+                    width: Math.max(loggerPos.width, 250) + "px",
                   }}
                 >
                   {fltHistLogger.map((v, i) => (
                     <div
                       key={i}
-                      style={{ padding: "4px 6px", cursor: "pointer" }}
+                      className="autocomplete-item"
                       onClick={() => {
                         setFilter({ ...filter, logger: v });
                         addFilterHistory("logger", v);
@@ -4135,9 +4074,21 @@ export default function App() {
                       onMouseDown={(e) => e.preventDefault()}
                       title={v}
                     >
+                      <span>🕐</span>
                       {v}
                     </div>
                   ))}
+                  <div className="autocomplete-hint">
+                    <span>
+                      <kbd>↑↓</kbd> Navigation
+                    </span>
+                    <span>
+                      <kbd>Enter</kbd> Auswählen
+                    </span>
+                    <span>
+                      <kbd>Esc</kbd> Schließen
+                    </span>
+                  </div>
                 </div>,
                 document.body,
               )}
@@ -4147,7 +4098,6 @@ export default function App() {
               style={{
                 display: "inline-flex",
                 alignItems: "center",
-                gap: "6px",
                 position: "relative",
               }}
             >
@@ -4179,29 +4129,8 @@ export default function App() {
                 }
                 placeholder={t("toolbar.threadPlaceholder")}
                 disabled={!stdFiltersEnabled}
-                style={{ minWidth: "160px", paddingRight: "26px" }}
+                style={{ minWidth: "130px" }}
               />
-              <button
-                type="button"
-                title={
-                  showThreadHist
-                    ? t("toolbar.searchHistoryHide")
-                    : t("toolbar.searchHistoryShow")
-                }
-                onClick={() => setShowThreadHist((v) => !v)}
-                disabled={!stdFiltersEnabled}
-                style={{
-                  position: "absolute",
-                  right: "6px",
-                  top: "50%",
-                  transform: "translateY(-50%)",
-                  height: "22px",
-                  minWidth: "22px",
-                  padding: "0 4px",
-                }}
-              >
-                ▾
-              </button>
             </div>
             {showThreadHist &&
               fltHistThread.length > 0 &&
@@ -4210,25 +4139,18 @@ export default function App() {
                 <div
                   ref={threadPopRef as any}
                   role="listbox"
+                  className="autocomplete-dropdown"
                   style={{
                     position: "fixed",
                     left: threadPos.left + "px",
                     top: threadPos.top + "px",
-                    width: threadPos.width + "px",
-                    background: "var(--color-bg, #fff)",
-                    border: "1px solid #cfcfcf",
-                    borderRadius: "6px",
-                    padding: "4px",
-                    zIndex: 200000,
-                    maxHeight: "220px",
-                    overflowY: "auto",
-                    boxShadow: "0 8px 28px rgba(0,0,0,0.2)",
+                    width: Math.max(threadPos.width, 250) + "px",
                   }}
                 >
                   {fltHistThread.map((v, i) => (
                     <div
                       key={i}
-                      style={{ padding: "4px 6px", cursor: "pointer" }}
+                      className="autocomplete-item"
                       onClick={() => {
                         setFilter({ ...filter, thread: v });
                         addFilterHistory("thread", v);
@@ -4237,9 +4159,21 @@ export default function App() {
                       onMouseDown={(e) => e.preventDefault()}
                       title={v}
                     >
+                      <span>🕐</span>
                       {v}
                     </div>
                   ))}
+                  <div className="autocomplete-hint">
+                    <span>
+                      <kbd>↑↓</kbd> Navigation
+                    </span>
+                    <span>
+                      <kbd>Enter</kbd> Auswählen
+                    </span>
+                    <span>
+                      <kbd>Esc</kbd> Schließen
+                    </span>
+                  </div>
                 </div>,
                 document.body,
               )}
@@ -4249,7 +4183,6 @@ export default function App() {
               style={{
                 display: "inline-flex",
                 alignItems: "center",
-                gap: "6px",
                 position: "relative",
               }}
             >
@@ -4281,29 +4214,8 @@ export default function App() {
                 }
                 placeholder={t("toolbar.messagePlaceholder")}
                 disabled={!stdFiltersEnabled}
-                style={{ minWidth: "240px", paddingRight: "26px" }}
+                style={{ minWidth: "200px" }}
               />
-              <button
-                type="button"
-                title={
-                  showMessageHist
-                    ? t("toolbar.searchHistoryHide")
-                    : t("toolbar.searchHistoryShow")
-                }
-                onClick={() => setShowMessageHist((v) => !v)}
-                disabled={!stdFiltersEnabled}
-                style={{
-                  position: "absolute",
-                  right: "6px",
-                  top: "50%",
-                  transform: "translateY(-50%)",
-                  height: "22px",
-                  minWidth: "22px",
-                  padding: "0 4px",
-                }}
-              >
-                ▾
-              </button>
             </div>
             {showMessageHist &&
               fltHistMessage.length > 0 &&
@@ -4312,25 +4224,18 @@ export default function App() {
                 <div
                   ref={messagePopRef as any}
                   role="listbox"
+                  className="autocomplete-dropdown"
                   style={{
                     position: "fixed",
                     left: messagePos.left + "px",
                     top: messagePos.top + "px",
-                    width: messagePos.width + "px",
-                    background: "var(--color-bg, #fff)",
-                    border: "1px solid #cfcfcf",
-                    borderRadius: "6px",
-                    padding: "4px",
-                    zIndex: 200000,
-                    maxHeight: "220px",
-                    overflowY: "auto",
-                    boxShadow: "0 8px 28px rgba(0,0,0,0.2)",
+                    width: Math.max(messagePos.width, 250) + "px",
                   }}
                 >
                   {fltHistMessage.map((v, i) => (
                     <div
                       key={i}
-                      style={{ padding: "4px 6px", cursor: "pointer" }}
+                      className="autocomplete-item"
                       onClick={() => {
                         setFilter({ ...filter, message: v });
                         addFilterHistory("message", v);
@@ -4339,12 +4244,80 @@ export default function App() {
                       onMouseDown={(e) => e.preventDefault()}
                       title={v}
                     >
+                      <span>🕐</span>
                       {v}
                     </div>
                   ))}
+                  <div className="autocomplete-hint">
+                    <span>
+                      <kbd>↑↓</kbd> Navigation
+                    </span>
+                    <span>
+                      <kbd>Enter</kbd> Auswählen
+                    </span>
+                    <span>
+                      <kbd>Esc</kbd> Schließen
+                    </span>
+                  </div>
                 </div>,
                 document.body,
               )}
+            {/* Trennlinie */}
+            <span className="filter-divider" />
+            {/* Nur markierte Checkbox */}
+            <label
+              style={{
+                display: "inline-flex",
+                alignItems: "center",
+                gap: "4px",
+                cursor:
+                  markedIdx.length === 0 && !onlyMarked
+                    ? "not-allowed"
+                    : "pointer",
+                opacity: markedIdx.length === 0 && !onlyMarked ? 0.5 : 1,
+              }}
+              title={
+                !onlyMarked && markedIdx.length === 0
+                  ? t("toolbar.toggleMarkedDisabled")
+                  : t("toolbar.toggleMarkedTooltip")
+              }
+            >
+              <input
+                type="checkbox"
+                className="native-checkbox"
+                checked={onlyMarked}
+                disabled={!onlyMarked && markedIdx.length === 0}
+                onChange={(e) => {
+                  const nv = e.currentTarget.checked;
+                  setOnlyMarked(nv);
+                  try {
+                    void window.api.settingsSet({ onlyMarked: nv });
+                  } catch (err) {
+                    logger.error("Persisting onlyMarked setting failed:", err);
+                  }
+                }}
+              />
+              <span>{t("toolbar.toggleMarkedOff")}</span>
+            </label>
+            {/* Trennlinie */}
+            <span className="filter-divider" />
+            {/* DC-Filter Button */}
+            <button
+              onClick={() => setShowDcDialog(true)}
+              title={t("toolbar.dcFilterTooltip")}
+            >
+              {t("toolbar.dcFilter")}
+            </button>
+            {/* Elastic-Search Button */}
+            <button
+              disabled={esBusy}
+              onClick={openTimeFilterDialog}
+              title={t("toolbar.elasticSearchTooltip")}
+            >
+              {t("toolbar.elasticSearch")}
+            </button>
+            {/* Trennlinie */}
+            <span className="filter-divider" />
             <button
               id="btnClearFilters"
               onClick={() => {

@@ -1091,6 +1091,18 @@ function buildMenu(): void {
     {
       label: "Ansicht",
       submenu: [
+        {
+          label: "Follow-Modus",
+          type: "checkbox" as const,
+          checked: settingsService.get().follow,
+          accelerator: "CmdOrCtrl+F",
+          click: (_mi, win) =>
+            sendMenuCmd(
+              { type: "toggle-follow" },
+              (win as BrowserWindow | null | undefined) || null,
+            ),
+        },
+        { type: "separator" as const },
         { role: "reload" as const },
         { role: "forceReload" as const },
         ...(isDev ? [{ role: "toggleDevTools" as const }] : []),
@@ -1215,10 +1227,7 @@ function createWindow(opts: { makePrimary?: boolean } = {}): BrowserWindow {
                 iconPath,
               );
             } else {
-              log.warn?.(
-                "[icon] nativeImage is empty for path:",
-                iconPath,
-              );
+              log.warn?.("[icon] nativeImage is empty for path:", iconPath);
             }
           } else {
             log.warn?.(

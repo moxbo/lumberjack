@@ -199,6 +199,11 @@ export function registerIpcHandlers(
 
         updateWindowTitles();
 
+        // Update menu if follow status changed (to show checkmark)
+        if (typeof patch.follow === "boolean" && sharedApi.updateAppMenu) {
+          sharedApi.updateAppMenu();
+        }
+
         return { ok: true, settings: settingsService.get() };
       } catch (err) {
         log.error(

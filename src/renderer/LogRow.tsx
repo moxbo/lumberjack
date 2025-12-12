@@ -121,6 +121,7 @@ const LogRowComponent = ({
       style={style}
       role="option"
       aria-selected={isSelected}
+      data-vi={index}
       onClick={(ev) => {
         const mouseEvent = ev as MouseEvent;
         onSelect(
