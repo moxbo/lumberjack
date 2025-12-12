@@ -324,7 +324,11 @@ body {
 
 /* Aktiver Status (TCP/HTTP läuft) */
 .toolbar .status-active {
-  background: linear-gradient(135deg, rgba(16, 185, 129, 0.15), rgba(16, 185, 129, 0.08));
+  background: linear-gradient(
+    135deg,
+    rgba(16, 185, 129, 0.15),
+    rgba(16, 185, 129, 0.08)
+  );
   color: var(--color-text-primary);
   border: 1px solid rgba(16, 185, 129, 0.3);
   font-weight: 500;
@@ -1592,7 +1596,10 @@ input[type="checkbox"] {
 .filter-section {
   width: 100%;
   overflow: hidden;
-  transition: max-height var(--transition-base), opacity var(--transition-base), padding var(--transition-base);
+  transition:
+    max-height var(--transition-base),
+    opacity var(--transition-base),
+    padding var(--transition-base);
 }
 
 .filter-section.collapsed {
@@ -2161,4 +2168,3 @@ input[type="checkbox"] {
   border-radius: 2px;
   font-family: var(--font-family-mono), monospace;
 }
-

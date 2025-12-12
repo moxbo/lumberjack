@@ -60,7 +60,6 @@ export default function App() {
     rendererPerf.mark("app-component-init");
   }
 
-
   // i18n hook
   const { t, locale, setLocale } = useI18n();
 
@@ -978,10 +977,13 @@ export default function App() {
   const estimateSize = useCallback(() => rowHeight, []);
 
   // Memoize getItemKey to prevent re-initialization
-  const getItemKey = useCallback((index: number) => {
-    const globalIdx = filteredIdx[index];
-    return globalIdx !== undefined ? `row-${globalIdx}` : `row-temp-${index}`;
-  }, [filteredIdx]);
+  const getItemKey = useCallback(
+    (index: number) => {
+      const globalIdx = filteredIdx[index];
+      return globalIdx !== undefined ? `row-${globalIdx}` : `row-temp-${index}`;
+    },
+    [filteredIdx],
+  );
 
   // Only create virtualizer if we have a scroll element to prevent initialization issues
   const hasScrollElement = parentRef.current !== null;
@@ -3829,8 +3831,7 @@ export default function App() {
                       if (typeof (res as any)?.total === "number")
                         setEsTotal(Number((res as any).total));
                       // PIT-Session nur beenden, wenn keine weiteren Ergebnisse vorhanden
-                      if (!res.hasMore)
-                        setEsPitSessionId(null);
+                      if (!res.hasMore) setEsPitSessionId(null);
                     } else {
                       alert(
                         "Elastic-Fehler: " +
@@ -3843,11 +3844,22 @@ export default function App() {
                 });
               }}
             >
-              {t("toolbar.elasticLoadMore")} {esTotal != null && esTotal > esLoaded ? `(${esTotal - esLoaded})` : ""}
+              {t("toolbar.elasticLoadMore")}{" "}
+              {esTotal != null && esTotal > esLoaded
+                ? `(${esTotal - esLoaded})`
+                : ""}
             </button>
           )}
           {esTotal != null && (
-            <span className="status" title={t("toolbar.elasticLoadedTooltip", { loaded: String(esLoaded), total: String(esTotal) }) + (esHasMore ? t("toolbar.elasticMoreAvailable") : "")}>
+            <span
+              className="status"
+              title={
+                t("toolbar.elasticLoadedTooltip", {
+                  loaded: String(esLoaded),
+                  total: String(esTotal),
+                }) + (esHasMore ? t("toolbar.elasticMoreAvailable") : "")
+              }
+            >
               {t("toolbar.elasticLoaded", {
                 loaded: String(esLoaded),
                 total: String(esTotal),
