@@ -7,15 +7,12 @@ import {
   useRef,
   useState,
 } from "preact/hooks";
-import { Fragment } from "preact";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { highlightAll } from "../utils/highlight";
-import { msgMatches, SearchMode } from "../utils/msgFilter";
+import { msgMatches } from "../utils/msgFilter";
 import logger from "../utils/logger";
 import { rendererPerf } from "../utils/rendererPerf";
 import { useI18n } from "../utils/i18n";
-// Dynamic import for DCFilterDialog (code splitting)
-// Preact supports dynamic imports directly
 import { LoggingStore } from "../store/loggingStore";
 import { canonicalDcKey, DiagnosticContextFilter } from "../store/dcFilter";
 import { DragAndDropManager } from "../utils/dnd";
@@ -25,150 +22,35 @@ import { createPortal, lazy, Suspense } from "preact/compat";
 import type { ElasticSearchOptions } from "../types/ipc";
 import { MDCListener } from "../store/mdcListener";
 import { LogRow, clearHighlightCache } from "./LogRow";
-import { clearTimestampCache } from "../utils/format";
-import { useDebounce } from "../hooks/useDebounce";
+import { fmtTimestamp, clearTimestampCache } from "../utils/format";
 
-// Feste Basisfarben für Markierungen
-const BASE_MARK_COLORS = [
-  "#F59E0B", // amber
-  "#EF4444", // red
-  "#10B981", // emerald
-  "#3B82F6", // blue
-  "#8B5CF6", // violet
-  "#EC4899", // pink
-  "#14B8A6", // teal
-  "#6B7280", // gray
-];
+// Import refactored constants
+import { BASE_MARK_COLORS, TRIM_THRESHOLD_ENTRIES } from "../constants";
 
-// Memory limits for renderer process stability
-// Maximum number of log entries to keep in memory
-// This is a safety limit - should rarely be hit in normal usage
-const MAX_RENDERER_ENTRIES = 1_000_000;
-// Threshold at which to start trimming (allows for burst handling)
-const TRIM_THRESHOLD_ENTRIES = MAX_RENDERER_ENTRIES * 0.95; // 950,000
+// Import refactored utilities
+import { entrySignature, mergeSorted } from "../utils/entryUtils";
+
+// Import refactored hooks
+import { useDebounce, useFilterState } from "../hooks";
+
+// Import refactored components
+import {
+  ContextMenu,
+  HelpDialog,
+  TitleDialog,
+  HttpLoadDialog,
+  HttpPollDialog,
+  SettingsModal,
+  DetailPanel,
+} from "./components";
+
+// IPC batching constants
+const IPC_BATCH_SIZE = 5000;
+const IPC_PROCESS_INTERVAL = 50;
 
 // Lazy-load DCFilterDialog as a component
 const DCFilterDialog = lazy(() => import("./DCFilterDialog"));
 const ElasticSearchDialog = lazy(() => import("./ElasticSearchDialog"));
-
-function levelClass(level: string | null | undefined): string {
-  const l = (level || "").toUpperCase();
-  return (
-    {
-      TRACE: "lev-trace",
-      DEBUG: "lev-debug",
-      INFO: "lev-info",
-      WARN: "lev-warn",
-      ERROR: "lev-error",
-      FATAL: "lev-fatal",
-    }[l] || "lev-unk"
-  );
-}
-function fmt(v: unknown): string {
-  return v == null ? "" : String(v);
-}
-// Lightweight timestamp formatter (replaces moment.js for faster startup)
-function fmtTimestamp(ts: string | number | Date | null | undefined): string {
-  if (!ts) return "-";
-  try {
-    const d = new Date(ts);
-    if (isNaN(d.getTime())) return String(ts);
-    const year = d.getFullYear();
-    const month = String(d.getMonth() + 1).padStart(2, "0");
-    const day = String(d.getDate()).padStart(2, "0");
-    const hours = String(d.getHours()).padStart(2, "0");
-    const minutes = String(d.getMinutes()).padStart(2, "0");
-    const seconds = String(d.getSeconds()).padStart(2, "0");
-    const ms = String(d.getMilliseconds()).padStart(3, "0");
-    return `${year}-${month}-${day} ${hours}:${minutes}:${seconds}.${ms}`;
-  } catch (e) {
-    return String(ts);
-  }
-}
-
-// Hilfsfunktion: erzeugt halbtransparente Tönung als rgba()-String
-function computeTint(color: string | null | undefined, alpha = 0.4): string {
-  if (!color) return "";
-  const c = String(color).trim();
-  const hexRaw = c.startsWith("#") ? c.slice(1) : "";
-  const hex = String(hexRaw);
-  if (hex.length === 3) {
-    const [h0, h1, h2] = hex as unknown as [string, string, string];
-    const r = parseInt(h0 + h0, 16);
-    const g = parseInt(h1 + h1, 16);
-    const b = parseInt(h2 + h2, 16);
-    return `rgba(${r}, ${g}, ${b}, ${alpha})`;
-  }
-  if (hex.length === 6) {
-    const r = parseInt(hex.substring(0, 2), 16);
-    const g = parseInt(hex.substring(2, 4), 16);
-    const b = parseInt(hex.substring(4, 6), 16);
-    return `rgba(${r}, ${g}, ${b}, ${alpha})`;
-  }
-  // Fallback: unveränderte Farbe (ohne Alpha)
-  return c;
-}
-
-// Entry signature for deduplication (without _id, since that's assigned later)
-function entrySignatureForMerge(e: any): string {
-  if (!e) return "";
-  const ts = e?.timestamp != null ? String(e.timestamp) : "";
-  const lg = e?.logger != null ? String(e.logger) : "";
-  const msg = e?.message != null ? String(e.message) : "";
-  const src = e?.source != null ? String(e.source) : "";
-  return `${ts}|${lg}|${msg}|${src}`;
-}
-
-// Efficient merge function for sorted arrays - O(n+m) instead of O(n log n)
-// Assumes both prevSorted and newSorted are already sorted by compareByTimestampId
-// Now also deduplicates based on entry signature
-function mergeSorted(prevSorted: any[], newSorted: any[]): any[] {
-  if (newSorted.length === 0) return prevSorted;
-  if (prevSorted.length === 0) return newSorted;
-
-  // Build a Set of existing signatures for O(1) lookup
-  const existingSigs = new Set<string>();
-  for (const e of prevSorted) {
-    existingSigs.add(entrySignatureForMerge(e));
-  }
-
-  const result: any[] = [];
-  let i = 0,
-    j = 0;
-
-  while (i < prevSorted.length && j < newSorted.length) {
-    if (compareByTimestampId(prevSorted[i], newSorted[j]) <= 0) {
-      result.push(prevSorted[i]);
-      i++;
-    } else {
-      // Only add new entry if not a duplicate
-      const sig = entrySignatureForMerge(newSorted[j]);
-      if (!existingSigs.has(sig)) {
-        result.push(newSorted[j]);
-        existingSigs.add(sig);
-      }
-      j++;
-    }
-  }
-
-  // Add remaining elements from prevSorted
-  while (i < prevSorted.length) {
-    result.push(prevSorted[i]);
-    i++;
-  }
-
-  // Add remaining elements from newSorted (with dedup check)
-  while (j < newSorted.length) {
-    const sig = entrySignatureForMerge(newSorted[j]);
-    if (!existingSigs.has(sig)) {
-      result.push(newSorted[j]);
-      existingSigs.add(sig);
-    }
-    j++;
-  }
-
-  return result;
-}
 
 export default function App() {
   // Track component initialization (only once via ref to avoid re-marking on every render)
@@ -190,22 +72,16 @@ export default function App() {
   }, [nextId]);
 
   // IPC batching queue to prevent renderer overload
-  // Incoming entries are queued and processed in controlled intervals
   const ipcQueueRef = useRef<any[]>([]);
   const ipcProcessingRef = useRef<boolean>(false);
   const ipcFlushTimerRef = useRef<number | null>(null);
-  // Max entries to process in one batch (prevents UI freeze)
-  const IPC_BATCH_SIZE = 5000;
-  // Min interval between processing batches (ms)
-  const IPC_PROCESS_INTERVAL = 50;
 
-  // Leichtgewichtiger Dedupe-Cache für Datei-Quellen: source -> Set(signature)
+  // Dedupe caches
   const fileSigCacheRef = useRef<Map<string, Set<string>>>(new Map());
-  // Dedupe-Cache für HTTP-Quellen: source -> Set(signature)
   const httpSigCacheRef = useRef<Map<string, Set<string>>>(new Map());
+
   // Persistenz: Markierungen (signature -> color)
   const [marksMap, setMarksMap] = useState<Record<string, string>>({});
-  const [onlyMarked, setOnlyMarked] = useState<boolean>(false);
   const [selected, setSelected] = useState<Set<number>>(new Set());
   const lastClicked = useRef<number | null>(null);
 
@@ -225,30 +101,33 @@ export default function App() {
     root.setAttribute("data-theme", mode);
   }
 
-  const [search, setSearch] = useState<string>("");
-  const [searchMode, setSearchMode] = useState<SearchMode>("insensitive");
-  const [showSearchOptions, setShowSearchOptions] = useState<boolean>(false);
-  const [filter, setFilter] = useState({
-    level: "",
-    logger: "",
-    thread: "",
-    service: "",
-    message: "",
-  });
-  const [stdFiltersEnabled, setStdFiltersEnabled] = useState<boolean>(true);
+  // Use the refactored filter state hook
+  const filterState = useFilterState();
+  const {
+    search,
+    setSearch,
+    searchMode,
+    setSearchMode,
+    showSearchOptions,
+    setShowSearchOptions,
+    filter,
+    setFilter,
+    stdFiltersEnabled,
+    setStdFiltersEnabled,
+    onlyMarked,
+    setOnlyMarked,
+    fltHistSearch,
+    fltHistLogger,
+    fltHistThread,
+    fltHistMessage,
+    addFilterHistory,
+    filtersExpanded,
+    setFiltersExpanded,
+  } = filterState;
 
   // Debounced Filter-Werte für bessere Performance beim Tippen (200ms Verzögerung)
   const debouncedSearch = useDebounce(search, 200);
   const debouncedFilter = useDebounce(filter, 200);
-
-  // NEU: Flüchtige Verlaufslisten (Session-only, keine Persistenz)
-  const [fltHistSearch, setFltHistSearch] = useState<string[]>([]);
-  const [fltHistLogger, setFltHistLogger] = useState<string[]>([]);
-  const [fltHistThread, setFltHistThread] = useState<string[]>([]);
-  const [fltHistMessage, setFltHistMessage] = useState<string[]>([]);
-
-  // NEU: Filter-Sektion ausklappbar
-  const [filtersExpanded, setFiltersExpanded] = useState<boolean>(false);
 
   // NEU: Resize-Feedback State
   const [resizeHeight, setResizeHeight] = useState<number | null>(null);
@@ -329,30 +208,6 @@ export default function App() {
       window.removeEventListener("scroll", onScroll, true);
     };
   }, [showSearchHist, showLoggerHist, showThreadHist, showMessageHist]);
-
-  function addFilterHistory(
-    kind: "search" | "logger" | "thread" | "message",
-    val: string,
-  ) {
-    const v = String(val || "").trim();
-    if (!v) return;
-    const upd = (prev: string[]) =>
-      [v, ...prev.filter((x) => x !== v)].slice(0, 20);
-    switch (kind) {
-      case "search":
-        setFltHistSearch(upd);
-        break;
-      case "logger":
-        setFltHistLogger(upd);
-        break;
-      case "thread":
-        setFltHistThread(upd);
-        break;
-      case "message":
-        setFltHistMessage(upd);
-        break;
-    }
-  }
 
   function closeAllHistoryPopovers() {
     setShowSearchHist(false);
@@ -793,12 +648,6 @@ export default function App() {
   }
 
   // Markierung anwenden/entfernen + Persistenz
-  function entrySignature(e: any): string {
-    const ts = e?.timestamp != null ? String(e.timestamp) : "";
-    const lg = e?.logger != null ? String(e.logger) : "";
-    const msg = e?.message != null ? String(e.message) : "";
-    return `${ts}|${lg}|${msg}`;
-  }
   function applyMarkColor(color?: string) {
     setEntries((prev) => {
       if (!prev || !prev.length) return prev;
@@ -1844,33 +1693,6 @@ export default function App() {
 
   const [showTitleDlg, setShowTitleDlg] = useState<boolean>(false);
   const [showHelpDlg, setShowHelpDlg] = useState<boolean>(false);
-  const [titleInput, setTitleInput] = useState<string>("Lumberjack");
-  async function openSetWindowTitleDialog() {
-    try {
-      const res = await window.api?.windowTitleGet?.();
-      const t =
-        res?.ok && typeof res.title === "string" && res.title.trim()
-          ? String(res.title)
-          : "Lumberjack";
-      setTitleInput(t);
-    } catch {
-      setTitleInput("Lumberjack");
-    }
-    setShowTitleDlg(true);
-  }
-  async function applySetWindowTitle() {
-    const t = String(titleInput || "").trim();
-    if (!t) {
-      alert("Bitte einen Fenstertitel eingeben");
-      return;
-    }
-    try {
-      await window.api?.windowTitleSet?.(t);
-      setShowTitleDlg(false);
-    } catch (e) {
-      alert("Speichern fehlgeschlagen: " + ((e as any)?.message || String(e)));
-    }
-  }
 
   // Settings laden (deferred to not block initial render)
   useEffect(() => {
@@ -2225,7 +2047,7 @@ export default function App() {
                 break;
               }
               case "window-title": {
-                await openSetWindowTitleDialog();
+                setShowTitleDlg(true);
                 break;
               }
               case "show-help": {
@@ -2913,563 +2735,69 @@ export default function App() {
       )}
 
       {/* HTTP Load Dialog */}
-      {showHttpLoadDlg && (
-        <div
-          className="modal-backdrop"
-          onClick={() => setShowHttpLoadDlg(false)}
-        >
-          <div className="modal" onClick={(e) => e.stopPropagation()}>
-            <h3>HTTP einmal laden</h3>
-            <div className="kv">
-              <span>HTTP URL</span>
-              <input
-                type="text"
-                value={httpLoadUrl}
-                onInput={(e) => setHttpLoadUrl(e.currentTarget.value)}
-                placeholder="https://…/logs.json"
-                autoFocus
-              />
-            </div>
-            <div className="modal-actions">
-              <button onClick={() => setShowHttpLoadDlg(false)}>
-                Abbrechen
-              </button>
-              <button
-                onClick={async () => {
-                  const url = String(httpLoadUrl || "").trim();
-                  if (!url) {
-                    alert("Bitte eine gültige URL eingeben");
-                    return;
-                  }
-                  setShowHttpLoadDlg(false);
-                  await withBusy(async () => {
-                    try {
-                      setHttpUrl(url);
-                      await window.api.settingsSet({ httpUrl: url } as any);
-                      const res = await window.api.httpLoadOnce(url);
-                      if (res.ok) appendEntries((res.entries || []) as any[]);
-                      else
-                        setHttpStatus("Fehler: " + (res.error || "unbekannt"));
-                    } catch (e) {
-                      setHttpStatus(
-                        "Fehler: " + ((e as any)?.message || String(e)),
-                      );
-                    }
-                  });
-                }}
-              >
-                Laden
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+      <HttpLoadDialog
+        open={showHttpLoadDlg}
+        initialUrl={httpLoadUrl}
+        onClose={() => setShowHttpLoadDlg(false)}
+        onLoad={async (url) => {
+          await withBusy(async () => {
+            try {
+              setHttpUrl(url);
+              await window.api.settingsSet({ httpUrl: url } as any);
+              const res = await window.api.httpLoadOnce(url);
+              if (res.ok) appendEntries((res.entries || []) as any[]);
+              else setHttpStatus("Fehler: " + (res.error || "unbekannt"));
+            } catch (e) {
+              setHttpStatus("Fehler: " + ((e as any)?.message || String(e)));
+            }
+          });
+        }}
+      />
 
       {/* HTTP Poll Dialog */}
-      {showHttpPollDlg && (
-        <div
-          className="modal-backdrop"
-          onClick={() => setShowHttpPollDlg(false)}
-        >
-          <div className="modal" onClick={(e) => e.stopPropagation()}>
-            <h3>HTTP Poll starten</h3>
-            <div className="kv">
-              <span>HTTP URL</span>
-              <input
-                type="text"
-                value={httpPollForm.url}
-                onInput={(e) =>
-                  setHttpPollForm({
-                    ...httpPollForm,
-                    url: e.currentTarget.value,
-                  })
-                }
-                placeholder="https://…/logs.json"
-                autoFocus
-              />
-            </div>
-            <div className="kv">
-              <span>Intervall (ms)</span>
-              <input
-                type="number"
-                min="500"
-                step="500"
-                value={httpPollForm.interval}
-                onInput={(e) =>
-                  setHttpPollForm({
-                    ...httpPollForm,
-                    interval: Math.max(0, Number(e.currentTarget.value || 0)),
-                  })
-                }
-              />
-            </div>
-            <div className="modal-actions">
-              <button onClick={() => setShowHttpPollDlg(false)}>
-                Abbrechen
-              </button>
-              <button
-                disabled={httpPollId != null}
-                title={
-                  httpPollId != null
-                    ? "Bitte laufendes Polling zuerst stoppen"
-                    : ""
-                }
-                onClick={async () => {
-                  const url = String(httpPollForm.url || "").trim();
-                  const ms = Math.max(
-                    500,
-                    Number(httpPollForm.interval || 5000),
-                  );
-                  if (!url) {
-                    alert("Bitte eine gültige URL eingeben");
-                    return;
-                  }
-                  if (httpPollId != null) return;
-                  setShowHttpPollDlg(false);
-                  try {
-                    setHttpUrl(url);
-                    setHttpInterval(ms);
-                    await window.api.settingsSet({
-                      httpUrl: url,
-                      httpPollInterval: ms,
-                    } as any);
-                    const r = await window.api.httpStartPoll({
-                      url,
-                      intervalMs: ms,
-                    });
-                    if (r.ok) {
-                      setHttpPollId(r.id!);
-                      setHttpStatus(`Polling #${r.id}`);
-                      setNextPollDueAt(Date.now() + ms);
-                      setCurrentPollInterval(ms);
-                    } else setHttpStatus("Fehler: " + (r.error || "unbekannt"));
-                  } catch (e) {
-                    setHttpStatus(
-                      "Fehler: " + ((e as any)?.message || String(e)),
-                    );
-                  }
-                }}
-              >
-                Starten
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+      <HttpPollDialog
+        open={showHttpPollDlg}
+        initialUrl={httpPollForm.url}
+        initialInterval={httpPollForm.interval}
+        isPollActive={httpPollId != null}
+        onClose={() => setShowHttpPollDlg(false)}
+        onStart={async (url, ms) => {
+          try {
+            setHttpUrl(url);
+            setHttpInterval(ms);
+            await window.api.settingsSet({
+              httpUrl: url,
+              httpPollInterval: ms,
+            } as any);
+            const r = await window.api.httpStartPoll({ url, intervalMs: ms });
+            if (r.ok) {
+              setHttpPollId(r.id!);
+              setHttpStatus(`Polling #${r.id}`);
+              setNextPollDueAt(Date.now() + ms);
+              setCurrentPollInterval(ms);
+            } else setHttpStatus("Fehler: " + (r.error || "unbekannt"));
+          } catch (e) {
+            setHttpStatus("Fehler: " + ((e as any)?.message || String(e)));
+          }
+        }}
+      />
 
       {/* Einstellungen (Tabs) */}
-      {showSettings && (
-        <div
-          className="modal-backdrop"
-          onClick={() => {
-            try {
-              applyThemeMode(themeMode);
-            } catch {}
-            setShowSettings(false);
-          }}
-        >
-          <div
-            className="modal modal-settings"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <h3>{t("settings.title")}</h3>
-            <div className="tabs">
-              <div
-                className="tablist"
-                role="tablist"
-                aria-label="Einstellungen Tabs"
-              >
-                <button
-                  className={`tab${settingsTab === "tcp" ? " active" : ""}`}
-                  role="tab"
-                  aria-selected={settingsTab === "tcp"}
-                  onClick={() => setSettingsTab("tcp")}
-                >
-                  TCP
-                </button>
-                <button
-                  className={`tab${settingsTab === "http" ? " active" : ""}`}
-                  role="tab"
-                  aria-selected={settingsTab === "http"}
-                  onClick={() => setSettingsTab("http")}
-                >
-                  HTTP
-                </button>
-                <button
-                  className={`tab${settingsTab === "elastic" ? " active" : ""}`}
-                  role="tab"
-                  aria-selected={settingsTab === "elastic"}
-                  onClick={() => setSettingsTab("elastic")}
-                >
-                  Elasticsearch
-                </button>
-                <button
-                  className={`tab${settingsTab === "logging" ? " active" : ""}`}
-                  role="tab"
-                  aria-selected={settingsTab === "logging"}
-                  onClick={() => setSettingsTab("logging")}
-                >
-                  Logging
-                </button>
-                <button
-                  className={`tab${settingsTab === "appearance" ? " active" : ""}`}
-                  role="tab"
-                  aria-selected={settingsTab === "appearance"}
-                  onClick={() => setSettingsTab("appearance")}
-                >
-                  {t("settings.tabs.appearance")}
-                </button>
-              </div>
-              <div className="tabpanels">
-                {settingsTab === "tcp" && (
-                  <div className="tabpanel" role="tabpanel">
-                    <div className="kv">
-                      <span>{t("settings.tcp.port")}</span>
-                      <input
-                        type="number"
-                        min="1"
-                        max="65535"
-                        value={form.tcpPort}
-                        onInput={(e) =>
-                          setForm({
-                            ...form,
-                            tcpPort: Number(e.currentTarget.value || 0),
-                          })
-                        }
-                      />
-                    </div>
-                    <div className="kv">
-                      <label
-                        style={{
-                          display: "flex",
-                          alignItems: "center",
-                          gap: "8px",
-                        }}
-                      >
-                        <input
-                          type="checkbox"
-                          className="native-checkbox"
-                          checked={canTcpControlWindow}
-                          onChange={async (e) => {
-                            const v = e.currentTarget.checked;
-                            setCanTcpControlWindow(v);
-                            try {
-                              await window.api?.windowPermsSet?.({
-                                canTcpControl: v,
-                              });
-                            } catch (err) {
-                              logger.warn("windowPermsSet failed:", err as any);
-                            }
-                          }}
-                        />
-                        <span>{t("settings.tcp.windowControl")}</span>
-                      </label>
-                    </div>
-                  </div>
-                )}
-                {settingsTab === "http" && (
-                  <div className="tabpanel" role="tabpanel">
-                    <div className="kv">
-                      <span>{t("settings.http.url")}</span>
-                      <input
-                        type="text"
-                        value={form.httpUrl}
-                        onInput={(e) =>
-                          setForm({ ...form, httpUrl: e.currentTarget.value })
-                        }
-                        placeholder="https://…/logs.json"
-                        autoFocus
-                      />
-                    </div>
-                    <div className="kv">
-                      <span>{t("settings.http.interval")}</span>
-                      <input
-                        type="number"
-                        min="500"
-                        step="500"
-                        value={form.httpInterval}
-                        onInput={(e) =>
-                          setForm({
-                            ...form,
-                            httpInterval: Number(e.currentTarget.value || 5000),
-                          })
-                        }
-                      />
-                    </div>
-                  </div>
-                )}
-                {settingsTab === "elastic" && (
-                  <div className="tabpanel" role="tabpanel">
-                    <div className="kv">
-                      <span>{t("settings.elastic.url")}</span>
-                      <input
-                        type="text"
-                        value={form.elasticUrl}
-                        onInput={(e) =>
-                          setForm({
-                            ...form,
-                            elasticUrl: e.currentTarget.value,
-                          })
-                        }
-                        placeholder="https://es:9200"
-                        autoFocus
-                      />
-                    </div>
-                    <div className="kv">
-                      <span>{t("settings.elastic.size")}</span>
-                      <input
-                        type="number"
-                        min="1"
-                        max="10000"
-                        value={form.elasticSize}
-                        onInput={(e) =>
-                          setForm({
-                            ...form,
-                            elasticSize: Math.max(
-                              1,
-                              Number(e.currentTarget.value || 1000),
-                            ),
-                          })
-                        }
-                      />
-                    </div>
-                    <div className="kv">
-                      <span>{t("settings.elastic.maxParallel")}</span>
-                      <input
-                        type="number"
-                        min="1"
-                        max="8"
-                        value={(form as any).elasticMaxParallel || 1}
-                        onInput={(e) =>
-                          setForm({
-                            ...form,
-                            elasticMaxParallel: Math.max(
-                              1,
-                              Number(e.currentTarget.value || 1),
-                            ),
-                          } as any)
-                        }
-                      />
-                    </div>
-                    <div className="kv">
-                      <span>{t("settings.elastic.user")}</span>
-                      <input
-                        type="text"
-                        value={form.elasticUser}
-                        onInput={(e) =>
-                          setForm({
-                            ...form,
-                            elasticUser: e.currentTarget.value,
-                          })
-                        }
-                        placeholder="user"
-                      />
-                    </div>
-                    <div className="kv">
-                      <span>{t("settings.elastic.password")}</span>
-                      <div
-                        style={{
-                          display: "grid",
-                          gridTemplateColumns: "1fr auto",
-                          gap: "6px",
-                        }}
-                      >
-                        <input
-                          type="password"
-                          value={form.elasticPassNew}
-                          onInput={(e) =>
-                            setForm({
-                              ...form,
-                              elasticPassNew: e.currentTarget.value,
-                              elasticPassClear: false,
-                            })
-                          }
-                          placeholder={
-                            elasticHasPass
-                              ? t("settings.elastic.passwordSet")
-                              : t("settings.elastic.passwordPlaceholder")
-                          }
-                        />
-                        <button
-                          type="button"
-                          onClick={() =>
-                            setForm({
-                              ...form,
-                              elasticPassNew: "",
-                              elasticPassClear: true,
-                            })
-                          }
-                          title={t("settings.elastic.passwordDelete")}
-                        >
-                          {t("settings.elastic.passwordDeleteButton")}
-                        </button>
-                      </div>
-                      <small style={{ color: "#6b7280" }}>
-                        {elasticHasPass && !form.elasticPassClear
-                          ? t("settings.elastic.passwordCurrentSet")
-                          : t("settings.elastic.passwordCurrentNotSet")}
-                      </small>
-                    </div>
-                  </div>
-                )}
-                {settingsTab === "logging" && (
-                  <div className="tabpanel" role="tabpanel">
-                    <div className="kv">
-                      <label
-                        style={{
-                          display: "flex",
-                          alignItems: "center",
-                          gap: "8px",
-                        }}
-                      >
-                        <input
-                          type="checkbox"
-                          className="native-checkbox"
-                          checked={form.logToFile}
-                          onChange={(e) =>
-                            setForm({
-                              ...form,
-                              logToFile: e.currentTarget.checked,
-                            })
-                          }
-                        />
-                        <span>{t("settings.logging.toFile")}</span>
-                      </label>
-                    </div>
-                    <div className="kv">
-                      <span>{t("settings.logging.file")}</span>
-                      <div
-                        style={{
-                          display: "grid",
-                          gridTemplateColumns: "1fr auto",
-                          gap: "6px",
-                        }}
-                      >
-                        <input
-                          type="text"
-                          value={form.logFilePath}
-                          onInput={(e) =>
-                            setForm({
-                              ...form,
-                              logFilePath: e.currentTarget.value,
-                            })
-                          }
-                          placeholder={t("settings.logging.filePlaceholder")}
-                          disabled={!form.logToFile}
-                        />
-                        <button
-                          onClick={async () => {
-                            try {
-                              const p = await window.api.chooseLogFile();
-                              if (p) setForm({ ...form, logFilePath: p });
-                            } catch (e) {
-                              logger.warn("chooseLogFile failed:", e as any);
-                            }
-                          }}
-                          disabled={!form.logToFile}
-                        >
-                          {t("settings.logging.choose")}
-                        </button>
-                      </div>
-                    </div>
-                    <div className="kv">
-                      <span>{t("settings.logging.maxSize")}</span>
-                      <input
-                        type="number"
-                        min="1"
-                        step="1"
-                        value={form.logMaxMB}
-                        onInput={(e) =>
-                          setForm({
-                            ...form,
-                            logMaxMB: Number(e.currentTarget.value || 5),
-                          })
-                        }
-                        disabled={!form.logToFile}
-                      />
-                    </div>
-                    <div className="kv">
-                      <span>{t("settings.logging.maxBackups")}</span>
-                      <input
-                        type="number"
-                        min="0"
-                        step="1"
-                        value={form.logMaxBackups}
-                        onInput={(e) =>
-                          setForm({
-                            ...form,
-                            logMaxBackups: Number(e.currentTarget.value || 0),
-                          })
-                        }
-                        disabled={!form.logToFile}
-                      />
-                    </div>
-                  </div>
-                )}
-                {settingsTab === "appearance" && (
-                  <div className="tabpanel" role="tabpanel">
-                    <div className="kv">
-                      <span>{t("settings.appearance.theme")}</span>
-                      <select
-                        value={form.themeMode}
-                        onChange={(e) => {
-                          const v = e.currentTarget.value;
-                          setForm({ ...form, themeMode: v });
-                          applyThemeMode(
-                            ["light", "dark"].includes(v) ? v : "system",
-                          );
-                        }}
-                      >
-                        <option value="system">System</option>
-                        <option value="light">Hell</option>
-                        <option value="dark">Dunkel</option>
-                      </select>
-                    </div>
-                    <div className="kv">
-                      <span>{t("settings.language.label")}</span>
-                      <select
-                        value={locale}
-                        onChange={(e) => {
-                          const v = e.currentTarget.value as any;
-                          try {
-                            setLocale(v);
-                          } catch {}
-                        }}
-                      >
-                        <option value="de">
-                          {t("settings.language.german")}
-                        </option>
-                        <option value="en">
-                          {t("settings.language.english")}
-                        </option>
-                      </select>
-                    </div>
-                    <div className="kv">
-                      <span>{t("settings.appearance.accent")}</span>
-                      <div>
-                        <small style={{ color: "#6b7280" }}>
-                          {t("settings.appearance.accentInfo")}
-                        </small>
-                      </div>
-                    </div>
-                  </div>
-                )}
-              </div>
-            </div>
-            <div className="modal-actions">
-              <button
-                onClick={() => {
-                  applyThemeMode(themeMode);
-                  setShowSettings(false);
-                }}
-              >
-                {t("settings.cancel")}
-              </button>
-              <button onClick={saveSettingsModal}>{t("settings.save")}</button>
-            </div>
-          </div>
-        </div>
-      )}
+      <SettingsModal
+        open={showSettings}
+        tab={settingsTab}
+        form={form}
+        elasticHasPass={elasticHasPass}
+        canTcpControlWindow={canTcpControlWindow}
+        locale={locale}
+        onTabChange={setSettingsTab}
+        onFormChange={setForm}
+        onCanTcpControlWindowChange={setCanTcpControlWindow}
+        onLocaleChange={setLocale}
+        onSave={saveSettingsModal}
+        onClose={() => setShowSettings(false)}
+        applyThemeMode={applyThemeMode}
+      />
 
       {/* Toolbar */}
       <header className="toolbar">
@@ -4356,6 +3684,9 @@ export default function App() {
                 } catch (e) {
                   logger.error("Resetting TimeFilter failed:", e);
                 }
+                try {
+                  DiagnosticContextFilter.reset();
+                } catch {}
               }}
             >
               {t("toolbar.clearFilters")}
@@ -4636,672 +3967,35 @@ export default function App() {
             className="divider"
             ref={(el) => (dividerElRef.current = el as any)}
           />
-          <div
-            className="details"
-            data-tinted={
-              selectedEntry && (selectedEntry._mark || selectedEntry.color)
-                ? "1"
-                : "0"
-            }
-            style={{
-              ["--details-tint" as any]: computeTint(
-                (selectedEntry && selectedEntry._mark) || selectedEntry?.color,
-                0.22,
-              ),
-            }}
-          >
-            {!selectedEntry && (
-              <div className="details-empty">
-                <div className="details-empty-icon">👆</div>
-                <div className="details-empty-title">
-                  {t("details.noSelection")}
-                </div>
-                <div className="details-empty-hint">
-                  {t("details.emptyHint")}
-                </div>
-              </div>
-            )}
-            {selectedEntry && (
-              <Fragment>
-                <div className="meta-grid">
-                  <div>
-                    <div className="kv">
-                      <span>{t("details.time")}</span>
-                      <div>{fmtTimestamp(selectedEntry.timestamp)}</div>
-                    </div>
-                    <div className="kv">
-                      <span>{t("details.logger")}</span>
-                      <div>{fmt(selectedEntry.logger)}</div>
-                    </div>
-                  </div>
-                  <div>
-                    <div className="kv">
-                      <span>{t("details.level")}</span>
-                      <div>
-                        <span className={levelClass(selectedEntry.level)}>
-                          {fmt(selectedEntry.level)}
-                        </span>
-                      </div>
-                    </div>
-                    <div className="kv">
-                      <span>{t("details.thread")}</span>
-                      <div>{fmt(selectedEntry.thread)}</div>
-                    </div>
-                  </div>
-                </div>
-                <div className="section-sep" />
-                <div className="kv full">
-                  <span>{t("details.message")}</span>
-                  <pre
-                    id="dMessage"
-                    dangerouslySetInnerHTML={{
-                      __html: highlightAll(selectedEntry.message || "", search),
-                    }}
-                  />
-                </div>
-                {(selectedEntry.stack_trace || selectedEntry.stackTrace) && (
-                  <div className="kv full">
-                    <span>{t("details.stacktrace")}</span>
-                    <pre className="stack-trace">
-                      {String(
-                        selectedEntry.stack_trace ||
-                          selectedEntry.stackTrace ||
-                          "",
-                      )}
-                    </pre>
-                  </div>
-                )}
-                {mdcPairs.length > 0 && (
-                  <Fragment>
-                    <div className="section-sep" />
-                    <div
-                      style={{
-                        fontSize: "12px",
-                        color: "#666",
-                        marginBottom: "6px",
-                      }}
-                    >
-                      {t("details.diagnosticContext")}
-                    </div>
-                    <div className="mdc-grid">
-                      {mdcPairs.map(([k, v]) => (
-                        <Fragment key={k + "=" + v}>
-                          <div className="mdc-key">{k}</div>
-                          <div className="mdc-val">
-                            <code>{v}</code>
-                          </div>
-                          <div
-                            className="mdc-act"
-                            style={{
-                              display: "flex",
-                              gap: "6px",
-                              justifyContent: "end",
-                            }}
-                          >
-                            <button
-                              onClick={() => addMdcToFilter(k, v)}
-                              title={t("details.addToFilter")}
-                            >
-                              +
-                            </button>
-                          </div>
-                        </Fragment>
-                      ))}
-                    </div>
-                  </Fragment>
-                )}
-              </Fragment>
-            )}
-          </div>
+          <DetailPanel
+            selectedEntry={selectedEntry}
+            mdcPairs={mdcPairs}
+            search={search}
+            onAddMdcToFilter={addMdcToFilter}
+          />
         </div>
       </div>
 
       {/* Kontextmenü */}
-      {ctxMenu.open && (
-        <div
-          ref={ctxRef}
-          className="context-menu"
-          style={{ left: ctxMenu.x + "px", top: ctxMenu.y + "px" }}
-        >
-          <div className="item" onClick={() => applyMarkColor(undefined)}>
-            {t("contextMenu.removeMark")}
-          </div>
-          <div className="colors">
-            {palette.map((c, i) => (
-              <div
-                key={i}
-                className="swatch"
-                style={{ background: c }}
-                onClick={() => applyMarkColor(c)}
-                title={c}
-              />
-            ))}
-          </div>
-          <div
-            className="item"
-            style={{
-              display: "grid",
-              gridTemplateColumns: "auto 1fr auto auto",
-              alignItems: "center",
-              gap: "8px",
-            }}
-          >
-            <span>{t("contextMenu.color")}</span>
-            <input
-              type="color"
-              className="swatch"
-              value={pickerColor}
-              onInput={(e) => setPickerColor(e.currentTarget.value)}
-            />
-            <button
-              onClick={() => applyMarkColor(pickerColor)}
-              title={t("contextMenu.applyColorTooltip")}
-            >
-              {t("contextMenu.apply")}
-            </button>
-            <button
-              onClick={() => addCustomColor(pickerColor)}
-              title={t("contextMenu.addColorTooltip")}
-            >
-              {t("contextMenu.add")}
-            </button>
-          </div>
-          <div className="sep" />
-          <div className="item" onClick={adoptTraceIds}>
-            {t("contextMenu.adoptTraceIds")}
-          </div>
-          <div className="item" onClick={copyTsMsg}>
-            {t("contextMenu.copyTsMsg")}
-          </div>
-        </div>
-      )}
+      <ContextMenu
+        open={ctxMenu.open}
+        x={ctxMenu.x}
+        y={ctxMenu.y}
+        ctxRef={ctxRef}
+        palette={palette}
+        pickerColor={pickerColor}
+        onPickerColorChange={setPickerColor}
+        onApplyMark={applyMarkColor}
+        onAddCustomColor={addCustomColor}
+        onAdoptTraceIds={adoptTraceIds}
+        onCopyTsMsg={copyTsMsg}
+      />
 
       {/* Hilfe-Dialog */}
-      {showHelpDlg && (
-        <div className="modal-backdrop" onClick={() => setShowHelpDlg(false)}>
-          <div
-            className="modal"
-            onClick={(e) => e.stopPropagation()}
-            style={{
-              maxWidth: "700px",
-              maxHeight: "80vh",
-              display: "flex",
-              flexDirection: "column",
-            }}
-          >
-            <h3
-              style={{
-                margin: "0 0 16px 0",
-                display: "flex",
-                alignItems: "center",
-                gap: "8px",
-              }}
-            >
-              🪓 Lumberjack - Hilfe
-            </h3>
-            <div
-              style={{
-                flex: 1,
-                overflowY: "auto",
-                fontSize: "13px",
-                lineHeight: "1.6",
-              }}
-            >
-              <section style={{ marginBottom: "20px" }}>
-                <h4
-                  style={{
-                    color: "var(--color-primary)",
-                    marginBottom: "8px",
-                    borderBottom: "1px solid var(--color-divider)",
-                    paddingBottom: "4px",
-                  }}
-                >
-                  📋 Übersicht
-                </h4>
-                <p>
-                  Lumberjack ist ein Log-Viewer für große Datenmengen und
-                  Live-Quellen mit Fokus auf Performance.
-                </p>
-              </section>
-
-              <section style={{ marginBottom: "20px" }}>
-                <h4
-                  style={{
-                    color: "var(--color-primary)",
-                    marginBottom: "8px",
-                    borderBottom: "1px solid var(--color-divider)",
-                    paddingBottom: "4px",
-                  }}
-                >
-                  📁 Datenquellen
-                </h4>
-                <ul style={{ margin: "0", paddingLeft: "20px" }}>
-                  <li>
-                    <strong>Dateien:</strong> .log, .json, .jsonl, .txt und .zip
-                    (Drag & Drop oder Menü)
-                  </li>
-                  <li>
-                    <strong>HTTP:</strong> Einmaliges Laden oder periodisches
-                    Polling mit Deduplizierung
-                  </li>
-                  <li>
-                    <strong>TCP:</strong> Live-Log-Server für Echtzeit-Streams
-                  </li>
-                  <li>
-                    <strong>Elasticsearch:</strong> Logs aus ES-Clustern mit
-                    Zeitfilter
-                  </li>
-                </ul>
-              </section>
-
-              <section style={{ marginBottom: "20px" }}>
-                <h4
-                  style={{
-                    color: "var(--color-primary)",
-                    marginBottom: "8px",
-                    borderBottom: "1px solid var(--color-divider)",
-                    paddingBottom: "4px",
-                  }}
-                >
-                  🔍 Volltextsuche
-                </h4>
-                <p style={{ marginBottom: "8px" }}>
-                  Syntax für die Nachrichtensuche:
-                </p>
-                <table
-                  style={{
-                    width: "100%",
-                    borderCollapse: "collapse",
-                    fontSize: "12px",
-                  }}
-                >
-                  <tbody>
-                    <tr>
-                      <td
-                        style={{
-                          padding: "4px 8px",
-                          background: "var(--color-bg-hover)",
-                        }}
-                      >
-                        <code>foo|bar</code>
-                      </td>
-                      <td style={{ padding: "4px 8px" }}>
-                        ODER - enthält 'foo' oder 'bar'
-                      </td>
-                    </tr>
-                    <tr>
-                      <td
-                        style={{
-                          padding: "4px 8px",
-                          background: "var(--color-bg-hover)",
-                        }}
-                      >
-                        <code>foo&bar</code>
-                      </td>
-                      <td style={{ padding: "4px 8px" }}>
-                        UND - enthält 'foo' und 'bar'
-                      </td>
-                    </tr>
-                    <tr>
-                      <td
-                        style={{
-                          padding: "4px 8px",
-                          background: "var(--color-bg-hover)",
-                        }}
-                      >
-                        <code>!foo</code>
-                      </td>
-                      <td style={{ padding: "4px 8px" }}>
-                        NICHT - enthält nicht 'foo'
-                      </td>
-                    </tr>
-                    <tr>
-                      <td
-                        style={{
-                          padding: "4px 8px",
-                          background: "var(--color-bg-hover)",
-                        }}
-                      >
-                        <code>foo&!bar</code>
-                      </td>
-                      <td style={{ padding: "4px 8px" }}>
-                        Kombination - 'foo' aber nicht 'bar'
-                      </td>
-                    </tr>
-                  </tbody>
-                </table>
-                <p
-                  style={{
-                    marginTop: "8px",
-                    fontSize: "12px",
-                    color: "var(--color-text-secondary)",
-                  }}
-                >
-                  Suchmodus wählbar: Case-insensitiv (Standard), Case-sensitiv,
-                  Regex
-                </p>
-              </section>
-
-              <section style={{ marginBottom: "20px" }}>
-                <h4
-                  style={{
-                    color: "var(--color-primary)",
-                    marginBottom: "8px",
-                    borderBottom: "1px solid var(--color-divider)",
-                    paddingBottom: "4px",
-                  }}
-                >
-                  🎛️ Filter
-                </h4>
-                <ul style={{ margin: "0", paddingLeft: "20px" }}>
-                  <li>
-                    <strong>Level:</strong> TRACE, DEBUG, INFO, WARN, ERROR,
-                    FATAL
-                  </li>
-                  <li>
-                    <strong>Logger:</strong> Substring-Suche im Logger-Namen
-                  </li>
-                  <li>
-                    <strong>Thread:</strong> Filtern nach Thread-Name
-                  </li>
-                  <li>
-                    <strong>DC-Filter:</strong> MDC-Keys wie TraceID, SpanID
-                  </li>
-                </ul>
-              </section>
-
-              <section style={{ marginBottom: "20px" }}>
-                <h4
-                  style={{
-                    color: "var(--color-primary)",
-                    marginBottom: "8px",
-                    borderBottom: "1px solid var(--color-divider)",
-                    paddingBottom: "4px",
-                  }}
-                >
-                  🔎 Elasticsearch-Suche
-                </h4>
-                <p style={{ marginBottom: "8px" }}>
-                  Im Elasticsearch-Dialog kannst du nach verschiedenen Kriterien
-                  filtern:
-                </p>
-                <ul style={{ margin: "0 0 12px 0", paddingLeft: "20px" }}>
-                  <li>
-                    <strong>Application:</strong> Anwendungsname
-                  </li>
-                  <li>
-                    <strong>Level:</strong> ERROR, WARN, INFO, DEBUG
-                  </li>
-                  <li>
-                    <strong>Environment:</strong> prod, stage, dev
-                  </li>
-                  <li>
-                    <strong>Logger:</strong> Logger-Name (Substring)
-                  </li>
-                  <li>
-                    <strong>Message:</strong> Nachrichteninhalt mit erweiterter
-                    Syntax
-                  </li>
-                </ul>
-                <p style={{ marginBottom: "8px" }}>
-                  <strong>Message-Filter Syntax:</strong>
-                </p>
-                <table
-                  style={{
-                    width: "100%",
-                    borderCollapse: "collapse",
-                    fontSize: "12px",
-                    marginBottom: "8px",
-                  }}
-                >
-                  <tbody>
-                    <tr>
-                      <td
-                        style={{
-                          padding: "4px 8px",
-                          background: "var(--color-bg-hover)",
-                          width: "180px",
-                        }}
-                      >
-                        <code>error</code>
-                      </td>
-                      <td style={{ padding: "4px 8px" }}>
-                        Einfache Suche (serverseitig)
-                      </td>
-                    </tr>
-                    <tr>
-                      <td
-                        style={{
-                          padding: "4px 8px",
-                          background: "var(--color-bg-hover)",
-                        }}
-                      >
-                        <code>xml&amp;CB24</code>
-                      </td>
-                      <td style={{ padding: "4px 8px" }}>
-                        UND - enthält 'xml' und 'CB24'
-                      </td>
-                    </tr>
-                    <tr>
-                      <td
-                        style={{
-                          padding: "4px 8px",
-                          background: "var(--color-bg-hover)",
-                        }}
-                      >
-                        <code>xml&amp;(CB24|CB27)</code>
-                      </td>
-                      <td style={{ padding: "4px 8px" }}>
-                        Gruppierung - 'xml' und ('CB24' oder 'CB27')
-                      </td>
-                    </tr>
-                    <tr>
-                      <td
-                        style={{
-                          padding: "4px 8px",
-                          background: "var(--color-bg-hover)",
-                        }}
-                      >
-                        <code>error&amp;!timeout</code>
-                      </td>
-                      <td style={{ padding: "4px 8px" }}>
-                        NICHT - 'error' aber nicht 'timeout'
-                      </td>
-                    </tr>
-                  </tbody>
-                </table>
-                <p
-                  style={{
-                    fontSize: "11px",
-                    color: "var(--color-text-secondary)",
-                    margin: 0,
-                  }}
-                >
-                  💡 Einfache Begriffe werden serverseitig gefiltert
-                  (schneller). Erweiterte Syntax (&amp;, |, !, ()) wird
-                  client-seitig nach dem Laden angewendet.
-                </p>
-              </section>
-
-              <section style={{ marginBottom: "20px" }}>
-                <h4
-                  style={{
-                    color: "var(--color-primary)",
-                    marginBottom: "8px",
-                    borderBottom: "1px solid var(--color-divider)",
-                    paddingBottom: "4px",
-                  }}
-                >
-                  ⌨️ Tastaturkürzel
-                </h4>
-                <table
-                  style={{
-                    width: "100%",
-                    borderCollapse: "collapse",
-                    fontSize: "12px",
-                  }}
-                >
-                  <tbody>
-                    <tr>
-                      <td
-                        style={{
-                          padding: "4px 8px",
-                          background: "var(--color-bg-hover)",
-                          width: "140px",
-                        }}
-                      >
-                        <kbd>⌘/Ctrl + F</kbd>
-                      </td>
-                      <td style={{ padding: "4px 8px" }}>
-                        Suchfeld fokussieren
-                      </td>
-                    </tr>
-                    <tr>
-                      <td
-                        style={{
-                          padding: "4px 8px",
-                          background: "var(--color-bg-hover)",
-                        }}
-                      >
-                        <kbd>⌘/Ctrl + ⇧ + F</kbd>
-                      </td>
-                      <td style={{ padding: "4px 8px" }}>
-                        Filter ein-/ausblenden
-                      </td>
-                    </tr>
-                    <tr>
-                      <td
-                        style={{
-                          padding: "4px 8px",
-                          background: "var(--color-bg-hover)",
-                        }}
-                      >
-                        <kbd>j / k</kbd>
-                      </td>
-                      <td style={{ padding: "4px 8px" }}>
-                        Navigation (Vim-Style)
-                      </td>
-                    </tr>
-                    <tr>
-                      <td
-                        style={{
-                          padding: "4px 8px",
-                          background: "var(--color-bg-hover)",
-                        }}
-                      >
-                        <kbd>g / G</kbd>
-                      </td>
-                      <td style={{ padding: "4px 8px" }}>Zum Anfang / Ende</td>
-                    </tr>
-                    <tr>
-                      <td
-                        style={{
-                          padding: "4px 8px",
-                          background: "var(--color-bg-hover)",
-                        }}
-                      >
-                        <kbd>n / N</kbd>
-                      </td>
-                      <td style={{ padding: "4px 8px" }}>
-                        Nächster / Vorheriger Treffer
-                      </td>
-                    </tr>
-                    <tr>
-                      <td
-                        style={{
-                          padding: "4px 8px",
-                          background: "var(--color-bg-hover)",
-                        }}
-                      >
-                        <kbd>↑ / ↓</kbd>
-                      </td>
-                      <td style={{ padding: "4px 8px" }}>
-                        Navigation (Standard)
-                      </td>
-                    </tr>
-                    <tr>
-                      <td
-                        style={{
-                          padding: "4px 8px",
-                          background: "var(--color-bg-hover)",
-                        }}
-                      >
-                        <kbd>Escape</kbd>
-                      </td>
-                      <td style={{ padding: "4px 8px" }}>
-                        Auswahl aufheben / Dialog schließen
-                      </td>
-                    </tr>
-                  </tbody>
-                </table>
-              </section>
-
-              <section>
-                <h4
-                  style={{
-                    color: "var(--color-primary)",
-                    marginBottom: "8px",
-                    borderBottom: "1px solid var(--color-divider)",
-                    paddingBottom: "4px",
-                  }}
-                >
-                  💡 Tipps
-                </h4>
-                <ul style={{ margin: "0", paddingLeft: "20px" }}>
-                  <li>
-                    Rechtsklick auf Zeilen für Kontextmenü (Markieren, Färben)
-                  </li>
-                  <li>Detail-Panel-Höhe per Drag anpassbar</li>
-                  <li>Spaltenbreiten durch Ziehen der Trenner anpassbar</li>
-                  <li>Aktive Filter werden als Chips angezeigt</li>
-                </ul>
-              </section>
-            </div>
-            <div
-              className="modal-actions"
-              style={{
-                marginTop: "16px",
-                paddingTop: "12px",
-                borderTop: "1px solid var(--color-divider)",
-              }}
-            >
-              <button
-                onClick={() => setShowHelpDlg(false)}
-                style={{
-                  background: "var(--accent-gradient)",
-                  color: "white",
-                  border: "none",
-                }}
-              >
-                Schließen
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+      <HelpDialog open={showHelpDlg} onClose={() => setShowHelpDlg(false)} />
 
       {/* Titel-Dialog */}
-      {showTitleDlg && (
-        <div className="modal-backdrop" onClick={() => setShowTitleDlg(false)}>
-          <div className="modal" onClick={(e) => e.stopPropagation()}>
-            <h3>Fenster-Titel setzen</h3>
-            <div className="kv full">
-              <span>Titel</span>
-              <input
-                type="text"
-                value={titleInput}
-                onChange={(e) => setTitleInput(e.currentTarget.value)}
-                placeholder="Lumberjack"
-                autoFocus
-              />
-            </div>
-            <div className="modal-actions">
-              <button onClick={() => setShowTitleDlg(false)}>Abbrechen</button>
-              <button onClick={applySetWindowTitle}>Übernehmen</button>
-            </div>
-          </div>
-        </div>
-      )}
+      <TitleDialog open={showTitleDlg} onClose={() => setShowTitleDlg(false)} />
     </div>
   );
 }
