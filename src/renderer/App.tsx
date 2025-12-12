@@ -2730,10 +2730,11 @@ export default function App() {
                         if (!hasMore) break;
                       }
 
-                      if (!hasMore || available <= 0) {
-                        // Session beenden, wenn nichts mehr oder Cap erreicht
-                        if (!hasMore) setEsPitSessionId(null);
+                      // Session nur beenden, wenn wirklich keine weiteren Ergebnisse mehr verfügbar
+                      if (!hasMore) {
+                        setEsPitSessionId(null);
                       }
+                      // esHasMore bleibt true, wenn noch Ergebnisse existieren (auch bei Cap erreicht)
                     } else {
                       alert(
                         "Elastic-Fehler: " +
@@ -3766,7 +3767,7 @@ export default function App() {
           {!esBusy && esHasMore && (
             <button
               style={{ marginLeft: "8px" }}
-              title="Weitere Ergebnisse laden (search_after)"
+              title={t("toolbar.elasticLoadMoreTooltip")}
               onClick={async () => {
                 if (esBusy) return;
                 const token = esNextSearchAfter;
@@ -3782,17 +3783,11 @@ export default function App() {
                     const mode = (f?.mode || "relative") as
                       | "relative"
                       | "absolute";
-                    let available = Math.max(
-                      0,
-                      (elasticSize || 0) - esElasticCountAll,
-                    );
-                    if (available <= 0) {
-                      setEsBusy(false);
-                      return;
-                    }
+                    // Lade eine weitere Batch von elasticSize Einträgen (kein Limit mehr)
+                    const batchSize = elasticSize || 1000;
                     const opts: ElasticSearchOptions = {
                       url: elasticUrl || undefined,
-                      size: Math.min(elasticSize || 1000, available),
+                      size: batchSize,
                       index: f?.index || undefined,
                       sort: f?.sort || undefined,
                       duration:
@@ -3815,14 +3810,14 @@ export default function App() {
                     const res = await window.api.elasticSearch(opts);
                     if (res?.ok) {
                       if (Array.isArray(res.entries) && res.entries.length) {
-                        const used = appendElasticCapped(
+                        // Keine Kapazitätsbeschränkung mehr - alle geladenen Einträge hinzufügen
+                        appendElasticCapped(
                           res.entries as any[],
-                          available,
+                          res.entries.length, // Alle Einträge verwenden
                           { messageFilter },
                         );
-                        available = Math.max(0, available - used);
                       }
-                      setEsHasMore(!!res.hasMore && available > 0);
+                      setEsHasMore(!!res.hasMore);
                       setEsNextSearchAfter(
                         (res.nextSearchAfter as any) || null,
                       );
@@ -3833,7 +3828,8 @@ export default function App() {
                       );
                       if (typeof (res as any)?.total === "number")
                         setEsTotal(Number((res as any).total));
-                      if (!res.hasMore || available <= 0)
+                      // PIT-Session nur beenden, wenn keine weiteren Ergebnisse vorhanden
+                      if (!res.hasMore)
                         setEsPitSessionId(null);
                     } else {
                       alert(
@@ -3847,11 +3843,11 @@ export default function App() {
                 });
               }}
             >
-              Weitere laden
+              {t("toolbar.elasticLoadMore")} {esTotal != null && esTotal > esLoaded ? `(${esTotal - esLoaded})` : ""}
             </button>
           )}
           {esTotal != null && (
-            <span className="status" title="Geladene ES-Ergebnisse">
+            <span className="status" title={t("toolbar.elasticLoadedTooltip", { loaded: String(esLoaded), total: String(esTotal) }) + (esHasMore ? t("toolbar.elasticMoreAvailable") : "")}>
               {t("toolbar.elasticLoaded", {
                 loaded: String(esLoaded),
                 total: String(esTotal),

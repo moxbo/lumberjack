@@ -49,7 +49,10 @@
     "elasticActive": "Elastic active",
     "elasticLoading": "Loading … {{loaded}}/{{target}} ({{percent}}%)",
     "elasticLoadMore": "Load More",
+    "elasticLoadMoreTooltip": "Load more results from Elasticsearch",
     "elasticLoaded": "Loaded: {{loaded}} of {{total}}",
+    "elasticLoadedTooltip": "Loaded ES results: {{loaded}} of {{total}}",
+    "elasticMoreAvailable": " - More available",
     "busy": "Loading…",
     "nextPollIn": "Next poll in"
   },

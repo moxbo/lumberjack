@@ -49,7 +49,10 @@
     "elasticActive": "Elastic aktiv",
     "elasticLoading": "Lädt … {{loaded}}/{{target}} ({{percent}}%)",
     "elasticLoadMore": "Weitere laden",
+    "elasticLoadMoreTooltip": "Weitere Ergebnisse von Elasticsearch laden",
     "elasticLoaded": "Geladen: {{loaded}} von {{total}}",
+    "elasticLoadedTooltip": "Geladene ES-Ergebnisse: {{loaded}} von {{total}}",
+    "elasticMoreAvailable": " - Weitere verfügbar",
     "busy": "Lädt…",
     "nextPollIn": "Nächster Poll in"
   },
