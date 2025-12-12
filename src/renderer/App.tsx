@@ -3708,9 +3708,6 @@ export default function App() {
                 } catch (e) {
                   logger.error("Resetting TimeFilter failed:", e);
                 }
-                try {
-                  DiagnosticContextFilter.reset();
-                } catch {}
               }}
             >
               {t("toolbar.clearFilters")}
