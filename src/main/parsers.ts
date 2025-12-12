@@ -520,7 +520,7 @@ async function httpJsonRequest(
       });
       req.on("error", (err: Error) => {
         if (timer) clearTimeout(timer);
-        reject(err instanceof Error ? err : new Error(String(err)));
+        reject(err);
       });
       const payload = body ? JSON.stringify(body) : "";
       if (payload) req.write(payload);
@@ -1118,12 +1118,14 @@ function parseHitsResponse(
     lastHit && Array.isArray(lastHit.sort)
       ? (lastHit.sort as Array<string | number>)
       : null;
-  const hasMore = hitsArray.length >= (size || 0);
+  // hasMore is true when we got a full page (size entries) - indicates more data might exist
+  // If we got fewer entries than requested, we've reached the end
+  const hasMore = hitsArray.length >= (size || 0) && sortVals !== null;
   return {
     entries: out,
     total: totalVal,
     hasMore,
-    nextSearchAfter: hasMore && sortVals ? sortVals : null,
+    nextSearchAfter: hasMore ? sortVals : null,
   };
 }
 

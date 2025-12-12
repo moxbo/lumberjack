@@ -797,7 +797,7 @@ async function ensurePitOpened(sess) {
       sess.backoffBaseMs
     );
     sess.dialect = "es";
-    return;
+
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
     if (/unrecognized parameter|unknown url|_pit]|\[\/\/_pit|unknown|not found|illegal_argument/i.test(
@@ -831,7 +831,6 @@ async function ensurePitOpened(sess) {
       return;
     }
     sess.dialect = "scroll";
-    return;
   }
 }
 function parseHitsResponse(data, size) {
@@ -859,12 +858,12 @@ function parseHitsResponse(data, size) {
   }
   const lastHit = hitsArray.length > 0 ? hitsArray[hitsArray.length - 1] : null;
   const sortVals = lastHit && Array.isArray(lastHit.sort) ? lastHit.sort : null;
-  const hasMore = hitsArray.length >= (size || 0);
+  const hasMore = hitsArray.length >= (size || 0) && sortVals !== null;
   return {
     entries: out,
     total: totalVal,
     hasMore,
-    nextSearchAfter: hasMore && sortVals ? sortVals : null
+    nextSearchAfter: hasMore ? sortVals : null
   };
 }
 async function openScroll(baseUrl, index, keepAlive, size, sortOrder, headers, allowInsecureTLS, timeoutMs, maxRetries, backoffBaseMs, queryOpts) {

@@ -18,11 +18,18 @@ export function entrySignatureForMerge(e: any): string {
 
 /**
  * Entry signature for marking (more concise, used for marks persistence)
+ * For Elasticsearch entries, includes source (which contains document ID) to avoid
+ * false deduplication of entries with same timestamp/logger/message
  */
 export function entrySignature(e: any): string {
   const ts = e?.timestamp != null ? String(e.timestamp) : "";
   const lg = e?.logger != null ? String(e.logger) : "";
   const msg = e?.message != null ? String(e.message) : "";
+  // For ES entries, include source (contains doc ID) to distinguish same-content entries
+  const src = e?.source;
+  if (typeof src === "string" && src.startsWith("elastic://")) {
+    return `${ts}|${lg}|${msg}|${src}`;
+  }
   return `${ts}|${lg}|${msg}`;
 }
 

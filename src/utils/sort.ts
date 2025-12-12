@@ -4,11 +4,13 @@
 function extractFractionBeyondMs(ts: unknown): number {
   // Extract digits after the decimal point in the seconds field, beyond the first 3 (milliseconds)
   // Example: 2025-10-23T15:46:12.0493117+02:00 -> fracAll=0493117 -> beyondMs=3117 -> normalized to 6 digits
+  // Also handles space-separated format: 2025-12-11 18:49:41.278
   try {
     if (ts == null || (typeof ts !== "string" && typeof ts !== "number"))
       return 0;
     const s = String(ts);
-    const m = s.match(/T\d{2}:\d{2}:\d{2}\.(\d+)/);
+    // Match both T-separated (ISO) and space-separated timestamp formats
+    const m = s.match(/[T ]\d{2}:\d{2}:\d{2}\.(\d+)/);
     if (!m) return 0;
     const frac = m[1] || "";
     if (!frac) return 0;

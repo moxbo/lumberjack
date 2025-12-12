@@ -475,7 +475,9 @@ export function registerIpcHandlers(
 
         const url = opts.url || settings.elasticUrl || "";
         const requestedSize = Number(opts.size ?? settings.elasticSize ?? 1000);
-        const size = Math.max(
+        // Page size for each ES request (max 10000 per ES default, but we paginate)
+        // Use smaller page size for pagination efficiency
+        const pageSize = Math.max(
           1,
           Math.min(
             10000,
@@ -497,7 +499,7 @@ export function registerIpcHandlers(
         const mergedOpts: ElasticSearchOptions = {
           ...opts,
           url,
-          size,
+          size: pageSize,
           auth: opts.auth ?? derivedAuth,
           // defaults for PIT/retries
           keepAlive: opts.keepAlive || "1m",
