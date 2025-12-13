@@ -42,6 +42,7 @@ import {
   HttpPollDialog,
   SettingsModal,
   DetailPanel,
+  FilterSection,
 } from "./components";
 
 // IPC batching constants
@@ -3351,372 +3352,64 @@ export default function App() {
           })()}
         </div>
         {/* Ausklappbare Filter-Sektion */}
-        <div
-          className={`filter-section ${filtersExpanded ? "expanded" : "collapsed"}`}
-        >
-          <div className="section" style={{ paddingTop: 0 }}>
-            <label>
-              <input
-                type="checkbox"
-                className="native-checkbox"
-                checked={stdFiltersEnabled}
-                onChange={(e) => setStdFiltersEnabled(e.currentTarget.checked)}
-              />{" "}
-              {t("toolbar.filterActive")}
-            </label>
-            <label>{t("toolbar.level")}</label>
-            <select
-              id="filterLevel"
-              value={filter.level}
-              onChange={(e) =>
-                setFilter({ ...filter, level: e.currentTarget.value })
-              }
-              disabled={!stdFiltersEnabled}
-            >
-              <option value="">{t("toolbar.levelAll")}</option>
-              {["TRACE", "DEBUG", "INFO", "WARN", "ERROR", "FATAL"].map((l) => (
-                <option key={l} value={l}>
-                  {l}
-                </option>
-              ))}
-            </select>
-            <label>{t("toolbar.logger")}</label>
-            <div
-              ref={loggerHistRef as any}
-              style={{
-                display: "inline-flex",
-                alignItems: "center",
-                position: "relative",
-              }}
-            >
-              <input
-                id="filterLogger"
-                type="text"
-                value={filter.logger}
-                onInput={(e) =>
-                  setFilter({ ...filter, logger: e.currentTarget.value })
-                }
-                onKeyDown={(e) => {
-                  if ((e as any).key === "Enter")
-                    addFilterHistory("logger", (e.currentTarget as any).value);
-                  if ((e as any).key === "ArrowDown") setShowLoggerHist(true);
-                  const key = (e as any).key?.toLowerCase?.() || "";
-                  if (
-                    key === "a" &&
-                    ((e as any).ctrlKey || (e as any).metaKey)
-                  ) {
-                    e.preventDefault();
-                    try {
-                      (e.currentTarget as HTMLInputElement).select();
-                    } catch {}
-                  }
-                }}
-                onFocus={() => setShowLoggerHist(true)}
-                onBlur={(e) =>
-                  addFilterHistory("logger", e.currentTarget.value)
-                }
-                placeholder={t("toolbar.loggerPlaceholder")}
-                disabled={!stdFiltersEnabled}
-                style={{ minWidth: "150px" }}
-              />
-            </div>
-            {showLoggerHist &&
-              fltHistLogger.length > 0 &&
-              loggerPos &&
-              createPortal(
-                <div
-                  ref={loggerPopRef as any}
-                  role="listbox"
-                  className="autocomplete-dropdown"
-                  style={{
-                    position: "fixed",
-                    left: loggerPos.left + "px",
-                    top: loggerPos.top + "px",
-                    width: Math.max(loggerPos.width, 250) + "px",
-                  }}
-                >
-                  {fltHistLogger.map((v, i) => (
-                    <div
-                      key={i}
-                      className="autocomplete-item"
-                      onClick={() => {
-                        setFilter({ ...filter, logger: v });
-                        addFilterHistory("logger", v);
-                        setShowLoggerHist(false);
-                      }}
-                      onMouseDown={(e) => e.preventDefault()}
-                      title={v}
-                    >
-                      <span>🕐</span>
-                      {v}
-                    </div>
-                  ))}
-                  <div className="autocomplete-hint">
-                    <span>
-                      <kbd>↑↓</kbd> Navigation
-                    </span>
-                    <span>
-                      <kbd>Enter</kbd> Auswählen
-                    </span>
-                    <span>
-                      <kbd>Esc</kbd> Schließen
-                    </span>
-                  </div>
-                </div>,
-                document.body,
-              )}
-            <label>{t("toolbar.thread")}</label>
-            <div
-              ref={threadHistRef as any}
-              style={{
-                display: "inline-flex",
-                alignItems: "center",
-                position: "relative",
-              }}
-            >
-              <input
-                id="filterThread"
-                type="text"
-                value={filter.thread}
-                onInput={(e) =>
-                  setFilter({ ...filter, thread: e.currentTarget.value })
-                }
-                onKeyDown={(e) => {
-                  if ((e as any).key === "Enter")
-                    addFilterHistory("thread", (e.currentTarget as any).value);
-                  if ((e as any).key === "ArrowDown") setShowThreadHist(true);
-                  const key = (e as any).key?.toLowerCase?.() || "";
-                  if (
-                    key === "a" &&
-                    ((e as any).ctrlKey || (e as any).metaKey)
-                  ) {
-                    e.preventDefault();
-                    try {
-                      (e.currentTarget as HTMLInputElement).select();
-                    } catch {}
-                  }
-                }}
-                onFocus={() => setShowThreadHist(true)}
-                onBlur={(e) =>
-                  addFilterHistory("thread", e.currentTarget.value)
-                }
-                placeholder={t("toolbar.threadPlaceholder")}
-                disabled={!stdFiltersEnabled}
-                style={{ minWidth: "130px" }}
-              />
-            </div>
-            {showThreadHist &&
-              fltHistThread.length > 0 &&
-              threadPos &&
-              createPortal(
-                <div
-                  ref={threadPopRef as any}
-                  role="listbox"
-                  className="autocomplete-dropdown"
-                  style={{
-                    position: "fixed",
-                    left: threadPos.left + "px",
-                    top: threadPos.top + "px",
-                    width: Math.max(threadPos.width, 250) + "px",
-                  }}
-                >
-                  {fltHistThread.map((v, i) => (
-                    <div
-                      key={i}
-                      className="autocomplete-item"
-                      onClick={() => {
-                        setFilter({ ...filter, thread: v });
-                        addFilterHistory("thread", v);
-                        setShowThreadHist(false);
-                      }}
-                      onMouseDown={(e) => e.preventDefault()}
-                      title={v}
-                    >
-                      <span>🕐</span>
-                      {v}
-                    </div>
-                  ))}
-                  <div className="autocomplete-hint">
-                    <span>
-                      <kbd>↑↓</kbd> Navigation
-                    </span>
-                    <span>
-                      <kbd>Enter</kbd> Auswählen
-                    </span>
-                    <span>
-                      <kbd>Esc</kbd> Schließen
-                    </span>
-                  </div>
-                </div>,
-                document.body,
-              )}
-            <label>{t("toolbar.message")}</label>
-            <div
-              ref={messageHistRef as any}
-              style={{
-                display: "inline-flex",
-                alignItems: "center",
-                position: "relative",
-              }}
-            >
-              <input
-                id="filterMessage"
-                type="text"
-                value={filter.message}
-                onInput={(e) =>
-                  setFilter({ ...filter, message: e.currentTarget.value })
-                }
-                onKeyDown={(e) => {
-                  if ((e as any).key === "Enter")
-                    addFilterHistory("message", (e.currentTarget as any).value);
-                  if ((e as any).key === "ArrowDown") setShowMessageHist(true);
-                  const key = (e as any).key?.toLowerCase?.() || "";
-                  if (
-                    key === "a" &&
-                    ((e as any).ctrlKey || (e as any).metaKey)
-                  ) {
-                    e.preventDefault();
-                    try {
-                      (e.currentTarget as HTMLInputElement).select();
-                    } catch {}
-                  }
-                }}
-                onFocus={() => setShowMessageHist(true)}
-                onBlur={(e) =>
-                  addFilterHistory("message", e.currentTarget.value)
-                }
-                placeholder={t("toolbar.messagePlaceholder")}
-                disabled={!stdFiltersEnabled}
-                style={{ minWidth: "200px" }}
-              />
-            </div>
-            {showMessageHist &&
-              fltHistMessage.length > 0 &&
-              messagePos &&
-              createPortal(
-                <div
-                  ref={messagePopRef as any}
-                  role="listbox"
-                  className="autocomplete-dropdown"
-                  style={{
-                    position: "fixed",
-                    left: messagePos.left + "px",
-                    top: messagePos.top + "px",
-                    width: Math.max(messagePos.width, 250) + "px",
-                  }}
-                >
-                  {fltHistMessage.map((v, i) => (
-                    <div
-                      key={i}
-                      className="autocomplete-item"
-                      onClick={() => {
-                        setFilter({ ...filter, message: v });
-                        addFilterHistory("message", v);
-                        setShowMessageHist(false);
-                      }}
-                      onMouseDown={(e) => e.preventDefault()}
-                      title={v}
-                    >
-                      <span>🕐</span>
-                      {v}
-                    </div>
-                  ))}
-                  <div className="autocomplete-hint">
-                    <span>
-                      <kbd>↑↓</kbd> Navigation
-                    </span>
-                    <span>
-                      <kbd>Enter</kbd> Auswählen
-                    </span>
-                    <span>
-                      <kbd>Esc</kbd> Schließen
-                    </span>
-                  </div>
-                </div>,
-                document.body,
-              )}
-            {/* Trennlinie */}
-            <span className="filter-divider" />
-            {/* Nur markierte Checkbox */}
-            <label
-              style={{
-                display: "inline-flex",
-                alignItems: "center",
-                gap: "4px",
-                cursor:
-                  markedIdx.length === 0 && !onlyMarked
-                    ? "not-allowed"
-                    : "pointer",
-                opacity: markedIdx.length === 0 && !onlyMarked ? 0.5 : 1,
-              }}
-              title={
-                !onlyMarked && markedIdx.length === 0
-                  ? t("toolbar.toggleMarkedDisabled")
-                  : t("toolbar.toggleMarkedTooltip")
-              }
-            >
-              <input
-                type="checkbox"
-                className="native-checkbox"
-                checked={onlyMarked}
-                disabled={!onlyMarked && markedIdx.length === 0}
-                onChange={(e) => {
-                  const nv = e.currentTarget.checked;
-                  setOnlyMarked(nv);
-                  try {
-                    void window.api.settingsSet({ onlyMarked: nv });
-                  } catch (err) {
-                    logger.error("Persisting onlyMarked setting failed:", err);
-                  }
-                }}
-              />
-              <span>{t("toolbar.toggleMarkedOff")}</span>
-            </label>
-            {/* Trennlinie */}
-            <span className="filter-divider" />
-            {/* DC-Filter Button */}
-            <button
-              onClick={() => setShowDcDialog(true)}
-              title={t("toolbar.dcFilterTooltip")}
-            >
-              {t("toolbar.dcFilter")}
-            </button>
-            {/* Elastic-Search Button */}
-            <button
-              disabled={esBusy}
-              onClick={openTimeFilterDialog}
-              title={t("toolbar.elasticSearchTooltip")}
-            >
-              {t("toolbar.elasticSearch")}
-            </button>
-            {/* Trennlinie */}
-            <span className="filter-divider" />
-            <button
-              id="btnClearFilters"
-              onClick={() => {
-                setSearch("");
-                setFilter({
-                  level: "",
-                  logger: "",
-                  thread: "",
-                  service: "",
-                  message: "",
-                });
-                setOnlyMarked(false);
-                try {
-                  void window.api.settingsSet({ onlyMarked: false });
-                } catch {}
-                try {
-                  (TimeFilter as any).reset?.();
-                } catch (e) {
-                  logger.error("Resetting TimeFilter failed:", e);
-                }
-              }}
-            >
-              {t("toolbar.clearFilters")}
-            </button>
-          </div>
-        </div>
+        <FilterSection
+          expanded={filtersExpanded}
+          stdFiltersEnabled={stdFiltersEnabled}
+          filter={filter}
+          onlyMarked={onlyMarked}
+          markedCount={markedIdx.length}
+          fltHistLogger={fltHistLogger}
+          fltHistThread={fltHistThread}
+          fltHistMessage={fltHistMessage}
+          showLoggerHist={showLoggerHist}
+          showThreadHist={showThreadHist}
+          showMessageHist={showMessageHist}
+          loggerPos={loggerPos}
+          threadPos={threadPos}
+          messagePos={messagePos}
+          loggerHistRef={loggerHistRef}
+          threadHistRef={threadHistRef}
+          messageHistRef={messageHistRef}
+          loggerPopRef={loggerPopRef}
+          threadPopRef={threadPopRef}
+          messagePopRef={messagePopRef}
+          onStdFiltersEnabledChange={setStdFiltersEnabled}
+          onFilterChange={setFilter}
+          onOnlyMarkedChange={(nv) => {
+            setOnlyMarked(nv);
+            try {
+              void window.api.settingsSet({ onlyMarked: nv });
+            } catch (err) {
+              logger.error("Persisting onlyMarked setting failed:", err);
+            }
+          }}
+          onShowLoggerHistChange={setShowLoggerHist}
+          onShowThreadHistChange={setShowThreadHist}
+          onShowMessageHistChange={setShowMessageHist}
+          addFilterHistory={addFilterHistory}
+          onShowDcDialog={() => setShowDcDialog(true)}
+          onShowTimeDialog={openTimeFilterDialog}
+          onClearAllFilters={() => {
+            setSearch("");
+            setFilter({
+              level: "",
+              logger: "",
+              thread: "",
+              service: "",
+              message: "",
+            });
+            setOnlyMarked(false);
+            try {
+              void window.api.settingsSet({ onlyMarked: false });
+            } catch {}
+            try {
+              (TimeFilter as any).reset?.();
+            } catch (e) {
+              logger.error("Resetting TimeFilter failed:", e);
+            }
+          }}
+          esBusy={esBusy}
+        />
         <div className="section">
           {(() => {
             const entries = DiagnosticContextFilter.getDcEntries();
