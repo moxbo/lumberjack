@@ -1066,60 +1066,25 @@ export default function App() {
     } catch {}
   }
 
-  // Hilfsfunktion: Ziel-Index mittig im sichtbaren Bereich (unterhalb des Headers) anzeigen
+  // Hilfsfunktion: Ziel-Index mittig im sichtbaren Bereich anzeigen
   function scrollToIndexCenter(viIndex: number) {
-    const parent = parentRef.current as HTMLDivElement | null;
-    if (!parent) return;
+    // Erst Virtualizer nutzen um sicherzustellen, dass das Element gerendert wird
+    virtualizer.scrollToIndex(viIndex, { align: "center" });
 
-    // Versuche das Zeilen-Element direkt zu finden und scrollIntoView zu nutzen
-    const rowEl = parent.querySelector(
-      `[data-vi="${viIndex}"]`,
-    ) as HTMLElement | null;
-    if (rowEl) {
-      try {
-        rowEl.scrollIntoView({
-          behavior: "smooth",
-          block: "center",
-        });
-        return;
-      } catch {
-        // Fallback zur manuellen Berechnung
+    // Dann nach kurzer Verzögerung die Position korrigieren
+    requestAnimationFrame(() => {
+      const parent = parentRef.current as HTMLDivElement | null;
+      if (!parent) return;
+
+      // Versuche das Element direkt zu finden
+      const rowEl = parent.querySelector(
+        `[data-vi="${viIndex}"]`,
+      ) as HTMLElement | null;
+      if (rowEl) {
+        // Element gefunden - scrolle es in die Mitte
+        rowEl.scrollIntoView({ behavior: "smooth", block: "center" });
       }
-    }
-
-    // Fallback: Manuelle Berechnung
-    // Header innerhalb der Scroll-List ermitteln
-    const headerEl = parent.querySelector(".list-header") as HTMLElement | null;
-    const headerH = headerEl ? headerEl.offsetHeight : 0;
-    const viewportH = parent.clientHeight;
-    // Höhe des unten liegenden Overlays (Details + Divider) aus CSS-Variablen
-    const csRoot = getComputedStyle(document.documentElement);
-    const detailH =
-      parseInt(
-        csRoot.getPropertyValue("--detail-height").trim().replace("px", ""),
-      ) || 0;
-    const dividerH =
-      parseInt(
-        csRoot.getPropertyValue("--divider-h").trim().replace("px", ""),
-      ) || 0;
-    const overlayH = Math.max(0, detailH + dividerH);
-    // Tatsächlich sichtbarer Zeilenbereich zwischen Header und Overlay
-    const rowsViewportH = Math.max(0, viewportH - headerH - overlayH);
-    // Bei fester Zeilenhöhe kann der Offset direkt berechnet werden
-    const y = Math.max(0, Math.round(viIndex * rowHeight));
-    // Gleichung: headerH + y + rowHeight/2 = scrollTop + headerH + rowsViewportH/2
-    // => scrollTop = y + rowHeight/2 - rowsViewportH/2
-    const desiredTop = y + rowHeight / 2 - rowsViewportH / 2;
-    const maxTop = Math.max(0, parent.scrollHeight - viewportH);
-    const top = Math.max(0, Math.min(maxTop, desiredTop));
-    try {
-      parent.scrollTo({
-        top,
-        behavior: "smooth" as ScrollBehavior,
-      });
-    } catch {
-      parent.scrollTop = top;
-    }
+    });
   }
 
   // Selection
