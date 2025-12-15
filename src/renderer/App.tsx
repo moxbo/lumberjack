@@ -2209,8 +2209,7 @@ export default function App() {
       logger.error("LoggingStore.reset error:", e);
       alert("Failed to reset logging store. See logs for details.");
     }
-    setHttpStatus("");
-    setTcpStatus("");
+    // HTTP/TCP Status wird NICHT zurückgesetzt, da Verbindungen noch aktiv sein können
   }
 
   async function httpMenuStopPoll() {
