@@ -2342,3 +2342,53 @@ input[type="checkbox"] {
   opacity: 0.5;
   cursor: not-allowed;
 }
+
+/* --- Alert Dialog --- */
+.modal.modal-alert {
+  width: min(400px, 90vw);
+  max-width: 90vw;
+  padding: 20px;
+}
+
+.alert-content {
+  display: flex;
+  gap: 16px;
+  align-items: flex-start;
+  margin-bottom: 20px;
+}
+
+.alert-icon {
+  font-size: 28px;
+  flex-shrink: 0;
+  line-height: 1;
+}
+
+.alert-text {
+  flex: 1;
+}
+
+.alert-title {
+  margin: 0 0 8px 0;
+  font-size: var(--font-size-lg);
+  font-weight: 600;
+}
+
+.alert-message {
+  margin: 0;
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-base);
+  line-height: 1.5;
+  white-space: pre-wrap;
+}
+
+.modal-alert-warning .alert-title {
+  color: var(--color-warning);
+}
+
+.modal-alert-error .alert-title {
+  color: var(--color-error);
+}
+
+.modal.modal-alert .modal-actions {
+  justify-content: flex-end;
+}

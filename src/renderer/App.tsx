@@ -43,6 +43,7 @@ import {
   SettingsModal,
   DetailPanel,
   FilterSection,
+  AlertDialog,
 } from "./components";
 
 // IPC batching constants - reduced to prevent UI freezes ("Keine Rückmeldung")
@@ -63,6 +64,12 @@ export default function App() {
 
   // i18n hook
   const { t, locale, setLocale } = useI18n();
+
+  // Ref for t function so it can be used in useEffects without dependencies
+  const tRef = useRef(t);
+  useEffect(() => {
+    tRef.current = t;
+  }, [t]);
 
   const [entries, setEntries] = useState<any[]>([]);
   const [nextId, setNextId] = useState<number>(1);
@@ -431,7 +438,7 @@ export default function App() {
           void window.api.settingsSet({ histAppName: list } as any);
         } catch (e) {
           logger.error("Failed to save histAppName settings:", e);
-          alert("Failed to save histAppName settings. See logs for details.");
+          showAlert(t("errors.histAppNameSaveFailed"));
         }
         return list;
       });
@@ -442,9 +449,7 @@ export default function App() {
           void window.api.settingsSet({ histEnvironment: list } as any);
         } catch (e) {
           logger.error("Failed to save histEnvironment settings:", e);
-          alert(
-            "Failed to save histEnvironment settings. See logs for details.",
-          );
+          showAlert(t("errors.histEnvironmentSaveFailed"));
         }
         return list;
       });
@@ -455,7 +460,7 @@ export default function App() {
           void window.api.settingsSet({ histIndex: list } as any);
         } catch (e) {
           logger.error("Failed to save histIndex settings:", e);
-          alert("Failed to save histIndex settings. See logs for details.");
+          showAlert(t("errors.histIndexSaveFailed"));
         }
         return list;
       });
@@ -472,7 +477,7 @@ export default function App() {
   const [httpInterval, setHttpInterval] = useState<number>(5000);
   const [showSettings, setShowSettings] = useState<boolean>(false);
   const [settingsTab, setSettingsTab] = useState<
-    "tcp" | "http" | "elastic" | "logging" | "appearance"
+    "tcp" | "http" | "elastic" | "logging" | "appearance" | "features"
   >("tcp");
   const [form, setForm] = useState({
     tcpPort: 5000,
@@ -750,7 +755,7 @@ export default function App() {
       }
     } catch (e) {
       logger.error("Failed to copy to clipboard:", e);
-      alert("Failed to copy to clipboard. See logs for details.");
+      showAlert(t("errors.copyFailed"));
     }
     closeContextMenu();
   }
@@ -1511,9 +1516,10 @@ export default function App() {
       (LoggingStore as any).addEvents(toAdd);
     } catch (e) {
       logger.error("LoggingStore.addEvents error:", e);
-      alert(
-        "Failed to process new log entries. See logs for details. " +
-          ((e as any)?.message || String(e)),
+      showAlert(
+        t("errors.parsePathsFailed", {
+          message: (e as any)?.message || String(e),
+        }),
       );
     }
     setEntries((prev) => {
@@ -1694,12 +1700,97 @@ export default function App() {
       (DiagnosticContextFilter as any).setEnabled(true);
     } catch (e) {
       logger.error("Failed to add MDC entry to filter:", e);
-      alert("Failed to add MDC entry to filter. See logs for details.");
+      showAlert(t("errors.mdcFilterAddFailed"));
     }
   }
 
   const [showTitleDlg, setShowTitleDlg] = useState<boolean>(false);
   const [showHelpDlg, setShowHelpDlg] = useState<boolean>(false);
+
+  // Alert dialog state for feature-disabled warnings
+  const [alertState, setAlertState] = useState<{
+    open: boolean;
+    title?: string;
+    message: string;
+    type?: "info" | "warning" | "error";
+  }>({ open: false, message: "" });
+
+  // General alert helper function
+  const showAlert = useCallback(
+    (
+      message: string,
+      options?: { title?: string; type?: "info" | "warning" | "error" },
+    ) => {
+      setAlertState({
+        open: true,
+        message,
+        title: options?.title,
+        type: options?.type || "error",
+      });
+    },
+    [],
+  );
+
+  // Ref for showAlert so it can be used in useEffects
+  const showAlertRef = useRef(showAlert);
+  useEffect(() => {
+    showAlertRef.current = showAlert;
+  }, [showAlert]);
+
+  // Helper to show feature-disabled alert
+  const showFeatureDisabledAlert = useCallback(
+    (featureName: string, reason?: string) => {
+      const featureLabel = t(`featureFlags.features.${featureName}`);
+      const message = t("featureFlags.alertMessage", { feature: featureLabel });
+      setAlertState({
+        open: true,
+        title: t("featureFlags.alertTitle"),
+        message: reason
+          ? `${message}\n\n${t("featureFlags.reason")}: ${reason}`
+          : message,
+        type: "warning",
+      });
+    },
+    [t],
+  );
+
+  // Helper to check if error is from disabled feature and show alert
+  const handleFeatureError = useCallback(
+    (error: string | undefined): boolean => {
+      if (!error) return false;
+
+      // Check for feature-disabled error patterns
+      const featurePatterns: { pattern: RegExp; feature: string }[] = [
+        { pattern: /TCP.*deaktiviert|TCP.*disabled/i, feature: "TCP_SERVER" },
+        {
+          pattern: /HTTP.*deaktiviert|HTTP.*disabled/i,
+          feature: "HTTP_POLLING",
+        },
+        {
+          pattern: /Elasticsearch.*deaktiviert|Elasticsearch.*disabled/i,
+          feature: "ELASTICSEARCH",
+        },
+      ];
+
+      for (const { pattern, feature } of featurePatterns) {
+        if (pattern.test(error)) {
+          // Extract reason if present (after colon)
+          const reasonMatch = error.match(/:\s*(.+)$/);
+          const reason = reasonMatch?.[1];
+          showFeatureDisabledAlert(feature, reason);
+          return true;
+        }
+      }
+      return false;
+    },
+    [showFeatureDisabledAlert],
+  );
+
+  // Ref for handleFeatureError so it can be used in useEffect without adding dependencies
+  const handleFeatureErrorRef = useRef(handleFeatureError);
+  useEffect(() => {
+    handleFeatureErrorRef.current = handleFeatureError;
+  }, [handleFeatureError]);
 
   // Settings laden (deferred to not block initial render)
   useEffect(() => {
@@ -1910,7 +2001,7 @@ export default function App() {
   async function saveSettingsModal() {
     const port = Number(form.tcpPort || 0);
     if (!(port >= 1 && port <= 65535)) {
-      alert("Ungültiger TCP-Port");
+      showAlert(t("errors.invalidTcpPort"));
       return;
     }
     const interval = Math.max(500, Number(form.httpInterval || 5000));
@@ -1945,9 +2036,10 @@ export default function App() {
     try {
       const res = await window.api.settingsSet(patch);
       if (!res || !res.ok) {
-        alert(
-          "Speichern fehlgeschlagen: " +
-            ((res as any)?.error || "Unbekannter Fehler"),
+        showAlert(
+          t("errors.saveFailed", {
+            message: (res as any)?.error || t("status.errorUnknown"),
+          }),
         );
         return;
       }
@@ -1968,7 +2060,9 @@ export default function App() {
       setShowSettings(false);
     } catch (e) {
       logger.error("Failed to save settings:", e);
-      alert("Speichern fehlgeschlagen: " + ((e as any)?.message || String(e)));
+      showAlert(
+        t("errors.saveFailed", { message: (e as any)?.message || String(e) }),
+      );
     }
   }
 
@@ -2088,13 +2182,23 @@ export default function App() {
     try {
       if (window.api?.onTcpStatus) {
         const off = window.api.onTcpStatus((st) => {
-          setTcpStatus(
-            (st as any)?.ok
-              ? (st as any).running
-                ? `TCP: Port ${(st as any).port} aktiv`
-                : "TCP gestoppt"
-              : (st as any).message || "TCP-Fehler",
-          );
+          const status = st as any;
+          if (status?.ok) {
+            setTcpStatus(
+              status.running
+                ? tRef.current("status.tcpActive", {
+                    port: String(status.port),
+                  })
+                : tRef.current("status.tcpStopped"),
+            );
+          } else {
+            // Check if this is a feature-disabled error
+            const errorMsg = status?.message || tRef.current("status.tcpError");
+            if (!handleFeatureErrorRef.current(errorMsg)) {
+              // Not a feature error, show in status
+              setTcpStatus(errorMsg);
+            }
+          }
         });
         offs.push(off);
       }
@@ -2119,16 +2223,17 @@ export default function App() {
       onFiles: async (paths) => {
         await withBusy(async () => {
           if (!window.api?.parsePaths) {
-            alert(
-              "API nicht verfügbar. Preload-Skript wurde möglicherweise nicht geladen.",
-            );
+            showAlertRef.current(tRef.current("errors.apiNotAvailable"));
             return;
           }
           const res = await window.api.parsePaths(paths);
           if (res?.ok) appendEntries(res.entries as any);
           else
-            alert(
-              "Fehler beim Laden (Drop): " + (res as any)?.error || "unbekannt",
+            showAlertRef.current(
+              tRef.current("errors.dropLoadError", {
+                message:
+                  (res as any)?.error || tRef.current("status.errorUnknown"),
+              }),
             );
         });
       },
@@ -2137,26 +2242,24 @@ export default function App() {
         await withBusy(async () => {
           try {
             if (!window.api?.parseRawDrops) {
-              alert(
-                "API nicht verfügbar. Preload-Skript wurde möglicherweise nicht geladen.",
-              );
+              showAlertRef.current(tRef.current("errors.apiNotAvailable"));
               return;
             }
             const res = await window.api.parseRawDrops(files);
             if (res?.ok) appendEntries(res.entries as any);
             else
-              alert(
-                "Fehler beim Laden (Drop-Rohdaten): " + (res as any)?.error ||
-                  "unbekannt",
+              showAlertRef.current(
+                tRef.current("errors.dropLoadError", {
+                  message:
+                    (res as any)?.error || tRef.current("status.errorUnknown"),
+                }),
               );
           } catch (e) {
-            logger.error(
-              "Fehler beim Einlesen der Dateien (Drop-Rohdaten):",
-              e,
-            );
-            alert(
-              "Fehler beim Einlesen der Dateien: " +
-                ((e as any)?.message || String(e)),
+            logger.error("Error reading files (drop raw data):", e);
+            showAlertRef.current(
+              tRef.current("errors.fileReadError", {
+                message: (e as any)?.message || String(e),
+              }),
             );
           }
         });
@@ -2221,7 +2324,7 @@ export default function App() {
       (LoggingStore as any).reset();
     } catch (e) {
       logger.error("LoggingStore.reset error:", e);
-      alert("Failed to reset logging store. See logs for details.");
+      showAlert(t("errors.resetLoggingStoreFailed"));
     }
     // HTTP/TCP Status wird NICHT zurückgesetzt, da Verbindungen noch aktiv sein können
   }
@@ -2230,7 +2333,7 @@ export default function App() {
     if (httpPollId == null) return;
     const r = await window.api.httpStopPoll(httpPollId);
     if (r.ok) {
-      setHttpStatus("Poll gestoppt");
+      setHttpStatus(t("status.httpPollStopped"));
       setHttpPollId(null);
       setNextPollIn("");
       setNextPollDueAt(null);
@@ -2717,10 +2820,14 @@ export default function App() {
                       }
                       // esHasMore bleibt true, wenn noch Ergebnisse existieren (auch bei Cap erreicht)
                     } else {
-                      alert(
-                        "Elastic-Fehler: " +
-                          ((res as any)?.error || "Unbekannt"),
-                      );
+                      // Check if this is a feature-disabled error
+                      const errorMsg =
+                        (res as any)?.error || t("status.errorUnknown");
+                      if (!handleFeatureError(errorMsg)) {
+                        showAlert(
+                          t("status.elasticError", { message: errorMsg }),
+                        );
+                      }
                     }
                   } finally {
                     setEsBusy(false);
@@ -2728,7 +2835,10 @@ export default function App() {
                 });
               } catch (e) {
                 logger.error("[Elastic] Search failed", e as any);
-                alert("Elastic-Fehler: " + ((e as any)?.message || String(e)));
+                const errorMsg = (e as any)?.message || String(e);
+                if (!handleFeatureError(errorMsg)) {
+                  showAlert(t("status.elasticError", { message: errorMsg }));
+                }
               }
             }}
             onClear={() => {
@@ -2751,10 +2861,24 @@ export default function App() {
               setHttpUrl(url);
               await window.api.settingsSet({ httpUrl: url } as any);
               const res = await window.api.httpLoadOnce(url);
-              if (res.ok) appendEntries((res.entries || []) as any[]);
-              else setHttpStatus("Fehler: " + (res.error || "unbekannt"));
+              if (res.ok) {
+                appendEntries((res.entries || []) as any[]);
+              } else {
+                // Check if this is a feature-disabled error
+                if (!handleFeatureError(res.error)) {
+                  setHttpStatus(
+                    t("status.error", {
+                      message: res.error || t("status.errorUnknown"),
+                    }),
+                  );
+                }
+              }
             } catch (e) {
-              setHttpStatus("Fehler: " + ((e as any)?.message || String(e)));
+              setHttpStatus(
+                t("status.error", {
+                  message: (e as any)?.message || String(e),
+                }),
+              );
             }
           });
         }}
@@ -2778,12 +2902,23 @@ export default function App() {
             const r = await window.api.httpStartPoll({ url, intervalMs: ms });
             if (r.ok) {
               setHttpPollId(r.id!);
-              setHttpStatus(`Polling #${r.id}`);
+              setHttpStatus(t("status.httpPolling", { id: String(r.id) }));
               setNextPollDueAt(Date.now() + ms);
               setCurrentPollInterval(ms);
-            } else setHttpStatus("Fehler: " + (r.error || "unbekannt"));
+            } else {
+              // Check if this is a feature-disabled error
+              if (!handleFeatureError(r.error)) {
+                setHttpStatus(
+                  t("status.error", {
+                    message: r.error || t("status.errorUnknown"),
+                  }),
+                );
+              }
+            }
           } catch (e) {
-            setHttpStatus("Fehler: " + ((e as any)?.message || String(e)));
+            setHttpStatus(
+              t("status.error", { message: (e as any)?.message || String(e) }),
+            );
           }
         }}
       />
@@ -3504,10 +3639,14 @@ export default function App() {
                       // PIT-Session nur beenden, wenn keine weiteren Ergebnisse vorhanden
                       if (!res.hasMore) setEsPitSessionId(null);
                     } else {
-                      alert(
-                        "Elastic-Fehler: " +
-                          ((res as any)?.error || "Unbekannt"),
-                      );
+                      // Check if this is a feature-disabled error
+                      const errorMsg =
+                        (res as any)?.error || t("status.errorUnknown");
+                      if (!handleFeatureError(errorMsg)) {
+                        showAlert(
+                          t("status.elasticError", { message: errorMsg }),
+                        );
+                      }
                     }
                   } finally {
                     setEsBusy(false);
@@ -3696,6 +3835,15 @@ export default function App() {
 
       {/* Titel-Dialog */}
       <TitleDialog open={showTitleDlg} onClose={() => setShowTitleDlg(false)} />
+
+      {/* Alert-Dialog für Feature-Warnungen */}
+      <AlertDialog
+        open={alertState.open}
+        title={alertState.title}
+        message={alertState.message}
+        type={alertState.type}
+        onClose={() => setAlertState({ ...alertState, open: false })}
+      />
     </div>
   );
 }

@@ -2,6 +2,34 @@
   "app": {
     "title": "Lumberjack"
   },
+  "status": {
+    "tcpActive": "TCP: Port {{port}} active",
+    "tcpStopped": "TCP stopped",
+    "tcpError": "TCP error",
+    "httpPolling": "Polling #{{id}}",
+    "httpPollStopped": "Poll stopped",
+    "error": "Error: {{message}}",
+    "errorUnknown": "unknown",
+    "elasticError": "Elastic error: {{message}}"
+  },
+  "errors": {
+    "apiNotAvailable": "API not available. Preload script may not have been loaded.",
+    "dropLoadError": "Error loading (drop raw data): {{message}}",
+    "fileReadError": "Error reading files: {{message}}",
+    "saveFailed": "Save failed: {{message}}",
+    "elasticError": "Elastic error: {{error}}",
+    "httpError": "Error: {{error}}",
+    "unknown": "Unknown error",
+    "copyFailed": "Failed to copy to clipboard. See logs for details.",
+    "settingsSaveFailed": "Failed to save settings. See logs for details.",
+    "histAppNameSaveFailed": "Failed to save app name history. See logs for details.",
+    "histEnvironmentSaveFailed": "Failed to save environment history. See logs for details.",
+    "histIndexSaveFailed": "Failed to save index history. See logs for details.",
+    "mdcFilterAddFailed": "Failed to add MDC entry to filter. See logs for details.",
+    "invalidTcpPort": "Invalid TCP port",
+    "resetLoggingStoreFailed": "Failed to reset logging store. See logs for details.",
+    "parsePathsFailed": "Error parsing paths: {{message}}"
+  },
   "toolbar": {
     "total": "total",
     "filtered": "filtered",
@@ -173,14 +201,6 @@
       "required": "Please enter a window title"
     }
   },
-  "errors": {
-    "saveFailed": "Save failed: {{error}}",
-    "elasticError": "Elastic error: {{error}}",
-    "httpError": "Error: {{error}}",
-    "unknown": "Unknown error",
-    "copyFailed": "Failed to copy to clipboard. See logs for details.",
-    "settingsSaveFailed": "Failed to save settings. See logs for details."
-  },
   "main": {
     "quit": {
       "title": "Quit Application",
@@ -271,6 +291,8 @@
     "error": "Error",
     "manuallyDisabled": "Manually disabled",
     "disabledWarning": "⚠️ This feature is disabled. Enable it in the Features tab.",
+    "alertTitle": "Feature Disabled",
+    "alertMessage": "{{feature}} is disabled. You can enable it in Settings under \"Features\".",
     "features": {
       "TCP_SERVER": "TCP server for receiving logs over network",
       "HTTP_POLLING": "HTTP polling for log sources",

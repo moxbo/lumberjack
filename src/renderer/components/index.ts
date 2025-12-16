@@ -12,3 +12,4 @@ export { SettingsModal } from "./SettingsModal";
 export { FilterSection } from "./FilterSection";
 export { DetailPanel } from "./DetailPanel";
 export { FeatureFlagsPanel } from "./FeatureFlagsPanel";
+export { AlertDialog } from "./AlertDialog";

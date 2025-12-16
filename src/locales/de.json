@@ -2,6 +2,34 @@
   "app": {
     "title": "Lumberjack"
   },
+  "status": {
+    "tcpActive": "TCP: Port {{port}} aktiv",
+    "tcpStopped": "TCP gestoppt",
+    "tcpError": "TCP-Fehler",
+    "httpPolling": "Polling #{{id}}",
+    "httpPollStopped": "Poll gestoppt",
+    "error": "Fehler: {{message}}",
+    "errorUnknown": "unbekannt",
+    "elasticError": "Elastic-Fehler: {{message}}"
+  },
+  "errors": {
+    "apiNotAvailable": "API nicht verfügbar. Preload-Skript wurde möglicherweise nicht geladen.",
+    "dropLoadError": "Fehler beim Laden (Drop-Rohdaten): {{message}}",
+    "fileReadError": "Fehler beim Einlesen der Dateien: {{message}}",
+    "saveFailed": "Speichern fehlgeschlagen: {{message}}",
+    "elasticError": "Elastic-Fehler: {{error}}",
+    "httpError": "Fehler: {{error}}",
+    "unknown": "Unbekannter Fehler",
+    "copyFailed": "Kopieren in die Zwischenablage fehlgeschlagen. Details siehe Logs.",
+    "settingsSaveFailed": "Einstellungen konnten nicht gespeichert werden. Details siehe Logs.",
+    "histAppNameSaveFailed": "Speichern der App-Name-Historie fehlgeschlagen. Details siehe Logs.",
+    "histEnvironmentSaveFailed": "Speichern der Environment-Historie fehlgeschlagen. Details siehe Logs.",
+    "histIndexSaveFailed": "Speichern der Index-Historie fehlgeschlagen. Details siehe Logs.",
+    "mdcFilterAddFailed": "MDC-Eintrag konnte nicht zum Filter hinzugefügt werden. Details siehe Logs.",
+    "invalidTcpPort": "Ungültiger TCP-Port",
+    "resetLoggingStoreFailed": "Zurücksetzen des Logging-Stores fehlgeschlagen. Details siehe Logs.",
+    "parsePathsFailed": "Fehler beim Parsen der Pfade: {{message}}"
+  },
   "toolbar": {
     "total": "gesamt",
     "filtered": "gefiltert",
@@ -173,14 +201,6 @@
       "required": "Bitte einen Fenstertitel eingeben"
     }
   },
-  "errors": {
-    "saveFailed": "Speichern fehlgeschlagen: {{error}}",
-    "elasticError": "Elastic-Fehler: {{error}}",
-    "httpError": "Fehler: {{error}}",
-    "unknown": "Unbekannter Fehler",
-    "copyFailed": "Kopieren in die Zwischenablage fehlgeschlagen. Details siehe Logs.",
-    "settingsSaveFailed": "Einstellungen konnten nicht gespeichert werden. Details siehe Logs."
-  },
   "main": {
     "quit": {
       "title": "Anwendung beenden",
@@ -271,6 +291,8 @@
     "error": "Fehler",
     "manuallyDisabled": "Manuell deaktiviert",
     "disabledWarning": "⚠️ Dieses Feature ist deaktiviert. Aktiviere es im Features-Tab.",
+    "alertTitle": "Feature deaktiviert",
+    "alertMessage": "{{feature}} ist deaktiviert. Du kannst es in den Einstellungen unter \"Features\" wieder aktivieren.",
     "features": {
       "TCP_SERVER": "TCP-Server für Log-Empfang über Netzwerk",
       "HTTP_POLLING": "HTTP-Polling für Log-Quellen",
