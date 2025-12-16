@@ -20,6 +20,11 @@ on:
         required: false
         type: boolean
         default: false
+      promote_to_release:
+        description: "Existierendes Pre-Release zu Release promoten (nur release_tag angeben)"
+        required: false
+        type: boolean
+        default: false
 
 permissions:
   contents: write
@@ -32,6 +37,7 @@ jobs:
       release_tag: ${{ steps.meta.outputs.release_tag }}
       prerelease: ${{ steps.meta.outputs.prerelease }}
       checkout_ref: ${{ steps.meta.outputs.checkout_ref }}
+      promote_only: ${{ steps.meta.outputs.promote_only }}
     steps:
       - name: Parameter auswerten
         id: meta
@@ -43,11 +49,13 @@ jobs:
           input_ref="${{ github.event.inputs.ref }}"
           input_tag="${{ github.event.inputs.release_tag }}"
           input_prerelease="${{ github.event.inputs.prerelease }}"
+          input_promote="${{ github.event.inputs.promote_to_release }}"
 
           checkout_ref="$ref"
           should_release="false"
           release_tag=""
           prerelease="false"
+          promote_only="false"
 
           if [[ "$event" == "workflow_dispatch" && -n "$input_ref" ]]; then
             checkout_ref="$input_ref"
@@ -77,13 +85,23 @@ jobs:
             prerelease="true"
           fi
 
+          # Check if we are promoting a pre-release to a release
+          if [[ "$input_promote" == "true" && -n "$input_tag" ]]; then
+            should_release="true"
+            release_tag="$input_tag"
+            prerelease="false"  # Force to non-prerelease
+            promote_only="true"  # Skip build, only update release
+          fi
+
           echo "should_release=$should_release" >> "$GITHUB_OUTPUT"
           echo "release_tag=$release_tag" >> "$GITHUB_OUTPUT"
           echo "prerelease=$prerelease" >> "$GITHUB_OUTPUT"
           echo "checkout_ref=$checkout_ref" >> "$GITHUB_OUTPUT"
+          echo "promote_only=$promote_only" >> "$GITHUB_OUTPUT"
 
   release:
     needs: prepare-release
+    if: needs.prepare-release.outputs.promote_only != 'true'
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
@@ -102,6 +120,23 @@ jobs:
 
       - name: Install dependencies
         run: npm ci
+
+      - name: Update version in package.json
+        if: needs.prepare-release.outputs.should_release == 'true'
+        shell: bash
+        run: |
+          tag="${{ needs.prepare-release.outputs.release_tag }}"
+          # Remove 'v' prefix if present (v1.0.0 -> 1.0.0)
+          version="${tag#v}"
+          echo "Setting version to $version"
+          npm version "$version" --no-git-tag-version --allow-same-version
+          
+          # Also update release/app/package.json if it exists
+          if [ -f "release/app/package.json" ]; then
+            cd release/app
+            npm version "$version" --no-git-tag-version --allow-same-version
+            cd ../..
+          fi
 
       - name: Build application
         run: npm run build
@@ -161,7 +196,7 @@ jobs:
 
   finalize-release:
     needs: [prepare-release, release]
-    if: needs.prepare-release.outputs.should_release == 'true'
+    if: always() && needs.prepare-release.outputs.should_release == 'true' && (needs.release.result == 'success' || needs.prepare-release.outputs.promote_only == 'true')
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
