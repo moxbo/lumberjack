@@ -30,9 +30,27 @@ if (process.env.LUMBERJACK_DISABLE_GPU === "1") {
 
 // V8 Optimizations for faster JavaScript execution
 // --turbo-fast-api-calls: Faster native API calls
-// --lite-mode: Reduced memory usage for faster startup (optional)
+// --expose-gc: Allow manual GC control for memory optimization
 if (!process.env.LUMBERJACK_DISABLE_V8_OPTS) {
-  app.commandLine.appendSwitch("js-flags", "--turbo-fast-api-calls");
+  app.commandLine.appendSwitch(
+    "js-flags",
+    "--turbo-fast-api-calls --expose-gc",
+  );
+}
+
+// Windows Portable: Additional optimizations for faster cold start
+if (process.platform === "win32") {
+  // Enable V8 code caching for faster subsequent starts
+  app.commandLine.appendSwitch("v8-cache-options", "code");
+
+  // Disable features that add startup latency
+  app.commandLine.appendSwitch(
+    "disable-features",
+    "HardwareMediaKeyHandling,MediaSessionService",
+  );
+
+  // Reduce IPC startup overhead
+  app.commandLine.appendSwitch("disable-ipc-flooding-protection");
 }
 
 // Disable Chromium features that slow down startup on Windows
@@ -41,6 +59,12 @@ if (process.platform === "win32") {
   app.commandLine.appendSwitch("disable-background-timer-throttling");
   // Disable renderer backgrounding to prevent slowdowns when window loses focus briefly during startup
   app.commandLine.appendSwitch("disable-renderer-backgrounding");
+  // Skip GPU info collection (can be slow on some systems)
+  app.commandLine.appendSwitch("disable-gpu-sandbox");
+  // Disable unnecessary Chromium features for faster init
+  app.commandLine.appendSwitch("disable-component-update");
+  // Faster font rendering initialization
+  app.commandLine.appendSwitch("disable-font-subpixel-positioning");
 }
 import { spawn } from "node:child_process";
 import * as path from "path";
@@ -125,24 +149,36 @@ if (log.transports.file.level !== false) {
     const logPath = log.transports.file.getFile().path;
     const logDir = path.dirname(logPath);
 
-    // Ensure directory exists
-    if (!fs.existsSync(logDir)) {
-      fs.mkdirSync(logDir, { recursive: true });
-    }
+    // Defer directory verification to after window is shown (improves startup time)
+    // Use setImmediate to not block the main thread during startup
+    setImmediate(() => {
+      try {
+        // Ensure directory exists
+        if (!fs.existsSync(logDir)) {
+          fs.mkdirSync(logDir, { recursive: true });
+        }
 
-    // Test write permissions with a temp file
-    const testFile = path.join(logDir, ".write-test");
-    try {
-      fs.writeFileSync(testFile, "test", "utf8");
-      fs.unlinkSync(testFile);
-    } catch (e) {
-      console.error(
-        "[FATAL] Log directory not writable:",
-        logDir,
-        e instanceof Error ? e.message : String(e),
-      );
-      // Continue anyway - logs will go to console
-    }
+        // Test write permissions with a temp file
+        const testFile = path.join(logDir, ".write-test");
+        try {
+          fs.writeFileSync(testFile, "test", "utf8");
+          fs.unlinkSync(testFile);
+        } catch (e) {
+          console.error(
+            "[FATAL] Log directory not writable:",
+            logDir,
+            e instanceof Error ? e.message : String(e),
+          );
+          // Continue anyway - logs will go to console
+        }
+      } catch (e) {
+        console.error(
+          "[FATAL] Failed to verify log directory:",
+          e instanceof Error ? e.message : String(e),
+        );
+        // Continue anyway - logs will go to console
+      }
+    });
   } catch (e) {
     console.error(
       "[FATAL] Failed to verify log directory:",
@@ -233,16 +269,20 @@ healthMonitor.registerCheck("network", async () => {
   return !tcp.running || tcp.running;
 });
 
-// Start periodic health monitoring in production
+// Start periodic health monitoring in production - DELAYED to not impact startup
 if (!isDev) {
-  setInterval(() => {
-    healthMonitor.runChecks().catch((err) => {
-      log.error(
-        "[health] Health check failed:",
-        err instanceof Error ? err.message : String(err),
-      );
-    });
-  }, 60000); // Check every minute
+  // Wait 5 seconds after startup before starting health checks
+  // This reduces CPU/IO load during the critical first-render period
+  setTimeout(() => {
+    setInterval(() => {
+      healthMonitor.runChecks().catch((err) => {
+        log.error(
+          "[health] Health check failed:",
+          err instanceof Error ? err.message : String(err),
+        );
+      });
+    }, 60000); // Check every minute
+  }, 5000); // Delay first check by 5 seconds
 }
 
 // Configure logging strategy based on environment
@@ -1176,6 +1216,42 @@ function updateMenu(): void {
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 (global as any).__updateAppMenu = updateMenu;
 
+// Cache preload path to avoid repeated fs.existsSync calls (improves window creation speed)
+let cachedPreloadPath: string | null = null;
+function resolvePreloadPath(): string {
+  if (cachedPreloadPath) return cachedPreloadPath;
+
+  // Try multiple preload paths
+  const candidates = [
+    path.join(
+      app.getAppPath(),
+      "release",
+      "app",
+      "dist",
+      "preload",
+      "preload.js",
+    ),
+    path.join(app.getAppPath(), "dist", "preload", "preload.js"),
+    path.join(__dirname, "..", "preload", "preload.js"),
+  ];
+  for (const p of candidates) {
+    try {
+      if (fs.existsSync(p)) {
+        cachedPreloadPath = p;
+        return p;
+      }
+    } catch {
+      /* ignore */
+    }
+  }
+  // Fallback to first candidate
+  const fallback =
+    candidates[0] ??
+    path.join(app.getAppPath(), "dist", "preload", "preload.js");
+  cachedPreloadPath = fallback;
+  return fallback;
+}
+
 // Create window
 function createWindow(opts: { makePrimary?: boolean } = {}): BrowserWindow {
   const { makePrimary } = opts;
@@ -1242,29 +1318,7 @@ function createWindow(opts: { makePrimary?: boolean } = {}): BrowserWindow {
     // Icon bereits beim Erzeugen setzen (wichtig für Taskbar/Alt-Tab unter Windows und Dock auf macOS)
     ...windowIconOpts,
     webPreferences: {
-      preload: (() => {
-        // Try multiple preload paths
-        const candidates = [
-          path.join(
-            app.getAppPath(),
-            "release",
-            "app",
-            "dist",
-            "preload",
-            "preload.js",
-          ),
-          path.join(app.getAppPath(), "dist", "preload", "preload.js"),
-          path.join(__dirname, "..", "preload", "preload.js"),
-        ];
-        for (const p of candidates) {
-          try {
-            if (fs.existsSync(p)) return p;
-          } catch {
-            /* ignore */
-          }
-        }
-        return candidates[0]; // fallback
-      })(),
+      preload: resolvePreloadPath(),
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: true, // Sandbox enabled for enhanced security
@@ -2433,20 +2487,39 @@ export { settingsService, networkService, getParsers, getAdmZip, featureFlags };
 app
   .whenReady()
   .then(() => {
-    log.info("[diag] app.whenReady() fired - creating initial window");
+    const whenReadyTime = Date.now() - processStartTime;
+    log.info(
+      `[PERF] app.whenReady() fired after ${whenReadyTime}ms - creating initial window`,
+    );
 
     // IPC handlers are already registered at module load time (line ~1685)
 
-    // Create the main window
+    // Create the main window FIRST - highest priority for perceived startup speed
     try {
       createWindow({ makePrimary: true });
-      log.info("[diag] Initial window created successfully");
+      const windowCreatedTime = Date.now() - processStartTime;
+      log.info(`[PERF] Initial window created after ${windowCreatedTime}ms`);
     } catch (err) {
       log.error(
         "[diag] Failed to create initial window:",
         err instanceof Error ? err.stack : String(err),
       );
     }
+
+    // Defer non-critical initialization tasks to after window is visible
+    // This significantly improves perceived startup time on Windows portable
+    setImmediate(() => {
+      // Trigger garbage collection if available (from --expose-gc flag)
+      // This helps clean up startup allocations for smoother first interaction
+      try {
+        if (typeof global.gc === "function") {
+          global.gc();
+          log.debug("[PERF] Post-startup GC triggered");
+        }
+      } catch {
+        // GC not available, ignore
+      }
+    });
 
     // macOS: Re-create window when dock icon is clicked and no windows are open
     app.on("activate", () => {

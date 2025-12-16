@@ -118,7 +118,13 @@
       ],
       "signAndEditExecutable": true,
       "forceCodeSigning": false,
-      "signExts": []
+      "signExts": [],
+      "requestedExecutionLevel": "asInvoker"
+    },
+    "portable": {
+      "artifactName": "Lumberjack-${version}-${arch}-portable.${ext}",
+      "unpackDirName": "Lumberjack-portable",
+      "splashImage": false
     },
     "nsis": {
       "oneClick": true,
