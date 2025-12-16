@@ -4,6 +4,9 @@
   "description": "Lumberjack - A log file viewer",
   "main": "dist-main/main.cjs",
   "type": "module",
+  "engines": {
+    "node": ">=20.0.0"
+  },
   "scripts": {
     "prebuild": "esbuild src/main/parsers.ts src/utils/settings.ts --outdir=src --out-extension:.js=.cjs --format=cjs --platform=node && esbuild src/main/parsers.ts --outfile=release/app/dist/main/parsers.cjs --format=cjs --platform=node && npm run build:main && npm run build:preload && npm run build:main-local",
     "build:main": "esbuild src/main/main.ts --bundle --outfile=release/app/dist/main/main.js --platform=node --format=cjs --external:electron --external:electron-log/main && esbuild src/main/ipcHandlers.ts --bundle --outfile=release/app/dist/main/ipcHandlers.js --platform=node --format=cjs --external:electron --external:electron-log/main",
@@ -25,7 +28,8 @@
     "build:x64": "npm run prepack:app && npm run build:prod && cross-env CSC_IDENTITY_AUTO_DISCOVERY=false electron-builder --win nsis --x64",
     "build:portable": "npm run prepack:app && npm run build:prod && cross-env CSC_IDENTITY_AUTO_DISCOVERY=false electron-builder --win portable",
     "build:portable:x64": "npm run prepack:app && npm run build:prod && cross-env CSC_IDENTITY_AUTO_DISCOVERY=false electron-builder --win portable --x64",
-    "build:mac:dmg": "npm run prepack:app && npm run build:prod && cross-env ELECTRON_BUILDER_DISABLE_PUBLISH=true CSC_IDENTITY_AUTO_DISCOVERY=false electron-builder --mac dmg --publish never"
+    "build:mac:dmg": "npm run prepack:app && npm run build:prod && cross-env ELECTRON_BUILDER_DISABLE_PUBLISH=true CSC_IDENTITY_AUTO_DISCOVERY=false electron-builder --mac dmg --publish never",
+    "prepare": "husky"
   },
   "author": {
     "name": "Bohm, Moritz"
@@ -48,7 +52,9 @@
     "eslint-config-prettier": "^10.1.8",
     "eslint-plugin-prettier": "^5.5.4",
     "globals": "^16.5.0",
+    "husky": "^9.1.7",
     "jimp": "^1.6.0",
+    "lint-staged": "^15.5.2",
     "playwright-electron": "^0.5.0",
     "png-to-ico": "^3.0.1",
     "prettier": "^3.6.2",
@@ -130,5 +136,14 @@
   },
   "overrides": {
     "@electron/asar": "^4.0.1"
+  },
+  "lint-staged": {
+    "*.{ts,tsx}": [
+      "eslint --fix",
+      "prettier --write"
+    ],
+    "*.{json,md,css,html}": [
+      "prettier --write"
+    ]
   }
 }

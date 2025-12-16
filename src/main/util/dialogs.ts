@@ -7,6 +7,7 @@ import { app, BrowserWindow, dialog } from "electron";
 import log from "electron-log/main";
 import os from "node:os";
 import { isDev } from "./constants";
+import { t } from "../../locales/mainI18n";
 
 /**
  * Show the About dialog with application information
@@ -21,31 +22,30 @@ export function showAboutDialog(): void {
 
     const detail = [
       `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`,
-      `Version: ${version}`,
+      `${t("main.about.version")}: ${version}`,
       `Build: ${env}`,
       ``,
-      `━━━━━━━━━━ Technische Details ━━━━━━━━━━`,
-      `Electron: ${process.versions.electron}`,
-      `Chromium: ${process.versions.chrome}`,
-      `Node.js: ${process.versions.node}`,
+      `━━━━━━━━━━ ${t("main.about.techDetails")} ━━━━━━━━━━`,
+      `${t("main.about.electron")}: ${process.versions.electron}`,
+      `${t("main.about.chrome")}: ${process.versions.chrome}`,
+      `${t("main.about.node")}: ${process.versions.node}`,
       `V8: ${process.versions.v8}`,
       ``,
-      `━━━━━━━━━━━━━ System ━━━━━━━━━━━━━`,
+      `━━━━━━━━━━━━━ ${t("main.about.system")} ━━━━━━━━━━━━━`,
       `OS: ${os.type()} ${os.release()}`,
-      `Architektur: ${process.arch}`,
-      `Speicher: ${Math.round(os.totalmem() / (1024 * 1024 * 1024))} GB`,
+      `${t("main.about.architecture")}: ${process.arch}`,
+      `${t("main.about.memory")}: ${Math.round(os.totalmem() / (1024 * 1024 * 1024))} GB`,
       ``,
       `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`,
       ``,
-      `Lumberjack ist ein leistungsstarker Log-Viewer`,
-      `für Entwickler und DevOps-Teams.`,
+      t("main.about.description"),
       ``,
       `© ${year} - Open Source Software`,
     ].join("\n");
 
     const options: Electron.MessageBoxOptions = {
       type: "info",
-      title: `Über ${name}`,
+      title: t("main.about.title"),
       message: `🪓 ${name}`,
       detail,
       buttons: ["OK"],

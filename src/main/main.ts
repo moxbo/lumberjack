@@ -75,6 +75,7 @@ import { FeatureFlags } from "../services/FeatureFlags";
 import { ShutdownCoordinator } from "../services/ShutdownCoordinator";
 import { registerIpcHandlers } from "./ipcHandlers";
 import { getSharedMainApi } from "./sharedMainApi";
+import { initI18n, t } from "../locales/mainI18n";
 
 // Import utility modules
 import {
@@ -192,6 +193,18 @@ const loggingStrategy = new LoggingStrategy();
 const featureFlags = new FeatureFlags();
 const shutdownCoordinator = new ShutdownCoordinator();
 
+// Initialize i18n with locale from settings (defaults to "de")
+try {
+  const savedLocale = settingsService.get().locale;
+  initI18n(savedLocale === "en" ? "en" : "de");
+} catch (e) {
+  log.warn(
+    "[i18n] Failed to initialize with saved locale, using default:",
+    e instanceof Error ? e.message : String(e),
+  );
+  initI18n("de");
+}
+
 // Register health checks for monitoring
 healthMonitor.registerCheck("memory", async () => {
   const mem = process.memoryUsage();
@@ -237,6 +250,7 @@ function getAdmZip(): typeof import("adm-zip") {
   return AdmZip as typeof import("adm-zip");
 }
 
+// eslint-disable-next-line @typescript-eslint/no-redundant-type-constituents
 let parsers: typeof import("./parsers.cjs") | null = null;
 function getParsers(): typeof import("./parsers.cjs") {
   if (!parsers) {
@@ -275,23 +289,23 @@ async function confirmQuitLocal(
         : BrowserWindow.getFocusedWindow?.();
     const options: Electron.MessageBoxOptions = {
       type: "question",
-      buttons: ["Abbrechen", "Beenden"],
+      buttons: [t("main.quit.cancel"), t("main.quit.confirm")],
       defaultId: 0,
       cancelId: 0,
-      title: "Anwendung beenden",
-      message: "Möchtest du Lumberjack wirklich beenden?",
+      title: t("main.quit.title"),
+      message: t("main.quit.message"),
       noLink: true,
       normalizeAccessKeys: true,
     };
     const res = win
       ? await dialog.showMessageBox(win, options)
       : await dialog.showMessageBox(options);
-    const ok = res.response === 1; // 'Beenden'
+    const ok = res.response === 1; // 'Beenden'/'Quit'
     if (ok) quitConfirmed = true;
     return ok;
   } catch (e) {
     log.warn(
-      "Quit-Dialog fehlgeschlagen:",
+      "[quit] Dialog failed:",
       e instanceof Error ? e.message : String(e),
     );
     return false;
@@ -307,7 +321,7 @@ type WindowMeta = {
 const windowMeta = new Map<number, WindowMeta>();
 
 function getDefaultBaseTitle(): string {
-  return "Lumberjack";
+  return t("app.title");
 }
 function getWindowBaseTitle(win: BrowserWindow): string {
   const meta = windowMeta.get(win.id);
@@ -998,16 +1012,16 @@ function buildMenu(): void {
         ]
       : []),
     {
-      label: "Datei",
+      label: t("main.menu.file"),
       submenu: [
         {
-          label: "Neues Fenster",
+          label: t("main.menu.newWindow"),
           accelerator: "CmdOrCtrl+N",
           click: () => openWindowInNewProcess(),
         },
         { type: "separator" as const },
         {
-          label: "Öffnen…",
+          label: t("main.menu.openFile"),
           accelerator: "CmdOrCtrl+O",
           click: (_mi, win) =>
             sendMenuCmd(
@@ -1016,7 +1030,7 @@ function buildMenu(): void {
             ),
         },
         {
-          label: "Einstellungen…",
+          label: t("settings.title"),
           accelerator: "CmdOrCtrl+,",
           click: (_mi, win) =>
             sendMenuCmd(
@@ -1025,7 +1039,7 @@ function buildMenu(): void {
             ),
         },
         {
-          label: "Fenster-Titel setzen…",
+          label: t("main.menu.setTitle"),
           click: (_mi, win) =>
             sendMenuCmd(
               { type: "window-title" },
@@ -1039,22 +1053,22 @@ function buildMenu(): void {
       ],
     },
     {
-      label: "Bearbeiten",
+      label: t("main.menu.edit"),
       submenu: [
-        { role: "undo" as const, label: "Widerrufen" },
-        { role: "redo" as const, label: "Wiederholen" },
+        { role: "undo" as const, label: t("main.menu.undo") },
+        { role: "redo" as const, label: t("main.menu.redo") },
         { type: "separator" as const },
-        { role: "cut" as const, label: "Ausschneiden" },
-        { role: "copy" as const, label: "Kopieren" },
-        { role: "paste" as const, label: "Einfügen" },
-        { role: "selectAll" as const, label: "Alles auswählen" },
+        { role: "cut" as const, label: t("main.menu.cut") },
+        { role: "copy" as const, label: t("main.menu.copy") },
+        { role: "paste" as const, label: t("main.menu.paste") },
+        { role: "selectAll" as const, label: t("main.menu.selectAll") },
       ],
     },
     {
-      label: "Netzwerk",
+      label: t("main.menu.network"),
       submenu: [
         {
-          label: "HTTP einmal laden…",
+          label: t("main.menu.httpLoadOnce"),
           click: (_mi, win) =>
             sendMenuCmd(
               { type: "http-load" },
@@ -1062,7 +1076,7 @@ function buildMenu(): void {
             ),
         },
         {
-          label: "HTTP Poll starten…",
+          label: t("main.menu.httpPollStart"),
           click: (_mi, win) =>
             sendMenuCmd(
               { type: "http-start-poll" },
@@ -1070,7 +1084,7 @@ function buildMenu(): void {
             ),
         },
         {
-          label: "HTTP Poll stoppen",
+          label: t("main.menu.httpPollStop"),
           click: (_mi, win) =>
             sendMenuCmd(
               { type: "http-stop-poll" },
@@ -1080,7 +1094,9 @@ function buildMenu(): void {
         { type: "separator" as const },
         {
           id: "tcp-toggle",
-          label: tcpStatus.running ? "⏹ TCP stoppen" : "⏵ TCP starten",
+          label: tcpStatus.running
+            ? t("main.menu.tcpToggleStop")
+            : t("main.menu.tcpToggleStart"),
           icon: tcpStatus.running
             ? (iconStop ?? undefined)
             : (iconPlay ?? undefined),
@@ -1094,10 +1110,10 @@ function buildMenu(): void {
       ],
     },
     {
-      label: "Ansicht",
+      label: t("main.menu.view"),
       submenu: [
         {
-          label: "Follow-Modus",
+          label: t("main.menu.followMode"),
           type: "checkbox" as const,
           checked: settingsService.get().follow,
           accelerator: "CmdOrCtrl+F",
@@ -1120,11 +1136,11 @@ function buildMenu(): void {
       ],
     },
     {
-      label: "Hilfe",
+      label: t("main.menu.helpMenu"),
       submenu: [
-        { label: "Über Lumberjack…", click: () => showAboutDialog() },
+        { label: t("main.menu.about"), click: () => showAboutDialog() },
         {
-          label: "Hilfe / Anleitung…",
+          label: t("main.menu.helpGuide"),
           accelerator: "F1",
           click: (_mi, win) =>
             sendMenuCmd(

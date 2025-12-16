@@ -1,3 +1,10 @@
+/**
+ * i18n for Renderer Process (Preact/React)
+ *
+ * Uses the shared i18nCore module for translation logic.
+ * This file adds React Context and Hooks for the renderer process.
+ */
+
 import { createContext } from "preact";
 import {
   useContext,
@@ -7,10 +14,17 @@ import {
   useMemo,
 } from "preact/hooks";
 import type { ComponentChildren, JSX } from "preact";
+import {
+  translate,
+  detectBrowserLocale,
+  type Locale,
+  type TranslationData,
+} from "../locales/i18nCore";
 import de from "../locales/de.json";
 import en from "../locales/en.json";
 
-export type Locale = "de" | "en";
+// Re-export types for convenience
+export type { Locale };
 
 interface I18nContextValue {
   locale: Locale;
@@ -18,9 +32,9 @@ interface I18nContextValue {
   t: (key: string, params?: Record<string, string | number>) => string;
 }
 
-const translations: Record<Locale, Record<string, unknown>> = {
-  de,
-  en,
+const translations: Record<Locale, TranslationData> = {
+  de: de as TranslationData,
+  en: en as TranslationData,
 };
 
 const I18nContext = createContext<I18nContextValue>({
@@ -40,24 +54,11 @@ export function I18nProvider({
   children,
   defaultLocale = "de",
 }: I18nProviderProps): JSX.Element {
-  const [locale, setLocaleState] = useState<Locale>(() => {
-    // Try to load from localStorage
-    if (typeof window !== "undefined" && window.localStorage) {
-      const saved = localStorage.getItem("lumberjack-locale");
-      if (saved === "de" || saved === "en") {
-        return saved;
-      }
-    }
-    // Fallback to browser language
-    if (typeof navigator !== "undefined" && navigator.language) {
-      const browserLang = navigator.language.toLowerCase();
-      if (browserLang.startsWith("de")) return "de";
-      if (browserLang.startsWith("en")) return "en";
-    }
-    return defaultLocale;
-  });
+  const [locale, setLocaleState] = useState<Locale>(() =>
+    detectBrowserLocale(defaultLocale),
+  );
 
-  const setLocale = (newLocale: Locale) => {
+  const setLocale = useCallback((newLocale: Locale): void => {
     setLocaleState(newLocale);
     if (typeof window !== "undefined" && window.localStorage) {
       localStorage.setItem("lumberjack-locale", newLocale);
@@ -80,7 +81,7 @@ export function I18nProvider({
         }
       }
     }
-  };
+  }, []);
 
   // Update HTML lang attribute on mount and locale change
   useEffect(() => {
@@ -89,35 +90,10 @@ export function I18nProvider({
     }
   }, [locale]);
 
-  // Memoize the t function to prevent re-renders of all consumers
+  // Use the shared translate function from i18nCore
   const t = useCallback(
     (key: string, params?: Record<string, string | number>): string => {
-      const keys = key.split(".");
-      let value: unknown = translations[locale];
-
-      for (const k of keys) {
-        if (value && typeof value === "object" && k in value) {
-          value = (value as Record<string, unknown>)[k];
-        } else {
-          // Fallback to key if translation not found
-          return key;
-        }
-      }
-
-      if (typeof value !== "string") {
-        return key;
-      }
-
-      // Simple parameter replacement
-      if (params) {
-        return value.replace(/\{\{(\w+)\}\}/g, (_match, paramKey: string) => {
-          return params[paramKey] !== undefined
-            ? String(params[paramKey])
-            : _match;
-        });
-      }
-
-      return value;
+      return translate(translations[locale], key, params);
     },
     [locale],
   );

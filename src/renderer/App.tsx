@@ -1,5 +1,5 @@
-/* eslint-disable */
-/* eslint-disable @typescript-eslint/no-unused-vars, @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-explicit-any, @typescript-eslint/no-base-to-string, @typescript-eslint/explicit-function-return-type, @typescript-eslint/no-unsafe-return, @typescript-eslint/no-unsafe-argument */
+/* eslint-disable @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-return, @typescript-eslint/no-unsafe-argument */
+// TODO: Gradually fix these eslint issues and remove the disable directives above
 import {
   useCallback,
   useEffect,
@@ -367,7 +367,7 @@ export default function App() {
         index: initIndex,
         environmentCase: initEnvCase,
       });
-    } catch (e) {
+    } catch {
       const { lastApp, lastEnv, lastIndex, lastEnvCase } = await getLasts();
       const prev = lastEsForm || {};
       const initIndex = String(prev.index || lastIndex || "");
@@ -846,7 +846,7 @@ export default function App() {
   // Filtered indices - uses debounced filter values for better typing performance
   const filteredIdx = useMemo(() => {
     const out: number[] = [];
-    let filterStats = {
+    const filterStats = {
       total: 0,
       passed: 0,
       rejectedByOnlyMarked: 0,
@@ -1578,7 +1578,7 @@ export default function App() {
             ipcFlushTimerRef.current = null;
             processIpcQueue();
           },
-          { timeout: IPC_PROCESS_INTERVAL * 3 } // Max wait time before forcing processing
+          { timeout: IPC_PROCESS_INTERVAL * 3 }, // Max wait time before forcing processing
         );
       } else {
         ipcFlushTimerRef.current = window.setTimeout(() => {
@@ -1787,7 +1787,7 @@ export default function App() {
     // Use requestIdleCallback with a timeout to ensure settings load eventually
     const idleId = requestIdleCallback(
       () => {
-        loadSettings();
+        void loadSettings();
       },
       { timeout: 100 },
     );
@@ -2038,11 +2038,11 @@ export default function App() {
                 break;
               }
               case "http-load": {
-                openHttpLoadDialog();
+                void openHttpLoadDialog();
                 break;
               }
               case "http-start-poll": {
-                openHttpPollDialog();
+                void openHttpPollDialog();
                 break;
               }
               case "http-stop-poll": {
@@ -2110,7 +2110,6 @@ export default function App() {
           logger.error("Failed to remove IPC listener:", e);
         }
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // Drag & Drop
