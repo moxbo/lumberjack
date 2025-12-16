@@ -93,15 +93,40 @@ jobs:
           node-version: 22
           cache: npm
 
-      - run: npm ci
+      - name: Install dependencies
+        run: npm ci
 
-      - uses: samuelmeuli/action-electron-builder@v1
+      - name: Build application
+        run: npm run build
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          CI: true
+
+      - name: Build Windows Portable
+        run: npx electron-builder --win portable --x64 --publish never
+        env:
+          CI: true
+          CSC_IDENTITY_AUTO_DISCOVERY: false
+
+      - name: Build Windows NSIS Installer
+        run: npx electron-builder --win nsis --x64 --publish never
+        env:
+          CI: true
+          CSC_IDENTITY_AUTO_DISCOVERY: false
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
         with:
-          github_token: ${{ secrets.GITHUB_TOKEN }}
-          build_script_name: build
-          release: ${{ needs.prepare-release.outputs.should_release == 'true' }}
+          name: windows-release
+          path: |
+            release/build/*.exe
+            release/build/*.yml
+          retention-days: 30
+
+      - name: Publish to GitHub Release
+        if: needs.prepare-release.outputs.should_release == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: npx electron-builder --win portable nsis --x64 --publish always
 
   finalize-release:
     needs: [prepare-release, release]
