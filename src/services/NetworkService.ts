@@ -26,6 +26,8 @@ export interface HttpPollConfig {
   intervalMs: number;
   timer: NodeJS.Timeout;
   seen: Set<string>;
+  abortController: AbortController; // Used to abort pending fetches on stop
+  stopped: boolean; // Flag to prevent new ticks after stop
 }
 
 /**
@@ -487,8 +489,13 @@ export class NetworkService {
 
   /**
    * Fetch text from HTTP URL with timeout and size limits
+   * @param url - URL to fetch
+   * @param externalSignal - Optional AbortSignal to allow external cancellation (e.g., on poll stop)
    */
-  private async httpFetchText(url: string): Promise<string> {
+  private async httpFetchText(
+    url: string,
+    externalSignal?: AbortSignal,
+  ): Promise<string> {
     if (typeof fetch === "function") {
       // Create AbortController for timeout
       const controller = new AbortController();
@@ -498,6 +505,19 @@ export class NetworkService {
           `[http:fetch] Request timeout after ${NetworkService.HTTP_FETCH_TIMEOUT_MS}ms: ${url}`,
         );
       }, NetworkService.HTTP_FETCH_TIMEOUT_MS);
+
+      // If external signal is provided, abort on external signal
+      const onExternalAbort = () => {
+        controller.abort();
+        log.debug(`[http:fetch] Request aborted by external signal: ${url}`);
+      };
+      if (externalSignal) {
+        if (externalSignal.aborted) {
+          clearTimeout(timeoutId);
+          throw new Error("Request aborted before start");
+        }
+        externalSignal.addEventListener("abort", onExternalAbort);
+      }
 
       try {
         const res = await fetch(url, {
@@ -532,6 +552,10 @@ export class NetworkService {
         return text;
       } catch (err) {
         if (err instanceof Error && err.name === "AbortError") {
+          // Check if it was external abort (poll stopped) vs timeout
+          if (externalSignal?.aborted) {
+            throw new Error("Request aborted (poll stopped)");
+          }
           throw new Error(
             `Request timeout after ${NetworkService.HTTP_FETCH_TIMEOUT_MS}ms`,
           );
@@ -539,6 +563,9 @@ export class NetworkService {
         throw err;
       } finally {
         clearTimeout(timeoutId);
+        if (externalSignal) {
+          externalSignal.removeEventListener("abort", onExternalAbort);
+        }
       }
     }
     throw new Error("fetch unavailable");
@@ -624,6 +651,7 @@ export class NetworkService {
 
       const id = this.httpPollerSeq++;
       const seen = new Set<string>();
+      const abortController = new AbortController();
 
       const parseJsonFile = this.parseJsonFile;
       const parseTextLines = this.parseTextLines;
@@ -632,14 +660,40 @@ export class NetworkService {
       const yieldToEventLoop = (): Promise<void> =>
         new Promise((resolve) => setImmediate(resolve));
 
+      // Helper to check if poller is still active (not stopped)
+      const isPollerActive = (): boolean => {
+        const poller = this.httpPollers.get(id);
+        return poller != null && !poller.stopped;
+      };
+
       const tick = async (): Promise<void> => {
+        // Early exit if poller was stopped
+        if (!isPollerActive()) {
+          log.debug(`[http:poll] ${id} tick skipped - poller stopped`);
+          return;
+        }
+
         try {
-          const text = await this.httpFetchText(url);
+          const text = await this.httpFetchText(url, abortController.signal);
+
+          // Check again after fetch (which could take a while)
+          if (!isPollerActive()) {
+            log.debug(
+              `[http:poll] ${id} processing skipped - poller stopped during fetch`,
+            );
+            return;
+          }
+
           const isJson =
             text.trim().startsWith("[") || text.trim().startsWith("{");
 
           // Yield before parsing to let event loop process other tasks
           await yieldToEventLoop();
+
+          // Check before parsing
+          if (!isPollerActive()) {
+            return;
+          }
 
           const entries = isJson
             ? parseJsonFile(url, text)
@@ -648,12 +702,21 @@ export class NetworkService {
           // Yield after parsing
           await yieldToEventLoop();
 
+          // Check after parsing
+          if (!isPollerActive()) {
+            return;
+          }
+
           const fresh = this.dedupeNewEntries(entries, seen);
           if (fresh.length) {
             // For large batches, chunk the queuing to prevent blocking
             if (fresh.length > 200) {
               const chunkSize = 100;
               for (let i = 0; i < fresh.length; i += chunkSize) {
+                // Check before each chunk
+                if (!isPollerActive()) {
+                  return;
+                }
                 const chunk = fresh.slice(i, i + chunkSize);
                 this.queueHttpEntries(chunk);
                 // Yield between chunks to keep UI responsive
@@ -664,7 +727,17 @@ export class NetworkService {
             }
           }
         } catch (err) {
+          // Don't log/retry if poller was stopped (abort error)
+          if (!isPollerActive()) {
+            log.debug(`[http:poll] ${id} error ignored - poller stopped`);
+            return;
+          }
           const message = err instanceof Error ? err.message : String(err);
+          // Skip logging for abort errors (poller stopped)
+          if (message.includes("aborted") || message.includes("poll stopped")) {
+            log.debug(`[http:poll] ${id} aborted: ${message}`);
+            return;
+          }
           // Keine Log-Einträge in die UI pushen – stilles Retry im nächsten Intervall
           log.warn(`[http:poll] ${url} failed: ${message} (will retry)`);
         }
@@ -677,7 +750,15 @@ export class NetworkService {
         Math.max(500, intervalMs),
       );
 
-      this.httpPollers.set(id, { id, url, intervalMs, timer, seen });
+      this.httpPollers.set(id, {
+        id,
+        url,
+        intervalMs,
+        timer,
+        seen,
+        abortController,
+        stopped: false,
+      });
 
       // Fire once immediately
       void tick();
@@ -702,8 +783,18 @@ export class NetworkService {
     // Flush any pending batched entries before stopping
     this.flushHttpBatch();
 
+    // Mark as stopped first to prevent new ticks
+    poller.stopped = true;
+
+    // Abort any pending fetch requests
+    poller.abortController.abort();
+
+    // Clear the interval timer
     clearInterval(poller.timer);
+
+    // Remove from map
     this.httpPollers.delete(id);
+
     log.info(`HTTP poller ${id} stopped`);
 
     return { ok: true };
@@ -717,6 +808,11 @@ export class NetworkService {
     this.flushHttpBatch();
 
     for (const poller of this.httpPollers.values()) {
+      // Mark as stopped first to prevent new ticks
+      poller.stopped = true;
+      // Abort any pending fetch requests
+      poller.abortController.abort();
+      // Clear the interval timer
       clearInterval(poller.timer);
     }
     this.httpPollers.clear();
