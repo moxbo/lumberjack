@@ -4,6 +4,7 @@
 import { useI18n, type Locale } from "../../utils/i18n";
 import logger from "../../utils/logger";
 import type { SettingsForm, SettingsTab } from "../../hooks";
+import { FeatureFlagsPanel } from "./FeatureFlagsPanel";
 
 interface SettingsModalProps {
   open: boolean;
@@ -102,6 +103,14 @@ export function SettingsModal({
               onClick={() => onTabChange("appearance")}
             >
               {t("settings.tabs.appearance")}
+            </button>
+            <button
+              className={`tab${tab === "features" ? " active" : ""}`}
+              role="tab"
+              aria-selected={tab === "features"}
+              onClick={() => onTabChange("features")}
+            >
+              {t("settings.tabs.features")}
             </button>
           </div>
 
@@ -439,6 +448,13 @@ export function SettingsModal({
                     </small>
                   </div>
                 </div>
+              </div>
+            )}
+
+            {/* Features Tab */}
+            {tab === "features" && (
+              <div className="tabpanel" role="tabpanel">
+                <FeatureFlagsPanel />
               </div>
             )}
           </div>

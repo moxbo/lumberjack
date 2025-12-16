@@ -1792,7 +1792,13 @@ setImmediate(() => {
 
 // Register IPC
 try {
-  registerIpcHandlers(settingsService, networkService, getParsers, getAdmZip);
+  registerIpcHandlers(
+    settingsService,
+    networkService,
+    getParsers,
+    getAdmZip,
+    featureFlags,
+  );
   log.info("[diag] IPC handlers registered successfully");
 } catch (err) {
   log.error(

@@ -16,3 +16,5 @@ export type { TimeFormState } from "./useElasticSearch";
 export { useEntryManagement } from "./useEntryManagement";
 export { useKeyboardNavigation } from "./useKeyboardNavigation";
 export { useResizable } from "./useResizable";
+export { useFeatureFlags } from "./useFeatureFlags";
+export type { FeatureName } from "./useFeatureFlags";

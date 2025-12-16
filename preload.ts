@@ -123,6 +123,27 @@ const api: ElectronAPI = {
   // Error logging from renderer to main process
   logError: (errorData: unknown): Promise<Result<void>> =>
     ipcRenderer.invoke("logError", errorData),
+
+  // FeatureFlags operations
+  featureFlagsGetAll: (): Promise<{
+    features: Record<string, { enabled: boolean; reason?: string }>;
+    stats: { total: number; enabled: number; disabled: number };
+  }> => ipcRenderer.invoke("featureFlags:getAll"),
+
+  featureFlagsIsEnabled: (feature: string): Promise<boolean> =>
+    ipcRenderer.invoke("featureFlags:isEnabled", feature),
+
+  featureFlagsDisable: (
+    feature: string,
+    reason?: string,
+  ): Promise<Result<void>> =>
+    ipcRenderer.invoke("featureFlags:disable", { feature, reason }),
+
+  featureFlagsEnable: (feature: string): Promise<Result<void>> =>
+    ipcRenderer.invoke("featureFlags:enable", feature),
+
+  featureFlagsResetAll: (): Promise<Result<void>> =>
+    ipcRenderer.invoke("featureFlags:resetAll"),
 };
 
 // Expose the API to the renderer process in a secure way

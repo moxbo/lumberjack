@@ -232,6 +232,14 @@ export interface DroppedFile {
 }
 
 /**
+ * Feature flags result
+ */
+export interface FeatureFlagsResult {
+  features: Record<string, { enabled: boolean; reason?: string }>;
+  stats: { total: number; enabled: number; disabled: number };
+}
+
+/**
  * Main API exposed to renderer via contextBridge
  */
 export type ElectronAPI = {
@@ -259,6 +267,15 @@ export type ElectronAPI = {
   onTcpStatus: (callback: (status: TcpStatus) => void) => () => void;
   onMenu: (callback: (command: MenuCommand) => void) => () => void;
   logError: (errorData: unknown) => Promise<Result<void>>;
+  // FeatureFlags
+  featureFlagsGetAll: () => Promise<FeatureFlagsResult>;
+  featureFlagsIsEnabled: (feature: string) => Promise<boolean>;
+  featureFlagsDisable: (
+    feature: string,
+    reason?: string,
+  ) => Promise<Result<void>>;
+  featureFlagsEnable: (feature: string) => Promise<Result<void>>;
+  featureFlagsResetAll: () => Promise<Result<void>>;
 };
 
 declare global {

@@ -97,7 +97,8 @@
       "elastic": "Elasticsearch",
       "logging": "Logging",
       "appearance": "Appearance",
-      "language": "Language"
+      "language": "Language",
+      "features": "Features"
     },
     "tcp": {
       "port": "TCP Port",
@@ -240,6 +241,26 @@
       "architecture": "Architecture",
       "memory": "Memory",
       "description": "Lumberjack is a powerful log viewer\nfor developers and DevOps teams."
+    }
+  },
+  "featureFlags": {
+    "title": "Feature Flags",
+    "description": "Disable features when experiencing issues without restarting the app.",
+    "active": "active",
+    "disabled": "disabled",
+    "reason": "Reason",
+    "enableAll": "Enable All",
+    "loading": "Loading...",
+    "error": "Error",
+    "manuallyDisabled": "Manually disabled",
+    "features": {
+      "TCP_SERVER": "TCP server for receiving logs over network",
+      "HTTP_POLLING": "HTTP polling for log sources",
+      "ELASTICSEARCH": "Elasticsearch integration for log search",
+      "FILE_LOGGING": "File-based app logging",
+      "HEALTH_MONITORING": "System health monitoring",
+      "ADAPTIVE_BATCHING": "Adaptive batch processing",
+      "ASYNC_FILE_WRITER": "Asynchronous file writing"
     }
   }
 }

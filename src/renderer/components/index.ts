@@ -11,3 +11,4 @@ export { FilterChips } from "./FilterChips";
 export { SettingsModal } from "./SettingsModal";
 export { FilterSection } from "./FilterSection";
 export { DetailPanel } from "./DetailPanel";
+export { FeatureFlagsPanel } from "./FeatureFlagsPanel";

@@ -18,12 +18,14 @@ import {
 } from "../types/ipc";
 import type { SettingsService } from "../services/SettingsService";
 import type { NetworkService } from "../services/NetworkService";
+import type { FeatureFlags } from "../services/FeatureFlags";
 
 export function registerIpcHandlers(
   settingsService: SettingsService,
   networkService: NetworkService,
   getParsers: () => typeof import("./parsers.cjs"),
   getAdmZip: () => typeof import("adm-zip"),
+  featureFlags?: FeatureFlags,
 ): void {
   const sharedApi = getSharedMainApi();
 
@@ -348,6 +350,17 @@ export function registerIpcHandlers(
   ipcMain.on("tcp:start", (event, { port }: { port: number }) => {
     (async () => {
       try {
+        // Check if TCP_SERVER feature is enabled
+        if (featureFlags && !featureFlags.isEnabled("TCP_SERVER")) {
+          const reason = featureFlags.getDisableReason("TCP_SERVER");
+          event.reply("tcp:status", {
+            ok: false,
+            message: `TCP-Server deaktiviert${reason ? `: ${reason}` : ""}`,
+            running: false,
+          });
+          return;
+        }
+
         const win = BrowserWindow.fromWebContents(event.sender);
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         const canFn = (global as any)?.__getWindowCanTcpControl;
@@ -632,5 +645,53 @@ export function registerIpcHandlers(
       );
       return { ok: false };
     }
+  });
+
+  // FeatureFlags handlers
+  ipcMain.handle("featureFlags:getAll", () => {
+    if (!featureFlags) {
+      return { features: {}, stats: { total: 0, enabled: 0, disabled: 0 } };
+    }
+    const allFeatures = featureFlags.getAllFeatures();
+    const featuresObj: Record<string, { enabled: boolean; reason?: string }> =
+      {};
+    for (const [key, value] of allFeatures) {
+      featuresObj[key] = value;
+    }
+    return {
+      features: featuresObj,
+      stats: featureFlags.getStats(),
+    };
+  });
+
+  ipcMain.handle("featureFlags:isEnabled", (_event, feature: string) => {
+    return featureFlags?.isEnabled(feature) ?? true;
+  });
+
+  ipcMain.handle(
+    "featureFlags:disable",
+    (_event, { feature, reason }: { feature: string; reason?: string }) => {
+      if (featureFlags) {
+        featureFlags.disable(feature, reason);
+        return { ok: true };
+      }
+      return { ok: false, error: "FeatureFlags not available" };
+    },
+  );
+
+  ipcMain.handle("featureFlags:enable", (_event, feature: string) => {
+    if (featureFlags) {
+      featureFlags.enable(feature);
+      return { ok: true };
+    }
+    return { ok: false, error: "FeatureFlags not available" };
+  });
+
+  ipcMain.handle("featureFlags:resetAll", () => {
+    if (featureFlags) {
+      featureFlags.resetAll();
+      return { ok: true };
+    }
+    return { ok: false, error: "FeatureFlags not available" };
   });
 }

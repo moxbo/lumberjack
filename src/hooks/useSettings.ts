@@ -7,7 +7,13 @@ import { rendererPerf } from "../utils/rendererPerf";
 import { MAX_ELASTIC_HISTORY } from "../constants";
 
 export type ThemeMode = "system" | "light" | "dark";
-export type SettingsTab = "tcp" | "http" | "elastic" | "logging" | "appearance";
+export type SettingsTab =
+  | "tcp"
+  | "http"
+  | "elastic"
+  | "logging"
+  | "appearance"
+  | "features";
 
 export interface SettingsForm {
   tcpPort: number;
