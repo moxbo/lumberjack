@@ -240,7 +240,7 @@ The following Windows-specific configurations are properly set:
 ```json
 {
   "build": {
-    "appId": "de.hhla.lumberjack",
+    "appId": "de.moxbo.lumberjack",
     "productName": "Lumberjack",
     "win": {
       "target": ["portable", "zip"],
@@ -256,7 +256,7 @@ The following Windows-specific configurations are properly set:
 
 ```javascript
 if (process.platform === "win32") {
-  app.setAppUserModelId("de.hhla.lumberjack");
+  app.setAppUserModelId("de.moxbo.lumberjack");
 }
 ```
 

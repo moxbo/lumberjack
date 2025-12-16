@@ -63,13 +63,18 @@ function getIconCandidates(filename: string): string[] {
     // Production: Inside ASAR (fallback - may work for some use cases)
     path.join(appPath, "images", filename),
     path.join(resPath, "images", filename),
-    // Development: Project root first
+    // Development: Project root first (most common case during npm run dev)
     path.join(cwdPath, "images", filename),
+    // Development: assets folder (where electron-builder expects icons)
+    path.join(cwdPath, "assets", filename),
     // Development: __dirname and project root
     path.join(__dirname, "images", filename),
-    // Additional fallback: Go up from compiled location
-    path.join(__dirname, "..", "..", "images", filename),
+    path.join(__dirname, "assets", filename),
+    // Additional fallback: Go up from compiled location (dist-main -> project root)
     path.join(__dirname, "..", "images", filename),
+    path.join(__dirname, "..", "assets", filename),
+    path.join(__dirname, "..", "..", "images", filename),
+    path.join(__dirname, "..", "..", "assets", filename),
   ].filter(Boolean);
 }
 

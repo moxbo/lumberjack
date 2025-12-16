@@ -611,11 +611,9 @@ function closeLogStream(): void {
   }
   logStream = null;
 
-  // Clear async file writer
-  if (asyncFileWriter) {
-    asyncFileWriter.clearQueue();
-    asyncFileWriter = null;
-  }
+  // Just release async file writer reference without clearing queue
+  // Pending writes will be lost but this is expected during rotation
+  asyncFileWriter = null;
 
   logBytes = 0;
 }
@@ -692,33 +690,40 @@ function writeEntriesToFile(entries: LogEntry[]): void {
     if (!logStream) openLogStream();
     if (!logStream) return;
 
+    // Pre-serialize all entries and calculate total size
+    const lines: string[] = [];
+    let totalBytes = 0;
+    for (const e of entries) {
+      const line = JSON.stringify(e) + "\n";
+      lines.push(line);
+      totalBytes += line.length;
+    }
+
+    // Check rotation once for the entire batch
+    rotateIfNeeded(totalBytes);
+    if (!logStream) openLogStream();
+    if (!logStream) return;
+
     // Use AsyncFileWriter if available for non-blocking writes
     if (asyncFileWriter) {
-      for (const e of entries) {
-        const line = JSON.stringify(e) + "\n";
-        rotateIfNeeded(line.length);
-        if (!asyncFileWriter) openLogStream();
-        if (!asyncFileWriter) return;
-
-        // Non-blocking async write
-        asyncFileWriter.write(line).catch((err) => {
-          log.error(
-            "Async write failed:",
-            err instanceof Error ? err.message : String(err),
-          );
-        });
-        logBytes += line.length;
-      }
+      // Write all lines as a single batch
+      const batch = lines.join("");
+      asyncFileWriter.write(batch).catch((err) => {
+        // Only log if it's not a queue-cleared situation (expected during rotation)
+        const msg = err instanceof Error ? err.message : String(err);
+        if (msg !== "Queue cleared") {
+          log.error("Async write failed:", msg);
+        }
+      });
+      logBytes += totalBytes;
     } else {
       // Fallback to sync writes if AsyncFileWriter not available
-      for (const e of entries) {
-        const line = JSON.stringify(e) + "\n";
-        rotateIfNeeded(line.length);
+      for (const line of lines) {
         if (!logStream) openLogStream();
         if (!logStream) return;
         logStream.write(line);
-        logBytes += line.length;
       }
+      logBytes += totalBytes;
     }
   } catch (err) {
     log.error(
@@ -1147,24 +1152,56 @@ function createWindow(opts: { makePrimary?: boolean } = {}): BrowserWindow {
   const { width, height, x, y } = settings.windowBounds || {};
 
   // Resolve icon path early and create nativeImage for reliable icon loading
-  const getWindowIcon = () => {
+  const getWindowIcon = (): { icon?: NativeImage | string } => {
     if (process.platform === "darwin") {
       const iconPath = resolveMacIconPath();
       if (iconPath) {
+        log.info?.("[window] macOS icon path resolved:", iconPath);
         const icon = nativeImage.createFromPath(iconPath);
-        return !icon.isEmpty() ? { icon } : {};
+        if (!icon.isEmpty()) {
+          log.info?.("[window] macOS nativeImage created successfully");
+          return { icon };
+        }
+        log.warn?.("[window] macOS nativeImage is empty, using path directly");
+        return { icon: iconPath };
       }
+      log.warn?.("[window] No macOS icon path found");
       return {};
     } else if (process.platform === "win32") {
       const iconPath = resolveIconPathSync();
       if (iconPath) {
-        const icon = nativeImage.createFromPath(iconPath);
-        return !icon.isEmpty() ? { icon } : {};
+        log.info?.("[window] Windows icon path resolved:", iconPath);
+        try {
+          const icon = nativeImage.createFromPath(iconPath);
+          if (!icon.isEmpty()) {
+            log.info?.(
+              "[window] Windows nativeImage created successfully, size:",
+              icon.getSize(),
+            );
+            return { icon };
+          }
+          log.warn?.(
+            "[window] Windows nativeImage is empty, using path directly",
+          );
+          // Fallback: return the path directly - Electron can also accept a path string
+          return { icon: iconPath };
+        } catch (e) {
+          log.error?.("[window] Failed to create nativeImage:", e);
+          // Fallback: return the path directly
+          return { icon: iconPath };
+        }
       }
+      log.warn?.("[window] No Windows icon path found");
       return {};
     }
     return {};
   };
+
+  const windowIconOpts = getWindowIcon();
+  log.info?.(
+    "[window] Window icon options:",
+    windowIconOpts.icon ? "icon set" : "no icon",
+  );
 
   const win = new BrowserWindow({
     width: width || 1200,
@@ -1172,7 +1209,7 @@ function createWindow(opts: { makePrimary?: boolean } = {}): BrowserWindow {
     ...(x != null && y != null ? { x, y } : {}),
     title: getDefaultBaseTitle(),
     // Icon bereits beim Erzeugen setzen (wichtig für Taskbar/Alt-Tab unter Windows und Dock auf macOS)
-    ...getWindowIcon(),
+    ...windowIconOpts,
     webPreferences: {
       preload: (() => {
         // Try multiple preload paths
@@ -1820,7 +1857,7 @@ setInterval(() => {
 // App lifecycle
 if (process.platform === "win32") {
   try {
-    app.setAppUserModelId("de.hhla.lumberjack");
+    app.setAppUserModelId(APP_ID_WINDOWS);
   } catch {
     // Intentionally empty - ignore errors
   }

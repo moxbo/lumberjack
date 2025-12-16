@@ -28,9 +28,7 @@
     "build:mac:dmg": "npm run prepack:app && npm run build:prod && cross-env ELECTRON_BUILDER_DISABLE_PUBLISH=true CSC_IDENTITY_AUTO_DISCOVERY=false electron-builder --mac dmg --publish never"
   },
   "author": {
-    "name": "Bohm, Moritz",
-    "email": "bohm@hhla.de",
-    "url": "https://www.hhla.de"
+    "name": "Bohm, Moritz"
   },
   "license": "ISC",
   "devDependencies": {
@@ -69,7 +67,7 @@
     "preact": "^10.27.2"
   },
   "build": {
-    "appId": "de.hhla.lumberjack",
+    "appId": "de.moxbo.lumberjack",
     "productName": "Lumberjack",
     "afterPack": "./scripts/afterPack.cjs",
     "extraMetadata": {

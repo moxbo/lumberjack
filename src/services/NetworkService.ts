@@ -87,8 +87,9 @@ export class NetworkService {
   private tcpBatchTimer: NodeJS.Timeout | null = null;
 
   // HTTP batching for improved throughput (similar to TCP)
-  private static readonly HTTP_BATCH_SIZE = 500; // Max entries per batch
-  private static readonly HTTP_BATCH_INTERVAL_MS = 50; // Flush interval in ms
+  // Reduced batch size to prevent UI freezes ("Keine Rückmeldung")
+  private static readonly HTTP_BATCH_SIZE = 100; // Max entries per batch (reduced from 500)
+  private static readonly HTTP_BATCH_INTERVAL_MS = 16; // Flush interval in ms (one frame at 60fps)
   private httpBatchQueue: LogEntry[] = [];
   private httpBatchTimer: NodeJS.Timeout | null = null;
 
@@ -627,17 +628,40 @@ export class NetworkService {
       const parseJsonFile = this.parseJsonFile;
       const parseTextLines = this.parseTextLines;
 
+      // Helper to yield to event loop - prevents UI freeze ("Keine Rückmeldung")
+      const yieldToEventLoop = (): Promise<void> =>
+        new Promise((resolve) => setImmediate(resolve));
+
       const tick = async (): Promise<void> => {
         try {
           const text = await this.httpFetchText(url);
           const isJson =
             text.trim().startsWith("[") || text.trim().startsWith("{");
+
+          // Yield before parsing to let event loop process other tasks
+          await yieldToEventLoop();
+
           const entries = isJson
             ? parseJsonFile(url, text)
             : parseTextLines(url, text);
+
+          // Yield after parsing
+          await yieldToEventLoop();
+
           const fresh = this.dedupeNewEntries(entries, seen);
           if (fresh.length) {
-            this.queueHttpEntries(fresh);
+            // For large batches, chunk the queuing to prevent blocking
+            if (fresh.length > 200) {
+              const chunkSize = 100;
+              for (let i = 0; i < fresh.length; i += chunkSize) {
+                const chunk = fresh.slice(i, i + chunkSize);
+                this.queueHttpEntries(chunk);
+                // Yield between chunks to keep UI responsive
+                await yieldToEventLoop();
+              }
+            } else {
+              this.queueHttpEntries(fresh);
+            }
           }
         } catch (err) {
           const message = err instanceof Error ? err.message : String(err);

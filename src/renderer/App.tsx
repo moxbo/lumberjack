@@ -45,9 +45,9 @@ import {
   FilterSection,
 } from "./components";
 
-// IPC batching constants
-const IPC_BATCH_SIZE = 5000;
-const IPC_PROCESS_INTERVAL = 50;
+// IPC batching constants - reduced to prevent UI freezes ("Keine Rückmeldung")
+const IPC_BATCH_SIZE = 1000; // Reduced from 5000
+const IPC_PROCESS_INTERVAL = 16; // Reduced from 50ms to one frame at 60fps
 
 // Lazy-load DCFilterDialog as a component
 const DCFilterDialog = lazy(() => import("./DCFilterDialog"));
@@ -1295,13 +1295,14 @@ export default function App() {
     }
 
     // For small batches or Elastic queries, process directly
-    // For large TCP streams, queue to prevent overload
+    // For large batches (HTTP/TCP streams), queue to prevent overload and UI freezes
     const isElasticBatch = newEntries.some(
       (e) => typeof e?.source === "string" && e.source.startsWith("elastic://"),
     );
 
+    // Reduced threshold from 500 to 200 to prevent "Keine Rückmeldung"
     if (
-      newEntries.length <= 500 ||
+      newEntries.length <= 200 ||
       isElasticBatch ||
       options?.ignoreExistingForElastic
     ) {
@@ -1541,6 +1542,7 @@ export default function App() {
   }
 
   // Process queued entries in controlled batches to prevent renderer overload
+  // Uses requestIdleCallback when available to avoid blocking the UI thread
   function processIpcQueue(): void {
     if (ipcProcessingRef.current) return;
     if (ipcQueueRef.current.length === 0) return;
@@ -1567,10 +1569,23 @@ export default function App() {
       if (ipcFlushTimerRef.current) {
         clearTimeout(ipcFlushTimerRef.current);
       }
-      ipcFlushTimerRef.current = window.setTimeout(() => {
-        ipcFlushTimerRef.current = null;
-        processIpcQueue();
-      }, IPC_PROCESS_INTERVAL);
+
+      // Use requestIdleCallback for smoother processing when available
+      // Falls back to setTimeout on browsers that don't support it
+      if (typeof requestIdleCallback === "function") {
+        requestIdleCallback(
+          () => {
+            ipcFlushTimerRef.current = null;
+            processIpcQueue();
+          },
+          { timeout: IPC_PROCESS_INTERVAL * 3 } // Max wait time before forcing processing
+        );
+      } else {
+        ipcFlushTimerRef.current = window.setTimeout(() => {
+          ipcFlushTimerRef.current = null;
+          processIpcQueue();
+        }, IPC_PROCESS_INTERVAL);
+      }
     }
   }
   // Keep ref in sync

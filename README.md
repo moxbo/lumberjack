@@ -88,7 +88,7 @@ Icons befinden sich nun in `assets/` und werden von electron-builder automatisch
    - Keine manuelle asarUnpack-Konfiguration mehr nötig
 
 AUMID/Gruppierung:
-- `app.setAppUserModelId('de.hhla.lumberjack')` entspricht `build.appId`
+- `app.setAppUserModelId('de.moxbo.lumberjack')` entspricht `build.appId`
 - Wichtig für Taskleisten-Gruppierung und konsistentes Icon-Verhalten
 
 ## Icon erzeugen (Multi-Size ICO)
@@ -145,7 +145,7 @@ Mit der neuen Build-Struktur sollten Icon-Probleme seltener auftreten. Falls doc
 6. **Konfiguration prüfen**
    - `release/build/builder-effective-config.yaml` sollte enthalten:
      - `directories.buildResources: assets`
-     - `appId: de.hhla.lumberjack`
+     - `appId: de.moxbo.lumberjack`
 
 ## Performance
 

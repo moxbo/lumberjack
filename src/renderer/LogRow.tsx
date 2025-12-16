@@ -131,7 +131,6 @@ const LogRowComponent = ({
         );
       }}
       onContextMenu={(ev) => onContextMenu(ev as MouseEvent, globalIdx)}
-      title={messageText}
       data-marked={markColor ? "1" : "0"}
     >
       <div className="col ts">{fmtTimestamp(getTs(entry, "timestamp"))}</div>

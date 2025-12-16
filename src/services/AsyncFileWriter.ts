@@ -120,16 +120,20 @@ export class AsyncFileWriter {
 
   /**
    * Clear the queue without processing
+   * Note: Pending writes are silently discarded (expected during rotation)
    */
   clearQueue(): void {
     const cleared = this.queue.length;
+    // Silently resolve instead of rejecting - clearing is expected during rotation
     this.queue.forEach((task) => {
-      task.reject(new Error("Queue cleared"));
+      task.resolve();
     });
     this.queue = [];
-    log.warn("[async-file-writer] Queue cleared", {
-      filepath: this.filepath,
-      tasksCleared: cleared,
-    });
+    if (cleared > 0) {
+      log.debug("[async-file-writer] Queue cleared", {
+        filepath: this.filepath,
+        tasksCleared: cleared,
+      });
+    }
   }
 }
