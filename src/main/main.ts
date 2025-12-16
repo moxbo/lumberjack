@@ -193,6 +193,21 @@ const loggingStrategy = new LoggingStrategy();
 const featureFlags = new FeatureFlags();
 const shutdownCoordinator = new ShutdownCoordinator();
 
+// Load feature flags from settings and set up persistence
+try {
+  const settings = settingsService.get();
+  featureFlags.loadFromSettings(settings.disabledFeatures);
+  featureFlags.setPersistCallback((disabledFeatures) => {
+    settingsService.update({ disabledFeatures });
+    void settingsService.save();
+  });
+} catch (e) {
+  log.warn(
+    "[feature-flags] Failed to load from settings:",
+    e instanceof Error ? e.message : String(e),
+  );
+}
+
 // Initialize i18n with locale from settings (defaults to "de")
 try {
   const savedLocale = settingsService.get().locale;

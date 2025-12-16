@@ -7,6 +7,7 @@ import { ipcMain, dialog, BrowserWindow } from "electron";
 import log from "electron-log/main";
 import * as path from "path";
 import { getSharedMainApi } from "./sharedMainApi";
+import { t } from "../locales/mainI18n";
 import {
   Settings,
   ElasticSearchOptions,
@@ -161,7 +162,7 @@ export function registerIpcHandlers(
     (_event, patch: Partial<Settings>): SettingsResult => {
       try {
         if (!patch || typeof patch !== "object") {
-          return { ok: false, error: "Invalid patch: not an object" };
+          return { ok: false, error: t("main.errors.invalidPatch") };
         }
 
         type SettingsPatch = Partial<Settings> & {
@@ -196,7 +197,7 @@ export function registerIpcHandlers(
 
         const saved = settingsService.saveSync();
         if (!saved) {
-          return { ok: false, error: "Failed to save settings to disk" };
+          return { ok: false, error: t("main.errors.saveFailed") };
         }
 
         updateWindowTitles();
@@ -228,8 +229,11 @@ export function registerIpcHandlers(
     const res = await dialog.showOpenDialog(mainWindow, {
       properties: ["openFile", "multiSelections"],
       filters: [
-        { name: "Logs", extensions: ["log", "json", "jsonl", "txt", "zip"] },
-        { name: "All Files", extensions: ["*"] },
+        {
+          name: t("main.dialogs.openLogs"),
+          extensions: ["log", "json", "jsonl", "txt", "zip"],
+        },
+        { name: t("main.dialogs.openAllFiles"), extensions: ["*"] },
       ],
     });
 
@@ -246,11 +250,14 @@ export function registerIpcHandlers(
       settings.logFilePath && String(settings.logFilePath).trim();
 
     const res = await dialog.showSaveDialog(mainWindow, {
-      title: "Logdatei wählen",
+      title: t("main.dialogs.chooseLogFile"),
       defaultPath: defaultPath || undefined,
       filters: [
-        { name: "Logdateien", extensions: ["log", "jsonl", "txt"] },
-        { name: "Alle Dateien", extensions: ["*"] },
+        {
+          name: t("main.dialogs.logFiles"),
+          extensions: ["log", "jsonl", "txt"],
+        },
+        { name: t("main.dialogs.allFiles"), extensions: ["*"] },
       ],
     });
 
@@ -353,9 +360,10 @@ export function registerIpcHandlers(
         // Check if TCP_SERVER feature is enabled
         if (featureFlags && !featureFlags.isEnabled("TCP_SERVER")) {
           const reason = featureFlags.getDisableReason("TCP_SERVER");
+          const msg = t("main.errors.tcpDisabled");
           event.reply("tcp:status", {
             ok: false,
-            message: `TCP-Server deaktiviert${reason ? `: ${reason}` : ""}`,
+            message: reason ? `${msg}: ${reason}` : msg,
             running: false,
           });
           return;
@@ -370,7 +378,7 @@ export function registerIpcHandlers(
           if (win) sharedApi.setTcpOwnerWindowId?.(win.id);
           event.reply("tcp:status", {
             ok: false,
-            message: "In diesem Fenster nicht erlaubt",
+            message: t("main.errors.tcpWindowNotAllowed"),
           });
           return;
         }
@@ -424,7 +432,7 @@ export function registerIpcHandlers(
         if (!allowed) {
           event.reply("tcp:status", {
             ok: false,
-            message: "In diesem Fenster nicht erlaubt",
+            message: t("main.errors.tcpWindowNotAllowed"),
           });
           return;
         }
@@ -460,6 +468,15 @@ export function registerIpcHandlers(
   ipcMain.handle(
     "http:loadOnce",
     async (_event, url: string): Promise<ParseResult> => {
+      // Check if HTTP_POLLING feature is enabled
+      if (featureFlags && !featureFlags.isEnabled("HTTP_POLLING")) {
+        const reason = featureFlags.getDisableReason("HTTP_POLLING");
+        const msg = t("main.errors.httpDisabled");
+        return {
+          ok: false,
+          error: reason ? `${msg}: ${reason}` : msg,
+        };
+      }
       return await networkService.httpLoadOnce(url);
     },
   );
@@ -470,6 +487,15 @@ export function registerIpcHandlers(
       _event,
       { url, intervalMs }: { url: string; intervalMs: number },
     ) => {
+      // Check if HTTP_POLLING feature is enabled
+      if (featureFlags && !featureFlags.isEnabled("HTTP_POLLING")) {
+        const reason = featureFlags.getDisableReason("HTTP_POLLING");
+        const msg = t("main.errors.httpDisabled");
+        return {
+          ok: false,
+          error: reason ? `${msg}: ${reason}` : msg,
+        };
+      }
       return await networkService.httpStartPoll(url, intervalMs);
     },
   );
@@ -482,6 +508,16 @@ export function registerIpcHandlers(
   ipcMain.handle(
     "elastic:search",
     async (_event, opts: ElasticSearchOptions): Promise<ParseResult> => {
+      // Check if ELASTICSEARCH feature is enabled
+      if (featureFlags && !featureFlags.isEnabled("ELASTICSEARCH")) {
+        const reason = featureFlags.getDisableReason("ELASTICSEARCH");
+        const msg = t("main.errors.elasticDisabled");
+        return {
+          ok: false,
+          error: reason ? `${msg}: ${reason}` : msg,
+        };
+      }
+
       try {
         const settings = settingsService.get();
         const { fetchElasticPitPage } = getParsers();
@@ -523,7 +559,7 @@ export function registerIpcHandlers(
         } as ElasticSearchOptions;
 
         if (!mergedOpts.url) {
-          throw new Error("Elasticsearch URL ist nicht konfiguriert");
+          throw new Error(t("main.errors.elasticUrlNotConfigured"));
         }
 
         // Vorab: finale Request-URL (Basis + _search) für Logging berechnen
@@ -675,7 +711,7 @@ export function registerIpcHandlers(
         featureFlags.disable(feature, reason);
         return { ok: true };
       }
-      return { ok: false, error: "FeatureFlags not available" };
+      return { ok: false, error: t("main.errors.featureFlagsNotAvailable") };
     },
   );
 
@@ -684,7 +720,7 @@ export function registerIpcHandlers(
       featureFlags.enable(feature);
       return { ok: true };
     }
-    return { ok: false, error: "FeatureFlags not available" };
+    return { ok: false, error: t("main.errors.featureFlagsNotAvailable") };
   });
 
   ipcMain.handle("featureFlags:resetAll", () => {
@@ -692,6 +728,6 @@ export function registerIpcHandlers(
       featureFlags.resetAll();
       return { ok: true };
     }
-    return { ok: false, error: "FeatureFlags not available" };
+    return { ok: false, error: t("main.errors.featureFlagsNotAvailable") };
   });
 }

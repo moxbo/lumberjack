@@ -91,6 +91,9 @@ export interface Settings {
 
   // Elasticsearch Performance
   elasticMaxParallel?: number; // maximale parallele Seiten (1 = sequentiell)
+
+  // Feature Flags (persisted disabled features)
+  disabledFeatures?: Record<string, string | true>; // feature -> reason or true
 }
 
 /**

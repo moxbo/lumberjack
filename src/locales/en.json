@@ -241,6 +241,23 @@
       "architecture": "Architecture",
       "memory": "Memory",
       "description": "Lumberjack is a powerful log viewer\nfor developers and DevOps teams."
+    },
+    "errors": {
+      "tcpDisabled": "TCP server disabled",
+      "tcpWindowNotAllowed": "Not allowed in this window",
+      "httpDisabled": "HTTP polling disabled",
+      "elasticDisabled": "Elasticsearch disabled",
+      "elasticUrlNotConfigured": "Elasticsearch URL is not configured",
+      "invalidPatch": "Invalid data: not an object",
+      "saveFailed": "Failed to save to disk",
+      "featureFlagsNotAvailable": "Feature flags not available"
+    },
+    "dialogs": {
+      "chooseLogFile": "Choose log file",
+      "logFiles": "Log files",
+      "allFiles": "All files",
+      "openLogs": "Logs",
+      "openAllFiles": "All files"
     }
   },
   "featureFlags": {
@@ -253,6 +270,7 @@
     "loading": "Loading...",
     "error": "Error",
     "manuallyDisabled": "Manually disabled",
+    "disabledWarning": "⚠️ This feature is disabled. Enable it in the Features tab.",
     "features": {
       "TCP_SERVER": "TCP server for receiving logs over network",
       "HTTP_POLLING": "HTTP polling for log sources",

@@ -4,6 +4,7 @@
 import { useI18n, type Locale } from "../../utils/i18n";
 import logger from "../../utils/logger";
 import type { SettingsForm, SettingsTab } from "../../hooks";
+import { useFeatureFlags } from "../../hooks";
 import { FeatureFlagsPanel } from "./FeatureFlagsPanel";
 
 interface SettingsModalProps {
@@ -38,8 +39,15 @@ export function SettingsModal({
   applyThemeMode,
 }: SettingsModalProps) {
   const { t } = useI18n();
+  const { isEnabled } = useFeatureFlags();
 
   if (!open) return null;
+
+  // Feature-Status prüfen
+  const tcpEnabled = isEnabled("TCP_SERVER");
+  const httpEnabled = isEnabled("HTTP_POLLING");
+  const elasticEnabled = isEnabled("ELASTICSEARCH");
+  const fileLoggingEnabled = isEnabled("FILE_LOGGING");
 
   const handleClose = () => {
     applyThemeMode(form.themeMode);
@@ -118,6 +126,11 @@ export function SettingsModal({
             {/* TCP Tab */}
             {tab === "tcp" && (
               <div className="tabpanel" role="tabpanel">
+                {!tcpEnabled && (
+                  <div className="feature-disabled-warning">
+                    {t("featureFlags.disabledWarning")}
+                  </div>
+                )}
                 <div className="kv">
                   <span>{t("settings.tcp.port")}</span>
                   <input
@@ -125,6 +138,7 @@ export function SettingsModal({
                     min="1"
                     max="65535"
                     value={form.tcpPort}
+                    disabled={!tcpEnabled}
                     onInput={(e) =>
                       onFormChange({
                         ...form,
@@ -145,6 +159,7 @@ export function SettingsModal({
                       type="checkbox"
                       className="native-checkbox"
                       checked={canTcpControlWindow}
+                      disabled={!tcpEnabled}
                       onChange={async (e) => {
                         const v = e.currentTarget.checked;
                         onCanTcpControlWindowChange(v);
@@ -166,11 +181,17 @@ export function SettingsModal({
             {/* HTTP Tab */}
             {tab === "http" && (
               <div className="tabpanel" role="tabpanel">
+                {!httpEnabled && (
+                  <div className="feature-disabled-warning">
+                    {t("featureFlags.disabledWarning")}
+                  </div>
+                )}
                 <div className="kv">
                   <span>{t("settings.http.url")}</span>
                   <input
                     type="text"
                     value={form.httpUrl}
+                    disabled={!httpEnabled}
                     onInput={(e) =>
                       onFormChange({ ...form, httpUrl: e.currentTarget.value })
                     }
@@ -185,6 +206,7 @@ export function SettingsModal({
                     min="500"
                     step="500"
                     value={form.httpInterval}
+                    disabled={!httpEnabled}
                     onInput={(e) =>
                       onFormChange({
                         ...form,
@@ -199,11 +221,17 @@ export function SettingsModal({
             {/* Elasticsearch Tab */}
             {tab === "elastic" && (
               <div className="tabpanel" role="tabpanel">
+                {!elasticEnabled && (
+                  <div className="feature-disabled-warning">
+                    {t("featureFlags.disabledWarning")}
+                  </div>
+                )}
                 <div className="kv">
                   <span>{t("settings.elastic.url")}</span>
                   <input
                     type="text"
                     value={form.elasticUrl}
+                    disabled={!elasticEnabled}
                     onInput={(e) =>
                       onFormChange({
                         ...form,
@@ -221,6 +249,7 @@ export function SettingsModal({
                     min="1"
                     max="10000"
                     value={form.elasticSize}
+                    disabled={!elasticEnabled}
                     onInput={(e) =>
                       onFormChange({
                         ...form,
@@ -239,6 +268,7 @@ export function SettingsModal({
                     min="1"
                     max="8"
                     value={form.elasticMaxParallel || 1}
+                    disabled={!elasticEnabled}
                     onInput={(e) =>
                       onFormChange({
                         ...form,
@@ -255,6 +285,7 @@ export function SettingsModal({
                   <input
                     type="text"
                     value={form.elasticUser}
+                    disabled={!elasticEnabled}
                     onInput={(e) =>
                       onFormChange({
                         ...form,
@@ -276,6 +307,7 @@ export function SettingsModal({
                     <input
                       type="password"
                       value={form.elasticPassNew}
+                      disabled={!elasticEnabled}
                       onInput={(e) =>
                         onFormChange({
                           ...form,
@@ -291,6 +323,7 @@ export function SettingsModal({
                     />
                     <button
                       type="button"
+                      disabled={!elasticEnabled}
                       onClick={() =>
                         onFormChange({
                           ...form,
@@ -315,6 +348,11 @@ export function SettingsModal({
             {/* Logging Tab */}
             {tab === "logging" && (
               <div className="tabpanel" role="tabpanel">
+                {!fileLoggingEnabled && (
+                  <div className="feature-disabled-warning">
+                    {t("featureFlags.disabledWarning")}
+                  </div>
+                )}
                 <div className="kv">
                   <label
                     style={{
@@ -327,6 +365,7 @@ export function SettingsModal({
                       type="checkbox"
                       className="native-checkbox"
                       checked={form.logToFile}
+                      disabled={!fileLoggingEnabled}
                       onChange={(e) =>
                         onFormChange({
                           ...form,
@@ -356,7 +395,7 @@ export function SettingsModal({
                         })
                       }
                       placeholder={t("settings.logging.filePlaceholder")}
-                      disabled={!form.logToFile}
+                      disabled={!fileLoggingEnabled || !form.logToFile}
                     />
                     <button
                       onClick={async () => {
@@ -367,7 +406,7 @@ export function SettingsModal({
                           logger.warn("chooseLogFile failed:", e as any);
                         }
                       }}
-                      disabled={!form.logToFile}
+                      disabled={!fileLoggingEnabled || !form.logToFile}
                     >
                       {t("settings.logging.choose")}
                     </button>
@@ -386,7 +425,7 @@ export function SettingsModal({
                         logMaxMB: Number(e.currentTarget.value || 5),
                       })
                     }
-                    disabled={!form.logToFile}
+                    disabled={!fileLoggingEnabled || !form.logToFile}
                   />
                 </div>
                 <div className="kv">
@@ -402,7 +441,7 @@ export function SettingsModal({
                         logMaxBackups: Number(e.currentTarget.value || 0),
                       })
                     }
-                    disabled={!form.logToFile}
+                    disabled={!fileLoggingEnabled || !form.logToFile}
                   />
                 </div>
               </div>

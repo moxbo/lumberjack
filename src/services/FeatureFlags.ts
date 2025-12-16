@@ -15,12 +15,18 @@ export type FeatureName =
   | "ADAPTIVE_BATCHING"
   | "ASYNC_FILE_WRITER";
 
+/** Callback for persisting feature flags */
+export type PersistCallback = (
+  disabledFeatures: Record<string, string | true>,
+) => void;
+
 /**
  * FeatureFlags manages feature availability for graceful degradation
  */
 export class FeatureFlags {
   private features = new Map<string, boolean>();
   private disableReasons = new Map<string, string>();
+  private persistCallback?: PersistCallback;
 
   constructor() {
     // Define default feature flags
@@ -31,6 +37,56 @@ export class FeatureFlags {
     this.features.set("HEALTH_MONITORING", true);
     this.features.set("ADAPTIVE_BATCHING", true);
     this.features.set("ASYNC_FILE_WRITER", true);
+  }
+
+  /**
+   * Set callback for persisting feature flags to settings
+   */
+  setPersistCallback(callback: PersistCallback): void {
+    this.persistCallback = callback;
+  }
+
+  /**
+   * Load disabled features from settings
+   */
+  loadFromSettings(disabledFeatures?: Record<string, string | true>): void {
+    if (!disabledFeatures || typeof disabledFeatures !== "object") {
+      return;
+    }
+
+    for (const [feature, reasonOrTrue] of Object.entries(disabledFeatures)) {
+      if (this.features.has(feature)) {
+        this.features.set(feature, false);
+        if (typeof reasonOrTrue === "string") {
+          this.disableReasons.set(feature, reasonOrTrue);
+        }
+        log.info(`[feature-flag] ${feature} loaded as disabled from settings`);
+      }
+    }
+  }
+
+  /**
+   * Persist current state to settings
+   */
+  private persist(): void {
+    if (!this.persistCallback) return;
+
+    const disabledFeatures: Record<string, string | true> = {};
+    for (const [feature, enabled] of this.features) {
+      if (!enabled) {
+        const reason = this.disableReasons.get(feature);
+        disabledFeatures[feature] = reason || true;
+      }
+    }
+
+    try {
+      this.persistCallback(disabledFeatures);
+    } catch (err) {
+      log.warn(
+        "[feature-flag] Failed to persist:",
+        err instanceof Error ? err.message : String(err),
+      );
+    }
   }
 
   /**
@@ -49,6 +105,7 @@ export class FeatureFlags {
       this.disableReasons.set(feature, reason);
     }
     log.warn(`[feature-flag] ${feature} disabled`, reason ? { reason } : {});
+    this.persist();
   }
 
   /**
@@ -58,6 +115,7 @@ export class FeatureFlags {
     this.features.set(feature, true);
     this.disableReasons.delete(feature);
     log.info(`[feature-flag] ${feature} enabled`);
+    this.persist();
   }
 
   /**
@@ -92,6 +150,7 @@ export class FeatureFlags {
     }
     this.disableReasons.clear();
     log.info("[feature-flag] All features reset to enabled");
+    this.persist();
   }
 
   /**
