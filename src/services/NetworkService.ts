@@ -641,6 +641,10 @@ export class NetworkService {
     url: string,
     intervalMs: number,
   ): Promise<{ ok: boolean; id?: number; error?: string }> {
+    log.info(
+      `[http:poll] httpStartPoll called for url=${url}, intervalMs=${intervalMs}, current pollers: ${Array.from(this.httpPollers.keys()).join(", ") || "none"}`,
+    );
+
     try {
       if (!this.parseJsonFile || !this.parseTextLines || !this.toEntry) {
         throw new Error("Parser functions not set");
@@ -669,9 +673,13 @@ export class NetworkService {
       const tick = async (): Promise<void> => {
         // Early exit if poller was stopped
         if (!isPollerActive()) {
-          log.debug(`[http:poll] ${id} tick skipped - poller stopped`);
+          log.debug(
+            `[http:poll] ${id} tick skipped - poller not active (stopped or removed from map)`,
+          );
           return;
         }
+
+        log.debug(`[http:poll] ${id} tick starting for ${url}`);
 
         try {
           const text = await this.httpFetchText(url, abortController.signal);
@@ -775,13 +783,22 @@ export class NetworkService {
    * Stop HTTP polling
    */
   httpStopPoll(id: number): { ok: boolean; error?: string } {
+    log.info(
+      `[http:poll] httpStopPoll called for id=${id}, current pollers: ${Array.from(this.httpPollers.keys()).join(", ")}`,
+    );
+
     const poller = this.httpPollers.get(id);
     if (!poller) {
+      log.warn(`[http:poll] httpStopPoll: Poller ${id} not found in map`);
       return { ok: false, error: "Poller not found" };
     }
 
     // Flush any pending batched entries before stopping
     this.flushHttpBatch();
+
+    log.info(
+      `[http:poll] Stopping poller ${id}: setting stopped=true, aborting fetch, clearing timer`,
+    );
 
     // Mark as stopped first to prevent new ticks
     poller.stopped = true;
@@ -795,7 +812,9 @@ export class NetworkService {
     // Remove from map
     this.httpPollers.delete(id);
 
-    log.info(`HTTP poller ${id} stopped`);
+    log.info(
+      `HTTP poller ${id} stopped, remaining pollers: ${Array.from(this.httpPollers.keys()).join(", ") || "none"}`,
+    );
 
     return { ok: true };
   }

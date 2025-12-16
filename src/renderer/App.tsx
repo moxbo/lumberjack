@@ -2140,7 +2140,18 @@ export default function App() {
                 break;
               }
               case "http-stop-poll": {
-                if (httpPollIdRef.current != null) void httpMenuStopPoll();
+                console.log(
+                  "[menu] http-stop-poll received, httpPollIdRef.current =",
+                  httpPollIdRef.current,
+                );
+                if (httpPollIdRef.current != null) {
+                  console.log("[menu] calling httpMenuStopPoll()");
+                  void httpMenuStopPoll();
+                } else {
+                  console.log(
+                    "[menu] httpPollIdRef.current is null, not stopping",
+                  );
+                }
                 break;
               }
               case "tcp-configure": {
@@ -2330,8 +2341,22 @@ export default function App() {
   }
 
   async function httpMenuStopPoll() {
-    if (httpPollId == null) return;
-    const r = await window.api.httpStopPoll(httpPollId);
+    // Use ref value instead of state value to avoid stale closures
+    const currentPollId = httpPollIdRef.current;
+    console.log(
+      "[httpMenuStopPoll] called, httpPollIdRef.current =",
+      currentPollId,
+    );
+    if (currentPollId == null) {
+      console.log("[httpMenuStopPoll] currentPollId is null, returning early");
+      return;
+    }
+    console.log(
+      "[httpMenuStopPoll] calling window.api.httpStopPoll with id =",
+      currentPollId,
+    );
+    const r = await window.api.httpStopPoll(currentPollId);
+    console.log("[httpMenuStopPoll] result =", r);
     if (r.ok) {
       setHttpStatus(t("status.httpPollStopped"));
       setHttpPollId(null);

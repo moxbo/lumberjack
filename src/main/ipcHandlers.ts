@@ -501,7 +501,10 @@ export function registerIpcHandlers(
   );
 
   ipcMain.handle("http:stopPoll", async (_event, id: number) => {
-    return networkService.httpStopPoll(id);
+    log.info(`[ipc] http:stopPoll called with id=${id}`);
+    const result = networkService.httpStopPoll(id);
+    log.info(`[ipc] http:stopPoll result: ${JSON.stringify(result)}`);
+    return result;
   });
 
   // Elasticsearch handler
