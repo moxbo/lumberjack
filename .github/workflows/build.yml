@@ -136,8 +136,9 @@ jobs:
       - uses: actions/checkout@v4
         with:
           ref: ${{ needs.prepare-release.outputs.checkout_ref }}
+          fetch-depth: 0  # Fetch all history for changelog generation
 
-      - name: Release automatisch vervollständigen
+      - name: Generate Changelog and Finalize Release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
@@ -149,12 +150,111 @@ jobs:
             release_flag="--prerelease"
           fi
 
+          REPO="${{ github.repository }}"
+          REPO_URL="https://github.com/$REPO"
+
+          # Find previous release tag
+          previous_tag=$(git tag --sort=-version:refname | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+' | grep -v "^$tag$" | head -n 1 || echo "")
+          
+          echo "Current tag: $tag"
+          echo "Previous tag: $previous_tag"
+
+          # Function to format commits with PR/issue links
+          format_commits() {
+            local commits="$1"
+            local formatted=""
+            while IFS= read -r line; do
+              if [[ -z "$line" ]]; then continue; fi
+              # Extract PR number if present (e.g., "(#123)" or "PR #123")
+              if [[ "$line" =~ \#([0-9]+) ]]; then
+                pr_num="${BASH_REMATCH[1]}"
+                # Format as linked item
+                commit_msg=$(echo "$line" | sed -E 's/- //' | sed -E 's/\(#[0-9]+\)//' | sed -E 's/\([a-f0-9]+\)$//' | xargs)
+                formatted+="- $commit_msg [#$pr_num]($REPO_URL/issues/$pr_num)\n"
+              else
+                # Format without PR link, but with commit hash link
+                if [[ "$line" =~ \(([a-f0-9]+)\)$ ]]; then
+                  hash="${BASH_REMATCH[1]}"
+                  commit_msg=$(echo "$line" | sed -E 's/- //' | sed -E 's/\([a-f0-9]+\)$//' | xargs)
+                  formatted+="- $commit_msg [\`$hash\`]($REPO_URL/commit/$hash)\n"
+                else
+                  formatted+="$line\n"
+                fi
+              fi
+            done <<< "$commits"
+            echo -e "$formatted"
+          }
+
+          # Generate changelog
+          changelog=""
+          
+          if [[ -n "$previous_tag" ]]; then
+            echo "Generating changelog from $previous_tag to $tag"
+            
+            # Get commits between tags, grouped by type
+            features=$(git log "$previous_tag..$tag" --pretty=format:"- %s (%h)" --grep="^feat" --regexp-ignore-case 2>/dev/null || echo "")
+            fixes=$(git log "$previous_tag..$tag" --pretty=format:"- %s (%h)" --grep="^fix" --regexp-ignore-case 2>/dev/null || echo "")
+            docs=$(git log "$previous_tag..$tag" --pretty=format:"- %s (%h)" --grep="^docs" --regexp-ignore-case 2>/dev/null || echo "")
+            refactor=$(git log "$previous_tag..$tag" --pretty=format:"- %s (%h)" --grep="^refactor" --regexp-ignore-case 2>/dev/null || echo "")
+            perf=$(git log "$previous_tag..$tag" --pretty=format:"- %s (%h)" --grep="^perf" --regexp-ignore-case 2>/dev/null || echo "")
+            deps=$(git log "$previous_tag..$tag" --pretty=format:"- %s (%h)" --grep="^deps\|^chore.*dep\|upgrade\|bump" --regexp-ignore-case 2>/dev/null || echo "")
+            chore=$(git log "$previous_tag..$tag" --pretty=format:"- %s (%h)" --grep="^chore" --regexp-ignore-case 2>/dev/null | grep -vi "dep\|upgrade\|bump" || echo "")
+            build=$(git log "$previous_tag..$tag" --pretty=format:"- %s (%h)" --grep="^build\|^ci" --regexp-ignore-case 2>/dev/null || echo "")
+            
+            # Build changelog with sections (Spring Framework style)
+            changelog=":sparkles: **What's Changed**\n\n"
+            changelog+="See [$tag Release Notes]($REPO_URL/releases/tag/$tag) for details.\n\n"
+            
+            if [[ -n "$features" ]]; then
+              changelog+="## :rocket: New Features\n$(format_commits "$features")\n"
+            fi
+            
+            if [[ -n "$fixes" ]]; then
+              changelog+="## :lady_beetle: Bug Fixes\n$(format_commits "$fixes")\n"
+            fi
+            
+            if [[ -n "$perf" ]]; then
+              changelog+="## :zap: Performance Improvements\n$(format_commits "$perf")\n"
+            fi
+            
+            if [[ -n "$refactor" ]]; then
+              changelog+="## :recycle: Refactoring\n$(format_commits "$refactor")\n"
+            fi
+            
+            if [[ -n "$docs" ]]; then
+              changelog+="## :notebook_with_decorative_cover: Documentation\n$(format_commits "$docs")\n"
+            fi
+            
+            if [[ -n "$deps" ]]; then
+              changelog+="## :hammer: Dependency Upgrades\n$(format_commits "$deps")\n"
+            fi
+            
+            if [[ -n "$build" ]]; then
+              changelog+="## :wrench: Build & CI\n$(format_commits "$build")\n"
+            fi
+            
+            if [[ -n "$chore" ]]; then
+              changelog+="## :broom: Maintenance\n$(format_commits "$chore")\n"
+            fi
+            
+            # Add comparison link
+            changelog+="\n---\n**Full Changelog**: [$previous_tag...$tag]($REPO_URL/compare/$previous_tag...$tag)"
+          else
+            echo "No previous tag found, using GitHub's auto-generated notes"
+            # Fallback to GitHub's generated notes for first release
+            changelog=$(gh api repos/$REPO/releases/generate-notes -f tag_name="$tag" --jq '.body' 2>/dev/null || echo ":tada: Initial Release")
+          fi
+
+          # Create or update release
           if gh release view "$tag" >/dev/null 2>&1; then
+            echo "Updating existing release $tag"
             gh release edit "$tag" --draft --title "$tag"
           else
+            echo "Creating new release $tag"
             gh release create "$tag" --draft --title "$tag"
           fi
 
-          notes=$(gh api repos/${GITHUB_REPOSITORY}/releases/generate-notes -f tag_name="$tag" --jq '.body')
-
-          gh release edit "$tag" --notes "$notes" $release_flag --draft=false
+          # Apply changelog and finalize
+          echo -e "$changelog" | gh release edit "$tag" --notes-file - $release_flag --draft=false
+          
+          echo "✅ Release $tag finalized successfully!"
