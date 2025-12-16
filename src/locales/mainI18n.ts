@@ -26,10 +26,11 @@ function loadTranslations(locale: Locale): TranslationData {
     const appPath = app.getAppPath();
     // Try multiple paths for packaged vs development
     const possiblePaths = [
-      path.join(appPath, "src", "locales", `${locale}.json`),
       path.join(appPath, "dist", "locales", `${locale}.json`),
-      path.join(__dirname, "..", "..", "locales", `${locale}.json`),
+      path.join(appPath, "src", "locales", `${locale}.json`),
       path.join(__dirname, "..", "locales", `${locale}.json`),
+      path.join(__dirname, "..", "..", "locales", `${locale}.json`),
+      path.join(__dirname, "locales", `${locale}.json`),
     ];
 
     for (const filePath of possiblePaths) {

@@ -15,6 +15,10 @@ const targetPkgPath = path.join(targetDir, 'package.json');
 const imagesSourceDir = path.join(__dirname, '..', 'images');
 const imagesTargetDir = path.join(targetDir, 'images');
 
+// Source and target for locales
+const localesSourceDir = path.join(__dirname, '..', 'src', 'locales');
+const localesTargetDir = path.join(targetDir, 'dist', 'locales');
+
 /**
  * Recursively copy a directory
  */
@@ -66,5 +70,20 @@ function run() {
   // Copy images folder for app icon
   copyDir(imagesSourceDir, imagesTargetDir);
   console.log('[prepare-release-metadata] copied images to', imagesTargetDir);
+
+  // Copy locale files (only .json files)
+  if (!fs.existsSync(localesTargetDir)) {
+    fs.mkdirSync(localesTargetDir, { recursive: true });
+  }
+  if (fs.existsSync(localesSourceDir)) {
+    const localeFiles = fs.readdirSync(localesSourceDir).filter(f => f.endsWith('.json'));
+    for (const file of localeFiles) {
+      fs.copyFileSync(
+        path.join(localesSourceDir, file),
+        path.join(localesTargetDir, file)
+      );
+    }
+    console.log('[prepare-release-metadata] copied locales to', localesTargetDir);
+  }
 }
 run();
