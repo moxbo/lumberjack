@@ -39,15 +39,18 @@ export function SettingsModal({
   applyThemeMode,
 }: SettingsModalProps) {
   const { t } = useI18n();
-  const { isEnabled } = useFeatureFlags();
+  const { features, loading } = useFeatureFlags();
 
   if (!open) return null;
 
   // Feature-Status prüfen
-  const tcpEnabled = isEnabled("TCP_SERVER");
-  const httpEnabled = isEnabled("HTTP_POLLING");
-  const elasticEnabled = isEnabled("ELASTICSEARCH");
-  const fileLoggingEnabled = isEnabled("FILE_LOGGING");
+  // Ein Feature ist deaktiviert wenn: nicht loading UND enabled explizit false ist
+  const tcpEnabled = loading || features["TCP_SERVER"]?.enabled !== false;
+  const httpEnabled = loading || features["HTTP_POLLING"]?.enabled !== false;
+  const elasticEnabled =
+    loading || features["ELASTICSEARCH"]?.enabled !== false;
+  const fileLoggingEnabled =
+    loading || features["FILE_LOGGING"]?.enabled !== false;
 
   const handleClose = () => {
     applyThemeMode(form.themeMode);

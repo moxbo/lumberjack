@@ -36,6 +36,13 @@ interface UseFeatureFlagsReturn {
   refresh: () => Promise<void>;
 }
 
+// Simple event emitter for synchronizing all hook instances
+const featureFlagListeners = new Set<() => void>();
+
+function notifyFeatureFlagChange() {
+  featureFlagListeners.forEach((listener) => listener());
+}
+
 /**
  * Hook to manage feature flags
  * @returns Feature flags state and control methods
@@ -64,8 +71,15 @@ export function useFeatureFlags(): UseFeatureFlagsReturn {
     }
   }, []);
 
+  // Initial load and subscribe to changes
   useEffect(() => {
     void refresh();
+
+    // Subscribe to feature flag changes from other hook instances
+    featureFlagListeners.add(refresh);
+    return () => {
+      featureFlagListeners.delete(refresh);
+    };
   }, [refresh]);
 
   const isEnabled = useCallback(
@@ -80,6 +94,8 @@ export function useFeatureFlags(): UseFeatureFlagsReturn {
       try {
         await window.api.featureFlagsDisable(feature, reason);
         await refresh();
+        // Notify all other hook instances to refresh
+        notifyFeatureFlagChange();
       } catch (err) {
         setError(err instanceof Error ? err.message : String(err));
       }
@@ -92,6 +108,8 @@ export function useFeatureFlags(): UseFeatureFlagsReturn {
       try {
         await window.api.featureFlagsEnable(feature);
         await refresh();
+        // Notify all other hook instances to refresh
+        notifyFeatureFlagChange();
       } catch (err) {
         setError(err instanceof Error ? err.message : String(err));
       }
@@ -103,6 +121,8 @@ export function useFeatureFlags(): UseFeatureFlagsReturn {
     try {
       await window.api.featureFlagsResetAll();
       await refresh();
+      // Notify all other hook instances to refresh
+      notifyFeatureFlagChange();
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     }
