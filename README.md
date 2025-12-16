@@ -1,3 +1,5 @@
+[![Build/release](https://github.com/moxbo/lumberjack/actions/workflows/build.yml/badge.svg)](https://github.com/moxbo/lumberjack/actions/workflows/build.yml)
+[![Qodana](https://github.com/moxbo/lumberjack/actions/workflows/qodana_code_quality.yml/badge.svg)](https://github.com/moxbo/lumberjack/actions/workflows/qodana_code_quality.yml)
 # Lumberjack
 
 Ein schneller, schlanker Electron-basierter Log-Viewer mit leistungsfähigen Filtern.
