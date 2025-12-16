@@ -56,11 +56,16 @@ jobs:
           if [[ "$ref" == refs/tags/* ]]; then
             should_release="true"
             release_tag="${ref#refs/tags/}"
-            checkout_ref="$release_tag"  # Use tag name directly
+            checkout_ref="$ref"  # Use full refs/tags/... path for checkout
           elif [[ "$event" == "workflow_dispatch" && -n "$input_tag" ]]; then
             should_release="true"
             release_tag="$input_tag"
-            checkout_ref="$input_tag"
+            # For manual dispatch, use the branch/ref (tag may not exist yet)
+            if [[ -n "$input_ref" ]]; then
+              checkout_ref="$input_ref"
+            else
+              checkout_ref="main"
+            fi
           fi
 
           if [[ "$should_release" == "true" ]]; then
@@ -131,6 +136,15 @@ jobs:
         shell: bash
         run: |
           tag="${{ needs.prepare-release.outputs.release_tag }}"
+          
+          # Create tag if it doesn't exist (for workflow_dispatch)
+          if ! git rev-parse "$tag" >/dev/null 2>&1; then
+            echo "Creating tag $tag..."
+            git config user.name "github-actions[bot]"
+            git config user.email "github-actions[bot]@users.noreply.github.com"
+            git tag -a "$tag" -m "Release $tag"
+            git push origin "$tag"
+          fi
           
           # Create draft release if it doesn't exist
           if ! gh release view "$tag" >/dev/null 2>&1; then
