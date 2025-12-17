@@ -99,6 +99,41 @@ jobs:
           echo "checkout_ref=$checkout_ref" >> "$GITHUB_OUTPUT"
           echo "promote_only=$promote_only" >> "$GITHUB_OUTPUT"
 
+      - name: Checkout for release creation
+        if: ${{ steps.meta.outputs.should_release == 'true' && steps.meta.outputs.promote_only != 'true' }}
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ steps.meta.outputs.checkout_ref }}
+          fetch-depth: 0
+          fetch-tags: true
+
+      - name: Create tag and draft GitHub Release (once)
+        if: ${{ steps.meta.outputs.should_release == 'true' && steps.meta.outputs.promote_only != 'true' }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          tag="${{ steps.meta.outputs.release_tag }}"
+          prerelease_flag=""
+          if [[ "${{ steps.meta.outputs.prerelease }}" == "true" ]]; then
+            prerelease_flag="--prerelease"
+          fi
+
+          # Create tag if it doesn't exist (for workflow_dispatch)
+          if ! git rev-parse "$tag" >/dev/null 2>&1; then
+            echo "Creating tag $tag..."
+            git config user.name "github-actions[bot]"
+            git config user.email "github-actions[bot]@users.noreply.github.com"
+            git tag -a "$tag" -m "Release $tag"
+            git push origin "$tag"
+          fi
+
+          # Create draft release if it doesn't exist
+          if ! gh release view "$tag" >/dev/null 2>&1; then
+            gh release create "$tag" --draft --title "$tag" --notes "Release $tag"
+          fi
+
   release:
     needs: prepare-release
     if: needs.prepare-release.outputs.promote_only != 'true'
@@ -106,6 +141,7 @@ jobs:
     strategy:
       matrix:
         os: [windows-latest]
+        arch: [x64, ia32]
     steps:
       - uses: actions/checkout@v4
         with:
@@ -144,55 +180,70 @@ jobs:
           CI: true
 
       - name: Build Windows Portable
-        run: npx electron-builder --win portable --x64 --publish never
+        run: npx electron-builder --win portable --${{ matrix.arch }} --publish never
         env:
           CI: true
           CSC_IDENTITY_AUTO_DISCOVERY: false
 
       - name: Build Windows NSIS Installer
+        if: ${{ matrix.arch == 'x64' }}
         run: npx electron-builder --win nsis --x64 --publish never
         env:
           CI: true
           CSC_IDENTITY_AUTO_DISCOVERY: false
 
+      - name: Organize build outputs into arch subfolder
+        if: always()
+        shell: pwsh
+        run: |
+          $arch = "${{ matrix.arch }}"
+          $outDir = Join-Path $PWD "release\build"
+          $archDir = Join-Path $outDir $arch
+          if (-not (Test-Path $archDir)) { New-Item -ItemType Directory -Path $archDir | Out-Null }
+          $moved = 0
+          Get-ChildItem -Path $outDir -File -Force -ErrorAction SilentlyContinue | Where-Object { $_.Name -like "*$arch*" } | ForEach-Object {
+            Move-Item -Path $_.FullName -Destination $archDir -Force
+            $moved += 1
+          }
+          if (Test-Path (Join-Path $outDir 'win-unpacked')) {
+            $dest = Join-Path $archDir 'win-unpacked'
+            # Move win-unpacked directory into arch folder (if present)
+            Move-Item -Path (Join-Path $outDir 'win-unpacked') -Destination $dest -Force -ErrorAction SilentlyContinue
+          }
+          Write-Host "Moved $moved files into $archDir"
+
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: windows-release
+          name: windows-release-${{ matrix.arch }}
           path: |
-            release/build/*.exe
-            release/build/*.yml
+            release/build/${{ matrix.arch }}/*.exe
+            release/build/${{ matrix.arch }}/*.yml
+            release/build/${{ matrix.arch }}/*.blockmap
           retention-days: 30
 
       - name: Create GitHub Release and Upload Assets
         if: needs.prepare-release.outputs.should_release == 'true'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ARCH: ${{ matrix.arch }}
         shell: bash
         run: |
           tag="${{ needs.prepare-release.outputs.release_tag }}"
           
-          # Create tag if it doesn't exist (for workflow_dispatch)
-          if ! git rev-parse "$tag" >/dev/null 2>&1; then
-            echo "Creating tag $tag..."
-            git config user.name "github-actions[bot]"
-            git config user.email "github-actions[bot]@users.noreply.github.com"
-            git tag -a "$tag" -m "Release $tag"
-            git push origin "$tag"
-          fi
-          
-          # Create draft release if it doesn't exist
-          if ! gh release view "$tag" >/dev/null 2>&1; then
-            gh release create "$tag" --draft --title "$tag" --notes "Release $tag"
-          fi
-          
-          # Upload all exe files
-          for file in release/build/*.exe; do
+          # Upload only files matching current ARCH
+          echo "Uploading artifacts for ARCH=$ARCH"
+          matches=0
+          for file in release/build/"$ARCH"/*; do
             if [ -f "$file" ]; then
               echo "Uploading $file..."
-              gh release upload "$tag" "$file" --clobber
+              gh release upload "$tag" "$file" --clobber || true
+              matches=$((matches+1))
             fi
           done
+          if [ "$matches" -eq 0 ]; then
+            echo "No artifacts found for arch=$ARCH, skipping upload."
+          fi
 
   finalize-release:
     needs: [prepare-release, release]
@@ -236,7 +287,7 @@ jobs:
               if [[ "$line" =~ \#([0-9]+) ]]; then
                 pr_num="${BASH_REMATCH[1]}"
                 # Format as linked item
-                commit_msg=$(echo "$line" | sed -E 's/- //' | sed -E 's/\(#[0-9]+\)//' | sed -E 's/\([a-f0-9]+\)$//' | xargs)
+                commit_msg=$(echo "$line" | sed -E 's/- //' | sed -E 's/\(#[0-9]+\)//' | sed -E 's/\([a-f0-9]+$//' | xargs)
                 formatted+="- $commit_msg [#$pr_num]($REPO_URL/issues/$pr_num)\n"
               else
                 # Format without PR link, but with commit hash link
