@@ -134,7 +134,7 @@
     },
     "http": {
       "url": "HTTP URL",
-      "interval": "Intervall (ms)"
+      "interval": "Intervall (s)"
     },
     "elastic": {
       "url": "Elasticsearch URL",
@@ -186,7 +186,7 @@
       "title": "HTTP Poll starten",
       "url": "HTTP URL",
       "urlPlaceholder": "https://…/logs.json",
-      "interval": "Intervall (ms)",
+      "interval": "Intervall (s)",
       "cancel": "Abbrechen",
       "start": "Starten",
       "invalidUrl": "Bitte eine gültige URL eingeben",

@@ -485,7 +485,7 @@ export function registerIpcHandlers(
     "http:startPoll",
     async (
       _event,
-      { url, intervalMs }: { url: string; intervalMs: number },
+      { url, intervalSec }: { url: string; intervalSec: number },
     ) => {
       // Check if HTTP_POLLING feature is enabled
       if (featureFlags && !featureFlags.isEnabled("HTTP_POLLING")) {
@@ -496,7 +496,7 @@ export function registerIpcHandlers(
           error: reason ? `${msg}: ${reason}` : msg,
         };
       }
-      return await networkService.httpStartPoll(url, intervalMs);
+      return await networkService.httpStartPoll(url, intervalSec);
     },
   );
 

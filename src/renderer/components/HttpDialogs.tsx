@@ -2,6 +2,7 @@
  * HTTP Load and Poll Dialog Components
  */
 import { useState, useEffect } from "preact/hooks";
+import { useI18n } from "../../utils/i18n";
 
 interface HttpLoadDialogProps {
   open: boolean;
@@ -16,6 +17,7 @@ export function HttpLoadDialog({
   onClose,
   onLoad,
 }: HttpLoadDialogProps) {
+  const { t } = useI18n();
   const [url, setUrl] = useState<string>(initialUrl);
 
   useEffect(() => {
@@ -27,7 +29,7 @@ export function HttpLoadDialog({
   const handleLoad = async () => {
     const trimmedUrl = String(url || "").trim();
     if (!trimmedUrl) {
-      alert("Bitte eine gültige URL eingeben");
+      alert(t("dialogs.httpLoad.invalidUrl"));
       return;
     }
     onClose();
@@ -39,20 +41,20 @@ export function HttpLoadDialog({
   return (
     <div className="modal-backdrop" onClick={onClose}>
       <div className="modal" onClick={(e) => e.stopPropagation()}>
-        <h3>HTTP einmal laden</h3>
+        <h3>{t("dialogs.httpLoad.title")}</h3>
         <div className="kv">
-          <span>HTTP URL</span>
+          <span>{t("dialogs.httpLoad.url")}</span>
           <input
             type="text"
             value={url}
             onInput={(e) => setUrl(e.currentTarget.value)}
-            placeholder="https://…/logs.json"
+            placeholder={t("dialogs.httpLoad.urlPlaceholder")}
             autoFocus
           />
         </div>
         <div className="modal-actions">
-          <button onClick={onClose}>Abbrechen</button>
-          <button onClick={handleLoad}>Laden</button>
+          <button onClick={onClose}>{t("dialogs.httpLoad.cancel")}</button>
+          <button onClick={handleLoad}>{t("dialogs.httpLoad.load")}</button>
         </div>
       </div>
     </div>
@@ -65,7 +67,7 @@ interface HttpPollDialogProps {
   initialInterval: number;
   isPollActive: boolean;
   onClose: () => void;
-  onStart: (url: string, intervalMs: number) => Promise<void>;
+  onStart: (url: string, intervalSec: number) => Promise<void>;
 }
 
 export function HttpPollDialog({
@@ -76,6 +78,7 @@ export function HttpPollDialog({
   onClose,
   onStart,
 }: HttpPollDialogProps) {
+  const { t } = useI18n();
   const [form, setForm] = useState({
     url: initialUrl,
     interval: initialInterval,
@@ -92,16 +95,16 @@ export function HttpPollDialog({
 
   const handleStart = async () => {
     const url = String(form.url || "").trim();
-    const ms = Math.max(500, Number(form.interval || 5000));
+    const sec = Math.max(1, Number(form.interval || 5));
 
     if (!url) {
-      alert("Bitte eine gültige URL eingeben");
+      alert(t("dialogs.httpPoll.invalidUrl"));
       return;
     }
     if (isPollActive) return;
 
     onClose();
-    await onStart(url, ms);
+    await onStart(url, sec);
   };
 
   if (!open) return null;
@@ -109,23 +112,23 @@ export function HttpPollDialog({
   return (
     <div className="modal-backdrop" onClick={onClose}>
       <div className="modal" onClick={(e) => e.stopPropagation()}>
-        <h3>HTTP Poll starten</h3>
+        <h3>{t("dialogs.httpPoll.title")}</h3>
         <div className="kv">
-          <span>HTTP URL</span>
+          <span>{t("dialogs.httpPoll.url")}</span>
           <input
             type="text"
             value={form.url}
             onInput={(e) => setForm({ ...form, url: e.currentTarget.value })}
-            placeholder="https://…/logs.json"
+            placeholder={t("dialogs.httpPoll.urlPlaceholder")}
             autoFocus
           />
         </div>
         <div className="kv">
-          <span>Intervall (ms)</span>
+          <span>{t("dialogs.httpPoll.interval")}</span>
           <input
             type="number"
-            min="500"
-            step="500"
+            min="1"
+            step="1"
             value={form.interval}
             onInput={(e) =>
               setForm({
@@ -136,13 +139,13 @@ export function HttpPollDialog({
           />
         </div>
         <div className="modal-actions">
-          <button onClick={onClose}>Abbrechen</button>
+          <button onClick={onClose}>{t("dialogs.httpPoll.cancel")}</button>
           <button
             disabled={isPollActive}
-            title={isPollActive ? "Bitte laufendes Polling zuerst stoppen" : ""}
+            title={isPollActive ? t("dialogs.httpPoll.stopFirst") : ""}
             onClick={handleStart}
           >
-            Starten
+            {t("dialogs.httpPoll.start")}
           </button>
         </div>
       </div>

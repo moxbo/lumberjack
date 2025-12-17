@@ -73,7 +73,7 @@ const api: ElectronAPI = {
 
   httpStartPoll: (options: {
     url: string;
-    intervalMs: number;
+    intervalSec: number;
   }): Promise<HttpPollResult> => ipcRenderer.invoke("http:startPoll", options),
 
   httpStopPoll: (id: number): Promise<Result<void>> =>

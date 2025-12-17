@@ -40,7 +40,7 @@ const DEFAULT_SETTINGS: Settings = {
   // NEW: last environment-case used in Elastic dialog
   lastEnvironmentCase: "original",
   httpUrl: "",
-  httpPollInterval: 5000,
+  httpPollInterval: 5, // Interval in seconds
   elasticMaxParallel: 1,
 };
 

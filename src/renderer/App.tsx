@@ -546,7 +546,7 @@ export default function App() {
           }
           const int = r?.httpPollInterval ?? r?.httpInterval;
           if (int != null) {
-            interval = Number(int) || 5000;
+            interval = Number(int) || 5;
             setHttpInterval(interval);
           }
         }
@@ -556,7 +556,7 @@ export default function App() {
     }
     setHttpPollForm({
       url: String(url || ""),
-      interval: Number(interval || 5000),
+      interval: Number(interval || 5),
     });
     setShowHttpPollDlg(true);
   }
@@ -1813,7 +1813,7 @@ export default function App() {
         if (typeof r.httpUrl === "string") setHttpUrl(r.httpUrl);
         // Support both httpPollInterval (persisted) and httpInterval (legacy)
         const interval = r.httpPollInterval ?? r.httpInterval;
-        if (interval != null) setHttpInterval(Number(interval) || 5000);
+        if (interval != null) setHttpInterval(Number(interval) || 5);
         // Entfernt: Laden einer persistierten Logger-Historie, damit Verlauf nur temporär ist
         // if (Array.isArray(r.histLogger)) setHistLogger(r.histLogger);
         if (Array.isArray(r.histAppName)) setHistAppName(r.histAppName);
@@ -1930,7 +1930,7 @@ export default function App() {
           }
           const interval = r.httpPollInterval ?? r.httpInterval;
           if (interval != null) {
-            curHttpInterval = Number(interval) || 5000;
+            curHttpInterval = Number(interval) || 5;
             setHttpInterval(curHttpInterval);
           }
           if (typeof r.logToFile === "boolean") {
@@ -2004,7 +2004,7 @@ export default function App() {
       showAlert(t("errors.invalidTcpPort"));
       return;
     }
-    const interval = Math.max(500, Number(form.httpInterval || 5000));
+    const interval = Math.max(1, Number(form.httpInterval || 5));
     const toFile = form.logToFile;
     const path = String(form.logFilePath || "").trim();
     const maxMB = Math.max(1, Number(form.logMaxMB || 5));
@@ -2916,20 +2916,21 @@ export default function App() {
         initialInterval={httpPollForm.interval}
         isPollActive={httpPollId != null}
         onClose={() => setShowHttpPollDlg(false)}
-        onStart={async (url, ms) => {
+        onStart={async (url, sec) => {
           try {
             setHttpUrl(url);
-            setHttpInterval(ms);
+            setHttpInterval(sec);
             await window.api.settingsSet({
               httpUrl: url,
-              httpPollInterval: ms,
+              httpPollInterval: sec,
             } as any);
-            const r = await window.api.httpStartPoll({ url, intervalMs: ms });
+            const r = await window.api.httpStartPoll({ url, intervalSec: sec });
             if (r.ok) {
               setHttpPollId(r.id!);
               setHttpStatus(t("status.httpPolling", { id: String(r.id) }));
-              setNextPollDueAt(Date.now() + ms);
-              setCurrentPollInterval(ms);
+              // Convert to ms for internal timer tracking
+              setNextPollDueAt(Date.now() + sec * 1000);
+              setCurrentPollInterval(sec * 1000);
             } else {
               // Check if this is a feature-disabled error
               if (!handleFeatureError(r.error)) {

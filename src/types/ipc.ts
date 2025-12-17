@@ -261,7 +261,7 @@ export type ElectronAPI = {
   httpLoadOnce: (url: string) => Promise<ParseResult>;
   httpStartPoll: (options: {
     url: string;
-    intervalMs: number;
+    intervalSec: number;
   }) => Promise<HttpPollResult>;
   httpStopPoll: (id: number) => Promise<Result<void>>;
   elasticSearch: (options: ElasticSearchOptions) => Promise<ParseResult>;

@@ -171,7 +171,7 @@ export function useSettings() {
         // HTTP
         if (typeof r.httpUrl === "string") setHttpUrl(r.httpUrl);
         const interval = r.httpPollInterval ?? r.httpInterval;
-        if (interval != null) setHttpInterval(Number(interval) || 5000);
+        if (interval != null) setHttpInterval(Number(interval) || 5);
 
         // Elastic History
         if (Array.isArray(r.histAppName)) setHistAppName(r.histAppName);
@@ -279,7 +279,7 @@ export function useSettings() {
             }
             const interval = r.httpPollInterval ?? r.httpInterval;
             if (interval != null) {
-              curHttpInterval = Number(interval) || 5000;
+              curHttpInterval = Number(interval) || 5;
               setHttpInterval(curHttpInterval);
             }
             if (typeof r.logToFile === "boolean") {
@@ -372,7 +372,7 @@ export function useSettings() {
       return false;
     }
 
-    const interval = Math.max(500, Number(form.httpInterval || 5000));
+    const interval = Math.max(1, Number(form.httpInterval || 5));
     const toFile = form.logToFile;
     const path = String(form.logFilePath || "").trim();
     const maxMB = Math.max(1, Number(form.logMaxMB || 5));

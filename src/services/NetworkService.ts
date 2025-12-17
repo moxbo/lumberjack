@@ -23,7 +23,7 @@ export interface TcpStatus {
 export interface HttpPollConfig {
   id: number;
   url: string;
-  intervalMs: number;
+  intervalSec: number;
   timer: NodeJS.Timeout;
   seen: Set<string>;
   abortController: AbortController; // Used to abort pending fetches on stop
@@ -636,13 +636,18 @@ export class NetworkService {
 
   /**
    * Start HTTP polling
+   * @param url - URL to poll
+   * @param intervalSec - Polling interval in seconds (minimum 1 second)
    */
   async httpStartPoll(
     url: string,
-    intervalMs: number,
+    intervalSec: number,
   ): Promise<{ ok: boolean; id?: number; error?: string }> {
+    // Convert seconds to milliseconds, minimum 1 second (1000ms)
+    const intervalMs = Math.max(1, intervalSec) * 1000;
+
     log.info(
-      `[http:poll] httpStartPoll called for url=${url}, intervalMs=${intervalMs}, current pollers: ${Array.from(this.httpPollers.keys()).join(", ") || "none"}`,
+      `[http:poll] httpStartPoll called for url=${url}, intervalSec=${intervalSec} (${intervalMs}ms), current pollers: ${Array.from(this.httpPollers.keys()).join(", ") || "none"}`,
     );
 
     try {
@@ -748,29 +753,50 @@ export class NetworkService {
           }
           // Keine Log-Einträge in die UI pushen – stilles Retry im nächsten Intervall
           log.warn(`[http:poll] ${url} failed: ${message} (will retry)`);
+        } finally {
+          // Schedule next tick AFTER current one completes (prevents overlap)
+          scheduleNextTick();
         }
       };
 
-      const timer = setInterval(
-        () => {
+      // Schedule next tick using setTimeout (waits for previous tick to complete)
+      const scheduleNextTick = (): void => {
+        // Don't schedule if poller was stopped
+        if (!isPollerActive()) {
+          log.debug(
+            `[http:poll] ${id} not scheduling next tick - poller stopped`,
+          );
+          return;
+        }
+
+        const timer = setTimeout(() => {
           void tick();
-        },
-        Math.max(500, intervalMs),
-      );
+        }, intervalMs);
+
+        // Update the timer reference in the poller config
+        const poller = this.httpPollers.get(id);
+        if (poller) {
+          poller.timer = timer;
+        }
+      };
+
+      // Create initial poller config (timer will be set by scheduleNextTick)
+      const initialTimer = setTimeout(() => {}, 0); // Placeholder, cleared immediately
+      clearTimeout(initialTimer);
 
       this.httpPollers.set(id, {
         id,
         url,
-        intervalMs,
-        timer,
+        intervalSec,
+        timer: initialTimer,
         seen,
         abortController,
         stopped: false,
       });
 
-      // Fire once immediately
+      // Fire first tick immediately (it will schedule the next one when done)
       void tick();
-      log.info(`HTTP poller ${id} started for ${url} every ${intervalMs} ms`);
+      log.info(`HTTP poller ${id} started for ${url} every ${intervalSec}s`);
       return { ok: true, id };
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
@@ -806,8 +832,8 @@ export class NetworkService {
     // Abort any pending fetch requests
     poller.abortController.abort();
 
-    // Clear the interval timer
-    clearInterval(poller.timer);
+    // Clear the timeout timer
+    clearTimeout(poller.timer);
 
     // Remove from map
     this.httpPollers.delete(id);
@@ -831,8 +857,8 @@ export class NetworkService {
       poller.stopped = true;
       // Abort any pending fetch requests
       poller.abortController.abort();
-      // Clear the interval timer
-      clearInterval(poller.timer);
+      // Clear the timeout timer
+      clearTimeout(poller.timer);
     }
     this.httpPollers.clear();
     log.info("All HTTP pollers stopped");
@@ -864,7 +890,7 @@ export class NetworkService {
       pollerDetails: Array<{
         id: number;
         url: string;
-        intervalMs: number;
+        intervalSec: number;
         seenEntries: number;
       }>;
       fetchTimeoutMs: number;
@@ -892,7 +918,7 @@ export class NetworkService {
         pollerDetails: Array.from(this.httpPollers.values()).map((p) => ({
           id: p.id,
           url: p.url,
-          intervalMs: p.intervalMs,
+          intervalSec: p.intervalSec,
           seenEntries: p.seen.size,
         })),
         fetchTimeoutMs: NetworkService.HTTP_FETCH_TIMEOUT_MS,

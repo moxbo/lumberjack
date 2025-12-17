@@ -32,7 +32,7 @@ export function useHttpPolling({
   const [showHttpLoadDlg, setShowHttpLoadDlg] = useState<boolean>(false);
   const [httpLoadUrl, setHttpLoadUrl] = useState<string>("");
   const [showHttpPollDlg, setShowHttpPollDlg] = useState<boolean>(false);
-  const [httpPollForm, setHttpPollForm] = useState({ url: "", interval: 5000 });
+  const [httpPollForm, setHttpPollForm] = useState({ url: "", interval: 5 });
 
   // Ref for stable access
   const httpPollIdRef = useRef<number | null>(httpPollId);
@@ -109,7 +109,7 @@ export function useHttpPolling({
           }
           const int = r?.httpPollInterval ?? r?.httpInterval;
           if (int != null) {
-            interval = Number(int) || 5000;
+            interval = Number(int) || 5;
             setHttpInterval(interval);
           }
         }
@@ -119,7 +119,7 @@ export function useHttpPolling({
     }
     setHttpPollForm({
       url: String(url || ""),
-      interval: Number(interval || 5000),
+      interval: Number(interval || 5),
     });
     setShowHttpPollDlg(true);
   }, [httpUrl, httpInterval, setHttpUrl, setHttpInterval]);
@@ -148,28 +148,29 @@ export function useHttpPolling({
 
   // Start HTTP Poll
   const startHttpPoll = useCallback(
-    async (url: string, intervalMs: number) => {
+    async (url: string, intervalSec: number) => {
       const trimmedUrl = String(url || "").trim();
-      const ms = Math.max(500, intervalMs);
+      const sec = Math.max(1, intervalSec);
       if (!trimmedUrl || httpPollId != null) return;
 
       try {
         setHttpUrl(trimmedUrl);
-        setHttpInterval(ms);
+        setHttpInterval(sec);
         await window.api.settingsSet({
           httpUrl: trimmedUrl,
-          httpPollInterval: ms,
+          httpPollInterval: sec,
         } as any);
 
         const r = await window.api.httpStartPoll({
           url: trimmedUrl,
-          intervalMs: ms,
+          intervalSec: sec,
         });
         if (r.ok) {
           setHttpPollId(r.id!);
           setHttpStatus(`Polling #${r.id}`);
-          setNextPollDueAt(Date.now() + ms);
-          setCurrentPollInterval(ms);
+          // Convert to ms for internal timer tracking
+          setNextPollDueAt(Date.now() + sec * 1000);
+          setCurrentPollInterval(sec * 1000);
         } else {
           setHttpStatus("Fehler: " + (r.error || "unbekannt"));
         }
