@@ -79,6 +79,7 @@ import { AdaptiveBatchService } from "../services/AdaptiveBatchService";
 import { AsyncFileWriter } from "../services/AsyncFileWriter";
 import { HealthMonitor } from "../services/HealthMonitor";
 import { LoggingStrategy, LogLevel } from "../services/LoggingStrategy";
+import { getAutoUpdaterService } from "../services/AutoUpdaterService";
 
 // Initialize crash reporter early to capture crashes
 // Crash dumps are stored locally in app.getPath('crashDumps')
@@ -2499,6 +2500,21 @@ app
       createWindow({ makePrimary: true });
       const windowCreatedTime = Date.now() - processStartTime;
       log.info(`[PERF] Initial window created after ${windowCreatedTime}ms`);
+
+      // Initialize auto-updater in production (not in dev mode)
+      if (!isDev) {
+        const autoUpdater = getAutoUpdaterService();
+        // Initialize allowPrerelease from settings
+        const settings = settingsService.get();
+        autoUpdater.initFromSettings(settings.allowPrerelease);
+        // Set main window for update notifications
+        const mainWin = BrowserWindow.getAllWindows()[0];
+        if (mainWin) {
+          autoUpdater.setMainWindow(mainWin);
+        }
+        // Check for updates after a delay (don't block startup)
+        autoUpdater.checkForUpdatesOnStart(15000);
+      }
     } catch (err) {
       log.error(
         "[diag] Failed to create initial window:",

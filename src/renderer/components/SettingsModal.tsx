@@ -748,6 +748,39 @@ export function SettingsModal({
                       {t("settings.appearance.accentInfo")}
                     </p>
                   </div>
+
+                  <div className="settings-divider" />
+
+                  {/* Auto-Update Pre-Release Toggle */}
+                  <div className="settings-field">
+                    <div className="settings-toggle-row">
+                      <div className="settings-toggle-info">
+                        <label
+                          className="settings-label"
+                          htmlFor="allowPrerelease"
+                        >
+                          {t("settings.updates.betaChannel")}
+                        </label>
+                        <p className="settings-field-hint">
+                          {t("settings.updates.betaChannelHint")}
+                        </p>
+                      </div>
+                      <label className="settings-toggle">
+                        <input
+                          type="checkbox"
+                          id="allowPrerelease"
+                          checked={form.allowPrerelease}
+                          onChange={(e) =>
+                            onFormChange({
+                              ...form,
+                              allowPrerelease: e.currentTarget.checked,
+                            })
+                          }
+                        />
+                        <span className="settings-toggle-slider" />
+                      </label>
+                    </div>
+                  </div>
                 </div>
               </div>
             )}

@@ -94,6 +94,10 @@ export interface Settings {
 
   // Feature Flags (persisted disabled features)
   disabledFeatures?: Record<string, string | true>; // feature -> reason or true
+
+  // Auto-Update
+  /** Allow pre-release/beta updates (default: false - only stable releases) */
+  allowPrerelease?: boolean;
 }
 
 /**
@@ -243,6 +247,40 @@ export interface FeatureFlagsResult {
 }
 
 /**
+ * Auto-Updater status
+ */
+export interface AutoUpdaterStatus {
+  status:
+    | "checking"
+    | "available"
+    | "not-available"
+    | "downloading"
+    | "downloaded"
+    | "error";
+  info?: {
+    version: string;
+    releaseDate?: string;
+    releaseNotes?: string;
+  };
+  progress?: {
+    percent: number;
+    bytesPerSecond: number;
+    transferred: number;
+    total: number;
+  };
+  error?: string;
+}
+
+/**
+ * Auto-Updater status result
+ */
+export interface AutoUpdaterStatusResult {
+  updateDownloaded: boolean;
+  isChecking: boolean;
+  allowPrerelease: boolean;
+}
+
+/**
  * Main API exposed to renderer via contextBridge
  */
 export type ElectronAPI = {
@@ -279,6 +317,16 @@ export type ElectronAPI = {
   ) => Promise<Result<void>>;
   featureFlagsEnable: (feature: string) => Promise<Result<void>>;
   featureFlagsResetAll: () => Promise<Result<void>>;
+  // Auto-Updater
+  autoUpdaterCheck: () => Promise<unknown>;
+  autoUpdaterDownload: () => Promise<void>;
+  autoUpdaterInstall: () => Promise<void>;
+  autoUpdaterStatus: () => Promise<AutoUpdaterStatusResult>;
+  autoUpdaterGetAllowPrerelease: () => Promise<boolean>;
+  autoUpdaterSetAllowPrerelease: (allow: boolean) => Promise<Result<void>>;
+  onAutoUpdaterStatus: (
+    callback: (status: AutoUpdaterStatus) => void,
+  ) => () => void;
 };
 
 declare global {

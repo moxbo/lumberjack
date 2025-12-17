@@ -30,6 +30,7 @@ export interface SettingsForm {
   elasticPassNew: string;
   elasticPassClear: boolean;
   elasticMaxParallel: number;
+  allowPrerelease: boolean;
 }
 
 const INITIAL_FORM: SettingsForm = {
@@ -47,6 +48,7 @@ const INITIAL_FORM: SettingsForm = {
   elasticPassNew: "",
   elasticPassClear: false,
   elasticMaxParallel: 1,
+  allowPrerelease: false,
 };
 
 function applyThemeMode(mode: string | null | undefined): void {
@@ -84,6 +86,9 @@ export function useSettings() {
   const [elasticUser, setElasticUser] = useState<string>("");
   const [elasticHasPass, setElasticHasPass] = useState<boolean>(false);
   const [elasticMaxParallel, setElasticMaxParallel] = useState<number>(1);
+
+  // Auto-Update
+  const [allowPrerelease, setAllowPrerelease] = useState<boolean>(false);
 
   // Elastic History
   const [histAppName, setHistAppName] = useState<string[]>([]);
@@ -221,6 +226,9 @@ export function useSettings() {
         setElasticHasPass(!!String(r.elasticPassEnc || "").trim());
         setElasticMaxParallel(Math.max(1, Number(r.elasticMaxParallel || 1)));
 
+        // Auto-Update
+        setAllowPrerelease(!!r.allowPrerelease);
+
         rendererPerf.mark("settings-loaded");
       } catch (e) {
         logger.error("Error loading settings:", e);
@@ -254,6 +262,7 @@ export function useSettings() {
       let curElasticSize = elasticSize;
       let curElasticUser = elasticUser;
       let curElasticMaxParallel = elasticMaxParallel;
+      let curAllowPrerelease = allowPrerelease;
 
       try {
         if (window.api?.settingsGet) {
@@ -320,6 +329,10 @@ export function useSettings() {
             if (typeof r.elasticPassEnc === "string") {
               setElasticHasPass(!!r.elasticPassEnc.trim());
             }
+            if (typeof r.allowPrerelease === "boolean") {
+              curAllowPrerelease = r.allowPrerelease;
+              setAllowPrerelease(curAllowPrerelease);
+            }
           }
         }
       } catch (e) {
@@ -344,6 +357,7 @@ export function useSettings() {
         elasticPassNew: "",
         elasticPassClear: false,
         elasticMaxParallel: curElasticMaxParallel || 1,
+        allowPrerelease: curAllowPrerelease,
       });
       setSettingsTab(initialTab || "tcp");
       setShowSettings(true);
@@ -361,6 +375,7 @@ export function useSettings() {
       elasticSize,
       elasticUser,
       elasticMaxParallel,
+      allowPrerelease,
     ],
   );
 
@@ -395,6 +410,7 @@ export function useSettings() {
       elasticSize: Math.max(1, Number(form.elasticSize || 1000)),
       elasticUser: String(form.elasticUser || "").trim(),
       elasticMaxParallel: Math.max(1, Number(form.elasticMaxParallel || 1)),
+      allowPrerelease: !!form.allowPrerelease,
     };
 
     const newPass = String(form.elasticPassNew || "").trim();
@@ -425,6 +441,15 @@ export function useSettings() {
       setElasticUser(String(form.elasticUser || "").trim());
       if (form.elasticPassClear) setElasticHasPass(false);
       else if (newPass) setElasticHasPass(true);
+
+      // Update allowPrerelease state and notify auto-updater
+      setAllowPrerelease(form.allowPrerelease);
+      try {
+        await window.api?.autoUpdaterSetAllowPrerelease?.(form.allowPrerelease);
+      } catch (e) {
+        logger.warn("Failed to update auto-updater allowPrerelease:", e);
+      }
+
       setShowSettings(false);
       return true;
     } catch (e) {

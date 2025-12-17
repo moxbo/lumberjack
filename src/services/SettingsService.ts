@@ -42,6 +42,8 @@ const DEFAULT_SETTINGS: Settings = {
   httpUrl: "",
   httpPollInterval: 5, // Interval in seconds
   elasticMaxParallel: 1,
+  // Auto-Update
+  allowPrerelease: false,
 };
 
 /**

@@ -494,6 +494,7 @@ export default function App() {
     elasticPassNew: "",
     elasticPassClear: false,
     elasticMaxParallel: 1,
+    allowPrerelease: false,
   });
   // NEU: hält das tatsächlich beim Start verwendete Poll-Intervall (für stabilen Countdown)
   const [currentPollInterval, setCurrentPollInterval] = useState<number | null>(
@@ -1901,6 +1902,7 @@ export default function App() {
     let curElasticSize = elasticSize;
     let curElasticUser = elasticUser;
     let curElasticMaxParallel = elasticMaxParallel;
+    let curAllowPrerelease = false;
 
     try {
       if (window.api?.settingsGet) {
@@ -1971,6 +1973,9 @@ export default function App() {
           if (typeof r.elasticPassEnc === "string") {
             setElasticHasPass(!!r.elasticPassEnc.trim());
           }
+          if (typeof r.allowPrerelease === "boolean") {
+            curAllowPrerelease = r.allowPrerelease;
+          }
         }
       }
     } catch (e) {
@@ -1994,6 +1999,7 @@ export default function App() {
       elasticPassNew: "",
       elasticPassClear: false,
       elasticMaxParallel: curElasticMaxParallel || 1,
+      allowPrerelease: curAllowPrerelease,
     });
     setSettingsTab(initialTab || "tcp");
     setShowSettings(true);
@@ -2029,6 +2035,7 @@ export default function App() {
         1,
         Number((form as any).elasticMaxParallel || elasticMaxParallel || 1),
       ),
+      allowPrerelease: !!(form as any).allowPrerelease,
     };
     const newPass = String(form.elasticPassNew || "").trim();
     if (form.elasticPassClear) patch["elasticPassClear"] = true;
@@ -2057,6 +2064,16 @@ export default function App() {
       setElasticUser(String(form.elasticUser || "").trim());
       if (form.elasticPassClear) setElasticHasPass(false);
       else if (newPass) setElasticHasPass(true);
+
+      // Update auto-updater with new allowPrerelease setting
+      try {
+        await window.api?.autoUpdaterSetAllowPrerelease?.(
+          !!(form as any).allowPrerelease,
+        );
+      } catch (e) {
+        logger.warn("Failed to update auto-updater allowPrerelease:", e);
+      }
+
       setShowSettings(false);
     } catch (e) {
       logger.error("Failed to save settings:", e);

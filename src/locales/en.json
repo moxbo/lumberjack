@@ -170,6 +170,10 @@
       "german": "Deutsch",
       "english": "English"
     },
+    "updates": {
+      "betaChannel": "Beta Updates",
+      "betaChannelHint": "Receive pre-release versions (beta/RC) before they are officially released."
+    },
     "cancel": "Cancel",
     "save": "Save"
   },

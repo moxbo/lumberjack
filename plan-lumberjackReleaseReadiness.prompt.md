@@ -105,7 +105,7 @@ Cross-team plan to harden stability, finalize Win/macOS distribution with signin
 | # | Task | Effort | Impact | Begründung |
 |---|------|--------|--------|------------|
 | 8 | E2E-Tests erweitern (Filter, TCP, etc.) | 2-3d | Medium | Mehr Coverage |
-| 9 | Auto-Update (electron-updater) | 1d | Medium | Für spätere Updates |
+| 9 | ~~Auto-Update (electron-updater)~~ | ~~1d~~ | ~~Medium~~ | ✅ DONE |
 | 10 | Linux CI-Build | 0.5d | Low | Geringere Nutzerbasis |
 
 ---
@@ -134,7 +134,7 @@ Cross-team plan to harden stability, finalize Win/macOS distribution with signin
 1. **Code Signing** – Option A: internes Apple Dev-ID & DigiCert EV; Option B: externe Signing-Dienstleister.
 2. **Telemetrieumfang** – Aktuell keine Telemetrie implementiert. Falls geplant: minimal anonymisierte Metriken vs. komplettes Opt-In.
 3. **CI-Runner-Kapazität** – GitHub-hosted `macos-latest` für Playwright auf macOS nutzen (kostenlos für öffentliche Repos).
-4. **Auto-Update** – electron-updater nicht konfiguriert. Für zukünftige Releases evaluieren.
+4. **Auto-Update** – ✅ electron-updater implementiert (`src/services/AutoUpdaterService.ts`). Benötigt GitHub Releases als Update-Quelle. Funktioniert nur mit signierten Builds.
 5. **Linux-Support** – Aktuell nicht in CI. Bei Bedarf `ubuntu-latest` + AppImage/deb targets hinzufügen.
 
 ---

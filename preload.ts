@@ -17,6 +17,7 @@ import type {
   Result,
   Settings,
   WindowTitleResult,
+  AutoUpdaterStatus,
 } from "./src/types/ipc";
 
 /**
@@ -144,6 +145,43 @@ const api: ElectronAPI = {
 
   featureFlagsResetAll: (): Promise<Result<void>> =>
     ipcRenderer.invoke("featureFlags:resetAll"),
+
+  // Auto-updater operations
+  autoUpdaterCheck: (): Promise<unknown> =>
+    ipcRenderer.invoke("auto-updater:check"),
+
+  autoUpdaterDownload: (): Promise<void> =>
+    ipcRenderer.invoke("auto-updater:download"),
+
+  autoUpdaterInstall: (): Promise<void> =>
+    ipcRenderer.invoke("auto-updater:install"),
+
+  autoUpdaterStatus: (): Promise<{
+    updateDownloaded: boolean;
+    isChecking: boolean;
+    allowPrerelease: boolean;
+  }> => ipcRenderer.invoke("auto-updater:status"),
+
+  autoUpdaterGetAllowPrerelease: (): Promise<boolean> =>
+    ipcRenderer.invoke("auto-updater:getAllowPrerelease"),
+
+  autoUpdaterSetAllowPrerelease: (allow: boolean): Promise<{ ok: boolean }> =>
+    ipcRenderer.invoke("auto-updater:setAllowPrerelease", allow),
+
+  onAutoUpdaterStatus: (
+    callback: (status: AutoUpdaterStatus) => void,
+  ): (() => void) => {
+    const listener = (
+      _event: IpcRendererEvent,
+      status: AutoUpdaterStatus,
+    ): void => {
+      callback(status);
+    };
+    ipcRenderer.on("auto-updater:status", listener);
+    return (): void => {
+      ipcRenderer.removeListener("auto-updater:status", listener);
+    };
+  },
 };
 
 // Expose the API to the renderer process in a secure way

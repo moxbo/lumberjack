@@ -11,8 +11,10 @@ This document lists all third-party dependencies used in Lumberjack (production 
 
 | License | Count |
 |---------|-------|
-| MIT | 8 |
-| ISC | 1 (Lumberjack itself) |
+| MIT | 12 |
+| ISC | 2 |
+| BlueOak-1.0.0 | 1 |
+| Python-2.0 | 1 |
 
 All dependencies use permissive open-source licenses compatible with commercial use.
 
@@ -39,6 +41,12 @@ All dependencies use permissive open-source licenses compatible with commercial 
 - **License**: MIT
 - **Repository**: https://github.com/megahertz/electron-log
 - **Publisher**: Alexey Prokhorov
+
+### electron-updater@6.x
+- **License**: MIT
+- **Repository**: https://github.com/electron-userland/electron-builder
+- **Publisher**: electron-userland
+- **Note**: Includes transitive dependencies (builder-util-runtime, lazy-val, lodash, etc.)
 
 ### preact@10.27.2
 - **License**: MIT
