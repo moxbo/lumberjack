@@ -19,7 +19,7 @@ Cross-team plan to harden stability, finalize Win/macOS distribution with signin
 | DEPLOYMENT_GUIDE | ✅ Done      | `docs/DEPLOYMENT_GUIDE.md` vorhanden |
 | Icon-Generation | ✅ Done      | `scripts/make-icon.ts` + Assets |
 | Lint/Format/Husky | ✅ Done      | ESLint + Prettier + lint-staged |
-| E2E-Tests (Playwright) | ❌ Missing   | Packages installiert, aber keine Tests |
+| E2E-Tests (Playwright) | ✅ Done      | Basis-Tests in `tests/e2e/` |
 | PRIVACY.md | ❌ Missing   | Datenschutzerklärung fehlt |
 | Third-Party-Lizenzen | ✅ Done     | `docs/THIRD_PARTY_LICENSES.md` + npm script |
 | Code Signing | ⚠️ Prepared | Konfiguriert aber deaktiviert |
@@ -55,11 +55,11 @@ Cross-team plan to harden stability, finalize Win/macOS distribution with signin
 - [x] Playwright + playwright-electron als devDependencies
 - [x] GitHub Actions Workflow für Windows builds
 - [x] `npm test` in CI-Pipeline integriert
-- [ ] **TODO**: E2E-Tests erstellen (`tests/e2e/*.spec.ts`)
+- [x] E2E-Tests erstellt (`tests/e2e/*.spec.ts`)
 - [ ] **TODO**: macOS zur CI-Matrix hinzufügen
 - [ ] **TODO**: Test-Report/Coverage-Upload
 
-**Files**: `.github/workflows/build.yml`, `scripts/test-*.ts`
+**Files**: `.github/workflows/build.yml`, `scripts/test-*.ts`, `tests/e2e/*.spec.ts`
 
 #### Step 4: Dokumentation & Compliance ⚠️ PARTIAL
 - [x] README.md aktuell und vollständig
@@ -92,7 +92,7 @@ Cross-team plan to harden stability, finalize Win/macOS distribution with signin
 | # | Task | Effort | Impact | Begründung |
 |---|------|--------|--------|------------|
 | 3 | PRIVACY.md erstellen | 2h | High | Compliance/DSGVO, auch ohne Telemetrie nötig |
-| 4 | E2E-Tests Basis (`tests/e2e/smoke.spec.ts`) | 1d | High | Absicherung kritischer User-Flows |
+| ~~4~~ | ~~E2E-Tests Basis (`tests/e2e/smoke.spec.ts`)~~ | ~~1d~~ | ~~High~~ | ✅ DONE |
 | 5 | macOS zur CI-Matrix hinzufügen | 3h | High | Aktuell nur Windows getestet |
 
 #### 🟡 P2 - Vor Production Release (Woche 3-4)

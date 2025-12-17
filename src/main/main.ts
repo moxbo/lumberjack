@@ -335,6 +335,10 @@ let quitPromptInProgress = false;
 async function confirmQuitLocal(
   target?: BrowserWindow | null,
 ): Promise<boolean> {
+  // Skip quit confirmation in E2E test mode
+  if (process.env.LUMBERJACK_E2E_TEST === "1") {
+    return true;
+  }
   if (quitConfirmed) return true;
   if (quitPromptInProgress) return false;
   quitPromptInProgress = true;

@@ -70,3 +70,9 @@ src/**/*.js
 release/
 preload.js
 /dist-main/
+
+# Playwright test artifacts
+/test-results/
+/playwright-report/
+/playwright/.cache/
+

@@ -39,6 +39,8 @@
     "preload.ts",
     "main.ts",
     "scripts/**/*",
+    "tests/**/*",
+    "playwright.config.ts",
     "vite.config.mjs"
   ],
   "exclude": ["node_modules", "dist", "release"]
