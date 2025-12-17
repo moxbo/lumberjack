@@ -157,6 +157,9 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Run tests
+        run: npm test
+
       - name: Update version in package.json
         if: needs.prepare-release.outputs.should_release == 'true'
         shell: bash
