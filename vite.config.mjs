@@ -35,6 +35,12 @@ export default defineConfig({
     // Optimize build for faster startup
     minify: "esbuild",
     target: "esnext",
+    // Reduce chunk warnings
+    chunkSizeWarningLimit: 1000,
+    // Optimize CSS extraction for faster first paint
+    cssCodeSplit: true,
+    // Generate sourcemaps only in development
+    sourcemap: process.env.NODE_ENV !== "production",
     rollupOptions: {
       output: {
         // Code splitting: split rarely-used features into separate chunks

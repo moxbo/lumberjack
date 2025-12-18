@@ -38,7 +38,7 @@ if (!process.env.LUMBERJACK_DISABLE_V8_OPTS) {
   );
 }
 
-// Windows Portable: Additional optimizations for faster cold start
+// Windows: Optimizations for faster startup
 if (process.platform === "win32") {
   // Enable V8 code caching for faster subsequent starts
   app.commandLine.appendSwitch("v8-cache-options", "code");
@@ -46,25 +46,44 @@ if (process.platform === "win32") {
   // Disable features that add startup latency
   app.commandLine.appendSwitch(
     "disable-features",
-    "HardwareMediaKeyHandling,MediaSessionService",
+    "HardwareMediaKeyHandling,MediaSessionService,WinRetrieveSuggestionsOnlyOnDemand",
   );
+
+  // Skip unnecessary Chromium startup tasks
+  app.commandLine.appendSwitch("no-pings");
 
   // Reduce IPC startup overhead
   app.commandLine.appendSwitch("disable-ipc-flooding-protection");
-}
 
-// Disable Chromium features that slow down startup on Windows
-if (process.platform === "win32") {
+  // Helps the app appear faster in Task Manager as an "App"
+  app.commandLine.appendSwitch("disable-site-isolation-trials");
+
   // Disable background timer throttling for consistent performance
   app.commandLine.appendSwitch("disable-background-timer-throttling");
   // Disable renderer backgrounding to prevent slowdowns when window loses focus briefly during startup
   app.commandLine.appendSwitch("disable-renderer-backgrounding");
-  // Skip GPU info collection (can be slow on some systems)
-  app.commandLine.appendSwitch("disable-gpu-sandbox");
   // Disable unnecessary Chromium features for faster init
   app.commandLine.appendSwitch("disable-component-update");
+  // Disable Chromium's background networking that delays startup
+  app.commandLine.appendSwitch("disable-background-networking");
+  // Skip Chromium's field trials which add latency
+  app.commandLine.appendSwitch("disable-field-trial-config");
+  // Skip GPU info collection (can be slow on some systems)
+  app.commandLine.appendSwitch("disable-gpu-sandbox");
   // Faster font rendering initialization
   app.commandLine.appendSwitch("disable-font-subpixel-positioning");
+  // Reduce memory usage during startup
+  app.commandLine.appendSwitch("disable-dev-shm-usage");
+  // Faster first paint
+  app.commandLine.appendSwitch("disable-gpu-vsync");
+  // Skip WebGL initialization if not needed immediately
+  app.commandLine.appendSwitch("disable-accelerated-2d-canvas");
+  // Reduce startup memory allocation
+  app.commandLine.appendSwitch("js-flags", "--max-old-space-size=512");
+  // Disable speech synthesis initialization (not used)
+  app.commandLine.appendSwitch("disable-speech-api");
+  // Skip print preview initialization
+  app.commandLine.appendSwitch("disable-print-preview");
 }
 import { spawn } from "node:child_process";
 import * as path from "path";
@@ -1331,7 +1350,9 @@ function createWindow(opts: { makePrimary?: boolean } = {}): BrowserWindow {
       allowRunningInsecureContent: false,
       backgroundThrottling: false, // Prevents slowdown during startup when window briefly loses focus
     },
-    show: false,
+    // Windows: show window earlier to appear as "App" in Task Manager faster
+    // This prevents the app being stuck in "Background processes" for too long
+    show: process.platform === "win32",
     backgroundColor: "#0f1113",
   });
 
@@ -1466,6 +1487,24 @@ function createWindow(opts: { makePrimary?: boolean } = {}): BrowserWindow {
       if (!win.isDestroyed() && !win.isVisible()) win.show();
     }, 50);
   });
+
+  // Windows: Fallback timeout to ensure window shows even if ready-to-show is delayed
+  // This is critical for Task Manager to classify the app as an "App" instead of "Background process"
+  if (process.platform === "win32") {
+    const fallbackShowTimeout = setTimeout(() => {
+      if (!win.isDestroyed() && !win.isVisible()) {
+        log.warn(
+          "[PERF] Fallback: Showing window after 2s timeout (ready-to-show delayed)",
+        );
+        win.show();
+      }
+    }, 2000);
+
+    // Clear the fallback timeout if ready-to-show fires normally
+    win.once("ready-to-show", () => {
+      clearTimeout(fallbackShowTimeout);
+    });
+  }
 
   win.once("ready-to-show", () => {
     // Log startup performance
