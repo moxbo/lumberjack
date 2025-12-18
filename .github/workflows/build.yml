@@ -160,6 +160,22 @@ jobs:
       - name: Run tests
         run: npm test
 
+      - name: Run E2E tests
+        run: npx playwright test --reporter=github
+        env:
+          CI: true
+          LUMBERJACK_E2E_TEST: "1"
+
+      - name: Upload E2E test results
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-test-results-${{ matrix.os }}-${{ matrix.arch }}
+          path: |
+            test-results/
+            playwright-report/
+          retention-days: 7
+
       - name: Update version in package.json
         if: needs.prepare-release.outputs.should_release == 'true'
         shell: bash
