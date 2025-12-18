@@ -160,24 +160,25 @@ jobs:
       - name: Run tests
         run: npm test
 
-      - name: Build for E2E tests
-        run: npm run prebuild
-
-      - name: Run E2E tests
-        run: npx playwright test --reporter=github
-        env:
-          CI: true
-          LUMBERJACK_E2E_TEST: "1"
-
-      - name: Upload E2E test results
-        if: failure()
-        uses: actions/upload-artifact@v4
-        with:
-          name: e2e-test-results-${{ matrix.os }}-${{ matrix.arch }}
-          path: |
-            test-results/
-            playwright-report/
-          retention-days: 7
+      # E2E tests disabled on Windows CI - Electron GUI tests require a display
+      # server which is not available on Windows runners. E2E tests run locally
+      # and will be enabled for macOS CI when added to the matrix.
+      # - name: Build for E2E tests
+      #   run: npm run prebuild
+      # - name: Run E2E tests
+      #   run: npx playwright test --reporter=github
+      #   env:
+      #     CI: true
+      #     LUMBERJACK_E2E_TEST: "1"
+      # - name: Upload E2E test results
+      #   if: failure()
+      #   uses: actions/upload-artifact@v4
+      #   with:
+      #     name: e2e-test-results-${{ matrix.os }}-${{ matrix.arch }}
+      #     path: |
+      #       test-results/
+      #       playwright-report/
+      #     retention-days: 7
 
       - name: Update version in package.json
         if: needs.prepare-release.outputs.should_release == 'true'
