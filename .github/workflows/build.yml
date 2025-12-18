@@ -160,6 +160,9 @@ jobs:
       - name: Run tests
         run: npm test
 
+      - name: Build for E2E tests
+        run: npm run prebuild
+
       - name: Run E2E tests
         run: npx playwright test --reporter=github
         env:
