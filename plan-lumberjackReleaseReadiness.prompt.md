@@ -20,7 +20,7 @@ Cross-team plan to harden stability, finalize Win/macOS distribution with signin
 | Icon-Generation | ✅ Done      | `scripts/make-icon.ts` + Assets |
 | Lint/Format/Husky | ✅ Done      | ESLint + Prettier + lint-staged |
 | E2E-Tests (Playwright) | ✅ Done      | Basis-Tests in `tests/e2e/` |
-| PRIVACY.md | ❌ Missing   | Datenschutzerklärung fehlt |
+| PRIVACY.md | ✅ Done      | `docs/PRIVACY.md` (DE/EN) |
 | Third-Party-Lizenzen | ✅ Done     | `docs/THIRD_PARTY_LICENSES.md` + npm script |
 | Code Signing | ⚠️ Prepared | Konfiguriert aber deaktiviert |
 | macOS CI-Build | ⚠️ Missing  | Nur Windows in CI-Matrix |
@@ -61,13 +61,13 @@ Cross-team plan to harden stability, finalize Win/macOS distribution with signin
 
 **Files**: `.github/workflows/build.yml`, `scripts/test-*.ts`, `tests/e2e/*.spec.ts`
 
-#### Step 4: Dokumentation & Compliance ⚠️ PARTIAL
+#### Step 4: Dokumentation & Compliance ✅ COMPLETED
 - [x] README.md aktuell und vollständig
 - [x] CHANGELOG.md vorhanden
 - [x] DEPLOYMENT_GUIDE.md vorhanden
 - [x] Umfangreiche docs/ Struktur
 - [x] Third-Party-Lizenz-Liste generiert (`docs/THIRD_PARTY_LICENSES.md`)
-- [ ] **TODO**: `docs/PRIVACY.md` erstellen
+- [x] `docs/PRIVACY.md` erstellt (DE/EN)
 - [ ] **TODO**: Security Addendum falls Telemetrie
 
 **Files**: `README.md`, `docs/`
@@ -91,7 +91,7 @@ Cross-team plan to harden stability, finalize Win/macOS distribution with signin
 #### 🟠 P1 - Vor Release (Woche 1-2)
 | # | Task | Effort | Impact | Begründung |
 |---|------|--------|--------|------------|
-| 3 | PRIVACY.md erstellen | 2h | High | Compliance/DSGVO, auch ohne Telemetrie nötig |
+| ~~3~~ | ~~PRIVACY.md erstellen~~ | ~~2h~~ | ~~High~~ | ✅ DONE |
 | ~~4~~ | ~~E2E-Tests Basis (`tests/e2e/smoke.spec.ts`)~~ | ~~1d~~ | ~~High~~ | ✅ DONE |
 | 5 | macOS zur CI-Matrix hinzufügen | 3h | High | Aktuell nur Windows getestet |
 
@@ -146,7 +146,7 @@ Cross-team plan to harden stability, finalize Win/macOS distribution with signin
 2. [x] `npm run licenses` Script + `docs/THIRD_PARTY_LICENSES.md` erstellt
 
 #### 🟠 Diese Woche (P1):
-3. [ ] `docs/PRIVACY.md` mit Standard-Template erstellen
+3. [x] `docs/PRIVACY.md` mit Standard-Template erstellen
 4. [ ] E2E-Test-Grundstruktur anlegen: `tests/e2e/smoke.spec.ts`
 5. [ ] macOS Job in `.github/workflows/build.yml` hinzufügen
 
@@ -168,7 +168,7 @@ Cross-team plan to harden stability, finalize Win/macOS distribution with signin
 |------|------------|--------|------------|
 | Unsigned App wird von Gatekeeper/SmartScreen blockiert | High | High | Code Signing priorisieren |
 | E2E-Tests fehlen, Regression unbemerkt | Medium | Medium | Playwright-Suite aufbauen |
-| Privacy-Compliance-Issues | Low | Medium | PRIVACY.md erstellen |
+| Privacy-Compliance-Issues | Low | Low | ✅ PRIVACY.md erstellt |
 | CI-Build-Fehler auf macOS | Low | Low | macOS in CI testen |
 
 ---
