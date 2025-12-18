@@ -1,6 +1,6 @@
 {
   "name": "lumberjack",
-  "version": "1.0.2",
+  "version": "1.0.0",
   "description": "Lumberjack - A log file viewer",
   "main": "dist-main/main.cjs",
   "type": "module",
