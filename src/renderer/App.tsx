@@ -1715,6 +1715,18 @@ export default function App() {
     }
   }
 
+  function filterByLogger(logger: string) {
+    setFilter((prev) => ({ ...prev, logger }));
+    addFilterHistory("logger", logger);
+    setStdFiltersEnabled(true);
+  }
+
+  function filterByThread(thread: string) {
+    setFilter((prev) => ({ ...prev, thread }));
+    addFilterHistory("thread", thread);
+    setStdFiltersEnabled(true);
+  }
+
   const [showTitleDlg, setShowTitleDlg] = useState<boolean>(false);
   const [showHelpDlg, setShowHelpDlg] = useState<boolean>(false);
 
@@ -4062,6 +4074,8 @@ export default function App() {
             mdcPairs={mdcPairs}
             search={search}
             onAddMdcToFilter={addMdcToFilter}
+            onFilterByLogger={filterByLogger}
+            onFilterByThread={filterByThread}
           />
         </div>
       </div>

@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-explicit-any, @typescript-eslint/no-redundant-type-constituents, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-argument */
 /**
  * Detail Panel Component - Zeigt Details zum ausgewählten Log-Eintrag
  */
@@ -11,6 +12,8 @@ interface DetailPanelProps {
   mdcPairs: Array<[string, string]>;
   search: string;
   onAddMdcToFilter: (key: string, value: string) => void;
+  onFilterByLogger?: (logger: string) => void;
+  onFilterByThread?: (thread: string) => void;
 }
 
 export function DetailPanel({
@@ -18,6 +21,8 @@ export function DetailPanel({
   mdcPairs,
   search,
   onAddMdcToFilter,
+  onFilterByLogger,
+  onFilterByThread,
 }: DetailPanelProps) {
   const { t } = useI18n();
 
@@ -54,7 +59,33 @@ export function DetailPanel({
               </div>
               <div className="kv">
                 <span>{t("details.logger")}</span>
-                <div>{fmt(selectedEntry.logger)}</div>
+                <div
+                  style={{ display: "flex", alignItems: "center", gap: "6px" }}
+                >
+                  <span style={{ flex: 1 }}>{fmt(selectedEntry.logger)}</span>
+                  {onFilterByLogger && selectedEntry.logger && (
+                    <button
+                      className="filter-action-btn"
+                      onClick={() =>
+                        onFilterByLogger(String(selectedEntry.logger))
+                      }
+                      title={t("details.filterByLogger")}
+                    >
+                      <svg
+                        width="14"
+                        height="14"
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        strokeWidth="2"
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                      >
+                        <polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3" />
+                      </svg>
+                    </button>
+                  )}
+                </div>
               </div>
             </div>
             <div>
@@ -68,7 +99,33 @@ export function DetailPanel({
               </div>
               <div className="kv">
                 <span>{t("details.thread")}</span>
-                <div>{fmt(selectedEntry.thread)}</div>
+                <div
+                  style={{ display: "flex", alignItems: "center", gap: "6px" }}
+                >
+                  <span style={{ flex: 1 }}>{fmt(selectedEntry.thread)}</span>
+                  {onFilterByThread && selectedEntry.thread && (
+                    <button
+                      className="filter-action-btn"
+                      onClick={() =>
+                        onFilterByThread(String(selectedEntry.thread))
+                      }
+                      title={t("details.filterByThread")}
+                    >
+                      <svg
+                        width="14"
+                        height="14"
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        strokeWidth="2"
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                      >
+                        <polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3" />
+                      </svg>
+                    </button>
+                  )}
+                </div>
               </div>
             </div>
           </div>

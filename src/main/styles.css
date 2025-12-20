@@ -1775,6 +1775,39 @@ input[type="checkbox"] {
   text-align: right;
 }
 
+/* Filter action button in details panel */
+.filter-action-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 3px 6px;
+  border: 1px solid var(--color-border);
+  border-radius: 4px;
+  background: var(--color-bg-paper);
+  color: var(--color-text-secondary);
+  cursor: pointer;
+  opacity: 0.7;
+  transition:
+    opacity 0.15s,
+    background 0.15s,
+    color 0.15s;
+}
+
+.filter-action-btn:hover {
+  opacity: 1;
+  background: var(--accent);
+  color: white;
+  border-color: var(--accent);
+}
+
+.filter-action-btn:active {
+  transform: scale(0.95);
+}
+
+.filter-action-btn svg {
+  display: block;
+}
+
 /* Entferne getönte Sonderbehandlung für MDC-Werte */
 .details[data-tinted="1"] .mdc-val code {
   background: transparent;

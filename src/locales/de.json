@@ -109,7 +109,9 @@
     "message": "Message",
     "stacktrace": "Stacktrace",
     "diagnosticContext": "Diagnostic Context",
-    "addToFilter": "Zum MDC-Filter hinzufügen"
+    "addToFilter": "Zum MDC-Filter hinzufügen",
+    "filterByLogger": "Nach diesem Logger filtern",
+    "filterByThread": "Nach diesem Thread filtern"
   },
   "contextMenu": {
     "removeMark": "Markierung löschen",
