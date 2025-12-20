@@ -227,7 +227,36 @@ export type MenuCommand =
   | { type: "tcp-configure" }
   | { type: "tcp-start" }
   | { type: "tcp-stop" }
-  | { type: "window-title" };
+  | { type: "window-title" }
+  | { type: "export-view" };
+
+/**
+ * Export options for saving the current view
+ */
+export interface ExportViewOptions {
+  format: "html" | "txt" | "json";
+  includeStyles?: boolean;
+  title?: string;
+}
+
+/**
+ * Export path result (from save dialog)
+ */
+export interface ExportPathResult {
+  ok: boolean;
+  filePath?: string;
+  format?: "html" | "txt" | "json";
+  error?: string;
+}
+
+/**
+ * Export result
+ */
+export interface ExportResult {
+  ok: boolean;
+  filePath?: string;
+  error?: string;
+}
 
 /**
  * Dropped file structure from renderer
@@ -292,6 +321,12 @@ export type ElectronAPI = {
   windowPermsSet: (patch: { canTcpControl?: boolean }) => Promise<Result<void>>;
   openFiles: () => Promise<string[]>;
   chooseLogFile: () => Promise<string>;
+  chooseExportPath: () => Promise<ExportPathResult>;
+  saveExportFile: (filePath: string, content: string) => Promise<ExportResult>;
+  exportView: (
+    content: string,
+    options: ExportViewOptions,
+  ) => Promise<ExportResult>;
   parsePaths: (paths: string[]) => Promise<ParseResult>;
   parseRawDrops: (files: DroppedFile[]) => Promise<ParseResult>;
   tcpStart: (port: number) => void;

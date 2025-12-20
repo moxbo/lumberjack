@@ -28,7 +28,9 @@
     "mdcFilterAddFailed": "MDC-Eintrag konnte nicht zum Filter hinzugefügt werden. Details siehe Logs.",
     "invalidTcpPort": "Ungültiger TCP-Port",
     "resetLoggingStoreFailed": "Zurücksetzen des Logging-Stores fehlgeschlagen. Details siehe Logs.",
-    "parsePathsFailed": "Fehler beim Parsen der Pfade: {{message}}"
+    "parsePathsFailed": "Fehler beim Parsen der Pfade: {{message}}",
+    "exportFailed": "Export fehlgeschlagen: {{message}}",
+    "exportNoEntries": "Keine Einträge zum Exportieren vorhanden"
   },
   "toolbar": {
     "total": "gesamt",
@@ -82,7 +84,9 @@
     "elasticLoadedTooltip": "Geladene ES-Ergebnisse: {{loaded}} von {{total}}",
     "elasticMoreAvailable": " - Weitere verfügbar",
     "busy": "Lädt…",
-    "nextPollIn": "Nächster Poll in"
+    "nextPollIn": "Nächster Poll in",
+    "exportView": "View exportieren…",
+    "exportViewTooltip": "Aktuellen View als HTML/Text exportieren"
   },
   "list": {
     "header": {
@@ -215,6 +219,7 @@
     "menu": {
       "file": "Datei",
       "openFile": "Datei öffnen…",
+      "exportView": "View exportieren…",
       "newWindow": "Neues Fenster",
       "closeWindow": "Fenster schließen",
       "quit": "Beenden",
@@ -274,14 +279,17 @@
       "elasticUrlNotConfigured": "Elasticsearch URL ist nicht konfiguriert",
       "invalidPatch": "Ungültige Daten: kein Objekt",
       "saveFailed": "Speichern auf Festplatte fehlgeschlagen",
-      "featureFlagsNotAvailable": "Feature-Flags nicht verfügbar"
+      "featureFlagsNotAvailable": "Feature-Flags nicht verfügbar",
+      "noWindow": "Kein aktives Fenster gefunden"
     },
     "dialogs": {
       "chooseLogFile": "Logdatei wählen",
       "logFiles": "Logdateien",
       "allFiles": "Alle Dateien",
       "openLogs": "Logs",
-      "openAllFiles": "Alle Dateien"
+      "openAllFiles": "Alle Dateien",
+      "exportView": "View exportieren",
+      "textFiles": "Textdateien"
     }
   },
   "featureFlags": {

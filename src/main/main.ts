@@ -1109,6 +1109,16 @@ function buildMenu(): void {
             ),
         },
         {
+          label: t("main.menu.exportView"),
+          accelerator: "CmdOrCtrl+Shift+E",
+          click: (_mi, win) =>
+            sendMenuCmd(
+              { type: "export-view" },
+              (win as BrowserWindow | null | undefined) || null,
+            ),
+        },
+        { type: "separator" as const },
+        {
           label: t("settings.title"),
           accelerator: "CmdOrCtrl+,",
           click: (_mi, win) =>

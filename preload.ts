@@ -18,6 +18,9 @@ import type {
   Settings,
   WindowTitleResult,
   AutoUpdaterStatus,
+  ExportViewOptions,
+  ExportResult,
+  ExportPathResult,
 } from "./src/types/ipc";
 
 /**
@@ -51,6 +54,19 @@ const api: ElectronAPI = {
 
   chooseLogFile: (): Promise<string> =>
     ipcRenderer.invoke("dialog:chooseLogFile"),
+
+  // Export view operations
+  chooseExportPath: (): Promise<ExportPathResult> =>
+    ipcRenderer.invoke("dialog:chooseExportPath"),
+
+  saveExportFile: (filePath: string, content: string): Promise<ExportResult> =>
+    ipcRenderer.invoke("dialog:saveExportFile", filePath, content),
+
+  exportView: (
+    content: string,
+    options: ExportViewOptions,
+  ): Promise<ExportResult> =>
+    ipcRenderer.invoke("dialog:exportView", content, options),
 
   // Log parsing operations
   parsePaths: (paths: string[]): Promise<ParseResult> =>

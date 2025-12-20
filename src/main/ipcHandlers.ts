@@ -6,6 +6,7 @@
 import { ipcMain, dialog, BrowserWindow } from "electron";
 import log from "electron-log/main";
 import * as path from "path";
+import * as fs from "fs";
 import { getSharedMainApi } from "./sharedMainApi";
 import { t } from "../locales/mainI18n";
 import {
@@ -16,6 +17,8 @@ import {
   DroppedFile,
   WindowPermsResult,
   Result,
+  ExportViewOptions,
+  ExportResult,
 } from "../types/ipc";
 import type { SettingsService } from "../services/SettingsService";
 import type { NetworkService } from "../services/NetworkService";
@@ -264,6 +267,141 @@ export function registerIpcHandlers(
     if (res.canceled) return "";
     return res.filePath || "";
   });
+
+  // Export view handler - choose path first, then save
+  ipcMain.handle(
+    "dialog:chooseExportPath",
+    async (): Promise<{
+      ok: boolean;
+      filePath?: string;
+      format?: "html" | "txt" | "json";
+      error?: string;
+    }> => {
+      const mainWindow = BrowserWindow.getFocusedWindow();
+      if (!mainWindow) {
+        return { ok: false, error: t("main.errors.noWindow") };
+      }
+
+      try {
+        // Show all formats in save dialog
+        const filters: { name: string; extensions: string[] }[] = [
+          { name: "HTML", extensions: ["html", "htm"] },
+          { name: t("main.dialogs.textFiles"), extensions: ["txt"] },
+          { name: "JSON", extensions: ["json"] },
+          { name: t("main.dialogs.allFiles"), extensions: ["*"] },
+        ];
+
+        const defaultName = `lumberjack-export-${new Date().toISOString().slice(0, 10)}.html`;
+
+        const res = await dialog.showSaveDialog(mainWindow, {
+          title: t("main.dialogs.exportView"),
+          defaultPath: defaultName,
+          filters,
+        });
+
+        if (res.canceled || !res.filePath) {
+          return { ok: false, error: "canceled" };
+        }
+
+        // Determine format from file extension
+        const ext = path.extname(res.filePath).toLowerCase();
+        let format: "html" | "txt" | "json" = "html";
+        if (ext === ".txt") {
+          format = "txt";
+        } else if (ext === ".json") {
+          format = "json";
+        }
+
+        return { ok: true, filePath: res.filePath, format };
+      } catch (err) {
+        log.error(
+          "Error choosing export path:",
+          err instanceof Error ? err.message : String(err),
+        );
+        return {
+          ok: false,
+          error: err instanceof Error ? err.message : String(err),
+        };
+      }
+    },
+  );
+
+  // Save export file handler
+  ipcMain.handle(
+    "dialog:saveExportFile",
+    async (
+      _event,
+      filePath: string,
+      content: string,
+    ): Promise<ExportResult> => {
+      try {
+        await fs.promises.writeFile(filePath, content, "utf-8");
+        log.info("[export] View exported to:", filePath);
+        return { ok: true, filePath };
+      } catch (err) {
+        log.error(
+          "Error saving export file:",
+          err instanceof Error ? err.message : String(err),
+        );
+        return {
+          ok: false,
+          error: err instanceof Error ? err.message : String(err),
+        };
+      }
+    },
+  );
+
+  // Legacy export view handler (kept for compatibility)
+  ipcMain.handle(
+    "dialog:exportView",
+    async (
+      _event,
+      content: string,
+      options: ExportViewOptions,
+    ): Promise<ExportResult> => {
+      const mainWindow = BrowserWindow.getFocusedWindow();
+      if (!mainWindow) {
+        return { ok: false, error: t("main.errors.noWindow") };
+      }
+
+      try {
+        // Show all formats in save dialog
+        const filters: { name: string; extensions: string[] }[] = [
+          { name: "HTML", extensions: ["html", "htm"] },
+          { name: t("main.dialogs.textFiles"), extensions: ["txt"] },
+          { name: "JSON", extensions: ["json"] },
+          { name: t("main.dialogs.allFiles"), extensions: ["*"] },
+        ];
+
+        const defaultFormat = options.format || "html";
+        const defaultName = `lumberjack-export-${new Date().toISOString().slice(0, 10)}.${defaultFormat}`;
+
+        const res = await dialog.showSaveDialog(mainWindow, {
+          title: t("main.dialogs.exportView"),
+          defaultPath: defaultName,
+          filters,
+        });
+
+        if (res.canceled || !res.filePath) {
+          return { ok: false, error: "canceled" };
+        }
+
+        await fs.promises.writeFile(res.filePath, content, "utf-8");
+        log.info("[export] View exported to:", res.filePath);
+
+        return { ok: true, filePath: res.filePath };
+      } catch (err) {
+        log.error(
+          "Error exporting view:",
+          err instanceof Error ? err.message : String(err),
+        );
+        return {
+          ok: false,
+          error: err instanceof Error ? err.message : String(err),
+        };
+      }
+    },
+  );
 
   // Log parsing handlers
 

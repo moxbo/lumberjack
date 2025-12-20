@@ -970,6 +970,16 @@ export default function App() {
     searchMode,
   ]);
 
+  // Refs to track current values for menu handlers (avoid stale closures)
+  const filteredIdxRef = useRef<number[]>(filteredIdx);
+  const entriesRef = useRef<any[]>(entries);
+  useEffect(() => {
+    filteredIdxRef.current = filteredIdx;
+  }, [filteredIdx]);
+  useEffect(() => {
+    entriesRef.current = entries;
+  }, [entries]);
+
   const countTotal = entries.length;
   const countFiltered = filteredIdx.length;
   const countSelected = selected.size;
@@ -2179,6 +2189,10 @@ export default function App() {
                 setShowTitleDlg(true);
                 break;
               }
+              case "export-view": {
+                void exportCurrentView();
+                break;
+              }
               case "show-help": {
                 setShowHelpDlg(true);
                 break;
@@ -2355,6 +2369,200 @@ export default function App() {
       showAlert(t("errors.resetLoggingStoreFailed"));
     }
     // HTTP/TCP Status wird NICHT zurückgesetzt, da Verbindungen noch aktiv sein können
+  }
+
+  /**
+   * Export the current filtered view as HTML with colors
+   */
+  async function exportCurrentView() {
+    // Use refs to get current values (avoid stale closures from menu handlers)
+    const currentFilteredIdx = filteredIdxRef.current;
+    const currentEntries = entriesRef.current;
+
+    if (currentFilteredIdx.length === 0) {
+      showAlert(t("errors.exportNoEntries"));
+      return;
+    }
+
+    try {
+      // First, show save dialog to let user choose format and path
+      const pathResult = await window.api.chooseExportPath();
+      if (!pathResult.ok || !pathResult.filePath) {
+        // User canceled or error
+        if (pathResult.error && pathResult.error !== "canceled") {
+          showAlert(t("errors.exportFailed", { message: pathResult.error }));
+        }
+        return;
+      }
+
+      const format = pathResult.format || "html";
+      const exportEntries = currentFilteredIdx.map(
+        (idx) => currentEntries[idx],
+      );
+
+      let content: string;
+
+      if (format === "json") {
+        // JSON export - include mark color explicitly
+        const jsonEntries = exportEntries.map((e) => ({
+          timestamp: e?.timestamp,
+          level: e?.level,
+          logger: e?.logger,
+          thread: e?.thread,
+          message: e?.message,
+          source: e?.source,
+          traceId: e?.traceId,
+          spanId: e?.spanId,
+          stackTrace: e?.stackTrace,
+          mdc: e?.mdc,
+          markColor: e?._mark || null, // Explicitly include mark color
+        }));
+        content = JSON.stringify(jsonEntries, null, 2);
+      } else if (format === "txt") {
+        // Plain text export
+        const lines = exportEntries.map((e) => {
+          const ts = fmtTimestamp(e?.timestamp);
+          const lvl = String(e?.level || "").padEnd(5);
+          const loggerVal = String(e?.logger || "");
+          const msg = String(e?.message || "");
+          return `${ts} [${lvl}] ${loggerVal} - ${msg}`;
+        });
+        content = lines.join("\n");
+      } else {
+        // HTML export with styling
+        const cssVars = getComputedStyle(document.documentElement);
+        const bgColor =
+          cssVars.getPropertyValue("--color-bg-default").trim() || "#f5f5f7";
+        const textColor =
+          cssVars.getPropertyValue("--color-text-primary").trim() || "#1d1d1f";
+        const bgPaper =
+          cssVars.getPropertyValue("--color-bg-paper").trim() || "#ffffff";
+
+        const levelColors: Record<string, string> = {
+          TRACE:
+            cssVars.getPropertyValue("--color-level-trace").trim() || "#8b5cf6",
+          DEBUG:
+            cssVars.getPropertyValue("--color-level-debug").trim() || "#06b6d4",
+          INFO:
+            cssVars.getPropertyValue("--color-level-info").trim() || "#10b981",
+          WARN:
+            cssVars.getPropertyValue("--color-level-warn").trim() || "#f59e0b",
+          WARNING:
+            cssVars.getPropertyValue("--color-level-warn").trim() || "#f59e0b",
+          ERROR:
+            cssVars.getPropertyValue("--color-level-error").trim() || "#ef4444",
+          FATAL:
+            cssVars.getPropertyValue("--color-level-fatal").trim() || "#dc2626",
+        };
+
+        const rows = exportEntries.map((e) => {
+          const ts = fmtTimestamp(e?.timestamp);
+          const lvl = String(e?.level || "").toUpperCase();
+          const loggerName = String(e?.logger || "");
+          const msg = String(e?.message || "")
+            .replace(/&/g, "&amp;")
+            .replace(/</g, "&lt;")
+            .replace(/>/g, "&gt;");
+          const markColor = e?._mark as string | undefined;
+          const levelColor = levelColors[lvl] || textColor;
+
+          const rowStyle = markColor
+            ? `border-left: 4px solid ${markColor}; background: ${markColor}22;`
+            : "border-left: 4px solid transparent;";
+
+          return `<tr style="${rowStyle}">
+            <td style="white-space: nowrap; padding: 4px 8px;">${ts}</td>
+            <td style="padding: 4px 8px; text-align: center;"><span style="color: ${levelColor}; font-weight: 600;">${lvl}</span></td>
+            <td style="padding: 4px 8px; color: #666;">${loggerName}</td>
+            <td style="padding: 4px 8px; font-family: monospace; white-space: pre-wrap; word-break: break-word;">${msg}</td>
+          </tr>`;
+        });
+
+        content = `<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Lumberjack Export - ${new Date().toLocaleString()}</title>
+  <style>
+    * { box-sizing: border-box; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", Roboto, sans-serif;
+      background: ${bgColor};
+      color: ${textColor};
+      margin: 0;
+      padding: 20px;
+    }
+    h1 { margin-bottom: 10px; }
+    .meta { color: #666; margin-bottom: 20px; font-size: 14px; }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      background: ${bgPaper};
+      border-radius: 8px;
+      overflow: hidden;
+      box-shadow: 0 1px 4px rgba(0,0,0,0.06);
+    }
+    th {
+      background: ${bgColor};
+      padding: 12px 8px;
+      text-align: left;
+      font-weight: 600;
+      border-bottom: 1px solid #ddd;
+    }
+    tr:hover { background: rgba(0,0,0,0.02); }
+    td { border-bottom: 1px solid #eee; vertical-align: top; }
+    .level-trace { color: ${levelColors.TRACE}; }
+    .level-debug { color: ${levelColors.DEBUG}; }
+    .level-info { color: ${levelColors.INFO}; }
+    .level-warn { color: ${levelColors.WARN}; }
+    .level-error { color: ${levelColors.ERROR}; }
+    .level-fatal { color: ${levelColors.FATAL}; }
+    @media print {
+      body { background: white; padding: 10px; }
+      table { box-shadow: none; }
+    }
+  </style>
+</head>
+<body>
+  <h1>🪵 Lumberjack Log Export</h1>
+  <div class="meta">
+    Exportiert: ${new Date().toLocaleString()}<br>
+    Einträge: ${exportEntries.length} (gefiltert aus ${currentEntries.length} gesamt)
+  </div>
+  <table>
+    <thead>
+      <tr>
+        <th style="width: 180px;">${t("list.header.timestamp")}</th>
+        <th style="width: 80px; text-align: center;">${t("list.header.level")}</th>
+        <th style="width: 200px;">${t("list.header.logger")}</th>
+        <th>${t("list.header.message")}</th>
+      </tr>
+    </thead>
+    <tbody>
+      ${rows.join("\n")}
+    </tbody>
+  </table>
+</body>
+</html>`;
+      }
+
+      // Save the file
+      const result = await window.api.saveExportFile(
+        pathResult.filePath,
+        content,
+      );
+      if (!result.ok) {
+        showAlert(t("errors.exportFailed", { message: result.error || "" }));
+      }
+    } catch (err) {
+      logger.error("Export failed:", err);
+      showAlert(
+        t("errors.exportFailed", {
+          message: err instanceof Error ? err.message : String(err),
+        }),
+      );
+    }
   }
 
   async function httpMenuStopPoll() {

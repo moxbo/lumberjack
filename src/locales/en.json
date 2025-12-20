@@ -28,7 +28,9 @@
     "mdcFilterAddFailed": "Failed to add MDC entry to filter. See logs for details.",
     "invalidTcpPort": "Invalid TCP port",
     "resetLoggingStoreFailed": "Failed to reset logging store. See logs for details.",
-    "parsePathsFailed": "Error parsing paths: {{message}}"
+    "parsePathsFailed": "Error parsing paths: {{message}}",
+    "exportFailed": "Export failed: {{message}}",
+    "exportNoEntries": "No entries available to export"
   },
   "toolbar": {
     "total": "total",
@@ -82,7 +84,9 @@
     "elasticLoadedTooltip": "Loaded ES results: {{loaded}} of {{total}}",
     "elasticMoreAvailable": " - More available",
     "busy": "Loading…",
-    "nextPollIn": "Next poll in"
+    "nextPollIn": "Next poll in",
+    "exportView": "Export View…",
+    "exportViewTooltip": "Export current view as HTML/Text"
   },
   "list": {
     "header": {
@@ -215,6 +219,7 @@
     "menu": {
       "file": "File",
       "openFile": "Open File…",
+      "exportView": "Export View…",
       "newWindow": "New Window",
       "closeWindow": "Close Window",
       "quit": "Quit",
@@ -274,14 +279,17 @@
       "elasticUrlNotConfigured": "Elasticsearch URL is not configured",
       "invalidPatch": "Invalid data: not an object",
       "saveFailed": "Failed to save to disk",
-      "featureFlagsNotAvailable": "Feature flags not available"
+      "featureFlagsNotAvailable": "Feature flags not available",
+      "noWindow": "No active window found"
     },
     "dialogs": {
       "chooseLogFile": "Choose log file",
       "logFiles": "Log files",
       "allFiles": "All files",
       "openLogs": "Logs",
-      "openAllFiles": "All files"
+      "openAllFiles": "All files",
+      "exportView": "Export view",
+      "textFiles": "Text files"
     }
   },
   "featureFlags": {
