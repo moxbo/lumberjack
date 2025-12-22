@@ -17,7 +17,7 @@ import {
   type UpdateInfo,
   type ProgressInfo,
 } from "electron-updater";
-import { BrowserWindow, ipcMain } from "electron";
+import { app, BrowserWindow, ipcMain } from "electron";
 import log from "electron-log/main";
 
 // Configure electron-updater to use electron-log
@@ -55,13 +55,39 @@ export class AutoUpdaterService {
     // Allow downgrade (useful for testing)
     autoUpdater.allowDowngrade = false;
 
+    // Configure GitHub token for private repositories
+    // Token can be set via GH_TOKEN or GITHUB_TOKEN environment variable
+    // or via app settings (stored securely)
+    this.configurePrivateRepoAccess();
+
     this.setupEventHandlers();
     this.setupIpcHandlers();
 
     log.info("[auto-updater] Service initialized", {
       currentVersion: autoUpdater.currentVersion?.version || "unknown",
       allowPrerelease: autoUpdater.allowPrerelease,
+      hasToken: !!process.env.GH_TOKEN || !!process.env.GITHUB_TOKEN,
     });
+  }
+
+  /**
+   * Configure access to private GitHub repositories
+   * Uses GH_TOKEN or GITHUB_TOKEN environment variable
+   */
+  private configurePrivateRepoAccess(): void {
+    const token = process.env.GH_TOKEN || process.env.GITHUB_TOKEN;
+    if (token) {
+      // Set the token for electron-updater to use with private repos
+      process.env.GH_TOKEN = token;
+      log.info(
+        "[auto-updater] GitHub token configured for private repo access",
+      );
+    } else {
+      log.debug(
+        "[auto-updater] No GitHub token found. " +
+          "Set GH_TOKEN or GITHUB_TOKEN env var for private repo access.",
+      );
+    }
   }
 
   /**
@@ -228,8 +254,24 @@ export class AutoUpdaterService {
 
   /**
    * Check for updates silently on app start (after delay)
+   * Skips check in development mode or when running from source
+   * For private repositories, set GH_TOKEN or GITHUB_TOKEN environment variable
    */
   checkForUpdatesOnStart(delayMs: number = 10000): void {
+    // Skip auto-update check in development mode
+    if (process.env.NODE_ENV === "development" || !app.isPackaged) {
+      log.info(
+        "[auto-updater] Skipping update check (development mode or not packaged)",
+      );
+      return;
+    }
+
+    // Log token status for debugging
+    const hasToken = !!process.env.GH_TOKEN || !!process.env.GITHUB_TOKEN;
+    log.info(
+      `[auto-updater] Will check for updates in ${delayMs / 1000}s (hasToken: ${hasToken})`,
+    );
+
     setTimeout(() => {
       log.info("[auto-updater] Checking for updates on start...");
       this.checkForUpdates().catch((err) => {

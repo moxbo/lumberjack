@@ -2566,7 +2566,7 @@ app
           autoUpdater.setMainWindow(mainWin);
         }
         // Check for updates after a delay (don't block startup)
-        autoUpdater.checkForUpdatesOnStart(15000);
+        autoUpdater.checkForUpdatesOnStart(5000);
       }
     } catch (err) {
       log.error(
