@@ -760,8 +760,7 @@ body {
   transition: background-color var(--transition-fast);
   /* Performance-Optimierungen für virtualisierte Listen */
   contain: layout style paint;
-  content-visibility: auto;
-  contain-intrinsic-size: auto 36px;
+  /* content-visibility entfernt - verursacht Render-Probleme beim schnellen Scrollen */
 }
 
 .row:hover {
@@ -770,6 +769,11 @@ body {
 
 .row.sel {
   background: rgba(10, 132, 255, 0.12);
+}
+
+/* Sel hat Vorrang vor Hover */
+.row.sel:hover {
+  background: rgba(10, 132, 255, 0.18);
 }
 
 .col {

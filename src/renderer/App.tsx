@@ -1022,6 +1022,50 @@ export default function App() {
   const virtualItems = hasScrollElement ? virtualizer.getVirtualItems() : [];
   const totalHeight = hasScrollElement ? virtualizer.getTotalSize() : 0;
 
+  // Bei Filteränderung: ausgewählten Eintrag sichtbar halten, wenn er noch in der Liste ist
+  const prevFilteredIdxRef = useRef<number[]>(filteredIdx);
+  const selectedRef = useRef<Set<number>>(selected);
+
+  // Halte selectedRef aktuell
+  useEffect(() => {
+    selectedRef.current = selected;
+  }, [selected]);
+
+  // Zustand für erzwungenes Re-Render nach Filter-Scroll
+  const [, forceUpdate] = useState(0);
+
+  useEffect(() => {
+    // Prüfe ob sich die gefilterte Liste geändert hat
+    if (prevFilteredIdxRef.current === filteredIdx) return;
+    prevFilteredIdxRef.current = filteredIdx;
+
+    // Wenn kein Eintrag ausgewählt ist, nichts tun
+    if (selectedRef.current.size === 0) return;
+
+    // Finde den zuletzt ausgewählten Eintrag (lastClicked oder letzten aus selected)
+    const currentSelected =
+      lastClicked.current ?? Array.from(selectedRef.current).pop();
+    if (currentSelected == null) return;
+
+    // Prüfe ob der ausgewählte Eintrag noch in der gefilterten Liste ist
+    const viIndex = filteredIdx.indexOf(currentSelected);
+    if (viIndex >= 0) {
+      // Element ist noch in der Liste - scrolle es in den sichtbaren Bereich
+      // Verwende setTimeout um sicherzustellen, dass der virtualizer aktualisiert wurde
+      setTimeout(() => {
+        // Scrolle den Eintrag so, dass er am oberen Rand des sichtbaren Bereichs erscheint
+        // mit ein paar Zeilen Puffer darüber
+        const targetIndex = Math.max(0, viIndex - 3); // 3 Zeilen Puffer nach oben
+        virtualizer.scrollToIndex(targetIndex, { align: "start" });
+
+        // Erzwinge Re-Render
+        requestAnimationFrame(() => {
+          forceUpdate((n) => n + 1);
+        });
+      }, 0);
+    }
+  }, [filteredIdx, virtualizer]);
+
   // Diagnostic logging removed - was causing render loops and performance issues on Windows
   // The logging condition (filteredIdx.length % 1000 === 0) fires on every render when length is 0
 
@@ -1057,35 +1101,35 @@ export default function App() {
     [],
   );
 
-  function gotoListStart() {
+  function gotoListStart(): void {
     if (!filteredIdx.length) return;
     const targetVi = 0;
     const globalIdx = filteredIdx[targetVi]!;
     setSelected(new Set([globalIdx]));
     lastClicked.current = globalIdx;
-    // In den sichtbaren Bereich (zwischen Header und Detail-Overlays) zentrieren
+    // In den sichtbaren Bereich scrollen
     scrollToIndexCenter(targetVi);
     try {
       (parentRef.current as any)?.focus?.();
     } catch {}
   }
-  function gotoListEnd() {
+  function gotoListEnd(): void {
     if (!filteredIdx.length) return;
     const targetVi = filteredIdx.length - 1;
     const globalIdx = filteredIdx[targetVi]!;
     setSelected(new Set([globalIdx]));
     lastClicked.current = globalIdx;
-    // In den sichtbaren Bereich (zwischen Header und Detail-Overlays) zentrieren
+    // In den sichtbaren Bereich scrollen
     scrollToIndexCenter(targetVi);
     try {
       (parentRef.current as any)?.focus?.();
     } catch {}
   }
 
-  // Hilfsfunktion: Ziel-Index mittig im sichtbaren Bereich anzeigen
+  // Hilfsfunktion: Ziel-Index im sichtbaren Bereich anzeigen (scrollt nur wenn nötig)
   function scrollToIndexCenter(viIndex: number) {
     // Erst Virtualizer nutzen um sicherzustellen, dass das Element gerendert wird
-    virtualizer.scrollToIndex(viIndex, { align: "center" });
+    virtualizer.scrollToIndex(viIndex, { align: "auto" });
 
     // Dann nach kurzer Verzögerung die Position korrigieren
     requestAnimationFrame(() => {
@@ -1097,14 +1141,14 @@ export default function App() {
         `[data-vi="${viIndex}"]`,
       ) as HTMLElement | null;
       if (rowEl) {
-        // Element gefunden - scrolle es in die Mitte
-        rowEl.scrollIntoView({ behavior: "smooth", block: "center" });
+        // Element gefunden - scrolle es in den sichtbaren Bereich (nur wenn nötig)
+        rowEl.scrollIntoView({ behavior: "smooth", block: "nearest" });
       }
     });
   }
 
   // Selection
-  function toggleSelectIndex(idx: number, shift: boolean, meta: boolean) {
+  function toggleSelectIndex(idx: number, shift: boolean, meta: boolean): void {
     try {
       setSelected((prev) => {
         try {
