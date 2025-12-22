@@ -183,6 +183,22 @@
     "cancel": "Cancel",
     "save": "Save"
   },
+  "update": {
+    "available": "Update available: Version {{version}}",
+    "availableHint": "A new version is ready to download.",
+    "downloading": "Downloading update…",
+    "downloaded": "Update {{version}} downloaded",
+    "downloadedHint": "Ready to install. The app will restart.",
+    "error": "Update error",
+    "download": "Download",
+    "installRestart": "Install & Restart",
+    "later": "Later",
+    "retry": "Retry",
+    "dismiss": "Dismiss",
+    "showDetails": "Show details",
+    "hideDetails": "Hide details",
+    "pleaseWait": "Please wait…"
+  },
   "dialogs": {
     "httpLoad": {
       "title": "Load HTTP once",

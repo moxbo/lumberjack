@@ -44,6 +44,7 @@ import {
   DetailPanel,
   FilterSection,
   AlertDialog,
+  UpdateNotification,
 } from "./components";
 import { JSX } from "preact/jsx-runtime";
 
@@ -4164,6 +4165,9 @@ export default function App(): JSX.Element {
         type={alertState.type}
         onClose={() => setAlertState({ ...alertState, open: false })}
       />
+
+      {/* Update-Benachrichtigung */}
+      <UpdateNotification />
     </div>
   );
 }

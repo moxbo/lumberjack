@@ -183,6 +183,22 @@
     "cancel": "Abbrechen",
     "save": "Speichern"
   },
+  "update": {
+    "available": "Update verfügbar: Version {{version}}",
+    "availableHint": "Eine neue Version ist zum Download bereit.",
+    "downloading": "Update wird heruntergeladen…",
+    "downloaded": "Update {{version}} heruntergeladen",
+    "downloadedHint": "Bereit zur Installation. Die App wird neu gestartet.",
+    "error": "Update-Fehler",
+    "download": "Herunterladen",
+    "installRestart": "Installieren & Neustarten",
+    "later": "Später",
+    "retry": "Erneut versuchen",
+    "dismiss": "Schließen",
+    "showDetails": "Details anzeigen",
+    "hideDetails": "Details ausblenden",
+    "pleaseWait": "Bitte warten…"
+  },
   "dialogs": {
     "httpLoad": {
       "title": "HTTP einmal laden",
