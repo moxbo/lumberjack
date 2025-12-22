@@ -45,6 +45,7 @@ import {
   FilterSection,
   AlertDialog,
 } from "./components";
+import { JSX } from "preact/jsx-runtime";
 
 // IPC batching constants - reduced to prevent UI freezes ("Keine Rückmeldung")
 const IPC_BATCH_SIZE = 1000; // Reduced from 5000
@@ -54,7 +55,7 @@ const IPC_PROCESS_INTERVAL = 16; // Reduced from 50ms to one frame at 60fps
 const DCFilterDialog = lazy(() => import("./DCFilterDialog"));
 const ElasticSearchDialog = lazy(() => import("./ElasticSearchDialog"));
 
-export default function App() {
+export default function App(): JSX.Element {
   // Track component initialization (only once via ref to avoid re-marking on every render)
   const initMarkedRef = useRef(false);
   if (!initMarkedRef.current) {
@@ -188,7 +189,7 @@ export default function App() {
       width: Math.round(r.width),
     };
   }
-  function updateVisiblePopoverPositions() {
+  function updateVisiblePopoverPositions(): void {
     // Für das Suchfeld verwenden wir jetzt searchInputRef statt searchHistRef
     if (showSearchHist) setSearchPos(computePosFor(searchInputRef.current));
     if (showLoggerHist) setLoggerPos(computePosFor(loggerHistRef.current));
@@ -207,8 +208,8 @@ export default function App() {
       !showMessageHist
     )
       return;
-    const onResize = () => updateVisiblePopoverPositions();
-    const onScroll = () => updateVisiblePopoverPositions();
+    const onResize = (): void => updateVisiblePopoverPositions();
+    const onScroll = (): void => updateVisiblePopoverPositions();
     window.addEventListener("resize", onResize);
     window.addEventListener("scroll", onScroll, true);
     return () => {
@@ -217,7 +218,7 @@ export default function App() {
     };
   }, [showSearchHist, showLoggerHist, showThreadHist, showMessageHist]);
 
-  function closeAllHistoryPopovers() {
+  function closeAllHistoryPopovers(): void {
     setShowSearchHist(false);
     setShowLoggerHist(false);
     setShowThreadHist(false);
@@ -232,7 +233,7 @@ export default function App() {
       !showMessageHist
     )
       return;
-    const onDocDown = (ev: MouseEvent) => {
+    const onDocDown = (ev: MouseEvent): void => {
       try {
         const t = ev.target as Node;
         if (
@@ -300,9 +301,14 @@ export default function App() {
   });
 
   // Öffnet den Elastic-Search-Dialog und befüllt Formular aus TimeFilter-State
-  async function openTimeFilterDialog() {
+  async function openTimeFilterDialog(): Promise<void> {
     // Helper: get last used values from in-memory history or settings as fallback
-    const getLasts = async () => {
+    const getLasts = async (): Promise<{
+      lastApp: string;
+      lastEnv: string;
+      lastIndex: string;
+      lastEnvCase: string | undefined;
+    }> => {
       let lastApp =
         (histAppName && histAppName.length > 0 ? String(histAppName[0]) : "") ||
         "";
@@ -338,12 +344,12 @@ export default function App() {
 
     try {
       const s = (TimeFilter as any).getState?.();
-      const toLocal = (iso: unknown) => {
+      const toLocal = (iso: unknown): string => {
         const t = String(iso || "").trim();
         if (!t) return "";
         const d = new Date(t);
         if (isNaN(d.getTime())) return "";
-        const pad = (n: number) => String(n).padStart(2, "0");
+        const pad = (n: number): string => String(n).padStart(2, "0");
         const y = d.getFullYear();
         const m = pad(d.getMonth() + 1);
         const da = pad(d.getDate());
@@ -428,7 +434,7 @@ export default function App() {
   const [histIndex, setHistIndex] = useState<string[]>([]);
 
   // History-Pflege für Elastic-Dialog
-  function addToHistory(kind: "app" | "env" | "index", val: string) {
+  function addToHistory(kind: "app" | "env" | "index", val: string): void {
     const v = String(val || "").trim();
     if (!v) return;
     if (kind === "app") {
@@ -2791,8 +2797,13 @@ export default function App() {
 
   // Globaler Keyboard-Handler für Shortcuts
   useEffect(() => {
-    function onGlobalKeyDown(e: KeyboardEvent) {
-      const isMac = navigator.platform.toUpperCase().indexOf("MAC") >= 0;
+    function onGlobalKeyDown(e: KeyboardEvent): void {
+      // Use userAgentData if available, fallback to userAgent for older browsers
+      const isMac =
+        (navigator as any).userAgentData?.platform
+          ?.toUpperCase()
+          ?.includes("MAC") ??
+        /Mac|iPhone|iPad|iPod/i.test(navigator.userAgent);
       const cmdOrCtrl = isMac ? e.metaKey : e.ctrlKey;
 
       // Cmd/Ctrl+F = Fokus auf Suchfeld

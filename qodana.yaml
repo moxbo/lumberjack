@@ -43,7 +43,7 @@ projectJDK: "25" #(Applied in CI/CD pipeline)
 #  testCoverageThresholds:
 #    fresh: 70
 #    total: 50
-  
+
 #Qodana supports other languages, for example, Python, JavaScript, TypeScript, Go, C#, PHP
 #For all supported languages see https://www.jetbrains.com/help/qodana/linters.html
 linter: jetbrains/qodana-jvm-community:2025.2

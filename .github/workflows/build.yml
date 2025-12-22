@@ -189,7 +189,7 @@ jobs:
           version="${tag#v}"
           echo "Setting version to $version"
           npm version "$version" --no-git-tag-version --allow-same-version
-          
+
           # Also update release/app/package.json if it exists
           if [ -f "release/app/package.json" ]; then
             cd release/app
@@ -224,13 +224,13 @@ jobs:
           $archDir = Join-Path $outDir $arch
           if (-not (Test-Path $archDir)) { New-Item -ItemType Directory -Path $archDir | Out-Null }
           $moved = 0
-          
+
           # Move files matching arch name
           Get-ChildItem -Path $outDir -File -Force -ErrorAction SilentlyContinue | Where-Object { $_.Name -like "*$arch*" } | ForEach-Object {
             Move-Item -Path $_.FullName -Destination $archDir -Force
             $moved += 1
           }
-          
+
           # Move latest.yml (only for x64 which builds NSIS installer)
           if ($arch -eq "x64") {
             Get-ChildItem -Path $outDir -File -Force -ErrorAction SilentlyContinue | Where-Object { $_.Name -like "*.yml" } | ForEach-Object {
@@ -239,7 +239,7 @@ jobs:
               $moved += 1
             }
           }
-          
+
           if (Test-Path (Join-Path $outDir 'win-unpacked')) {
             $dest = Join-Path $archDir 'win-unpacked'
             # Move win-unpacked directory into arch folder (if present)
@@ -265,7 +265,7 @@ jobs:
         shell: bash
         run: |
           tag="${{ needs.prepare-release.outputs.release_tag }}"
-          
+
           # Upload only files matching current ARCH
           echo "Uploading artifacts for ARCH=$ARCH"
           matches=0
@@ -289,7 +289,7 @@ jobs:
         with:
           ref: ${{ needs.prepare-release.outputs.checkout_ref }}
           fetch-depth: 0
-          fetch-tags: true  # Fetch all tags for changelog generation
+          fetch-tags: true # Fetch all tags for changelog generation
 
       - name: Generate Changelog and Finalize Release
         env:
@@ -308,7 +308,7 @@ jobs:
 
           # Find previous release tag
           previous_tag=$(git tag --sort=-version:refname | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+' | grep -v "^$tag$" | head -n 1 || echo "")
-          
+
           echo "Current tag: $tag"
           echo "Previous tag: $previous_tag"
 
@@ -340,7 +340,7 @@ jobs:
 
           # Generate changelog
           changelog=""
-          
+
           if [[ -n "$previous_tag" ]]; then
             echo "Generating changelog from $previous_tag to $tag"
             
@@ -409,5 +409,5 @@ jobs:
 
           # Apply changelog and finalize
           echo -e "$changelog" | gh release edit "$tag" --notes-file - $release_flag --draft=false
-          
+
           echo "✅ Release $tag finalized successfully!"
