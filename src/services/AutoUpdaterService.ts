@@ -79,8 +79,19 @@ export class AutoUpdaterService {
     if (token) {
       // Set the token for electron-updater to use with private repos
       process.env.GH_TOKEN = token;
+
+      // Force electron-updater to use GitHub API instead of Atom feed
+      // This is required for private repositories
+      autoUpdater.setFeedURL({
+        provider: "github",
+        owner: "moxbo",
+        repo: "lumberjack",
+        private: true,
+        token: token,
+      });
+
       log.info(
-        "[auto-updater] GitHub token configured for private repo access",
+        "[auto-updater] GitHub token configured for private repo access (using API)",
       );
     } else {
       log.debug(
