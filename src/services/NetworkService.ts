@@ -69,9 +69,9 @@ export class NetworkService {
   private toEntry: EntryConverterFn | null = null;
 
   // Memory leak prevention constants
-  private static readonly MAX_BUFFER_SIZE = 10 * 1024 * 1024; // 10MB max buffer per socket
+  private static readonly MAX_BUFFER_SIZE = 50 * 1024 * 1024; // 50MB max buffer per socket (increased for large messages)
   private static readonly SOCKET_TIMEOUT_MS = 5 * 60 * 1000; // 5 minutes timeout
-  private static readonly MAX_LINE_LENGTH = 5 * 1024 * 1024; // 5MB max line length (will be truncated in renderer)
+  private static readonly MAX_LINE_LENGTH = 20 * 1024 * 1024; // 20MB max line length (increased for large XML messages)
   private static readonly MAX_SEEN_ENTRIES = 10000; // Max deduplication entries per poller
 
   // Additional robustness constants

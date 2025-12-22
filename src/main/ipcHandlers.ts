@@ -19,15 +19,50 @@ import {
   Result,
   ExportViewOptions,
   ExportResult,
+  LogEntry,
 } from "../types/ipc";
 import type { SettingsService } from "../services/SettingsService";
 import type { NetworkService } from "../services/NetworkService";
 import type { FeatureFlags } from "../services/FeatureFlags";
 
+// Type declarations for global namespace functions
+declare global {
+  var __applyWindowTitles: (() => void) | undefined;
+  var __updateAppMenu: (() => void) | undefined;
+  var __getWindowCanTcpControl: ((windowId: number) => boolean) | undefined;
+  var __setTcpOwnerWindowId: ((windowId: number | null) => void) | undefined;
+}
+
+// Type for parser functions from parsers.cjs
+interface ParsersModule {
+  parsePaths: (paths: string[]) => LogEntry[];
+  parseJsonFile: (name: string, data: string) => LogEntry[];
+  parseTextLines: (name: string, data: string) => LogEntry[];
+  fetchElasticPitPage: (
+    opts: ElasticSearchOptions,
+  ) => Promise<ElasticPitPageResult>;
+  closeElasticPitSession: (sessionId: string) => Promise<void>;
+}
+
+interface ElasticPitPageResult {
+  entries: LogEntry[];
+  total: number | null;
+  hasMore: boolean;
+  nextSearchAfter: Array<string | number> | null;
+  pitSessionId: string;
+}
+
+// AdmZip entry interface
+interface ZipEntry {
+  entryName: string;
+  isDirectory: boolean;
+  getData: () => Buffer;
+}
+
 export function registerIpcHandlers(
   settingsService: SettingsService,
   networkService: NetworkService,
-  getParsers: () => typeof import("./parsers.cjs"),
+  getParsers: () => ParsersModule,
   getAdmZip: () => typeof import("adm-zip"),
   featureFlags?: FeatureFlags,
 ): void {
@@ -36,8 +71,7 @@ export function registerIpcHandlers(
   function updateWindowTitles(): void {
     try {
       sharedApi.applyWindowTitles?.();
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const fn = (global as any)?.__applyWindowTitles;
+      const fn = global.__applyWindowTitles;
       if (typeof fn === "function") fn();
     } catch (e) {
       log.warn(
@@ -50,8 +84,7 @@ export function registerIpcHandlers(
   function updateAppMenu(): void {
     try {
       sharedApi.updateAppMenu?.();
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const upd = (global as any)?.__updateAppMenu;
+      const upd = global.__updateAppMenu;
       if (typeof upd === "function") upd();
     } catch (e) {
       log.warn(
@@ -410,7 +443,21 @@ export function registerIpcHandlers(
     async (_event, filePaths: string[]): Promise<ParseResult> => {
       try {
         const { parsePaths } = getParsers();
-        const entries = parsePaths(filePaths);
+        const entries: LogEntry[] = parsePaths(filePaths);
+
+        // Log parsing summary
+        log.info(
+          `[parse] Parsed ${entries.length} entries from ${filePaths.length} file(s)`,
+        );
+
+        // Log large message info if any
+        const largeEntries = entries.filter((e: LogEntry) => e._truncated);
+        if (largeEntries.length > 0) {
+          log.info(
+            `[parse] ${largeEntries.length} entries with large messages (truncated for display)`,
+          );
+        }
+
         return { ok: true, entries };
       } catch (err) {
         log.error(
@@ -434,7 +481,7 @@ export function registerIpcHandlers(
 
         const { parseJsonFile, parseTextLines } = getParsers();
         const ZipClass = getAdmZip();
-        const all = [] as any[];
+        const all: LogEntry[] = [];
         for (const f of files) {
           const name = String(f?.name || "");
           const enc = String(f?.encoding || "utf8");
@@ -443,10 +490,10 @@ export function registerIpcHandlers(
           if (!name || !data) continue;
           if (ext === ".zip") {
             const buf = Buffer.from(data, enc === "base64" ? "base64" : "utf8");
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any
-            const zip = new (ZipClass as any)(buf);
-            zip.getEntries().forEach((zEntry: Record<string, unknown>) => {
-              const ename = String(zEntry.entryName || "");
+            // AdmZip accepts Buffer but type definitions may be incomplete
+            const zip = new ZipClass(buf as unknown as string);
+            for (const zEntry of zip.getEntries() as ZipEntry[]) {
+              const ename = zEntry.entryName;
               const eext = path.extname(ename).toLowerCase();
               if (
                 !zEntry.isDirectory &&
@@ -455,25 +502,22 @@ export function registerIpcHandlers(
                   eext === ".jsonl" ||
                   eext === ".txt")
               ) {
-                const getData = zEntry.getData as (
-                  ...args: unknown[]
-                ) => Buffer;
-                const text = getData().toString("utf8");
-                const parsed =
+                const text = zEntry.getData().toString("utf8");
+                const parsed: LogEntry[] =
                   eext === ".json"
                     ? parseJsonFile(ename, text)
                     : parseTextLines(ename, text);
-                parsed.forEach((e: Record<string, unknown>) => {
+                for (const e of parsed) {
                   e.source = `${name}::${ename}`;
-                });
+                }
                 all.push(...parsed);
               }
-            });
+            }
           } else if (ext === ".json") {
-            const entries = parseJsonFile(name, data);
+            const entries: LogEntry[] = parseJsonFile(name, data);
             all.push(...entries);
           } else {
-            const entries = parseTextLines(name, data);
+            const entries: LogEntry[] = parseTextLines(name, data);
             all.push(...entries);
           }
         }
@@ -508,8 +552,7 @@ export function registerIpcHandlers(
         }
 
         const win = BrowserWindow.fromWebContents(event.sender);
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const canFn = (global as any)?.__getWindowCanTcpControl;
+        const canFn = global.__getWindowCanTcpControl;
         const allowed =
           win && typeof canFn === "function" ? !!canFn(win.id) : true;
         if (!allowed) {
@@ -534,8 +577,7 @@ export function registerIpcHandlers(
           }
           // Eigentümer auf dieses Fenster setzen (ephemeral, nicht persistiert)
           try {
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any
-            (global as any).__setTcpOwnerWindowId?.(win.id);
+            global.__setTcpOwnerWindowId?.(win.id);
           } catch {
             // Intentionally empty - ignore errors
           }
@@ -563,8 +605,7 @@ export function registerIpcHandlers(
     (async () => {
       try {
         const win = BrowserWindow.fromWebContents(event.sender);
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const canFn = (global as any)?.__getWindowCanTcpControl;
+        const canFn = global.__getWindowCanTcpControl;
         const allowed =
           win && typeof canFn === "function" ? !!canFn(win.id) : true;
         if (!allowed) {
@@ -578,8 +619,7 @@ export function registerIpcHandlers(
         event.reply("tcp:status", status);
         if (status.ok) {
           try {
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any
-            (global as any).__setTcpOwnerWindowId?.(null);
+            global.__setTcpOwnerWindowId?.(null);
           } catch {
             // Intentionally empty - ignore errors
           }
@@ -700,7 +740,10 @@ export function registerIpcHandlers(
         } as ElasticSearchOptions;
 
         if (!mergedOpts.url) {
-          throw new Error(t("main.errors.elasticUrlNotConfigured"));
+          return {
+            ok: false,
+            error: t("main.errors.elasticUrlNotConfigured"),
+          };
         }
 
         // Vorab: finale Request-URL (Basis + _search) für Logging berechnen
@@ -733,22 +776,11 @@ export function registerIpcHandlers(
           trackTotalHits: mergedOpts.trackTotalHits,
         });
 
-        type PitPage = {
-          entries: Array<unknown>;
-          total: number | null;
-          hasMore: boolean;
-          nextSearchAfter: Array<string | number> | null;
-          pitSessionId: string;
-        };
-        const page = await (
-          fetchElasticPitPage as unknown as (
-            o: ElasticSearchOptions,
-          ) => Promise<PitPage>
-        )(mergedOpts);
+        const page = await fetchElasticPitPage(mergedOpts);
 
         return {
           ok: true,
-          entries: page.entries as any,
+          entries: page.entries,
           hasMore: page.hasMore,
           nextSearchAfter: page.nextSearchAfter,
           total: page.total == null ? undefined : page.total,

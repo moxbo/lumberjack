@@ -17,6 +17,13 @@ const HTTPS_INSECURE_KEEPALIVE_AGENT = new https.Agent({
   rejectUnauthorized: false,
 });
 
+// Message size limits for performance optimization
+// Messages larger than TRUNCATE_THRESHOLD will be truncated for display,
+// but the full message is preserved in _fullMessage for viewing on demand
+const MESSAGE_TRUNCATE_THRESHOLD = 100 * 1024; // 100 KB - truncate for display
+const MESSAGE_PREVIEW_LENGTH = 50 * 1024; // 50 KB - preview shown in list
+const LARGE_MESSAGE_WARNING_THRESHOLD = 1024 * 1024; // 1 MB - log warning
+
 // Types
 type AnyMap = Record<string, unknown>;
 export interface Entry {
@@ -33,6 +40,10 @@ export interface Entry {
   _mark?: string;
   mdc?: Record<string, string>;
   service?: string;
+  // Large message handling
+  _fullMessage?: string; // Original full message if truncated
+  _truncated?: boolean; // True if message was truncated
+  _messageSize?: number; // Original message size in bytes
 }
 
 // AdmZip lazy
@@ -157,17 +168,48 @@ function toEntry(obj: AnyMap = {}, fallbackMessage = "", source = ""): Entry {
   const traceVal =
     obj.traceId ?? obj.trace_id ?? obj.trace ?? obj["trace.id"] ?? obj.TraceID;
 
-  return {
+  // Handle large messages - truncate for display but preserve original
+  const fullMessage = toStringOr(msgVal, "");
+  const messageSize = fullMessage.length;
+  let displayMessage = fullMessage;
+  let truncated = false;
+  let originalMessage: string | undefined;
+
+  if (messageSize > MESSAGE_TRUNCATE_THRESHOLD) {
+    // Truncate for display, preserve original
+    displayMessage =
+      fullMessage.substring(0, MESSAGE_PREVIEW_LENGTH) +
+      `\n\n... [Nachricht gekürzt: ${(messageSize / 1024).toFixed(1)} KB - Klicken Sie "Vollständig" um alles zu sehen] ...`;
+    truncated = true;
+    originalMessage = fullMessage;
+
+    if (messageSize > LARGE_MESSAGE_WARNING_THRESHOLD) {
+      log.debug(
+        `[parser] Large message detected: ${(messageSize / 1024 / 1024).toFixed(2)} MB from ${source}`,
+      );
+    }
+  }
+
+  const entry: Entry = {
     timestamp: toOptionalString(tsVal),
     level: toOptionalString(lvlVal),
     logger: toOptionalString(loggerVal),
     thread: toOptionalString(threadVal),
-    message: toStringOr(msgVal, ""),
+    message: displayMessage,
     traceId: toOptionalString(traceVal),
     stackTrace: stackTrace || null,
     raw: obj,
     source,
   };
+
+  // Add truncation metadata if applicable
+  if (truncated) {
+    entry._truncated = true;
+    entry._fullMessage = originalMessage;
+    entry._messageSize = messageSize;
+  }
+
+  return entry;
 }
 
 function tryParseJson(line: string): AnyMap | null {

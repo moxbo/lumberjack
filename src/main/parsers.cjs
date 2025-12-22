@@ -50,6 +50,9 @@ const HTTPS_INSECURE_KEEPALIVE_AGENT = new import_https.default.Agent({
   keepAlive: true,
   rejectUnauthorized: false
 });
+const MESSAGE_TRUNCATE_THRESHOLD = 100 * 1024;
+const MESSAGE_PREVIEW_LENGTH = 50 * 1024;
+const LARGE_MESSAGE_WARNING_THRESHOLD = 1024 * 1024;
 let AdmZip = null;
 function getAdmZip() {
   if (!AdmZip) {
@@ -139,17 +142,40 @@ function toEntry(obj = {}, fallbackMessage = "", source = "") {
   const threadVal = obj.thread ?? obj.thread_name;
   const msgVal = obj.message ?? obj.msg ?? obj.log ?? fallbackMessage ?? "";
   const traceVal = obj.traceId ?? obj.trace_id ?? obj.trace ?? obj["trace.id"] ?? obj.TraceID;
-  return {
+  const fullMessage = toStringOr(msgVal, "");
+  const messageSize = fullMessage.length;
+  let displayMessage = fullMessage;
+  let truncated = false;
+  let originalMessage;
+  if (messageSize > MESSAGE_TRUNCATE_THRESHOLD) {
+    displayMessage = fullMessage.substring(0, MESSAGE_PREVIEW_LENGTH) + `
+
+... [Nachricht gek\xFCrzt: ${(messageSize / 1024).toFixed(1)} KB - Klicken Sie "Vollst\xE4ndig" um alles zu sehen] ...`;
+    truncated = true;
+    originalMessage = fullMessage;
+    if (messageSize > LARGE_MESSAGE_WARNING_THRESHOLD) {
+      import_main.default.debug(
+        `[parser] Large message detected: ${(messageSize / 1024 / 1024).toFixed(2)} MB from ${source}`
+      );
+    }
+  }
+  const entry = {
     timestamp: toOptionalString(tsVal),
     level: toOptionalString(lvlVal),
     logger: toOptionalString(loggerVal),
     thread: toOptionalString(threadVal),
-    message: toStringOr(msgVal, ""),
+    message: displayMessage,
     traceId: toOptionalString(traceVal),
     stackTrace: stackTrace || null,
     raw: obj,
     source
   };
+  if (truncated) {
+    entry._truncated = true;
+    entry._fullMessage = originalMessage;
+    entry._messageSize = messageSize;
+  }
+  return entry;
 }
 function tryParseJson(line) {
   try {

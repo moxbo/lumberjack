@@ -37,6 +37,15 @@ function isTruncated(entry: Record<string, unknown>): boolean {
   return entry._truncated === true || typeof entry._fullMessage === "string";
 }
 
+/**
+ * Format byte size to human-readable string
+ */
+function formatSize(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(2)} MB`;
+}
+
 export function DetailPanel({
   entry,
   search,
@@ -110,6 +119,19 @@ export function DetailPanel({
       <div className="kv full">
         <span>
           {t("details.message")}
+          <span
+            style={{
+              marginLeft: "8px",
+              fontSize: "11px",
+              color: "var(--color-text-secondary)",
+              fontWeight: "normal",
+            }}
+            title="Nachrichtengröße"
+          >
+            (
+            {formatSize(new TextEncoder().encode(getFullMessage(entry)).length)}
+            )
+          </span>
           {isTruncated(entry) && (
             <button
               onClick={() => setMessageExpanded(!messageExpanded)}

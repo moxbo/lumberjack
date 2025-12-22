@@ -56,6 +56,135 @@ const IPC_PROCESS_INTERVAL = 16; // Reduced from 50ms to one frame at 60fps
 const DCFilterDialog = lazy(() => import("./DCFilterDialog"));
 const ElasticSearchDialog = lazy(() => import("./ElasticSearchDialog"));
 
+// Global debug reference for console access
+let debugEntriesRef: { current: any[] } | null = null;
+let debugFilteredIdxRef: { current: number[] } | null = null;
+
+// Global debug function - call from console: window.ljDebug.findInEntries("TimeTableRead")
+function setupDebugFunctions(): void {
+  (window as any).ljDebug = {
+    findInEntries: (term: string) => {
+      const entries = debugEntriesRef?.current || [];
+      const filteredIdx = debugFilteredIdxRef?.current || [];
+      const termLower = term.toLowerCase();
+
+      // eslint-disable-next-line no-console
+      console.log(
+        "[ljDebug] Searching for '" +
+          term +
+          "' in " +
+          entries.length +
+          " total entries...",
+      );
+
+      const foundInAll: number[] = [];
+      const foundInFiltered: number[] = [];
+
+      for (let i = 0; i < entries.length; i++) {
+        const e = entries[i];
+        if (!e) continue;
+        const msg = String(e.message || "").toLowerCase();
+        const raw = JSON.stringify(e.raw || e).toLowerCase();
+
+        if (msg.includes(termLower) || raw.includes(termLower)) {
+          foundInAll.push(i);
+          if (filteredIdx.includes(i)) {
+            foundInFiltered.push(i);
+          }
+        }
+      }
+
+      // eslint-disable-next-line no-console
+      console.log(
+        "[ljDebug] Found " +
+          foundInAll.length +
+          " entries containing '" +
+          term +
+          "'",
+      );
+      // eslint-disable-next-line no-console
+      console.log(
+        "[ljDebug] Of those, " +
+          foundInFiltered.length +
+          " are visible (not filtered out)",
+      );
+
+      if (foundInAll.length > 0 && foundInFiltered.length === 0) {
+        console.warn(
+          "[ljDebug] WARNING: All " +
+            foundInAll.length +
+            " entries with '" +
+            term +
+            "' are filtered out!",
+        );
+        const firstIdx = foundInAll[0];
+        if (firstIdx !== undefined) {
+          // eslint-disable-next-line no-console
+          console.log("[ljDebug] First matching entry:", entries[firstIdx]);
+        }
+      }
+
+      return {
+        total: foundInAll.length,
+        visible: foundInFiltered.length,
+        indices: foundInAll,
+      };
+    },
+    // Find largest messages in the loaded entries
+    largestMessages: (count = 10) => {
+      const entries = debugEntriesRef?.current || [];
+      const sized = entries.map((e, i) => ({
+        index: i,
+        size: new TextEncoder().encode(String(e?.message || "")).length,
+        timestamp: e?.timestamp,
+        logger: e?.logger,
+        level: e?.level,
+        messagePreview: String(e?.message || "").substring(0, 100),
+      }));
+      sized.sort((a, b) => b.size - a.size);
+      const top = sized.slice(0, count);
+      // eslint-disable-next-line no-console
+      console.log("[ljDebug] Top " + count + " largest messages:");
+      // eslint-disable-next-line no-console
+      console.table(top);
+      return top;
+    },
+    // Get statistics about loaded entries
+    stats: () => {
+      const entries = debugEntriesRef?.current || [];
+      const filteredIdx = debugFilteredIdxRef?.current || [];
+      const totalSize = entries.reduce(
+        (sum, e) =>
+          sum + new TextEncoder().encode(String(e?.message || "")).length,
+        0,
+      );
+      const levels: Record<string, number> = {};
+      entries.forEach((e) => {
+        const lvl = String(e?.level || "UNKNOWN").toUpperCase();
+        levels[lvl] = (levels[lvl] || 0) + 1;
+      });
+      const stats = {
+        totalEntries: entries.length,
+        filteredEntries: filteredIdx.length,
+        hiddenEntries: entries.length - filteredIdx.length,
+        totalMessageSize: (totalSize / 1024 / 1024).toFixed(2) + " MB",
+        levelCounts: levels,
+      };
+      // eslint-disable-next-line no-console
+      console.log("[ljDebug] Entry statistics:", stats);
+      return stats;
+    },
+    getFilterState: () => {
+      // eslint-disable-next-line no-console
+      console.log(
+        "[ljDebug] Use window.ljDebug.findInEntries('searchterm') to search",
+      );
+      return "Check the filter toolbar in the app";
+    },
+  };
+}
+setupDebugFunctions();
+
 export default function App(): JSX.Element {
   // Track component initialization (only once via ref to avoid re-marking on every render)
   const initMarkedRef = useRef(false);
@@ -820,6 +949,19 @@ export default function App(): JSX.Element {
     };
   }, [httpPollId, currentPollInterval]);
 
+  // Filter statistics for debugging why entries are filtered out
+  const [lastFilterStats, setLastFilterStats] = useState<{
+    total: number;
+    passed: number;
+    rejectedByOnlyMarked: number;
+    rejectedByLevel: number;
+    rejectedByLogger: number;
+    rejectedByThread: number;
+    rejectedByMessage: number;
+    rejectedByTime: number;
+    rejectedByDC: number;
+  } | null>(null);
+
   // Refs/Layout/Virtualizer
   const parentRef = useRef<HTMLDivElement | null>(null);
   const [isParentMounted, setIsParentMounted] = useState(false);
@@ -948,12 +1090,21 @@ export default function App(): JSX.Element {
       out.push(i);
     }
 
+    // Save filter stats for debugging (always, not just in development)
+    // Use setTimeout to avoid updating state during render
+    setTimeout(() => {
+      setLastFilterStats({ ...filterStats });
+      // Also expose via debug API
+      (window as any).ljDebug.filterStats = filterStats;
+    }, 0);
+
     // Reduced logging: only log filter stats when count changes significantly or all entries are filtered
     if (
       process.env.NODE_ENV === "development" &&
       (filterStats.total % 5000 === 0 ||
         (filterStats.passed === 0 && filterStats.total > 0))
     ) {
+      // eslint-disable-next-line no-console
       console.log("[filter-diag] Filter stats:", filterStats);
       if (filterStats.passed === 0 && filterStats.total > 0) {
         console.warn("[filter-diag] WARNING: All entries filtered out!", {
@@ -982,9 +1133,13 @@ export default function App(): JSX.Element {
   const entriesRef = useRef<any[]>(entries);
   useEffect(() => {
     filteredIdxRef.current = filteredIdx;
+    // Update debug reference
+    debugFilteredIdxRef = filteredIdxRef;
   }, [filteredIdx]);
   useEffect(() => {
     entriesRef.current = entries;
+    // Update debug reference
+    debugEntriesRef = entriesRef;
   }, [entries]);
 
   const countTotal = entries.length;
@@ -992,6 +1147,42 @@ export default function App(): JSX.Element {
   const countSelected = selected.size;
 
   const rowHeight = 36;
+
+  // Ref, um programmatisches Scrollen von manuellem Scrollen zu unterscheiden
+  const isProgrammaticScrollRef = useRef(false);
+
+  // Handler für manuelles Scrollen: deaktiviert Follow-Modus wenn der Benutzer nach oben scrollt
+  const handleListScroll = useCallback(
+    (e: Event) => {
+      // Ignoriere programmatisches Scrollen
+      if (isProgrammaticScrollRef.current) {
+        return;
+      }
+
+      // Nur reagieren, wenn Follow-Modus aktiv ist
+      if (!follow) return;
+
+      const target = e.target as HTMLElement;
+      if (!target) return;
+
+      // Berechne, ob wir am Ende der Liste sind (mit Toleranz)
+      const scrollTop = target.scrollTop;
+      const scrollHeight = target.scrollHeight;
+      const clientHeight = target.clientHeight;
+      const distanceFromBottom = scrollHeight - scrollTop - clientHeight;
+
+      // Wenn der Benutzer mehr als 100px vom Ende entfernt ist, deaktiviere Follow-Modus
+      if (distanceFromBottom > 100) {
+        setFollow(false);
+        try {
+          void window.api.settingsSet({ follow: false } as any);
+        } catch (err) {
+          logger.warn("Persisting follow flag failed:", err);
+        }
+      }
+    },
+    [follow],
+  );
 
   // TEMPORARY: Disable virtualizer to test if it's causing the render loop
   // Memoize getScrollElement callback to prevent virtualizer from re-initializing
@@ -1032,6 +1223,15 @@ export default function App(): JSX.Element {
   // Bei Filteränderung: ausgewählten Eintrag sichtbar halten, wenn er noch in der Liste ist
   const prevFilteredIdxRef = useRef<number[]>(filteredIdx);
   const selectedRef = useRef<Set<number>>(selected);
+  // Track previous filter criteria to distinguish filter changes from new entries
+  const prevFilterCriteriaRef = useRef({
+    stdFiltersEnabled,
+    debouncedFilter,
+    dcVersion,
+    timeVersion,
+    onlyMarked,
+    searchMode,
+  });
 
   // Halte selectedRef aktuell
   useEffect(() => {
@@ -1044,7 +1244,30 @@ export default function App(): JSX.Element {
   useEffect(() => {
     // Prüfe ob sich die gefilterte Liste geändert hat
     if (prevFilteredIdxRef.current === filteredIdx) return;
+
+    // Prüfe ob sich die Filter-Kriterien geändert haben (nicht nur neue Einträge)
+    const prevCriteria = prevFilterCriteriaRef.current;
+    const filterCriteriaChanged =
+      prevCriteria.stdFiltersEnabled !== stdFiltersEnabled ||
+      prevCriteria.debouncedFilter !== debouncedFilter ||
+      prevCriteria.dcVersion !== dcVersion ||
+      prevCriteria.timeVersion !== timeVersion ||
+      prevCriteria.onlyMarked !== onlyMarked ||
+      prevCriteria.searchMode !== searchMode;
+
+    // Update refs
     prevFilteredIdxRef.current = filteredIdx;
+    prevFilterCriteriaRef.current = {
+      stdFiltersEnabled,
+      debouncedFilter,
+      dcVersion,
+      timeVersion,
+      onlyMarked,
+      searchMode,
+    };
+
+    // Nur bei Filter-Änderungen zum ausgewählten Eintrag scrollen, nicht bei neuen Einträgen
+    if (!filterCriteriaChanged) return;
 
     // Wenn kein Eintrag ausgewählt ist, nichts tun
     if (selectedRef.current.size === 0) return;
@@ -1057,6 +1280,9 @@ export default function App(): JSX.Element {
     // Prüfe ob der ausgewählte Eintrag noch in der gefilterten Liste ist
     const viIndex = filteredIdx.indexOf(currentSelected);
     if (viIndex >= 0) {
+      // Markiere als programmatisches Scrollen
+      isProgrammaticScrollRef.current = true;
+
       // Element ist noch in der Liste - scrolle es in den sichtbaren Bereich
       // Verwende setTimeout um sicherzustellen, dass der virtualizer aktualisiert wurde
       setTimeout(() => {
@@ -1068,10 +1294,23 @@ export default function App(): JSX.Element {
         // Erzwinge Re-Render
         requestAnimationFrame(() => {
           forceUpdate((n) => n + 1);
+          // Reset programmatic scroll flag
+          setTimeout(() => {
+            isProgrammaticScrollRef.current = false;
+          }, 300);
         });
       }, 0);
     }
-  }, [filteredIdx, virtualizer]);
+  }, [
+    filteredIdx,
+    virtualizer,
+    stdFiltersEnabled,
+    debouncedFilter,
+    dcVersion,
+    timeVersion,
+    onlyMarked,
+    searchMode,
+  ]);
 
   // Diagnostic logging removed - was causing render loops and performance issues on Windows
   // The logging condition (filteredIdx.length % 1000 === 0) fires on every render when length is 0
@@ -1135,6 +1374,9 @@ export default function App(): JSX.Element {
 
   // Hilfsfunktion: Ziel-Index im sichtbaren Bereich anzeigen (scrollt nur wenn nötig)
   function scrollToIndexCenter(viIndex: number) {
+    // Markiere als programmatisches Scrollen, damit Follow-Modus nicht deaktiviert wird
+    isProgrammaticScrollRef.current = true;
+
     // Erst Virtualizer nutzen um sicherzustellen, dass das Element gerendert wird
     virtualizer.scrollToIndex(viIndex, { align: "auto" });
 
@@ -1151,6 +1393,11 @@ export default function App(): JSX.Element {
         // Element gefunden - scrolle es in den sichtbaren Bereich (nur wenn nötig)
         rowEl.scrollIntoView({ behavior: "smooth", block: "nearest" });
       }
+
+      // Setze das Flag nach dem Scrollen zurück (mit etwas Verzögerung für smooth scrolling)
+      setTimeout(() => {
+        isProgrammaticScrollRef.current = false;
+      }, 300);
     });
   }
 
@@ -1478,6 +1725,11 @@ export default function App(): JSX.Element {
     const batchHttpSigsBySrc = new Map<string, Set<string>>();
     const accepted: any[] = [];
 
+    // Debug: Track rejection reasons
+    let rejectedByEsDedup = 0;
+    let rejectedByFileDedup = 0;
+    let rejectedByHttpDedup = 0;
+
     for (const e of newEntries) {
       // Elasticsearch-Dedupe
       if (needEsDedup && isElastic(e)) {
@@ -1486,9 +1738,14 @@ export default function App(): JSX.Element {
           !ignoreExistingForElastic &&
           existingEsSigs &&
           existingEsSigs.has(sig)
-        )
+        ) {
+          rejectedByEsDedup++;
           continue;
-        if (batchEsSigs.has(sig)) continue;
+        }
+        if (batchEsSigs.has(sig)) {
+          rejectedByEsDedup++;
+          continue;
+        }
         batchEsSigs.add(sig);
         accepted.push(e);
         continue;
@@ -1498,13 +1755,19 @@ export default function App(): JSX.Element {
         const src = String(e.source || "");
         const sig = entrySignature(e);
         const existingSet = fileSigCacheRef.current.get(src);
-        if (existingSet && existingSet.has(sig)) continue;
+        if (existingSet && existingSet.has(sig)) {
+          rejectedByFileDedup++;
+          continue;
+        }
         let batchSet = batchFileSigsBySrc.get(src);
         if (!batchSet) {
           batchSet = new Set<string>();
           batchFileSigsBySrc.set(src, batchSet);
         }
-        if (batchSet.has(sig)) continue;
+        if (batchSet.has(sig)) {
+          rejectedByFileDedup++;
+          continue;
+        }
         batchSet.add(sig);
         accepted.push(e);
         continue;
@@ -1514,19 +1777,34 @@ export default function App(): JSX.Element {
         const src = String(e.source || "");
         const sig = entrySignature(e);
         const existingSet = httpSigCacheRef.current.get(src);
-        if (existingSet && existingSet.has(sig)) continue;
+        if (existingSet && existingSet.has(sig)) {
+          rejectedByHttpDedup++;
+          continue;
+        }
         let batchSet = batchHttpSigsBySrc.get(src);
         if (!batchSet) {
           batchSet = new Set<string>();
           batchHttpSigsBySrc.set(src, batchSet);
         }
-        if (batchSet.has(sig)) continue;
+        if (batchSet.has(sig)) {
+          rejectedByHttpDedup++;
+          continue;
+        }
         batchSet.add(sig);
         accepted.push(e);
         continue;
       }
       // Alle anderen Quellen unverändert
       accepted.push(e);
+    }
+
+    // Debug logging
+    if (newEntries.length !== accepted.length) {
+      // eslint-disable-next-line no-console
+      console.log(
+        `[dedupe-diag] Input: ${newEntries.length}, Accepted: ${accepted.length}, ` +
+          `Rejected by ES: ${rejectedByEsDedup}, File: ${rejectedByFileDedup}, HTTP: ${rejectedByHttpDedup}`,
+      );
     }
 
     if (accepted.length === 0) return;
@@ -3267,7 +3545,46 @@ export default function App(): JSX.Element {
               {countTotal}
             </span>{" "}
             {t("toolbar.total")},{" "}
-            <span id="countFiltered" className="count">
+            <span
+              id="countFiltered"
+              className="count"
+              title={
+                lastFilterStats && countTotal > countFiltered
+                  ? `Gefiltert: ${countTotal - countFiltered} Einträge\n` +
+                    (lastFilterStats.rejectedByLevel > 0
+                      ? `• Level: ${lastFilterStats.rejectedByLevel}\n`
+                      : "") +
+                    (lastFilterStats.rejectedByLogger > 0
+                      ? `• Logger: ${lastFilterStats.rejectedByLogger}\n`
+                      : "") +
+                    (lastFilterStats.rejectedByThread > 0
+                      ? `• Thread: ${lastFilterStats.rejectedByThread}\n`
+                      : "") +
+                    (lastFilterStats.rejectedByMessage > 0
+                      ? `• Message: ${lastFilterStats.rejectedByMessage}\n`
+                      : "") +
+                    (lastFilterStats.rejectedByTime > 0
+                      ? `• Zeit: ${lastFilterStats.rejectedByTime}\n`
+                      : "") +
+                    (lastFilterStats.rejectedByDC > 0
+                      ? `• DC-Filter: ${lastFilterStats.rejectedByDC}\n`
+                      : "") +
+                    (lastFilterStats.rejectedByOnlyMarked > 0
+                      ? `• Nur Markierte: ${lastFilterStats.rejectedByOnlyMarked}\n`
+                      : "")
+                  : undefined
+              }
+              style={{
+                cursor:
+                  lastFilterStats && countTotal > countFiltered
+                    ? "help"
+                    : undefined,
+                textDecoration:
+                  lastFilterStats && countTotal > countFiltered
+                    ? "underline dotted"
+                    : undefined,
+              }}
+            >
               {countFiltered}
             </span>{" "}
             {t("toolbar.filtered")},{" "}
@@ -4018,6 +4335,7 @@ export default function App(): JSX.Element {
           role="listbox"
           aria-label={t("list.ariaLabel")}
           onKeyDown={onListKeyDown as any}
+          onScroll={handleListScroll as any}
           onMouseDown={(ev) => {
             try {
               // Stelle sicher, dass die Liste fokussiert ist wenn sie geklickt wird

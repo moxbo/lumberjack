@@ -6,12 +6,28 @@ import { compareByTimestampId } from "./sort";
 
 /**
  * Entry signature for deduplication (without _id, since that's assigned later)
+ * Uses _fullMessage if available (for truncated entries) to ensure unique signatures
+ * even when messages share the same truncated prefix.
+ * For very large messages, uses prefix + length to avoid memory issues.
  */
 export function entrySignatureForMerge(e: any): string {
   if (!e) return "";
   const ts = e?.timestamp != null ? String(e.timestamp) : "";
   const lg = e?.logger != null ? String(e.logger) : "";
-  const msg = e?.message != null ? String(e.message) : "";
+  // Use _fullMessage (original before truncation) if available, otherwise use message
+  let msg =
+    e?._fullMessage != null
+      ? String(e._fullMessage)
+      : e?.message != null
+        ? String(e.message)
+        : "";
+
+  // For very large messages, use prefix + length to create unique but memory-efficient signature
+  const MAX_SIG_MSG_LENGTH = 10 * 1024; // 10 KB max for signature
+  if (msg.length > MAX_SIG_MSG_LENGTH) {
+    msg = msg.substring(0, MAX_SIG_MSG_LENGTH) + `[len:${msg.length}]`;
+  }
+
   const src = e?.source != null ? String(e.source) : "";
   return `${ts}|${lg}|${msg}|${src}`;
 }
@@ -19,12 +35,28 @@ export function entrySignatureForMerge(e: any): string {
 /**
  * Entry signature for marking (more concise, used for marks persistence)
  * For Elasticsearch entries, includes source (which contains document ID) to avoid
- * false deduplication of entries with same timestamp/logger/message
+ * false deduplication of entries with same timestamp/logger/message.
+ * Uses _fullMessage if available (for truncated entries) to ensure unique signatures.
+ * For very large messages, uses prefix + length to avoid memory issues.
  */
 export function entrySignature(e: any): string {
   const ts = e?.timestamp != null ? String(e.timestamp) : "";
   const lg = e?.logger != null ? String(e.logger) : "";
-  const msg = e?.message != null ? String(e.message) : "";
+
+  // Use _fullMessage (original before truncation) if available, otherwise use message
+  let msg =
+    e?._fullMessage != null
+      ? String(e._fullMessage)
+      : e?.message != null
+        ? String(e.message)
+        : "";
+
+  // For very large messages, use prefix + length to create unique but memory-efficient signature
+  const MAX_SIG_MSG_LENGTH = 10 * 1024; // 10 KB max for signature
+  if (msg.length > MAX_SIG_MSG_LENGTH) {
+    msg = msg.substring(0, MAX_SIG_MSG_LENGTH) + `[len:${msg.length}]`;
+  }
+
   // For ES entries, include source (contains doc ID) to distinguish same-content entries
   const src = e?.source;
   if (typeof src === "string" && src.startsWith("elastic://")) {

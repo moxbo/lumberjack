@@ -3,9 +3,35 @@
  * Detail Panel Component - Zeigt Details zum ausgewählten Log-Eintrag
  */
 import { Fragment } from "preact";
+import { useState } from "preact/hooks";
 import { useI18n } from "../../utils/i18n";
 import { highlightAll } from "../../utils/highlight";
 import { levelClass, fmtTimestamp, computeTint, fmt } from "../../utils/format";
+
+/**
+ * Format byte size to human-readable string
+ */
+function formatSize(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(2)} MB`;
+}
+
+/**
+ * Get the actual message size (from _messageSize if truncated, otherwise calculate)
+ */
+function getMessageSize(entry: any): number {
+  if (entry._messageSize) return entry._messageSize;
+  if (entry._fullMessage) return entry._fullMessage.length;
+  return (entry.message || "").length;
+}
+
+/**
+ * Get the full message (from _fullMessage if truncated, otherwise message)
+ */
+function getFullMessage(entry: any): string {
+  return entry._fullMessage || entry.message || "";
+}
 
 interface DetailPanelProps {
   selectedEntry: any | null;
@@ -25,6 +51,11 @@ export function DetailPanel({
   onFilterByThread,
 }: DetailPanelProps) {
   const { t } = useI18n();
+  const [showFullMessage, setShowFullMessage] = useState(false);
+
+  // Reset showFullMessage when selected entry changes
+  const isTruncated = selectedEntry?._truncated === true;
+  const messageSize = selectedEntry ? getMessageSize(selectedEntry) : 0;
 
   return (
     <div
@@ -133,11 +164,74 @@ export function DetailPanel({
           <div className="section-sep" />
 
           <div className="kv full">
-            <span>{t("details.message")}</span>
+            <span
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: "8px",
+                flexWrap: "wrap",
+              }}
+            >
+              {t("details.message")}
+              <span
+                style={{
+                  fontSize: "11px",
+                  color: "var(--color-text-secondary, #666)",
+                  fontWeight: "normal",
+                }}
+                title="Nachrichtengröße"
+              >
+                ({formatSize(messageSize)})
+              </span>
+              {isTruncated && (
+                <button
+                  onClick={() => setShowFullMessage(!showFullMessage)}
+                  style={{
+                    padding: "2px 8px",
+                    fontSize: "11px",
+                    cursor: "pointer",
+                    background: showFullMessage
+                      ? "var(--color-primary, #007acc)"
+                      : "var(--color-bg-secondary, #f0f0f0)",
+                    color: showFullMessage
+                      ? "white"
+                      : "var(--color-text-secondary, #666)",
+                    border: "1px solid var(--color-border, #ddd)",
+                    borderRadius: "4px",
+                  }}
+                  title={
+                    showFullMessage
+                      ? "Gekürzte Ansicht"
+                      : "Vollständige Nachricht anzeigen (kann bei großen Nachrichten langsam sein)"
+                  }
+                >
+                  {showFullMessage ? "▼ Gekürzt" : "▶ Vollständig"}
+                </button>
+              )}
+              {isTruncated && !showFullMessage && (
+                <span
+                  style={{
+                    fontSize: "10px",
+                    color: "var(--color-warning, #f0ad4e)",
+                  }}
+                >
+                  ⚠️ Nachricht gekürzt
+                </span>
+              )}
+            </span>
             <pre
               id="dMessage"
+              style={{
+                maxHeight: showFullMessage ? "none" : "400px",
+                overflow: showFullMessage ? "auto" : "auto",
+              }}
               dangerouslySetInnerHTML={{
-                __html: highlightAll(selectedEntry.message || "", search),
+                __html: highlightAll(
+                  showFullMessage
+                    ? getFullMessage(selectedEntry)
+                    : selectedEntry.message || "",
+                  search,
+                ),
               }}
             />
           </div>
