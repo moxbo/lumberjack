@@ -155,15 +155,15 @@ export default function ElasticSearchDialog(props: any) {
         onClick={(e) => e.stopPropagation()}
         style={{
           marginTop: "4px",
-          maxHeight: "180px",
+          maxHeight: "280px",
           overflow: "auto",
           border: "1px solid var(--glass-border, var(--color-border))",
           borderRadius: "4px",
           background: "var(--color-bg-paper)",
           color: "var(--color-text-primary)",
-          boxShadow: "0 2px 8px rgba(0,0,0,0.12)",
+          boxShadow: "0 4px 16px rgba(0,0,0,0.2)",
           padding: "4px",
-          zIndex: "var(--z-dropdown)",
+          zIndex: 9999,
           ...(props.style || {}),
         }}
       >

@@ -2568,7 +2568,7 @@ input[type="checkbox"] {
   border: 1px solid var(--color-divider);
   border-radius: var(--radius-md);
   margin-bottom: 12px;
-  overflow: hidden;
+  overflow: visible; /* Allow dropdowns to extend beyond section */
 }
 
 .es-dialog-section-header {
@@ -2580,6 +2580,12 @@ input[type="checkbox"] {
   cursor: pointer;
   user-select: none;
   transition: background var(--transition-fast);
+  border-radius: var(--radius-md) var(--radius-md) 0 0;
+}
+
+/* Collapsed sections have fully rounded header */
+.es-dialog-section.collapsed .es-dialog-section-header {
+  border-radius: var(--radius-md);
 }
 
 .es-dialog-section-header:hover {
@@ -2606,6 +2612,7 @@ input[type="checkbox"] {
 .es-dialog-section-content {
   padding: 16px;
   border-top: 1px solid var(--color-divider);
+  overflow: visible; /* Allow dropdowns to extend beyond section */
 }
 
 .es-dialog-section.collapsed .es-dialog-section-content {
