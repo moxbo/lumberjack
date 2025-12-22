@@ -224,10 +224,22 @@ jobs:
           $archDir = Join-Path $outDir $arch
           if (-not (Test-Path $archDir)) { New-Item -ItemType Directory -Path $archDir | Out-Null }
           $moved = 0
+          
+          # Move files matching arch name
           Get-ChildItem -Path $outDir -File -Force -ErrorAction SilentlyContinue | Where-Object { $_.Name -like "*$arch*" } | ForEach-Object {
             Move-Item -Path $_.FullName -Destination $archDir -Force
             $moved += 1
           }
+          
+          # Move latest.yml (only for x64 which builds NSIS installer)
+          if ($arch -eq "x64") {
+            Get-ChildItem -Path $outDir -File -Force -ErrorAction SilentlyContinue | Where-Object { $_.Name -like "*.yml" } | ForEach-Object {
+              Copy-Item -Path $_.FullName -Destination $archDir -Force
+              Write-Host "Copied $($_.Name) to $archDir"
+              $moved += 1
+            }
+          }
+          
           if (Test-Path (Join-Path $outDir 'win-unpacked')) {
             $dest = Join-Path $archDir 'win-unpacked'
             # Move win-unpacked directory into arch folder (if present)
