@@ -2508,6 +2508,10 @@ setInterval(() => {
         });
       } catch {}
     }
+    // IMPORTANT: Always update lastActivityTime when interval fires.
+    // The fact that this callback runs proves the event loop is NOT frozen.
+    // Without this, frozenMs would accumulate infinitely even when responsive.
+    lastActivityTime = now;
   } else {
     if (frozenIntervalCount > 0) {
       try {
