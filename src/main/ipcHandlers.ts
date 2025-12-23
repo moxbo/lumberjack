@@ -195,7 +195,7 @@ export function registerIpcHandlers(
 
   ipcMain.handle(
     "settings:set",
-    (_event, patch: Partial<Settings>): SettingsResult => {
+    async (_event, patch: Partial<Settings>): Promise<SettingsResult> => {
       try {
         if (!patch || typeof patch !== "object") {
           return { ok: false, error: t("main.errors.invalidPatch") };
@@ -231,7 +231,8 @@ export function registerIpcHandlers(
           settingsService.update(updated);
         }
 
-        const saved = settingsService.saveSync();
+        // Use async save to avoid blocking the main process
+        const saved = await settingsService.save();
         if (!saved) {
           return { ok: false, error: t("main.errors.saveFailed") };
         }
@@ -438,12 +439,23 @@ export function registerIpcHandlers(
 
   // Log parsing handlers
 
+  // Helper to yield to the event loop, preventing UI blocking
+  const yieldToEventLoop = (): Promise<void> =>
+    new Promise((resolve) => setImmediate(resolve));
+
   ipcMain.handle(
     "logs:parsePaths",
     async (_event, filePaths: string[]): Promise<ParseResult> => {
       try {
         const { parsePaths } = getParsers();
+
+        // Yield before heavy parsing to keep UI responsive
+        await yieldToEventLoop();
+
         const entries: LogEntry[] = parsePaths(filePaths);
+
+        // Yield after parsing before processing results
+        await yieldToEventLoop();
 
         // Log parsing summary
         log.info(
@@ -482,7 +494,11 @@ export function registerIpcHandlers(
         const { parseJsonFile, parseTextLines } = getParsers();
         const ZipClass = getAdmZip();
         const all: LogEntry[] = [];
+
         for (const f of files) {
+          // Yield between files to keep UI responsive
+          await yieldToEventLoop();
+
           const name = String(f?.name || "");
           const enc = String(f?.encoding || "utf8");
           const data = String(f?.data || "");
@@ -502,6 +518,9 @@ export function registerIpcHandlers(
                   eext === ".jsonl" ||
                   eext === ".txt")
               ) {
+                // Yield between zip entries for large archives
+                await yieldToEventLoop();
+
                 const text = zEntry.getData().toString("utf8");
                 const parsed: LogEntry[] =
                   eext === ".json"
