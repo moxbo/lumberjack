@@ -124,6 +124,10 @@ export class SettingsService {
       if ("windowTitle" in parsed) {
         delete parsed.windowTitle;
       }
+      // marksMap is session-only (ephemeral) - don't load from persisted settings
+      if ("marksMap" in parsed) {
+        delete parsed.marksMap;
+      }
 
       // Merge with defaults to ensure all required fields exist
       this.settings = { ...DEFAULT_SETTINGS, ...parsed } as Settings;
@@ -162,6 +166,10 @@ export class SettingsService {
       if ("windowTitle" in parsed) {
         delete (parsed as Record<string, unknown>)["windowTitle"];
       }
+      // marksMap is session-only (ephemeral) - don't load from persisted settings
+      if ("marksMap" in parsed) {
+        delete (parsed as Record<string, unknown>)["marksMap"];
+      }
       this.settings = { ...DEFAULT_SETTINGS, ...parsed } as Settings;
       log.info(
         "[settings] loadSync(): merged httpUrl:",
@@ -199,7 +207,10 @@ export class SettingsService {
         );
       }
 
-      const json = JSON.stringify(this.settings, null, 2);
+      // Exclude marksMap from persistence - it's session-only (ephemeral)
+      const { marksMap: _excluded, ...settingsToSave } = this
+        .settings as Settings & { marksMap?: Record<string, string> };
+      const json = JSON.stringify(settingsToSave, null, 2);
       const dir = path.dirname(this.settingsPath);
       await fs.promises.mkdir(dir, { recursive: true });
       await fs.promises.writeFile(this.settingsPath, json, "utf8");
@@ -235,7 +246,10 @@ export class SettingsService {
           e instanceof Error ? e.message : String(e),
         );
       }
-      const json = JSON.stringify(this.settings, null, 2);
+      // Exclude marksMap from persistence - it's session-only (ephemeral)
+      const { marksMap: _excluded, ...settingsToSave } = this
+        .settings as Settings & { marksMap?: Record<string, string> };
+      const json = JSON.stringify(settingsToSave, null, 2);
       const dir = path.dirname(this.settingsPath);
       fs.mkdirSync(dir, { recursive: true });
       fs.writeFileSync(this.settingsPath, json, "utf8");

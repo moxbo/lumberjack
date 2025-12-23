@@ -2719,6 +2719,8 @@ export default function App(): JSX.Element {
     setLastEsForm(null);
     setEsTotal(null);
     setEsBaseline(0);
+    // Clear marksMap (session-only, not persisted)
+    setMarksMap({});
     // Datei-Dedupe-Cache leeren
     fileSigCacheRef.current = new Map();
     // HTTP-Dedupe-Cache leeren
