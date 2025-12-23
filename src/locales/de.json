@@ -183,7 +183,8 @@
     "performance": {
       "heapSize": "Speicherlimit",
       "heapSizeHint": "Maximaler Arbeitsspeicher für die Anwendung. Größere Werte ermöglichen mehr Log-Einträge, benötigen aber einen Neustart.",
-      "default": "Standard"
+      "default": "Standard",
+      "restartRequired": "Das Speicherlimit wurde geändert. Die Änderung wird erst nach einem Neustart wirksam.\n\nMöchten Sie die Anwendung jetzt neu starten?"
     },
     "cancel": "Abbrechen",
     "save": "Speichern"

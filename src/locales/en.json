@@ -183,7 +183,8 @@
     "performance": {
       "heapSize": "Memory Limit",
       "heapSizeHint": "Maximum memory for the application. Higher values allow more log entries but require a restart.",
-      "default": "Default"
+      "default": "Default",
+      "restartRequired": "The memory limit has been changed. The change will take effect after a restart.\n\nDo you want to restart the application now?"
     },
     "cancel": "Cancel",
     "save": "Save"

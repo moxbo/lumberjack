@@ -44,6 +44,8 @@ const DEFAULT_SETTINGS: Settings = {
   elasticMaxParallel: 1,
   // Auto-Update
   allowPrerelease: false,
+  // Performance / Memory - heap size in MB (requires restart)
+  heapSizeMB: 2048,
 };
 
 /**
@@ -357,6 +359,16 @@ export class SettingsService {
       const v = Number(settings.elasticMaxParallel);
       if (!Number.isFinite(v) || v < 1) {
         return { success: false, error: "elasticMaxParallel must be >= 1" };
+      }
+    }
+
+    if (settings.heapSizeMB !== undefined) {
+      const v = Number(settings.heapSizeMB);
+      if (!Number.isFinite(v) || v < 512 || v > 8192) {
+        return {
+          success: false,
+          error: "heapSizeMB must be between 512 and 8192",
+        };
       }
     }
 

@@ -631,7 +631,10 @@ export default function App(): JSX.Element {
     elasticPassClear: false,
     elasticMaxParallel: 1,
     allowPrerelease: false,
+    heapSizeMB: 2048,
   });
+  // Store original heap size to detect changes requiring restart
+  const [originalHeapSizeMB, setOriginalHeapSizeMB] = useState<number>(2048);
   // NEU: hält das tatsächlich beim Start verwendete Poll-Intervall (für stabilen Countdown)
   const [currentPollInterval, setCurrentPollInterval] = useState<number | null>(
     null,
@@ -2254,6 +2257,7 @@ export default function App(): JSX.Element {
     let curElasticUser = elasticUser;
     let curElasticMaxParallel = elasticMaxParallel;
     let curAllowPrerelease = false;
+    let curHeapSizeMB = 2048;
 
     try {
       if (window.api?.settingsGet) {
@@ -2327,6 +2331,9 @@ export default function App(): JSX.Element {
           if (typeof r.allowPrerelease === "boolean") {
             curAllowPrerelease = r.allowPrerelease;
           }
+          if (typeof r.heapSizeMB === "number") {
+            curHeapSizeMB = r.heapSizeMB;
+          }
         }
       }
     } catch (e) {
@@ -2351,7 +2358,9 @@ export default function App(): JSX.Element {
       elasticPassClear: false,
       elasticMaxParallel: curElasticMaxParallel || 1,
       allowPrerelease: curAllowPrerelease,
+      heapSizeMB: curHeapSizeMB,
     });
+    setOriginalHeapSizeMB(curHeapSizeMB);
     setSettingsTab(initialTab || "tcp");
     setShowSettings(true);
   }
@@ -2387,6 +2396,10 @@ export default function App(): JSX.Element {
         Number((form as any).elasticMaxParallel || elasticMaxParallel || 1),
       ),
       allowPrerelease: !!(form as any).allowPrerelease,
+      heapSizeMB: Math.max(
+        512,
+        Math.min(8192, Number((form as any).heapSizeMB || 2048)),
+      ),
     };
     const newPass = String(form.elasticPassNew || "").trim();
     if (form.elasticPassClear) patch["elasticPassClear"] = true;
@@ -2426,6 +2439,23 @@ export default function App(): JSX.Element {
       }
 
       setShowSettings(false);
+
+      // Check if heap size changed and ask for restart
+      const newHeapSize = Math.max(
+        512,
+        Math.min(8192, Number((form as any).heapSizeMB || 2048)),
+      );
+      if (newHeapSize !== originalHeapSizeMB) {
+        // Use setTimeout to allow the modal to close first
+        setTimeout(() => {
+          const shouldRestart = window.confirm(
+            t("settings.performance.restartRequired"),
+          );
+          if (shouldRestart && window.api?.appRelaunch) {
+            void window.api.appRelaunch();
+          }
+        }, 100);
+      }
     } catch (e) {
       logger.error("Failed to save settings:", e);
       showAlert(

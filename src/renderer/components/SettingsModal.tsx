@@ -795,21 +795,22 @@ export function SettingsModal({
                     <select
                       id="heapSizeMB"
                       className="settings-select"
-                      value={form.heapSizeMB || 2048}
-                      onChange={(e) =>
+                      value={String(form.heapSizeMB || 2048)}
+                      onChange={(e) => {
+                        const newValue = parseInt(e.currentTarget.value, 10);
                         onFormChange({
                           ...form,
-                          heapSizeMB: parseInt(e.currentTarget.value, 10),
-                        })
-                      }
+                          heapSizeMB: newValue,
+                        });
+                      }}
                     >
-                      <option value={512}>512 MB</option>
-                      <option value={1024}>1 GB</option>
-                      <option value={2048}>
+                      <option value="512">512 MB</option>
+                      <option value="1024">1 GB</option>
+                      <option value="2048">
                         2 GB ({t("settings.performance.default")})
                       </option>
-                      <option value={4096}>4 GB</option>
-                      <option value={8192}>8 GB</option>
+                      <option value="4096">4 GB</option>
+                      <option value="8192">8 GB</option>
                     </select>
                   </div>
                 </div>

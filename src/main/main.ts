@@ -100,6 +100,9 @@ if (process.platform === "win32") {
     // Ignore errors, use default
   }
 
+  // Log the heap size being used (console.warn is allowed by ESLint)
+  console.warn(`[startup] Heap size configured: ${heapSizeMB}MB`);
+
   // Increase memory allocation for renderer process to prevent OOM crashes
   // with large Elasticsearch result sets (configurable via settings.heapSizeMB)
   app.commandLine.appendSwitch(
@@ -248,6 +251,25 @@ log.info("[diag] Application starting", {
       ? log.transports.file.getFile().path
       : "disabled",
 });
+
+// Log configured heap size (read from settings at startup)
+// This helps diagnose OOM issues
+{
+  let configuredHeapMB = 2048; // default
+  try {
+    const settingsPath = path.join(app.getPath("userData"), "settings.json");
+    if (fs.existsSync(settingsPath)) {
+      const raw = fs.readFileSync(settingsPath, "utf-8");
+      const parsed = JSON.parse(raw) as { heapSizeMB?: number };
+      if (typeof parsed.heapSizeMB === "number") {
+        configuredHeapMB = Math.max(512, Math.min(8192, parsed.heapSizeMB));
+      }
+    }
+  } catch {
+    // ignore
+  }
+  log.info("[memory] Heap size configured:", `${configuredHeapMB}MB`);
+}
 
 // Set AppUserModelId for Windows taskbar and notifications
 // This must be done early in the app lifecycle
