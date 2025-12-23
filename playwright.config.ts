@@ -3,7 +3,7 @@ import { defineConfig } from "@playwright/test";
 /**
  * Playwright Configuration for Electron E2E Tests
  *
- * Uses playwright-electron to launch and test the Electron app
+ * Uses Playwright's native Electron support to launch and test the Electron app
  *
  * Artefakte werden in folgenden Ordnern gespeichert:
  * - test-results/     → Screenshots, Videos, Traces bei Fehlern

@@ -61,7 +61,6 @@
     "jimp": "^1.6.0",
     "license-checker": "^25.0.1",
     "lint-staged": "^16.2.7",
-    "playwright-electron": "^0.5.0",
     "png-to-ico": "^3.0.1",
     "prettier": "^3.7.4",
     "rcedit": "^5.0.2",
