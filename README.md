@@ -60,6 +60,15 @@ npm run build:mac:dmg
 
 Build-Artefakte befinden sich in `release/build/`.
 
+### Installation
+
+> ⚠️ **Hinweis:** Beim ersten Start kann eine Sicherheitswarnung erscheinen, da die App nicht signiert ist.
+>
+> - **macOS**: Rechtsklick → "Öffnen" → "Öffnen" bestätigen
+> - **Windows**: "Weitere Informationen" → "Trotzdem ausführen"
+>
+> Siehe [Troubleshooting](docs/user/TROUBLESHOOTING_AND_FAQ.md#️-sicherheitswarnungen-beim-ersten-start) für Details.
+
 ---
 
 ## 📦 Projekt-Struktur
@@ -155,15 +164,24 @@ npm run diagnose:memory # Speicher-Diagnose
 
 ## 📄 Lizenz
 
-[ISC](LICENSE) © Moritz Bohm
+[MIT](LICENSE) © Moritz Bohm
 
 ---
 
 ## 🤝 Contributing
 
+Wir freuen uns über Beiträge! Siehe [CONTRIBUTING.md](CONTRIBUTING.md) für Details.
+
+Kurz-Anleitung:
 1. Fork erstellen
 2. Feature Branch: `git checkout -b feature/amazing-feature`
 3. Commit: `git commit -m 'Add amazing feature'`
 4. Push: `git push origin feature/amazing-feature`
 5. Pull Request öffnen
+
+---
+
+## 🔒 Security
+
+Sicherheitslücken melden? Siehe [SECURITY.md](SECURITY.md).
 

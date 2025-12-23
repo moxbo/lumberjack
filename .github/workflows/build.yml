@@ -140,8 +140,19 @@ jobs:
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
-        os: [windows-latest]
-        arch: [x64, ia32]
+        include:
+          - os: windows-latest
+            arch: x64
+            platform: win
+          - os: windows-latest
+            arch: ia32
+            platform: win
+          - os: macos-latest
+            arch: arm64
+            platform: mac
+          - os: macos-latest
+            arch: x64
+            platform: mac
     steps:
       - uses: actions/checkout@v4
         with:
@@ -203,20 +214,36 @@ jobs:
           CI: true
 
       - name: Build Windows Portable
+        if: ${{ matrix.platform == 'win' }}
         run: npx electron-builder --win portable --${{ matrix.arch }} --publish never
         env:
           CI: true
-          CSC_IDENTITY_AUTO_DISCOVERY: false
+          # Code Signing: Set CSC_LINK and CSC_KEY_PASSWORD secrets to enable
+          CSC_LINK: ${{ secrets.WIN_CSC_LINK }}
+          CSC_KEY_PASSWORD: ${{ secrets.WIN_CSC_KEY_PASSWORD }}
 
       - name: Build Windows NSIS Installer
-        if: ${{ matrix.arch == 'x64' }}
+        if: ${{ matrix.platform == 'win' && matrix.arch == 'x64' }}
         run: npx electron-builder --win nsis --x64 --publish never
         env:
           CI: true
-          CSC_IDENTITY_AUTO_DISCOVERY: false
+          CSC_LINK: ${{ secrets.WIN_CSC_LINK }}
+          CSC_KEY_PASSWORD: ${{ secrets.WIN_CSC_KEY_PASSWORD }}
 
-      - name: Organize build outputs into arch subfolder
-        if: always()
+      - name: Build macOS DMG
+        if: ${{ matrix.platform == 'mac' }}
+        run: npx electron-builder --mac dmg --${{ matrix.arch }} --publish never
+        env:
+          CI: true
+          # Code Signing & Notarization: Set these secrets to enable
+          CSC_LINK: ${{ secrets.MAC_CSC_LINK }}
+          CSC_KEY_PASSWORD: ${{ secrets.MAC_CSC_KEY_PASSWORD }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+
+      - name: Organize Windows build outputs into arch subfolder
+        if: ${{ matrix.platform == 'win' && always() }}
         shell: pwsh
         run: |
           $arch = "${{ matrix.arch }}"
@@ -247,7 +274,26 @@ jobs:
           }
           Write-Host "Moved $moved files into $archDir"
 
-      - name: Upload artifacts
+      - name: Organize macOS build outputs into arch subfolder
+        if: ${{ matrix.platform == 'mac' && always() }}
+        shell: bash
+        run: |
+          arch="${{ matrix.arch }}"
+          outDir="release/build"
+          archDir="$outDir/mac-$arch"
+          mkdir -p "$archDir"
+          
+          # Move DMG and other macOS artifacts
+          find "$outDir" -maxdepth 1 -name "*.dmg" -exec mv {} "$archDir/" \;
+          find "$outDir" -maxdepth 1 -name "*.zip" -exec mv {} "$archDir/" \;
+          find "$outDir" -maxdepth 1 -name "*.blockmap" -exec mv {} "$archDir/" \;
+          find "$outDir" -maxdepth 1 -name "latest-mac*.yml" -exec cp {} "$archDir/" \;
+          
+          echo "macOS artifacts organized in $archDir"
+          ls -la "$archDir" || true
+
+      - name: Upload Windows artifacts
+        if: ${{ matrix.platform == 'win' }}
         uses: actions/upload-artifact@v4
         with:
           name: windows-release-${{ matrix.arch }}
@@ -257,19 +303,39 @@ jobs:
             release/build/${{ matrix.arch }}/*.blockmap
           retention-days: 30
 
+      - name: Upload macOS artifacts
+        if: ${{ matrix.platform == 'mac' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: macos-release-${{ matrix.arch }}
+          path: |
+            release/build/mac-${{ matrix.arch }}/*.dmg
+            release/build/mac-${{ matrix.arch }}/*.zip
+            release/build/mac-${{ matrix.arch }}/*.yml
+            release/build/mac-${{ matrix.arch }}/*.blockmap
+          retention-days: 30
+
       - name: Create GitHub Release and Upload Assets
         if: needs.prepare-release.outputs.should_release == 'true'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           ARCH: ${{ matrix.arch }}
+          PLATFORM: ${{ matrix.platform }}
         shell: bash
         run: |
           tag="${{ needs.prepare-release.outputs.release_tag }}"
 
-          # Upload only files matching current ARCH
-          echo "Uploading artifacts for ARCH=$ARCH"
+          # Determine artifact directory based on platform
+          if [[ "$PLATFORM" == "mac" ]]; then
+            artifact_dir="release/build/mac-$ARCH"
+          else
+            artifact_dir="release/build/$ARCH"
+          fi
+
+          # Upload artifacts
+          echo "Uploading artifacts from $artifact_dir for PLATFORM=$PLATFORM ARCH=$ARCH"
           matches=0
-          for file in release/build/"$ARCH"/*; do
+          for file in "$artifact_dir"/*; do
             if [ -f "$file" ]; then
               echo "Uploading $file..."
               gh release upload "$tag" "$file" --clobber || true
@@ -277,7 +343,7 @@ jobs:
             fi
           done
           if [ "$matches" -eq 0 ]; then
-            echo "No artifacts found for arch=$ARCH, skipping upload."
+            echo "No artifacts found in $artifact_dir, skipping upload."
           fi
 
   finalize-release:

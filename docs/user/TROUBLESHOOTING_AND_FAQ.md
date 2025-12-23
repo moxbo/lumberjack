@@ -3,6 +3,61 @@
 
 ---
 
+## ⚠️ SICHERHEITSWARNUNGEN BEIM ERSTEN START
+
+### macOS: "App kann nicht geöffnet werden"
+
+**Symptom:**
+> "Lumberjack" kann nicht geöffnet werden, da es von einem nicht verifizierten Entwickler stammt.
+
+**Lösung:**
+
+**Methode 1 - Rechtsklick (Empfohlen):**
+1. Im Finder zur App navigieren (`/Applications/Lumberjack.app`)
+2. **Rechtsklick** (oder Ctrl+Klick) auf die App
+3. "Öffnen" auswählen
+4. Im Dialog erneut "Öffnen" klicken
+5. ✅ Die App startet und wird für zukünftige Starts freigeschaltet
+
+**Methode 2 - Systemeinstellungen:**
+1. Systemeinstellungen → Datenschutz & Sicherheit
+2. Nach unten scrollen zu "Sicherheit"
+3. "Lumberjack trotzdem öffnen" klicken
+4. Mit Touch ID oder Passwort bestätigen
+
+**Methode 3 - Terminal:**
+```bash
+xattr -cr /Applications/Lumberjack.app
+```
+
+---
+
+### Windows: "Windows hat Ihren PC geschützt" (SmartScreen)
+
+**Symptom:**
+> Windows Defender SmartScreen hat den Start einer unbekannten App verhindert.
+
+**Lösung:**
+1. Im SmartScreen-Dialog auf **"Weitere Informationen"** klicken
+2. Dann auf **"Trotzdem ausführen"** klicken
+3. ✅ Die App startet
+
+**Hinweis:** Diese Warnung erscheint nur beim ersten Start. Windows merkt sich die Entscheidung.
+
+---
+
+### Warum diese Warnungen?
+
+Lumberjack ist **Open Source** und wird ohne kostenpflichtige Code-Signing-Zertifikate verteilt. Das bedeutet:
+
+- ✅ Die App ist sicher und enthält keine Malware
+- ✅ Der Quellcode ist auf GitHub einsehbar
+- ⚠️ macOS/Windows können den Entwickler nicht verifizieren
+
+**Für Entwickler:** Siehe [Code Signing Guide](../developer/CODE_SIGNING_GUIDE.md) für Informationen zur Signierung.
+
+---
+
 ## 🔴 KRITISCHE FEHLER
 
 ### Problem: "Cannot read property 'length' of undefined"
@@ -242,14 +297,14 @@ emitter.once('data', callback); // Nur einmal
 **Ursache 3: Buffer zu groß**
 ```typescript
 // FALSCH: Unbegrenztes Wachstum
-let buffer = [];
+let logBuffer = [];
 while (hasData()) {
-  buffer.push(getData()); // Kann Millionen werden
+  logBuffer.push(getData()); // Kann Millionen werden
 }
 
 // RICHTIG: Mit Limits
-const buffer = new AdaptiveBuffer(5000);
-if (!buffer.add(entries)) {
+const adaptiveBuffer = new AdaptiveBuffer(5000);
+if (!adaptiveBuffer.add(entries)) {
   // Backpressure: DROP die Daten
   log.warn('Buffer full, dropping entries');
 }
@@ -543,5 +598,3 @@ grep "2025-11-12" ~/.config/Lumberjack/logs/*.log
 - [Electron Debugging](https://www.electronjs.org/docs/tutorial/debugging-main-process)
 - [Node.js Profiling](https://nodejs.org/en/docs/guides/simple-profiling/)
 - [Chrome DevTools Tips](https://developer.chrome.com/docs/devtools/memory-problems/)
-
-

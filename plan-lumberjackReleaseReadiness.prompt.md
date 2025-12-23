@@ -2,30 +2,30 @@
 
 Cross-team plan to harden stability, finalize Win/macOS distribution with signing hooks, wire up Playwright + CI coverage, update compliance docs, and execute a last-mile QA gate so Lumberjack ships reliably on both platforms.
 
-**Version**: 1.0.2  
-**Last Updated**: 2025-12-17  
-**Status**: 🟡 In Progress
+**Version**: 1.0.0  
+**Last Updated**: 2025-12-24  
+**Status**: 🟢 Ready for Release (without code signing)
 
 ---
 
 ### Current State Assessment
 
-| Bereich | Status      | Details |
-|---------|-------------|---------|
-| Electron-Builder Config | ✅ Done      | Win portable/NSIS + macOS DMG/ZIP konfiguriert |
-| CI/CD Pipeline | ✅ Done      | GitHub Actions für Windows x64/ia32 builds |
-| Unit-Tests | ✅ Done      | 8+ Test-Suites in `scripts/` (smoke-parse, msg-filter, etc.) |
-| CHANGELOG | ✅ Done      | `docs/reference/CHANGELOG.md` vorhanden |
-| DEPLOYMENT_GUIDE | ✅ Done      | `docs/DEPLOYMENT_GUIDE.md` vorhanden |
-| Icon-Generation | ✅ Done      | `scripts/make-icon.ts` + Assets |
-| Lint/Format/Husky | ✅ Done      | ESLint + Prettier + lint-staged |
-| E2E-Tests (Playwright) | ✅ Done      | Basis-Tests in `tests/e2e/` |
-| PRIVACY.md | ✅ Done      | `docs/PRIVACY.md` (DE/EN) |
-| Third-Party-Lizenzen | ✅ Done     | `docs/THIRD_PARTY_LICENSES.md` + npm script |
-| Code Signing | ⚠️ Prepared | Konfiguriert aber deaktiviert |
-| macOS CI-Build | ⚠️ Missing  | Nur Windows in CI-Matrix |
-| Notarization Hook | ❌ Missing   | `afterSign` Hook fehlt |
-| Tests in CI | ✅ Done     | `npm test` in Workflow vor Build |
+| Bereich                 | Status      | Details                                                      |
+|-------------------------|-------------|--------------------------------------------------------------|
+| Electron-Builder Config | ✅ Done      | Win portable/NSIS + macOS DMG/ZIP konfiguriert               |
+| CI/CD Pipeline          | ✅ Done      | GitHub Actions für Windows x64/ia32 builds                   |
+| Unit-Tests              | ✅ Done      | 8+ Test-Suites in `scripts/` (smoke-parse, msg-filter, etc.) |
+| CHANGELOG               | ✅ Done      | `docs/reference/CHANGELOG.md` vorhanden                      |
+| DEPLOYMENT_GUIDE        | ✅ Done      | `docs/DEPLOYMENT_GUIDE.md` vorhanden                         |
+| Icon-Generation         | ✅ Done      | `scripts/make-icon.ts` + Assets                              |
+| Lint/Format/Husky       | ✅ Done      | ESLint + Prettier + lint-staged                              |
+| E2E-Tests (Playwright)  | ✅ Done      | Basis-Tests in `tests/e2e/`                                  |
+| PRIVACY.md              | ✅ Done      | `docs/PRIVACY.md` (DE/EN)                                    |
+| Third-Party-Lizenzen    | ✅ Done      | `docs/THIRD_PARTY_LICENSES.md` + npm script                  |
+| Code Signing            | ⚠️ Prepared | Konfiguriert aber deaktiviert                                |
+| macOS CI-Build          | ✅ Done      | In CI-Matrix hinzugefügt                                     |
+| Notarization Hook       | ❌ Missing   | `afterSign` Hook fehlt                                       |
+| Tests in CI             | ✅ Done      | `npm test` in Workflow vor Build                             |
 
 ---
 
@@ -83,30 +83,30 @@ Cross-team plan to harden stability, finalize Win/macOS distribution with signin
 ### Priority Tasks (Recommended Order)
 
 #### 🔴 P0 - Release Blocker (Diese Woche)
-| # | Task | Effort | Impact | Begründung |
-|---|------|--------|--------|------------|
-| 1 | `npm test` in CI integrieren | 2h | Critical | Verhindert Regressionen bei jedem Push |
-| 2 | Third-Party-Lizenzen exportieren | 1h | Critical | Rechtlich erforderlich für Distribution |
+| # | Task                             | Effort | Impact   | Begründung                              |
+|---|----------------------------------|--------|----------|-----------------------------------------|
+| 1 | `npm test` in CI integrieren     | 2h     | Critical | Verhindert Regressionen bei jedem Push  |
+| 2 | Third-Party-Lizenzen exportieren | 1h     | Critical | Rechtlich erforderlich für Distribution |
 
 #### 🟠 P1 - Vor Release (Woche 1-2)
-| # | Task | Effort | Impact | Begründung |
-|---|------|--------|--------|------------|
-| ~~3~~ | ~~PRIVACY.md erstellen~~ | ~~2h~~ | ~~High~~ | ✅ DONE |
-| ~~4~~ | ~~E2E-Tests Basis (`tests/e2e/smoke.spec.ts`)~~ | ~~1d~~ | ~~High~~ | ✅ DONE |
-| 5 | macOS zur CI-Matrix hinzufügen | 3h | High | Aktuell nur Windows getestet |
+| #     | Task                                            | Effort | Impact   | Begründung                   |
+|-------|-------------------------------------------------|--------|----------|------------------------------|
+| ~~3~~ | ~~PRIVACY.md erstellen~~                        | ~~2h~~ | ~~High~~ | ✅ DONE                       |
+| ~~4~~ | ~~E2E-Tests Basis (`tests/e2e/smoke.spec.ts`)~~ | ~~1d~~ | ~~High~~ | ✅ DONE                       |
+| 5     | macOS zur CI-Matrix hinzufügen                  | 3h     | High     | Aktuell nur Windows getestet |
 
 #### 🟡 P2 - Vor Production Release (Woche 3-4)
-| # | Task | Effort | Impact | Begründung |
-|---|------|--------|--------|------------|
-| 6 | Code-Signing aktivieren | 1d | Critical | Ohne Signing: Gatekeeper/SmartScreen-Warnungen |
-| 7 | afterSign Hook (Notarization) | 0.5d | High | macOS-spezifisch, nach Signing |
+| # | Task                          | Effort | Impact   | Begründung                                     |
+|---|-------------------------------|--------|----------|------------------------------------------------|
+| 6 | Code-Signing aktivieren       | 1d     | Critical | Ohne Signing: Gatekeeper/SmartScreen-Warnungen |
+| 7 | afterSign Hook (Notarization) | 0.5d   | High     | macOS-spezifisch, nach Signing                 |
 
 #### 🟢 P3 - Nice-to-Have (Nach Release)
-| # | Task | Effort | Impact | Begründung |
-|---|------|--------|--------|------------|
-| 8 | E2E-Tests erweitern (Filter, TCP, etc.) | 2-3d | Medium | Mehr Coverage |
-| 9 | ~~Auto-Update (electron-updater)~~ | ~~1d~~ | ~~Medium~~ | ✅ DONE |
-| 10 | Linux CI-Build | 0.5d | Low | Geringere Nutzerbasis |
+| #  | Task                                    | Effort | Impact     | Begründung            |
+|----|-----------------------------------------|--------|------------|-----------------------|
+| 8  | E2E-Tests erweitern (Filter, TCP, etc.) | 2-3d   | Medium     | Mehr Coverage         |
+| 9  | ~~Auto-Update (electron-updater)~~      | ~~1d~~ | ~~Medium~~ | ✅ DONE                |
+| 10 | Linux CI-Build                          | 0.5d   | Low        | Geringere Nutzerbasis |
 
 ---
 
@@ -164,12 +164,12 @@ Cross-team plan to harden stability, finalize Win/macOS distribution with signin
 
 ### Risk Assessment
 
-| Risk | Likelihood | Impact | Mitigation |
-|------|------------|--------|------------|
-| Unsigned App wird von Gatekeeper/SmartScreen blockiert | High | High | Code Signing priorisieren |
-| E2E-Tests fehlen, Regression unbemerkt | Medium | Medium | Playwright-Suite aufbauen |
-| Privacy-Compliance-Issues | Low | Low | ✅ PRIVACY.md erstellt |
-| CI-Build-Fehler auf macOS | Low | Low | macOS in CI testen |
+| Risk                                                   | Likelihood | Impact | Mitigation                |
+|--------------------------------------------------------|------------|--------|---------------------------|
+| Unsigned App wird von Gatekeeper/SmartScreen blockiert | High       | High   | Code Signing priorisieren |
+| E2E-Tests fehlen, Regression unbemerkt                 | Medium     | Medium | Playwright-Suite aufbauen |
+| Privacy-Compliance-Issues                              | Low        | Low    | ✅ PRIVACY.md erstellt     |
+| CI-Build-Fehler auf macOS                              | Low        | Low    | macOS in CI testen        |
 
 ---
 
