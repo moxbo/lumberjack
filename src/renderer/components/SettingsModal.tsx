@@ -781,6 +781,37 @@ export function SettingsModal({
                       </label>
                     </div>
                   </div>
+
+                  <div className="settings-divider" />
+
+                  {/* Heap Size Setting */}
+                  <div className="settings-field">
+                    <label className="settings-label" htmlFor="heapSizeMB">
+                      {t("settings.performance.heapSize")}
+                    </label>
+                    <p className="settings-field-hint">
+                      {t("settings.performance.heapSizeHint")}
+                    </p>
+                    <select
+                      id="heapSizeMB"
+                      className="settings-select"
+                      value={form.heapSizeMB || 2048}
+                      onChange={(e) =>
+                        onFormChange({
+                          ...form,
+                          heapSizeMB: parseInt(e.currentTarget.value, 10),
+                        })
+                      }
+                    >
+                      <option value={512}>512 MB</option>
+                      <option value={1024}>1 GB</option>
+                      <option value={2048}>
+                        2 GB ({t("settings.performance.default")})
+                      </option>
+                      <option value={4096}>4 GB</option>
+                      <option value={8192}>8 GB</option>
+                    </select>
+                  </div>
                 </div>
               </div>
             )}

@@ -3,7 +3,7 @@
  * Handles IPC communication between main and renderer processes
  */
 
-import { ipcMain, dialog, BrowserWindow } from "electron";
+import { ipcMain, dialog, BrowserWindow, app } from "electron";
 import log from "electron-log/main";
 import * as path from "path";
 import * as fs from "fs";
@@ -902,5 +902,13 @@ export function registerIpcHandlers(
       return { ok: true };
     }
     return { ok: false, error: t("main.errors.featureFlagsNotAvailable") };
+  });
+
+  // App relaunch handler
+  ipcMain.handle("app:relaunch", () => {
+    log.info("[app] Relaunch requested by renderer");
+    app.relaunch();
+    app.exit(0);
+    return { ok: true };
   });
 }

@@ -180,6 +180,11 @@
       "betaChannel": "Beta-Updates",
       "betaChannelHint": "Vorab-Versionen (Beta/RC) erhalten, bevor sie offiziell veröffentlicht werden."
     },
+    "performance": {
+      "heapSize": "Speicherlimit",
+      "heapSizeHint": "Maximaler Arbeitsspeicher für die Anwendung. Größere Werte ermöglichen mehr Log-Einträge, benötigen aber einen Neustart.",
+      "default": "Standard"
+    },
     "cancel": "Abbrechen",
     "save": "Speichern"
   },

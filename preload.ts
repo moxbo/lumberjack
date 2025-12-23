@@ -162,6 +162,9 @@ const api: ElectronAPI = {
   featureFlagsResetAll: (): Promise<Result<void>> =>
     ipcRenderer.invoke("featureFlags:resetAll"),
 
+  // App operations
+  appRelaunch: (): Promise<Result<void>> => ipcRenderer.invoke("app:relaunch"),
+
   // Auto-updater operations
   autoUpdaterCheck: (): Promise<unknown> =>
     ipcRenderer.invoke("auto-updater:check"),
@@ -196,6 +199,26 @@ const api: ElectronAPI = {
     ipcRenderer.on("auto-updater:status", listener);
     return (): void => {
       ipcRenderer.removeListener("auto-updater:status", listener);
+    };
+  },
+
+  // Memory critical warning listener
+  onMemoryCritical: (
+    callback: (data: {
+      heapUsedMB: number;
+      heapTotalMB: number;
+      heapPercent: number;
+    }) => void,
+  ): (() => void) => {
+    const listener = (
+      _event: IpcRendererEvent,
+      data: { heapUsedMB: number; heapTotalMB: number; heapPercent: number },
+    ): void => {
+      callback(data);
+    };
+    ipcRenderer.on("memory:critical", listener);
+    return (): void => {
+      ipcRenderer.removeListener("memory:critical", listener);
     };
   },
 };

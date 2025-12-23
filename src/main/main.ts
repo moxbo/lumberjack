@@ -28,6 +28,10 @@ if (process.env.LUMBERJACK_DISABLE_GPU === "1") {
   );
 }
 
+// Early imports needed for settings loading before app ready
+import * as path from "path";
+import * as fs from "fs";
+
 // V8 Optimizations for faster JavaScript execution
 // --turbo-fast-api-calls: Faster native API calls
 // --expose-gc: Allow manual GC control for memory optimization
@@ -78,16 +82,36 @@ if (process.platform === "win32") {
   app.commandLine.appendSwitch("disable-gpu-vsync");
   // Skip WebGL initialization if not needed immediately
   app.commandLine.appendSwitch("disable-accelerated-2d-canvas");
-  // Reduce startup memory allocation
-  app.commandLine.appendSwitch("js-flags", "--max-old-space-size=512");
+
+  // Load heap size from settings (sync read before app ready)
+  // This must happen early before the js-flags switch is set
+  let heapSizeMB = 2048; // Default 2GB
+  try {
+    const settingsPath = path.join(app.getPath("userData"), "settings.json");
+    if (fs.existsSync(settingsPath)) {
+      const settingsRaw = fs.readFileSync(settingsPath, "utf-8");
+      const settings = JSON.parse(settingsRaw);
+      if (typeof settings.heapSizeMB === "number") {
+        // Clamp to reasonable bounds: min 512MB, max 8192MB (8GB)
+        heapSizeMB = Math.max(512, Math.min(8192, settings.heapSizeMB));
+      }
+    }
+  } catch {
+    // Ignore errors, use default
+  }
+
+  // Increase memory allocation for renderer process to prevent OOM crashes
+  // with large Elasticsearch result sets (configurable via settings.heapSizeMB)
+  app.commandLine.appendSwitch(
+    "js-flags",
+    `--max-old-space-size=${heapSizeMB}`,
+  );
   // Disable speech synthesis initialization (not used)
   app.commandLine.appendSwitch("disable-speech-api");
   // Skip print preview initialization
   app.commandLine.appendSwitch("disable-print-preview");
 }
 import { spawn } from "node:child_process";
-import * as path from "path";
-import * as fs from "fs";
 import log from "electron-log/main";
 import { crashReporter } from "electron";
 import type { LogEntry } from "../types/ipc";
@@ -543,6 +567,11 @@ const pendingMenuCmdsByWindow = new Map<
 let lastFocusedWindowId: number | null = null;
 const pendingAppendsByWindow = new Map<number, LogEntry[]>();
 
+// Track last memory warning time to avoid spamming
+let lastMemoryWarningTime = 0;
+const MEMORY_WARNING_COOLDOWN_MS = 60000; // Only warn once per minute
+const MEMORY_CRITICAL_THRESHOLD = 0.85; // 85% heap usage - critical warning
+
 // Adaptive Memory Management
 // Periodically adjust buffer sizes based on memory usage
 setInterval(() => {
@@ -551,6 +580,34 @@ setInterval(() => {
     const heapUsed = mem.heapUsed;
     const heapTotal = mem.heapTotal;
     const heapPercent = heapUsed / heapTotal;
+
+    // Send critical memory warning to renderer (once per minute max)
+    if (heapPercent > MEMORY_CRITICAL_THRESHOLD) {
+      const now = Date.now();
+      if (now - lastMemoryWarningTime > MEMORY_WARNING_COOLDOWN_MS) {
+        lastMemoryWarningTime = now;
+        const heapUsedMB = Math.round(heapUsed / (1024 * 1024));
+        const heapTotalMB = Math.round(heapTotal / (1024 * 1024));
+        log.warn(
+          `[memory] Critical memory usage: ${heapUsedMB}MB / ${heapTotalMB}MB (${Math.round(heapPercent * 100)}%)`,
+        );
+
+        // Notify all renderer windows about critical memory
+        for (const w of windows) {
+          try {
+            if (!w.isDestroyed() && w.webContents) {
+              w.webContents.send("memory:critical", {
+                heapUsedMB,
+                heapTotalMB,
+                heapPercent: Math.round(heapPercent * 100),
+              });
+            }
+          } catch {
+            // Ignore errors sending to individual windows
+          }
+        }
+      }
+    }
 
     if (heapPercent > MEMORY_HIGH_THRESHOLD) {
       // High memory usage: reduce buffer

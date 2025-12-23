@@ -98,6 +98,10 @@ export interface Settings {
   // Auto-Update
   /** Allow pre-release/beta updates (default: false - only stable releases) */
   allowPrerelease?: boolean;
+
+  // Performance / Memory
+  /** V8 heap size in MB (default: 2048, min: 512, max: 8192). Requires restart. */
+  heapSizeMB?: number;
 }
 
 /**
@@ -352,6 +356,8 @@ export type ElectronAPI = {
   ) => Promise<Result<void>>;
   featureFlagsEnable: (feature: string) => Promise<Result<void>>;
   featureFlagsResetAll: () => Promise<Result<void>>;
+  // App operations
+  appRelaunch: () => Promise<Result<void>>;
   // Auto-Updater
   autoUpdaterCheck: () => Promise<unknown>;
   autoUpdaterDownload: () => Promise<void>;
@@ -361,6 +367,14 @@ export type ElectronAPI = {
   autoUpdaterSetAllowPrerelease: (allow: boolean) => Promise<Result<void>>;
   onAutoUpdaterStatus: (
     callback: (status: AutoUpdaterStatus) => void,
+  ) => () => void;
+  // Memory warning
+  onMemoryCritical: (
+    callback: (data: {
+      heapUsedMB: number;
+      heapTotalMB: number;
+      heapPercent: number;
+    }) => void,
   ) => () => void;
 };
 

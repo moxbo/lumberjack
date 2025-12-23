@@ -240,9 +240,9 @@ export class PerformanceMonitor {
       return issues;
     }
 
-    // Check memory usage
+    // Check memory usage (warn at 75% of 2GB heap limit)
     const heapUsedMB = latest.memory.heapUsed / (1024 * 1024);
-    if (heapUsedMB > 512) {
+    if (heapUsedMB > 1500) {
       issues.push(`High memory usage: ${Math.round(heapUsedMB)}MB`);
     }
 

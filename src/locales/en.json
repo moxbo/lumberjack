@@ -180,6 +180,11 @@
       "betaChannel": "Beta Updates",
       "betaChannelHint": "Receive pre-release versions (beta/RC) before they are officially released."
     },
+    "performance": {
+      "heapSize": "Memory Limit",
+      "heapSizeHint": "Maximum memory for the application. Higher values allow more log entries but require a restart.",
+      "default": "Default"
+    },
     "cancel": "Cancel",
     "save": "Save"
   },

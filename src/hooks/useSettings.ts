@@ -31,6 +31,7 @@ export interface SettingsForm {
   elasticPassClear: boolean;
   elasticMaxParallel: number;
   allowPrerelease: boolean;
+  heapSizeMB: number;
 }
 
 const INITIAL_FORM: SettingsForm = {
@@ -49,6 +50,7 @@ const INITIAL_FORM: SettingsForm = {
   elasticPassClear: false,
   elasticMaxParallel: 1,
   allowPrerelease: false,
+  heapSizeMB: 2048,
 };
 
 function applyThemeMode(mode: string | null | undefined): void {
@@ -99,6 +101,7 @@ export function useSettings() {
   const [showSettings, setShowSettings] = useState<boolean>(false);
   const [settingsTab, setSettingsTab] = useState<SettingsTab>("tcp");
   const [form, setForm] = useState<SettingsForm>(INITIAL_FORM);
+  const [originalHeapSizeMB, setOriginalHeapSizeMB] = useState<number>(2048);
 
   // Follow mode
   const [follow, setFollow] = useState<boolean>(false);
@@ -263,6 +266,7 @@ export function useSettings() {
       let curElasticUser = elasticUser;
       let curElasticMaxParallel = elasticMaxParallel;
       let curAllowPrerelease = allowPrerelease;
+      let curHeapSizeMB = 2048; // Default 2GB
 
       try {
         if (window.api?.settingsGet) {
@@ -333,6 +337,9 @@ export function useSettings() {
               curAllowPrerelease = r.allowPrerelease;
               setAllowPrerelease(curAllowPrerelease);
             }
+            if (typeof r.heapSizeMB === "number") {
+              curHeapSizeMB = r.heapSizeMB;
+            }
           }
         }
       } catch (e) {
@@ -358,7 +365,9 @@ export function useSettings() {
         elasticPassClear: false,
         elasticMaxParallel: curElasticMaxParallel || 1,
         allowPrerelease: curAllowPrerelease,
+        heapSizeMB: curHeapSizeMB,
       });
+      setOriginalHeapSizeMB(curHeapSizeMB);
       setSettingsTab(initialTab || "tcp");
       setShowSettings(true);
     },
@@ -411,6 +420,10 @@ export function useSettings() {
       elasticUser: String(form.elasticUser || "").trim(),
       elasticMaxParallel: Math.max(1, Number(form.elasticMaxParallel || 1)),
       allowPrerelease: !!form.allowPrerelease,
+      heapSizeMB: Math.max(
+        512,
+        Math.min(8192, Number(form.heapSizeMB || 2048)),
+      ),
     };
 
     const newPass = String(form.elasticPassNew || "").trim();
@@ -451,13 +464,31 @@ export function useSettings() {
       }
 
       setShowSettings(false);
+
+      // Check if heap size changed and ask for restart
+      const newHeapSize = Math.max(
+        512,
+        Math.min(8192, Number(form.heapSizeMB || 2048)),
+      );
+      if (newHeapSize !== originalHeapSizeMB) {
+        // Use setTimeout to allow the modal to close first
+        setTimeout(() => {
+          const shouldRestart = window.confirm(
+            "Das Speicherlimit wurde geändert. Die Änderung wird erst nach einem Neustart wirksam.\n\nMöchten Sie die Anwendung jetzt neu starten?",
+          );
+          if (shouldRestart && window.api?.appRelaunch) {
+            void window.api.appRelaunch();
+          }
+        }, 100);
+      }
+
       return true;
     } catch (e) {
       logger.error("Failed to save settings:", e);
       alert("Speichern fehlgeschlagen: " + ((e as any)?.message || String(e)));
       return false;
     }
-  }, [form]);
+  }, [form, originalHeapSizeMB]);
 
   const closeSettingsModal = useCallback(() => {
     applyThemeMode(themeMode);
