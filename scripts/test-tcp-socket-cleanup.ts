@@ -155,7 +155,7 @@ async function testTcpSocketCleanup(): Promise<void> {
 
   // Test 6: Stop server with active connections
   console.log("Test 6: Stopping server with active connections...");
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+
   const _client3 = net.createConnection({ port });
   await sleep(100);
 

@@ -58,7 +58,7 @@ class IndexedDBLogStore {
             "[IndexedDBStore] Failed to open database:",
             request.error,
           );
-          reject(request.error);
+          reject(request.error ?? new Error("Failed to open database"));
         };
 
         request.onsuccess = () => {
@@ -85,7 +85,7 @@ class IndexedDBLogStore {
         };
       } catch (error) {
         console.error("[IndexedDBStore] Error initializing:", error);
-        reject(error);
+        reject(error instanceof Error ? error : new Error(String(error)));
       }
     });
 
@@ -106,7 +106,7 @@ class IndexedDBLogStore {
 
       transaction.onerror = () => {
         console.error("[IndexedDBStore] Transaction error:", transaction.error);
-        reject(transaction.error);
+        reject(transaction.error ?? new Error("Transaction failed"));
       };
 
       transaction.oncomplete = () => {
@@ -154,7 +154,8 @@ class IndexedDBLogStore {
       const store = transaction.objectStore(STORE_NAME);
       const request = store.get(id);
 
-      request.onerror = () => reject(request.error);
+      request.onerror = () =>
+        reject(request.error ?? new Error("Get entry failed"));
       request.onsuccess = () => {
         const entry = request.result as LogEntry | undefined;
         if (entry) {
@@ -192,7 +193,8 @@ class IndexedDBLogStore {
       const transaction = this.db!.transaction([STORE_NAME], "readonly");
       const store = transaction.objectStore(STORE_NAME);
 
-      transaction.onerror = () => reject(transaction.error);
+      transaction.onerror = () =>
+        reject(transaction.error ?? new Error("Transaction failed"));
       transaction.oncomplete = () => resolve(entries);
 
       for (const id of idsToFetch) {
@@ -252,7 +254,8 @@ class IndexedDBLogStore {
       const offset = options.offset || 0;
       let skipped = 0;
 
-      request.onerror = () => reject(request.error);
+      request.onerror = () =>
+        reject(request.error ?? new Error("Query failed"));
       request.onsuccess = (event) => {
         const cursor = (event.target as IDBRequest)
           .result as IDBCursorWithValue | null;
@@ -285,7 +288,8 @@ class IndexedDBLogStore {
       const store = transaction.objectStore(STORE_NAME);
       const request = store.count();
 
-      request.onerror = () => reject(request.error);
+      request.onerror = () =>
+        reject(request.error ?? new Error("Count failed"));
       request.onsuccess = () => resolve(request.result);
     });
   }
@@ -302,7 +306,8 @@ class IndexedDBLogStore {
       const store = transaction.objectStore(STORE_NAME);
       const request = store.clear();
 
-      request.onerror = () => reject(request.error);
+      request.onerror = () =>
+        reject(request.error ?? new Error("Clear failed"));
       request.onsuccess = () => {
         this.memoryCache.clear();
         this.nextId = 1;
@@ -329,7 +334,8 @@ class IndexedDBLogStore {
       const store = transaction.objectStore(STORE_NAME);
       const request = store.put(updatedEntry);
 
-      request.onerror = () => reject(request.error);
+      request.onerror = () =>
+        reject(request.error ?? new Error("Update failed"));
       request.onsuccess = () => {
         this.memoryCache.set(id, updatedEntry);
         resolve();

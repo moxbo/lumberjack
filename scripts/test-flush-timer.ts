@@ -210,7 +210,7 @@ async function main() {
   if (count > 0) {
     await runBatchMode(host, port, count);
   } else {
-    await runInteractiveMode(host, port);
+    runInteractiveMode(host, port);
   }
 }
 

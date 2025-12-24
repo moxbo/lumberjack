@@ -157,8 +157,8 @@ LoggingStore.addLoggingStoreListener({
 });
 
 // DCFilterPanel subscribes to both MDCListener and DiagnosticContextFilter
-MDCListener.onChange(() => setKeys(...));  // For suggestions
-DiagnosticContextFilter.onChange(() => setRows(...));  // For table
+MDCListener.onChange(() => setKeys(/* updated keys */));  // For suggestions
+DiagnosticContextFilter.onChange(() => setRows(/* updated rows */));  // For table
 ```
 
 ### Efficient Change Detection

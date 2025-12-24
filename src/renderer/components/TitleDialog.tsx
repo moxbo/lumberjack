@@ -3,6 +3,7 @@
  */
 import { useState, useEffect } from "preact/hooks";
 import logger from "../../utils/logger";
+import { useI18n } from "../../utils/i18n";
 
 interface TitleDialogProps {
   open: boolean;
@@ -10,39 +11,43 @@ interface TitleDialogProps {
 }
 
 export function TitleDialog({ open, onClose }: TitleDialogProps) {
+  const { t } = useI18n();
   const [titleInput, setTitleInput] = useState<string>("Lumberjack");
 
   // Load current title when dialog opens
   useEffect(() => {
     if (!open) return;
 
-    (async () => {
+    void (async () => {
       try {
         const res = await window.api?.windowTitleGet?.();
-        const t =
+        const title =
           res?.ok && typeof res.title === "string" && res.title.trim()
             ? String(res.title)
             : "Lumberjack";
-        setTitleInput(t);
+        setTitleInput(title);
       } catch {
         setTitleInput("Lumberjack");
       }
     })();
   }, [open]);
 
-  const handleApply = async () => {
-    const t = String(titleInput || "").trim();
-    if (!t) {
-      alert("Bitte einen Fenstertitel eingeben");
+  const handleApply = (): void => {
+    const title = String(titleInput || "").trim();
+    if (!title) {
+      alert(t("titleDialog.emptyError"));
       return;
     }
-    try {
-      await window.api?.windowTitleSet?.(t);
-      onClose();
-    } catch (e) {
-      logger.error("Failed to set window title:", e);
-      alert("Speichern fehlgeschlagen: " + ((e as any)?.message || String(e)));
-    }
+    void (async () => {
+      try {
+        await window.api?.windowTitleSet?.(title);
+        onClose();
+      } catch (e) {
+        logger.error("Failed to set window title:", e);
+        const message = (e as Error)?.message || String(e);
+        alert(t("titleDialog.saveFailed", { message }));
+      }
+    })();
   };
 
   if (!open) return null;
@@ -50,20 +55,20 @@ export function TitleDialog({ open, onClose }: TitleDialogProps) {
   return (
     <div className="modal-backdrop" onClick={onClose}>
       <div className="modal" onClick={(e) => e.stopPropagation()}>
-        <h3>Fenster-Titel setzen</h3>
+        <h3>{t("titleDialog.title")}</h3>
         <div className="kv full">
-          <span>Titel</span>
+          <span>{t("titleDialog.label")}</span>
           <input
             type="text"
             value={titleInput}
             onChange={(e) => setTitleInput(e.currentTarget.value)}
-            placeholder="Lumberjack"
+            placeholder={t("titleDialog.placeholder")}
             autoFocus
           />
         </div>
         <div className="modal-actions">
-          <button onClick={onClose}>Abbrechen</button>
-          <button onClick={handleApply}>Übernehmen</button>
+          <button onClick={onClose}>{t("titleDialog.cancel")}</button>
+          <button onClick={handleApply}>{t("titleDialog.apply")}</button>
         </div>
       </div>
     </div>

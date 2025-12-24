@@ -28,7 +28,7 @@ const testFunction = async () => {
 for (let i = 0; i < 3; i++) {
   try {
     await breaker.execute(testFunction);
-  } catch (e) {
+  } catch {
     // Expected to fail
   }
 }

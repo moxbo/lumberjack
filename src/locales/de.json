@@ -338,5 +338,14 @@
       "ADAPTIVE_BATCHING": "Adaptive Batch-Verarbeitung",
       "ASYNC_FILE_WRITER": "Asynchrones Schreiben von Dateien"
     }
+  },
+  "titleDialog": {
+    "title": "Fenster-Titel setzen",
+    "label": "Titel",
+    "placeholder": "Lumberjack",
+    "cancel": "Abbrechen",
+    "apply": "Übernehmen",
+    "emptyError": "Bitte einen Fenstertitel eingeben",
+    "saveFailed": "Speichern fehlgeschlagen: {{message}}"
   }
 }

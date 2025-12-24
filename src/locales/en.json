@@ -338,5 +338,14 @@
       "ADAPTIVE_BATCHING": "Adaptive batch processing",
       "ASYNC_FILE_WRITER": "Asynchronous file writing"
     }
+  },
+  "titleDialog": {
+    "title": "Set Window Title",
+    "label": "Title",
+    "placeholder": "Lumberjack",
+    "cancel": "Cancel",
+    "apply": "Apply",
+    "emptyError": "Please enter a window title",
+    "saveFailed": "Save failed: {{message}}"
   }
 }

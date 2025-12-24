@@ -66,7 +66,7 @@ async function testBulkPartialConflictsAndRetries(): Promise<void> {
         const docLine = lines[i + 1];
         if (!metaLine || !docLine) continue;
         const meta = JSON.parse(metaLine);
-        // eslint-disable-next-line @typescript-eslint/no-unused-vars
+
         const _doc = JSON.parse(docLine);
         const id = meta.create?._id || meta.index?._id;
         if (!id) {

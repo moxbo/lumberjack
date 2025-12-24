@@ -341,7 +341,7 @@ export function useElasticSearch({
     setLastEsForm(null);
     setEsTotal(null);
     setEsBaseline(0);
-    closePitSession();
+    void closePitSession();
   }, [closePitSession]);
 
   return {

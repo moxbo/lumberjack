@@ -7,13 +7,11 @@
  * - TCP connection limit
  */
 
-// eslint-disable-next-line @typescript-eslint/no-unused-vars
 import * as _net from "net";
 import * as http from "http";
 import { NetworkService } from "../src/services/NetworkService";
 import type { LogEntry } from "../src/types/ipc";
 
-// eslint-disable-next-line @typescript-eslint/no-unused-vars
 function _sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
