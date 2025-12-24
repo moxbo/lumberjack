@@ -86,19 +86,23 @@ export function resolveIconPathSync(): string | null {
 
   const candidates = getIconCandidates("icon.ico");
 
-  log.info?.("[icon] resolveIconPathSync searching in candidates:", candidates);
-  log.info?.("[icon] app.isPackaged:", app.isPackaged);
-  log.info?.("[icon] app.getAppPath():", app.getAppPath?.());
-  log.info?.("[icon] process.resourcesPath:", process.resourcesPath);
+  // Defer verbose logging to not block startup
+  if (process.env.LJ_DEBUG_ICON === "1") {
+    log.info?.(
+      "[icon] resolveIconPathSync searching in candidates:",
+      candidates,
+    );
+    log.info?.("[icon] app.isPackaged:", app.isPackaged);
+    log.info?.("[icon] app.getAppPath():", app.getAppPath?.());
+    log.info?.("[icon] process.resourcesPath:", process.resourcesPath);
+  }
 
   for (const candidate of candidates) {
     try {
       const exists = fs.existsSync(candidate);
-      log.debug?.("[icon] Checking candidate:", candidate, "exists:", exists);
 
       if (exists) {
         if (!canAccessFile(candidate)) {
-          log.debug?.("[icon] Candidate exists but not readable:", candidate);
           continue;
         }
 
@@ -114,11 +118,8 @@ export function resolveIconPathSync(): string | null {
         log.info?.("[icon] resolveIconPathSync found valid ICO:", candidate);
         return candidate;
       }
-    } catch (e) {
-      log.debug?.(
-        "[icon] resolveIconPathSync error:",
-        e instanceof Error ? e.message : String(e),
-      );
+    } catch {
+      // Ignore errors, try next candidate
     }
   }
 

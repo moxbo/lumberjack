@@ -125,7 +125,21 @@ import { AdaptiveBatchService } from "../services/AdaptiveBatchService";
 import { AsyncFileWriter } from "../services/AsyncFileWriter";
 import { HealthMonitor } from "../services/HealthMonitor";
 import { LoggingStrategy, LogLevel } from "../services/LoggingStrategy";
-import { getAutoUpdaterService } from "../services/AutoUpdaterService";
+// Lazy import for AutoUpdaterService to avoid loading electron-updater at startup
+// This significantly improves startup time for portable versions
+let _autoUpdaterServiceModule:
+  | typeof import("../services/AutoUpdaterService")
+  | null = null;
+function getAutoUpdaterServiceModule(): typeof import("../services/AutoUpdaterService") {
+  if (!_autoUpdaterServiceModule) {
+    _autoUpdaterServiceModule =
+      require("../services/AutoUpdaterService") as typeof import("../services/AutoUpdaterService");
+  }
+  return _autoUpdaterServiceModule;
+}
+function getAutoUpdaterService(): import("../services/AutoUpdaterService").AutoUpdaterService {
+  return getAutoUpdaterServiceModule().getAutoUpdaterService();
+}
 
 // Initialize crash reporter early to capture crashes
 // Crash dumps are stored locally in app.getPath('crashDumps')
@@ -167,8 +181,6 @@ import {
   resolveIconPathSync,
   resolveIconPathAsync,
   resolveMacIconPath,
-  canAccessFile,
-  isValidIcoFile,
 } from "./util/iconResolver";
 import { showAboutDialog } from "./util/dialogs";
 
@@ -594,90 +606,97 @@ let lastMemoryWarningTime = 0;
 const MEMORY_WARNING_COOLDOWN_MS = 60000; // Only warn once per minute
 const MEMORY_CRITICAL_THRESHOLD = 0.85; // 85% heap usage - critical warning
 
-// Adaptive Memory Management
-// Periodically adjust buffer sizes based on memory usage
-setInterval(() => {
-  try {
-    const mem = process.memoryUsage();
-    const heapUsed = mem.heapUsed;
-    const heapTotal = mem.heapTotal;
-    const heapPercent = heapUsed / heapTotal;
+// Adaptive Memory Management - DEFERRED until after window is shown
+// This interval is started in whenReady() to not impact startup time
+let memoryManagementStarted = false;
+function startMemoryManagement(): void {
+  if (memoryManagementStarted) return;
+  memoryManagementStarted = true;
 
-    // Send critical memory warning to renderer (once per minute max)
-    if (heapPercent > MEMORY_CRITICAL_THRESHOLD) {
-      const now = Date.now();
-      if (now - lastMemoryWarningTime > MEMORY_WARNING_COOLDOWN_MS) {
-        lastMemoryWarningTime = now;
-        const heapUsedMB = Math.round(heapUsed / (1024 * 1024));
-        const heapTotalMB = Math.round(heapTotal / (1024 * 1024));
-        log.warn(
-          `[memory] Critical memory usage: ${heapUsedMB}MB / ${heapTotalMB}MB (${Math.round(heapPercent * 100)}%)`,
-        );
+  // Periodically adjust buffer sizes based on memory usage
+  setInterval(() => {
+    try {
+      const mem = process.memoryUsage();
+      const heapUsed = mem.heapUsed;
+      const heapTotal = mem.heapTotal;
+      const heapPercent = heapUsed / heapTotal;
 
-        // Notify all renderer windows about critical memory
-        for (const w of windows) {
-          try {
-            if (!w.isDestroyed() && w.webContents) {
-              w.webContents.send("memory:critical", {
-                heapUsedMB,
-                heapTotalMB,
-                heapPercent: Math.round(heapPercent * 100),
-              });
+      // Send critical memory warning to renderer (once per minute max)
+      if (heapPercent > MEMORY_CRITICAL_THRESHOLD) {
+        const now = Date.now();
+        if (now - lastMemoryWarningTime > MEMORY_WARNING_COOLDOWN_MS) {
+          lastMemoryWarningTime = now;
+          const heapUsedMB = Math.round(heapUsed / (1024 * 1024));
+          const heapTotalMB = Math.round(heapTotal / (1024 * 1024));
+          log.warn(
+            `[memory] Critical memory usage: ${heapUsedMB}MB / ${heapTotalMB}MB (${Math.round(heapPercent * 100)}%)`,
+          );
+
+          // Notify all renderer windows about critical memory
+          for (const w of windows) {
+            try {
+              if (!w.isDestroyed() && w.webContents) {
+                w.webContents.send("memory:critical", {
+                  heapUsedMB,
+                  heapTotalMB,
+                  heapPercent: Math.round(heapPercent * 100),
+                });
+              }
+            } catch {
+              // Ignore errors sending to individual windows
             }
-          } catch {
-            // Ignore errors sending to individual windows
           }
         }
       }
-    }
 
-    if (heapPercent > MEMORY_HIGH_THRESHOLD) {
-      // High memory usage: reduce buffer
-      const newLimit = Math.max(
-        MIN_PENDING_APPENDS,
-        Math.floor(MAX_PENDING_APPENDS * 0.5),
-      );
-      if (newLimit !== MAX_PENDING_APPENDS) {
-        loggingStrategy.logMessage(
-          "memory",
-          LogLevel.WARN,
-          `Buffer reduced due to high memory usage: ${MAX_PENDING_APPENDS} -> ${newLimit}`,
-          { heapPercent: Math.round(heapPercent * 100) + "%" },
+      if (heapPercent > MEMORY_HIGH_THRESHOLD) {
+        // High memory usage: reduce buffer
+        const newLimit = Math.max(
+          MIN_PENDING_APPENDS,
+          Math.floor(MAX_PENDING_APPENDS * 0.5),
         );
-        MAX_PENDING_APPENDS = newLimit;
+        if (newLimit !== MAX_PENDING_APPENDS) {
+          loggingStrategy.logMessage(
+            "memory",
+            LogLevel.WARN,
+            `Buffer reduced due to high memory usage: ${MAX_PENDING_APPENDS} -> ${newLimit}`,
+            { heapPercent: Math.round(heapPercent * 100) + "%" },
+          );
+          MAX_PENDING_APPENDS = newLimit;
 
-        // Trim existing buffers if needed
-        if (pendingAppends.length > MAX_PENDING_APPENDS) {
-          const overflow = pendingAppends.length - MAX_PENDING_APPENDS;
-          pendingAppends.splice(0, overflow);
+          // Trim existing buffers if needed
+          if (pendingAppends.length > MAX_PENDING_APPENDS) {
+            const overflow = pendingAppends.length - MAX_PENDING_APPENDS;
+            pendingAppends.splice(0, overflow);
+          }
+        }
+      } else if (
+        heapPercent < MEMORY_LOW_THRESHOLD &&
+        MAX_PENDING_APPENDS < DEFAULT_MAX_PENDING_APPENDS
+      ) {
+        // Low memory usage: increase buffer back to normal
+        const newLimit = Math.min(
+          DEFAULT_MAX_PENDING_APPENDS,
+          Math.floor(MAX_PENDING_APPENDS * 1.5),
+        );
+        if (newLimit !== MAX_PENDING_APPENDS) {
+          loggingStrategy.logMessage(
+            "memory",
+            LogLevel.INFO,
+            `Buffer increased: ${MAX_PENDING_APPENDS} -> ${newLimit}`,
+            { heapPercent: Math.round(heapPercent * 100) + "%" },
+          );
+          MAX_PENDING_APPENDS = newLimit;
         }
       }
-    } else if (
-      heapPercent < MEMORY_LOW_THRESHOLD &&
-      MAX_PENDING_APPENDS < DEFAULT_MAX_PENDING_APPENDS
-    ) {
-      // Low memory usage: increase buffer back to normal
-      const newLimit = Math.min(
-        DEFAULT_MAX_PENDING_APPENDS,
-        Math.floor(MAX_PENDING_APPENDS * 1.5),
+    } catch (e) {
+      log.error(
+        "[memory] Adaptive buffer adjustment failed:",
+        e instanceof Error ? e.message : String(e),
       );
-      if (newLimit !== MAX_PENDING_APPENDS) {
-        loggingStrategy.logMessage(
-          "memory",
-          LogLevel.INFO,
-          `Buffer increased: ${MAX_PENDING_APPENDS} -> ${newLimit}`,
-          { heapPercent: Math.round(heapPercent * 100) + "%" },
-        );
-        MAX_PENDING_APPENDS = newLimit;
-      }
     }
-  } catch (e) {
-    log.error(
-      "[memory] Adaptive buffer adjustment failed:",
-      e instanceof Error ? e.message : String(e),
-    );
-  }
-}, MEMORY_CHECK_INTERVAL_MS);
+  }, MEMORY_CHECK_INTERVAL_MS);
+}
 
 // truncateEntryForRenderer and prepareRenderBatch are now imported from ./util/logEntryUtils
 
@@ -1141,7 +1160,7 @@ function sendAppend(entries: LogEntry[]): void {
 }
 
 // Icon/dist path caching is now handled in ./util/iconResolver
-// Using imported functions: resolveIconPathSync, resolveIconPathAsync, resolveMacIconPath, canAccessFile, isValidIcoFile
+// Using imported functions: resolveIconPathSync, resolveIconPathAsync, resolveMacIconPath
 let cachedDistIndexPath: string | null = null;
 
 // showAboutDialog and showHelpDialog are now imported from ./util/dialogs
@@ -1444,50 +1463,6 @@ function createWindow(opts: { makePrimary?: boolean } = {}): BrowserWindow {
     show: process.platform === "win32",
     backgroundColor: "#0f1113",
   });
-
-  // Abfangen des Schließens des letzten Fensters (Win/Linux) → Beenden bestätigen
-
-  // [Windows Taskbar] Set icon immediately after window creation for early taskbar display
-  if (process.platform === "win32") {
-    try {
-      const iconPath = resolveIconPathSync();
-      if (iconPath) {
-        try {
-          // Validate file access before setting
-          if (canAccessFile(iconPath) && isValidIcoFile(iconPath)) {
-            // Use nativeImage for more reliable icon loading
-            const icon = nativeImage.createFromPath(iconPath);
-            if (!icon.isEmpty()) {
-              win.setIcon(icon);
-              log.info?.(
-                "[icon] Windows icon set immediately at window creation:",
-                iconPath,
-              );
-            } else {
-              log.warn?.("[icon] nativeImage is empty for path:", iconPath);
-            }
-          } else {
-            log.warn?.(
-              "[icon] Icon file exists but failed validation checks:",
-              iconPath,
-            );
-          }
-        } catch (e) {
-          log.debug?.(
-            "[icon] Immediate Windows icon set failed, will retry in ready-to-show:",
-            e instanceof Error ? e.message : String(e),
-          );
-        }
-      } else {
-        log.warn?.("[icon] No icon path resolved at window creation");
-      }
-    } catch (e) {
-      log.debug?.(
-        "[icon] Error setting immediate Windows icon:",
-        e instanceof Error ? e.message : String(e),
-      );
-    }
-  }
 
   // Abfangen des Schließens des letzten Fensters (Win/Linux) → Beenden bestätigen
   win.on("close", async (e) => {
@@ -2037,46 +2012,53 @@ try {
 // Without this timer, logs can be delayed indefinitely in pendingAppends buffer
 const PENDING_APPEND_FLUSH_INTERVAL_MS = 100; // Flush every 100ms for responsive UI
 let flushTimerCount = 0;
-setInterval(() => {
-  try {
-    flushTimerCount++;
-    const hasPending = pendingAppends.length > 0;
-    const hasWindowPending = Array.from(windows).some((w) => {
-      const buf = pendingAppendsByWindow.get(w.id);
-      return buf && buf.length > 0;
-    });
+let flushTimerStarted = false;
 
-    if (flushTimerCount % 10 === 1 || hasPending || hasWindowPending) {
-      log.silly(
-        `[flush-timer] Run #${flushTimerCount}: pendingAppends=${pendingAppends.length}, windows=${windows.size}, hasWindowPending=${hasWindowPending}`,
-      );
-    }
+function startFlushTimer(): void {
+  if (flushTimerStarted) return;
+  flushTimerStarted = true;
 
-    // Flush main window buffer
-    flushPendingAppends();
+  setInterval(() => {
+    try {
+      flushTimerCount++;
+      const hasPending = pendingAppends.length > 0;
+      const hasWindowPending = Array.from(windows).some((w) => {
+        const buf = pendingAppendsByWindow.get(w.id);
+        return buf && buf.length > 0;
+      });
 
-    // Flush per-window buffers for multi-window scenarios
-    for (const win of windows) {
-      try {
-        if (!win.isDestroyed()) {
-          flushPendingAppendsFor(win);
+      if (flushTimerCount % 10 === 1 || hasPending || hasWindowPending) {
+        log.silly(
+          `[flush-timer] Run #${flushTimerCount}: pendingAppends=${pendingAppends.length}, windows=${windows.size}, hasWindowPending=${hasWindowPending}`,
+        );
+      }
+
+      // Flush main window buffer
+      flushPendingAppends();
+
+      // Flush per-window buffers for multi-window scenarios
+      for (const win of windows) {
+        try {
+          if (!win.isDestroyed()) {
+            flushPendingAppendsFor(win);
+          }
+        } catch {
+          // Ignore errors for individual windows
         }
+      }
+    } catch (err) {
+      // Ignore errors to prevent timer from being cancelled
+      try {
+        log.silly(
+          "[flush-timer] Periodic flush error (continuing):",
+          err instanceof Error ? err.message : String(err),
+        );
       } catch {
-        // Ignore errors for individual windows
+        // Ignore logging errors
       }
     }
-  } catch (err) {
-    // Ignore errors to prevent timer from being cancelled
-    try {
-      log.silly(
-        "[flush-timer] Periodic flush error (continuing):",
-        err instanceof Error ? err.message : String(err),
-      );
-    } catch {
-      // Ignore logging errors
-    }
-  }
-}, PENDING_APPEND_FLUSH_INTERVAL_MS);
+  }, PENDING_APPEND_FLUSH_INTERVAL_MS);
+}
 
 // App lifecycle
 if (process.platform === "win32") {
@@ -2637,19 +2619,29 @@ app
       const windowCreatedTime = Date.now() - processStartTime;
       log.info(`[PERF] Initial window created after ${windowCreatedTime}ms`);
 
-      // Initialize auto-updater in production (not in dev mode)
+      // Initialize auto-updater in production (not in dev mode) - DEFERRED
+      // Delay auto-updater to after window is shown for faster perceived startup
       if (!isDev) {
-        const autoUpdater = getAutoUpdaterService();
-        // Initialize allowPrerelease from settings
-        const settings = settingsService.get();
-        autoUpdater.initFromSettings(settings.allowPrerelease);
-        // Set main window for update notifications
-        const mainWin = BrowserWindow.getAllWindows()[0];
-        if (mainWin) {
-          autoUpdater.setMainWindow(mainWin);
-        }
-        // Check for updates after a delay (don't block startup)
-        autoUpdater.checkForUpdatesOnStart(5000);
+        setTimeout(() => {
+          try {
+            const autoUpdater = getAutoUpdaterService();
+            // Initialize allowPrerelease from settings
+            const settings = settingsService.get();
+            autoUpdater.initFromSettings(settings.allowPrerelease);
+            // Set main window for update notifications
+            const mainWin = BrowserWindow.getAllWindows()[0];
+            if (mainWin) {
+              autoUpdater.setMainWindow(mainWin);
+            }
+            // Check for updates after a delay (don't block startup)
+            autoUpdater.checkForUpdatesOnStart(5000);
+          } catch (e) {
+            log.warn(
+              "[auto-updater] Initialization failed:",
+              e instanceof Error ? e.message : String(e),
+            );
+          }
+        }, 2000); // Wait 2 seconds after window creation
       }
     } catch (err) {
       log.error(
@@ -2661,6 +2653,12 @@ app
     // Defer non-critical initialization tasks to after window is visible
     // This significantly improves perceived startup time on Windows portable
     setImmediate(() => {
+      // Start flush timer for log buffer
+      startFlushTimer();
+
+      // Start memory management after window is shown
+      startMemoryManagement();
+
       // Trigger garbage collection if available (from --expose-gc flag)
       // This helps clean up startup allocations for smoother first interaction
       try {
