@@ -239,6 +239,35 @@ jobs:
           CSC_LINK: ${{ secrets.WIN_CSC_LINK }}
           CSC_KEY_PASSWORD: ${{ secrets.WIN_CSC_KEY_PASSWORD }}
 
+      - name: Build Windows Directory (for fast portable ZIP)
+        if: ${{ matrix.platform == 'win' && matrix.arch == 'x64' }}
+        run: npx electron-builder --win dir --x64 --publish never
+        env:
+          CI: true
+          CSC_LINK: ${{ secrets.WIN_CSC_LINK }}
+          CSC_KEY_PASSWORD: ${{ secrets.WIN_CSC_KEY_PASSWORD }}
+
+      - name: Create fast portable ZIP from win-unpacked
+        if: ${{ matrix.platform == 'win' && matrix.arch == 'x64' }}
+        shell: pwsh
+        run: |
+          $buildDir = Join-Path $PWD "release\build"
+          $unpackedDir = Join-Path $buildDir "win-unpacked"
+          $packageJson = Get-Content "package.json" | ConvertFrom-Json
+          $version = $packageJson.version
+          $zipName = "Lumberjack-$version-x64-portable-fast.zip"
+          $zipPath = Join-Path $buildDir $zipName
+
+          if (Test-Path $unpackedDir) {
+            Write-Host "Creating $zipName from win-unpacked..."
+            Compress-Archive -Path "$unpackedDir\*" -DestinationPath $zipPath -CompressionLevel Optimal
+            $size = [math]::Round((Get-Item $zipPath).Length / 1MB, 1)
+            Write-Host "Created: $zipPath ($size MB)"
+            Write-Host "This ZIP version starts in ~2-3 seconds (vs ~20 seconds for portable.exe)"
+          } else {
+            Write-Host "win-unpacked directory not found, skipping fast portable ZIP"
+          }
+
       - name: Build macOS DMG
         if: ${{ matrix.platform == 'mac' }}
         run: npx electron-builder --mac dmg --${{ matrix.arch }} --publish never
@@ -261,10 +290,19 @@ jobs:
           if (-not (Test-Path $archDir)) { New-Item -ItemType Directory -Path $archDir | Out-Null }
           $moved = 0
 
-          # Move files matching arch name
+          # Move files matching arch name (exe, zip, blockmap)
           Get-ChildItem -Path $outDir -File -Force -ErrorAction SilentlyContinue | Where-Object { $_.Name -like "*$arch*" } | ForEach-Object {
             Move-Item -Path $_.FullName -Destination $archDir -Force
             $moved += 1
+          }
+
+          # Move portable-fast.zip (created from win-unpacked, only for x64)
+          if ($arch -eq "x64") {
+            Get-ChildItem -Path $outDir -File -Force -ErrorAction SilentlyContinue | Where-Object { $_.Name -like "*portable-fast.zip" } | ForEach-Object {
+              Move-Item -Path $_.FullName -Destination $archDir -Force
+              Write-Host "Moved $($_.Name) to $archDir"
+              $moved += 1
+            }
           }
 
           # Move latest.yml (only for x64 which builds NSIS installer)
@@ -308,6 +346,7 @@ jobs:
           name: windows-release-${{ matrix.arch }}
           path: |
             release/build/${{ matrix.arch }}/*.exe
+            release/build/${{ matrix.arch }}/*.zip
             release/build/${{ matrix.arch }}/*.yml
             release/build/${{ matrix.arch }}/*.blockmap
           retention-days: 30
