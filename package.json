@@ -1,6 +1,6 @@
 {
   "name": "lumberjack",
-  "version": "1.0.0",
+  "version": "1.0.2",
   "description": "Lumberjack - A log file viewer",
   "main": "dist-main/main.cjs",
   "type": "module",
@@ -33,6 +33,7 @@
     "build:x64": "npm run prepack:app && npm run build:prod && cross-env CSC_IDENTITY_AUTO_DISCOVERY=false electron-builder --win nsis --x64",
     "build:portable": "npm run prepack:app && npm run build:prod && cross-env CSC_IDENTITY_AUTO_DISCOVERY=false electron-builder --win portable",
     "build:portable:x64": "npm run prepack:app && npm run build:prod && cross-env CSC_IDENTITY_AUTO_DISCOVERY=false electron-builder --win portable --x64",
+    "build:dir:x64": "npm run prepack:app && npm run build:prod && cross-env CSC_IDENTITY_AUTO_DISCOVERY=false electron-builder --win dir --x64",
     "build:mac:dmg": "npm run prepack:app && npm run build:prod && cross-env ELECTRON_BUILDER_DISABLE_PUBLISH=true CSC_IDENTITY_AUTO_DISCOVERY=false electron-builder --mac dmg --publish never",
     "prepare": "husky"
   },
@@ -127,6 +128,12 @@
             "x64"
           ]
         },
+        {
+          "target": "dir",
+          "arch": [
+            "x64"
+          ]
+        },
         "nsis"
       ],
       "signAndEditExecutable": true,
@@ -138,13 +145,18 @@
       "artifactName": "Lumberjack-${version}-${arch}-portable.${ext}",
       "unpackDirName": "Lumberjack-portable",
       "splashImage": false,
-      "useZip": true,
+      "useZip": false,
       "warningsAsErrors": false
     },
     "nsis": {
-      "oneClick": true,
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
       "createDesktopShortcut": true,
-      "shortcutName": "Lumberjack"
+      "shortcutName": "Lumberjack",
+      "installerIcon": "assets/icon.ico",
+      "uninstallerIcon": "assets/icon.ico",
+      "uninstallDisplayName": "Lumberjack",
+      "artifactName": "Lumberjack-${version}-${arch}-setup.${ext}"
     },
     "mac": {
       "target": [
