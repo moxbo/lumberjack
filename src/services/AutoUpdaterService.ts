@@ -234,6 +234,8 @@ export class AutoUpdaterService {
    */
   async downloadUpdate(): Promise<void> {
     try {
+      // Send downloading status immediately so UI updates right away
+      this.sendStatusToRenderer({ status: "downloading" });
       await autoUpdater.downloadUpdate();
     } catch (error) {
       log.error("[auto-updater] Download failed:", error);

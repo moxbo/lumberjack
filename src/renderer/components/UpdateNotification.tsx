@@ -40,6 +40,7 @@ export function UpdateNotification(): VNode | null {
   const [updateStatus, setUpdateStatus] = useState<UpdateStatus | null>(null);
   const [dismissed, setDismissed] = useState(false);
   const [showDetails, setShowDetails] = useState(false);
+  const [isStartingDownload, setIsStartingDownload] = useState(false);
 
   // Listen for update status changes from main process
   useEffect(() => {
@@ -52,9 +53,15 @@ export function UpdateNotification(): VNode | null {
         logger.info("[UpdateNotification] Received status:", status);
         setUpdateStatus(status);
 
+        // Reset isStartingDownload when download actually starts or on error
+        if (status.status === "downloading" || status.status === "error") {
+          setIsStartingDownload(false);
+        }
+
         // Reset dismissed state when a new update becomes available
         if (status.status === "available") {
           setDismissed(false);
+          setIsStartingDownload(false);
         }
       },
     );
@@ -66,10 +73,12 @@ export function UpdateNotification(): VNode | null {
 
   const handleDownload = useCallback(async () => {
     try {
+      setIsStartingDownload(true);
       logger.info("[UpdateNotification] Starting download...");
       await window.api?.autoUpdaterDownload?.();
     } catch (error) {
       logger.error("[UpdateNotification] Download failed:", error);
+      setIsStartingDownload(false);
     }
   }, []);
 
@@ -200,12 +209,16 @@ export function UpdateNotification(): VNode | null {
               <button
                 className="update-btn update-btn-primary"
                 onClick={handleDownload}
+                disabled={isStartingDownload}
               >
-                {t("update.download")}
+                {isStartingDownload
+                  ? t("update.pleaseWait")
+                  : t("update.download")}
               </button>
               <button
                 className="update-btn update-btn-secondary"
                 onClick={handleDismiss}
+                disabled={isStartingDownload}
               >
                 {t("update.later")}
               </button>
