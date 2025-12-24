@@ -165,8 +165,17 @@ jobs:
           node-version: 22
           cache: npm
 
-      - name: Install dependencies
-        run: npm ci
+      - name: Install dependencies (with retry)
+        shell: bash
+        run: |
+          for i in 1 2 3; do
+            echo "Attempt $i of 3..."
+            npm ci && break
+            echo "Attempt $i failed, retrying in 15 seconds..."
+            sleep 15
+            npm cache clean --force
+          done
+        timeout-minutes: 15
 
       - name: Run tests
         run: npm test
