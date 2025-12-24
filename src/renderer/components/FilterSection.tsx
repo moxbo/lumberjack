@@ -3,6 +3,7 @@
  */
 import { createPortal } from "preact/compat";
 import type { RefObject } from "preact";
+import { useState, useEffect, useRef } from "preact/hooks";
 import { useI18n } from "../../utils/i18n";
 import type { FilterState } from "../../hooks";
 
@@ -90,6 +91,11 @@ export function FilterSection({
 }: FilterSectionProps) {
   const { t } = useI18n();
 
+  // Local refs for input elements (needed for keyboard navigation)
+  const loggerInputRef = useRef<HTMLInputElement>(null);
+  const threadInputRef = useRef<HTMLInputElement>(null);
+  const messageInputRef = useRef<HTMLInputElement>(null);
+
   return (
     <div className={`filter-section ${expanded ? "expanded" : "collapsed"}`}>
       <div className="section" style={{ paddingTop: 0 }}>
@@ -131,6 +137,7 @@ export function FilterSection({
         >
           <input
             id="filterLogger"
+            ref={loggerInputRef as any}
             type="text"
             value={filter.logger}
             onInput={(e) =>
@@ -165,6 +172,8 @@ export function FilterSection({
                 addFilterHistory("logger", v);
                 onShowLoggerHistChange(false);
               }}
+              onClose={() => onShowLoggerHistChange(false)}
+              inputRef={loggerInputRef}
             />,
             document.body,
           )}
@@ -180,6 +189,7 @@ export function FilterSection({
         >
           <input
             id="filterThread"
+            ref={threadInputRef as any}
             type="text"
             value={filter.thread}
             onInput={(e) =>
@@ -214,6 +224,8 @@ export function FilterSection({
                 addFilterHistory("thread", v);
                 onShowThreadHistChange(false);
               }}
+              onClose={() => onShowThreadHistChange(false)}
+              inputRef={threadInputRef}
             />,
             document.body,
           )}
@@ -229,6 +241,7 @@ export function FilterSection({
         >
           <input
             id="filterMessage"
+            ref={messageInputRef as any}
             type="text"
             value={filter.message}
             onInput={(e) =>
@@ -263,6 +276,8 @@ export function FilterSection({
                 addFilterHistory("message", v);
                 onShowMessageHistChange(false);
               }}
+              onClose={() => onShowMessageHistChange(false)}
+              inputRef={messageInputRef}
             />,
             document.body,
           )}
@@ -325,6 +340,8 @@ interface HistoryDropdownProps {
   position: { left: number; top: number; width: number };
   popRef: RefObject<HTMLDivElement>;
   onSelect: (value: string) => void;
+  onClose: () => void;
+  inputRef?: RefObject<HTMLInputElement>;
 }
 
 function HistoryDropdown({
@@ -332,7 +349,67 @@ function HistoryDropdown({
   position,
   popRef,
   onSelect,
+  onClose,
+  inputRef,
 }: HistoryDropdownProps) {
+  const [highlightedIdx, setHighlightedIdx] = useState(-1);
+  const itemRefs = useRef<(HTMLDivElement | null)[]>([]);
+
+  // Reset highlight when items change
+  useEffect(() => {
+    setHighlightedIdx(-1);
+    itemRefs.current = items.map(() => null);
+  }, [items]);
+
+  // Scroll highlighted item into view
+  useEffect(() => {
+    if (highlightedIdx >= 0 && itemRefs.current[highlightedIdx]) {
+      itemRefs.current[highlightedIdx]?.scrollIntoView({
+        block: "nearest",
+        behavior: "smooth",
+      });
+    }
+  }, [highlightedIdx]);
+
+  // Keyboard event handler
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "ArrowDown") {
+        e.preventDefault();
+        setHighlightedIdx((prev) => Math.min(prev + 1, items.length - 1));
+      } else if (e.key === "ArrowUp") {
+        e.preventDefault();
+        setHighlightedIdx((prev) => Math.max(prev - 1, 0));
+      } else if (
+        e.key === "Enter" &&
+        highlightedIdx >= 0 &&
+        highlightedIdx < items.length
+      ) {
+        e.preventDefault();
+        const selectedItem = items[highlightedIdx];
+        if (selectedItem !== undefined) {
+          onSelect(selectedItem);
+        }
+      } else if (e.key === "Escape") {
+        e.preventDefault();
+        onClose();
+      } else if (e.key === "Home") {
+        e.preventDefault();
+        setHighlightedIdx(0);
+      } else if (e.key === "End") {
+        e.preventDefault();
+        setHighlightedIdx(items.length - 1);
+      }
+    };
+
+    // Attach to input if provided, otherwise to document
+    const target = inputRef?.current || document;
+    target.addEventListener("keydown", handleKeyDown as EventListener);
+    return () => {
+      target.removeEventListener("keydown", handleKeyDown as EventListener);
+    };
+  }, [items, highlightedIdx, onSelect, onClose, inputRef]);
+
   return (
     <div
       ref={popRef as any}
@@ -348,10 +425,16 @@ function HistoryDropdown({
       {items.map((v, i) => (
         <div
           key={i}
-          className="autocomplete-item"
+          ref={(el) => {
+            itemRefs.current[i] = el;
+          }}
+          className={`autocomplete-item ${highlightedIdx === i ? "highlighted" : ""}`}
           onClick={() => onSelect(v)}
           onMouseDown={(e) => e.preventDefault()}
+          onMouseEnter={() => setHighlightedIdx(i)}
           title={v}
+          role="option"
+          aria-selected={highlightedIdx === i}
         >
           <span>🕐</span>
           {v}

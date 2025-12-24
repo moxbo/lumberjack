@@ -275,6 +275,8 @@ export default function App(): JSX.Element {
   const searchInputRef = useRef<HTMLInputElement | null>(null);
   // NEU: Sichtbarkeit der Popover-Listen + Refs für Outside-Click
   const [showSearchHist, setShowSearchHist] = useState<boolean>(false);
+  const [searchHistHighlightIdx, setSearchHistHighlightIdx] =
+    useState<number>(-1);
   const [showLoggerHist, setShowLoggerHist] = useState<boolean>(false);
   const [showThreadHist, setShowThreadHist] = useState<boolean>(false);
   const [showMessageHist, setShowMessageHist] = useState<boolean>(false);
@@ -3685,20 +3687,80 @@ export default function App(): JSX.Element {
               value={search}
               onInput={(e) => setSearch(e.currentTarget.value)}
               onKeyDown={(e) => {
-                if ((e as any).key === "Enter") {
-                  addFilterHistory("search", (e.currentTarget as any).value);
-                  gotoSearchMatch(1);
+                const key = (e as any).key;
+                // Handle Enter: select highlighted item or go to next match
+                if (key === "Enter") {
+                  if (
+                    showSearchHist &&
+                    searchHistHighlightIdx >= 0 &&
+                    searchHistHighlightIdx < fltHistSearch.length
+                  ) {
+                    e.preventDefault();
+                    const selectedItem = fltHistSearch[searchHistHighlightIdx];
+                    if (selectedItem !== undefined) {
+                      setSearch(selectedItem);
+                      addFilterHistory("search", selectedItem);
+                      setShowSearchHist(false);
+                      setSearchHistHighlightIdx(-1);
+                    }
+                  } else {
+                    addFilterHistory(
+                      "search",
+                      (e.currentTarget as any).value as string,
+                    );
+                    gotoSearchMatch(1);
+                  }
+                  return;
                 }
-                if ((e as any).key === "ArrowDown") setShowSearchHist(true);
-                const key = (e as any).key?.toLowerCase?.() || "";
-                if (key === "a" && ((e as any).ctrlKey || (e as any).metaKey)) {
+                // Arrow navigation when dropdown is open
+                if (key === "ArrowDown") {
+                  if (showSearchHist && fltHistSearch.length > 0) {
+                    e.preventDefault();
+                    setSearchHistHighlightIdx((prev) =>
+                      Math.min(prev + 1, fltHistSearch.length - 1),
+                    );
+                  } else {
+                    setShowSearchHist(true);
+                    setSearchHistHighlightIdx(-1);
+                  }
+                  return;
+                }
+                if (key === "ArrowUp" && showSearchHist) {
+                  e.preventDefault();
+                  setSearchHistHighlightIdx((prev) => Math.max(prev - 1, 0));
+                  return;
+                }
+                if (key === "Escape" && showSearchHist) {
+                  e.preventDefault();
+                  setShowSearchHist(false);
+                  setSearchHistHighlightIdx(-1);
+                  return;
+                }
+                if (key === "Home" && showSearchHist) {
+                  e.preventDefault();
+                  setSearchHistHighlightIdx(0);
+                  return;
+                }
+                if (key === "End" && showSearchHist) {
+                  e.preventDefault();
+                  setSearchHistHighlightIdx(fltHistSearch.length - 1);
+                  return;
+                }
+                const keyLower = key?.toLowerCase?.() || "";
+                if (
+                  keyLower === "a" &&
+                  ((e as any).ctrlKey || (e as any).metaKey)
+                ) {
                   e.preventDefault();
                   try {
                     (e.currentTarget as HTMLInputElement).select();
                   } catch {}
                 }
               }}
-              onFocus={() => setShowSearchHist(true)}
+              onFocus={() => {
+                setShowSearchHist(true);
+                setSearchHistHighlightIdx(-1);
+              }}
               onBlur={(e) => addFilterHistory("search", e.currentTarget.value)}
               placeholder="Suchen… (foo&bar, foo|bar, !foo)"
             />
@@ -3882,14 +3944,18 @@ export default function App(): JSX.Element {
                 {fltHistSearch.map((v, i) => (
                   <div
                     key={i}
-                    className="autocomplete-item"
+                    className={`autocomplete-item ${searchHistHighlightIdx === i ? "highlighted" : ""}`}
                     onClick={() => {
                       setSearch(v);
                       addFilterHistory("search", v);
                       setShowSearchHist(false);
+                      setSearchHistHighlightIdx(-1);
                     }}
                     onMouseDown={(e) => e.preventDefault()}
+                    onMouseEnter={() => setSearchHistHighlightIdx(i)}
                     title={v}
+                    role="option"
+                    aria-selected={searchHistHighlightIdx === i}
                   >
                     <span>🕐</span>
                     {v}
