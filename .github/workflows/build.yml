@@ -291,13 +291,13 @@ jobs:
           outDir="release/build"
           archDir="$outDir/mac-$arch"
           mkdir -p "$archDir"
-          
+
           # Move DMG and other macOS artifacts
           find "$outDir" -maxdepth 1 -name "*.dmg" -exec mv {} "$archDir/" \;
           find "$outDir" -maxdepth 1 -name "*.zip" -exec mv {} "$archDir/" \;
           find "$outDir" -maxdepth 1 -name "*.blockmap" -exec mv {} "$archDir/" \;
           find "$outDir" -maxdepth 1 -name "latest-mac*.yml" -exec cp {} "$archDir/" \;
-          
+
           echo "macOS artifacts organized in $archDir"
           ls -la "$archDir" || true
 
