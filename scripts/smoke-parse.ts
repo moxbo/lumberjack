@@ -35,6 +35,11 @@ function main() {
   }, {});
   console.log("Level Verteilung:", levels);
   console.log("Beispiel-Eintrag:", entries[0]);
+
+  // Aufräumen: Temporäre Testdatei löschen
+  if (fs.existsSync(tmpPath)) {
+    fs.unlinkSync(tmpPath);
+  }
 }
 
 main();

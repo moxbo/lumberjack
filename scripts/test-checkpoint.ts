@@ -1,7 +1,7 @@
 import os from "node:os";
 import fs from "node:fs";
 import path from "node:path";
-import { CheckpointStore } from "../src/main/CheckpointStore";
+import { CheckpointStore } from "../src/main/CheckpointStore.js";
 
 async function testCheckpointBasics() {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "cp-"));

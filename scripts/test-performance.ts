@@ -4,7 +4,7 @@
  * Tests the performance difference between full sort vs merge approach
  */
 
-import { compareByTimestampId } from "../src/utils/sort";
+import { compareByTimestampId } from "../src/utils/sort.js";
 
 // Efficient merge function (same as in App.tsx)
 function mergeSorted(prevSorted: any[], newSorted: any[]): any[] {
