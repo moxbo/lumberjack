@@ -57,7 +57,7 @@ Lumberjack erwartet **JSON-formatierte Logs** über TCP. Verwende den `LogstashT
 
     <!-- TCP Socket-Appender für Lumberjack (JSON-Format) -->
     <appender name="LUMBERJACK" class="net.logstash.logback.appender.LogstashTcpSocketAppender">
-        <destination>localhost:4560</destination>
+        <destination>localhost:4445</destination>
         <encoder class="net.logstash.logback.encoder.LogstashEncoder">
             <includeContext>false</includeContext>
         </encoder>
@@ -97,7 +97,7 @@ Lumberjack erwartet **JSON-formatierte Logs** über TCP. Verwende den `LogstashT
         </Console>
 
         <!-- TCP Socket für Lumberjack -->
-        <Socket name="Lumberjack" host="localhost" port="4560" protocol="TCP">
+        <Socket name="Lumberjack" host="localhost" port="4445" protocol="TCP">
             <PatternLayout pattern="%d{yyyy-MM-dd HH:mm:ss.SSS} [%t] %-5level %logger{36} - %msg%n"/>
         </Socket>
     </Appenders>
@@ -122,14 +122,14 @@ log4j.appender.console.layout.ConversionPattern=%d{yyyy-MM-dd HH:mm:ss.SSS} [%t]
 # TCP Socket für Lumberjack
 log4j.appender.lumberjack=org.apache.log4j.net.SocketAppender
 log4j.appender.lumberjack.remoteHost=localhost
-log4j.appender.lumberjack.port=4560
+log4j.appender.lumberjack.port=4445
 log4j.appender.lumberjack.reconnectionDelay=10000
 
 # Root Logger
 log4j.rootLogger=INFO, console, lumberjack
 ```
 
-> 💡 **Tipp**: In Lumberjack den TCP-Port unter *Einstellungen → TCP Port* konfigurieren (Standard: 4560)
+> 💡 **Tipp**: In Lumberjack den TCP-Port unter *Einstellungen → TCP Port* konfigurieren (Standard: 4445)
 
 ---
 
