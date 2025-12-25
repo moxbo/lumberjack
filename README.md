@@ -43,6 +43,8 @@ Lumberjack kann Logs in Echtzeit über TCP empfangen. Konfiguriere deine Anwendu
 
 ### Logback (logback.xml)
 
+Lumberjack erwartet **JSON-formatierte Logs** über TCP. Verwende den `LogstashTcpSocketAppender` mit `LogstashEncoder`:
+
 ```xml
 <?xml version="1.0" encoding="UTF-8"?>
 <configuration>
@@ -53,20 +55,36 @@ Lumberjack kann Logs in Echtzeit über TCP empfangen. Konfiguriere deine Anwendu
         </encoder>
     </appender>
 
-    <!-- TCP Socket-Appender für Lumberjack -->
-    <appender name="LUMBERJACK" class="ch.qos.logback.classic.net.SocketAppender">
-        <remoteHost>localhost</remoteHost>
-        <port>4560</port>
-        <reconnectionDelay>10000</reconnectionDelay>
-        <includeCallerData>true</includeCallerData>
+    <!-- TCP Socket-Appender für Lumberjack (JSON-Format) -->
+    <appender name="LUMBERJACK" class="net.logstash.logback.appender.LogstashTcpSocketAppender">
+        <destination>localhost:4560</destination>
+        <encoder class="net.logstash.logback.encoder.LogstashEncoder">
+            <includeContext>false</includeContext>
+        </encoder>
+    </appender>
+
+    <!-- Async-Wrapper für bessere Performance (optional) -->
+    <appender name="ASYNC_LUMBERJACK" class="ch.qos.logback.classic.AsyncAppender">
+        <queueSize>500</queueSize>
+        <discardingThreshold>0</discardingThreshold>
+        <appender-ref ref="LUMBERJACK"/>
     </appender>
 
     <root level="INFO">
         <appender-ref ref="CONSOLE"/>
-        <appender-ref ref="LUMBERJACK"/>
+        <appender-ref ref="ASYNC_LUMBERJACK"/>
     </root>
 </configuration>
 ```
+
+> **Hinweis:** Du benötigst die Dependency `logstash-logback-encoder` in deinem Projekt:
+> ```xml
+> <dependency>
+>     <groupId>net.logstash.logback</groupId>
+>     <artifactId>logstash-logback-encoder</artifactId>
+>     <version>9.0</version>
+> </dependency>
+> ```
 
 ### Log4j2 (log4j2.xml)
 
