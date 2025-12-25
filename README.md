@@ -8,6 +8,25 @@ Ein schneller, schlanker Electron-basierter Log-Viewer mit leistungsfähigen Fil
 
 ---
 
+## 📸 Screenshots
+
+### Hauptansicht
+![Hauptansicht](images/screenshot/main.png)
+
+### Filter in Aktion
+![Filter](images/screenshot/filter.png)
+
+### MDC/Diagnostic Context Filter
+![DC Filter](images/screenshot/dc-filter.png)
+
+### Elasticsearch Integration
+![Elasticsearch](images/screenshot/elastic.png)
+
+### Einstellungen
+![Einstellungen](images/screenshot/settings.png)
+
+---
+
 ## ✨ Features
 
 - **Leistungsstarke Filter**: UND (`&`), ODER (`|`), NICHT (`!`) Operatoren
@@ -15,6 +34,86 @@ Ein schneller, schlanker Electron-basierter Log-Viewer mit leistungsfähigen Fil
 - **Effizientes Rendering**: 100.000+ Log-Einträge bei 60 FPS
 - **TCP Log-Empfang**: Echtzeit Log-Streaming
 - **Cross-Platform**: Windows, macOS, Linux
+
+---
+
+## 📡 TCP Log-Streaming Konfiguration
+
+Lumberjack kann Logs in Echtzeit über TCP empfangen. Konfiguriere deine Anwendung, um Logs an Lumberjack zu senden:
+
+### Logback (logback.xml)
+
+```xml
+<?xml version="1.0" encoding="UTF-8"?>
+<configuration>
+    <!-- Konsolen-Appender für lokale Ausgabe -->
+    <appender name="CONSOLE" class="ch.qos.logback.core.ConsoleAppender">
+        <encoder>
+            <pattern>%d{yyyy-MM-dd HH:mm:ss.SSS} [%thread] %-5level %logger{36} - %msg%n</pattern>
+        </encoder>
+    </appender>
+
+    <!-- TCP Socket-Appender für Lumberjack -->
+    <appender name="LUMBERJACK" class="ch.qos.logback.classic.net.SocketAppender">
+        <remoteHost>localhost</remoteHost>
+        <port>4560</port>
+        <reconnectionDelay>10000</reconnectionDelay>
+        <includeCallerData>true</includeCallerData>
+    </appender>
+
+    <root level="INFO">
+        <appender-ref ref="CONSOLE"/>
+        <appender-ref ref="LUMBERJACK"/>
+    </root>
+</configuration>
+```
+
+### Log4j2 (log4j2.xml)
+
+```xml
+<?xml version="1.0" encoding="UTF-8"?>
+<Configuration status="WARN">
+    <Appenders>
+        <Console name="Console" target="SYSTEM_OUT">
+            <PatternLayout pattern="%d{yyyy-MM-dd HH:mm:ss.SSS} [%t] %-5level %logger{36} - %msg%n"/>
+        </Console>
+
+        <!-- TCP Socket für Lumberjack -->
+        <Socket name="Lumberjack" host="localhost" port="4560" protocol="TCP">
+            <PatternLayout pattern="%d{yyyy-MM-dd HH:mm:ss.SSS} [%t] %-5level %logger{36} - %msg%n"/>
+        </Socket>
+    </Appenders>
+
+    <Loggers>
+        <Root level="info">
+            <AppenderRef ref="Console"/>
+            <AppenderRef ref="Lumberjack"/>
+        </Root>
+    </Loggers>
+</Configuration>
+```
+
+### Log4j 1.x (log4j.properties)
+
+```properties
+# Konsolen-Appender
+log4j.appender.console=org.apache.log4j.ConsoleAppender
+log4j.appender.console.layout=org.apache.log4j.PatternLayout
+log4j.appender.console.layout.ConversionPattern=%d{yyyy-MM-dd HH:mm:ss.SSS} [%t] %-5p %c{1} - %m%n
+
+# TCP Socket für Lumberjack
+log4j.appender.lumberjack=org.apache.log4j.net.SocketAppender
+log4j.appender.lumberjack.remoteHost=localhost
+log4j.appender.lumberjack.port=4560
+log4j.appender.lumberjack.reconnectionDelay=10000
+
+# Root Logger
+log4j.rootLogger=INFO, console, lumberjack
+```
+
+> 💡 **Tipp**: In Lumberjack den TCP-Port unter *Einstellungen → TCP Port* konfigurieren (Standard: 4560)
+
+---
 
 ### Filter-Beispiele
 
