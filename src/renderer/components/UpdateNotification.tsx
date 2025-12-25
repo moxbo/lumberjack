@@ -4,7 +4,7 @@
  * Allows the user to download, install, or dismiss the update
  */
 
-import { useState, useEffect, useCallback } from "preact/hooks";
+import { useCallback, useEffect, useState } from "preact/hooks";
 import type { VNode } from "preact";
 import { useI18n } from "../../utils/i18n";
 import logger from "../../utils/logger";
@@ -196,9 +196,10 @@ export function UpdateNotification(): VNode | null {
 
           {/* Release notes content */}
           {showDetails && notesText && (
-            <div className="update-release-notes">
-              <pre>{notesText}</pre>
-            </div>
+            <div
+              className="update-release-notes"
+              dangerouslySetInnerHTML={{ __html: notesText }}
+            />
           )}
         </div>
 
