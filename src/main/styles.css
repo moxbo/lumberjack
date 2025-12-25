@@ -2674,7 +2674,7 @@ input[type="checkbox"] {
   box-shadow: var(--shadow-lg);
   max-height: 240px;
   overflow-y: auto;
-  z-index: var(--z-dropdown);
+  z-index: 9999;
 }
 
 .autocomplete-item {

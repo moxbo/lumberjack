@@ -21,8 +21,8 @@ import { TimeFilter } from "../store/timeFilter";
 import { createPortal, lazy, Suspense } from "preact/compat";
 import type { ElasticSearchOptions } from "../types/ipc";
 import { MDCListener } from "../store/mdcListener";
-import { LogRow, clearHighlightCache } from "./LogRow";
-import { fmtTimestamp, clearTimestampCache } from "../utils/format";
+import { clearHighlightCache, LogRow } from "./LogRow";
+import { clearTimestampCache, fmtTimestamp } from "../utils/format";
 
 // Import refactored constants
 import { BASE_MARK_COLORS, TRIM_THRESHOLD_ENTRIES } from "../constants";
@@ -35,15 +35,15 @@ import { useDebounce, useFilterState } from "../hooks";
 
 // Import refactored components
 import {
+  AlertDialog,
   ContextMenu,
+  DetailPanel,
+  FilterSection,
   HelpDialog,
-  TitleDialog,
   HttpLoadDialog,
   HttpPollDialog,
   SettingsModal,
-  DetailPanel,
-  FilterSection,
-  AlertDialog,
+  TitleDialog,
   UpdateNotification,
 } from "./components";
 import { JSX } from "preact/jsx-runtime";
@@ -3758,11 +3758,15 @@ export default function App(): JSX.Element {
                 }
               }}
               onFocus={() => {
+                setShowLoggerHist(false);
+                setShowThreadHist(false);
+                setShowMessageHist(false);
                 setShowSearchHist(true);
                 setSearchHistHighlightIdx(-1);
               }}
               onBlur={(e) => addFilterHistory("search", e.currentTarget.value)}
               placeholder="Suchen… (foo&bar, foo|bar, !foo)"
+              autocomplete="off"
             />
           </div>
           {/* Such-Optionen Button mit Dropdown */}
@@ -4230,9 +4234,18 @@ export default function App(): JSX.Element {
               logger.error("Persisting onlyMarked setting failed:", err);
             }
           }}
-          onShowLoggerHistChange={setShowLoggerHist}
-          onShowThreadHistChange={setShowThreadHist}
-          onShowMessageHistChange={setShowMessageHist}
+          onShowLoggerHistChange={(show) => {
+            if (show) setShowSearchHist(false);
+            setShowLoggerHist(show);
+          }}
+          onShowThreadHistChange={(show) => {
+            if (show) setShowSearchHist(false);
+            setShowThreadHist(show);
+          }}
+          onShowMessageHistChange={(show) => {
+            if (show) setShowSearchHist(false);
+            setShowMessageHist(show);
+          }}
           addFilterHistory={addFilterHistory}
           onShowDcDialog={() => setShowDcDialog(true)}
           onShowTimeDialog={openTimeFilterDialog}

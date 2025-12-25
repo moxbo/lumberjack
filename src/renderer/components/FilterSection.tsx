@@ -3,7 +3,7 @@
  */
 import { createPortal } from "preact/compat";
 import type { RefObject } from "preact";
-import { useState, useEffect, useRef } from "preact/hooks";
+import { useEffect, useRef, useState } from "preact/hooks";
 import { useI18n } from "../../utils/i18n";
 import type { FilterState } from "../../hooks";
 
@@ -152,11 +152,16 @@ export function FilterSection({
                 e.currentTarget.select();
               }
             }}
-            onFocus={() => onShowLoggerHistChange(true)}
+            onFocus={() => {
+              onShowThreadHistChange(false);
+              onShowMessageHistChange(false);
+              onShowLoggerHistChange(true);
+            }}
             onBlur={(e) => addFilterHistory("logger", e.currentTarget.value)}
             placeholder={t("toolbar.loggerPlaceholder")}
             disabled={!stdFiltersEnabled}
             style={{ minWidth: "150px" }}
+            autocomplete="off"
           />
         </div>
         {showLoggerHist &&
@@ -204,11 +209,16 @@ export function FilterSection({
                 e.currentTarget.select();
               }
             }}
-            onFocus={() => onShowThreadHistChange(true)}
+            onFocus={() => {
+              onShowLoggerHistChange(false);
+              onShowMessageHistChange(false);
+              onShowThreadHistChange(true);
+            }}
             onBlur={(e) => addFilterHistory("thread", e.currentTarget.value)}
             placeholder={t("toolbar.threadPlaceholder")}
             disabled={!stdFiltersEnabled}
             style={{ minWidth: "130px" }}
+            autocomplete="off"
           />
         </div>
         {showThreadHist &&
@@ -256,11 +266,16 @@ export function FilterSection({
                 e.currentTarget.select();
               }
             }}
-            onFocus={() => onShowMessageHistChange(true)}
+            onFocus={() => {
+              onShowLoggerHistChange(false);
+              onShowThreadHistChange(false);
+              onShowMessageHistChange(true);
+            }}
             onBlur={(e) => addFilterHistory("message", e.currentTarget.value)}
             placeholder={t("toolbar.messagePlaceholder")}
             disabled={!stdFiltersEnabled}
             style={{ minWidth: "200px" }}
+            autocomplete="off"
           />
         </div>
         {showMessageHist &&
