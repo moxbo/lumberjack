@@ -268,9 +268,9 @@ jobs:
             Write-Host "win-unpacked directory not found, skipping fast portable ZIP"
           }
 
-      - name: Build macOS DMG
+      - name: Build macOS DMG and ZIP
         if: ${{ matrix.platform == 'mac' }}
-        run: npx electron-builder --mac dmg --${{ matrix.arch }} --publish never
+        run: npx electron-builder --mac dmg zip --${{ matrix.arch }} --publish never
         env:
           CI: true
           # Code Signing & Notarization: Set these secrets to enable
