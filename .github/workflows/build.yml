@@ -144,9 +144,6 @@ jobs:
           - os: windows-latest
             arch: x64
             platform: win
-          - os: windows-latest
-            arch: ia32
-            platform: win
           - os: macos-latest
             arch: arm64
             platform: mac
@@ -222,14 +219,6 @@ jobs:
         env:
           CI: true
 
-      - name: Build Windows Portable
-        if: ${{ matrix.platform == 'win' }}
-        run: npx electron-builder --win portable --${{ matrix.arch }} --publish never
-        env:
-          CI: true
-          # Code Signing: Set CSC_LINK and CSC_KEY_PASSWORD secrets to enable
-          CSC_LINK: ${{ secrets.WIN_CSC_LINK }}
-          CSC_KEY_PASSWORD: ${{ secrets.WIN_CSC_KEY_PASSWORD }}
 
       - name: Build Windows NSIS Installer
         if: ${{ matrix.platform == 'win' && matrix.arch == 'x64' }}
