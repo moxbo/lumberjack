@@ -6,11 +6,52 @@
 import {
   app,
   BrowserWindow,
+  crashReporter,
   dialog,
   Menu,
-  nativeImage,
   type NativeImage,
+  nativeImage,
 } from "electron";
+// Early imports needed for settings loading before app ready
+import * as path from "path";
+import * as fs from "fs";
+import { spawn } from "node:child_process";
+import log from "electron-log/main";
+import type { LogEntry } from "../types/ipc";
+import { SettingsService } from "../services/SettingsService";
+import { NetworkService } from "../services/NetworkService";
+import { PerformanceService } from "../services/PerformanceService";
+import { AdaptiveBatchService } from "../services/AdaptiveBatchService";
+import { AsyncFileWriter } from "../services/AsyncFileWriter";
+import { HealthMonitor } from "../services/HealthMonitor";
+import { LoggingStrategy, LogLevel } from "../services/LoggingStrategy";
+import { FeatureFlags } from "../services/FeatureFlags";
+import { ShutdownCoordinator } from "../services/ShutdownCoordinator";
+import { registerIpcHandlers } from "./ipcHandlers";
+import { getSharedMainApi } from "./sharedMainApi";
+import { initI18n, t } from "../locales/mainI18n";
+
+// Import utility modules
+import {
+  APP_ID_WINDOWS,
+  DEFAULT_MAX_PENDING_APPENDS,
+  isDev as isDevEnv,
+  LOG_FILE_MAX_SIZE,
+  MAX_BATCH_ENTRIES,
+  MEMORY_CHECK_INTERVAL_MS,
+  MEMORY_HIGH_THRESHOLD,
+  MEMORY_LOW_THRESHOLD,
+  MIN_PENDING_APPENDS,
+  MULTI_INSTANCE_FLAG,
+  NEW_WINDOW_FLAG,
+} from "./util/constants";
+import { prepareRenderBatch } from "./util/logEntryUtils";
+import {
+  resolveIconPathAsync,
+  resolveIconPathSync,
+  resolveMacIconPath,
+} from "./util/iconResolver";
+import { showAboutDialog } from "./util/dialogs";
 
 // ============================================================================
 // STARTUP OPTIMIZATIONS (must be before any other code)
@@ -27,10 +68,6 @@ if (process.env.LUMBERJACK_DISABLE_GPU === "1") {
     "[startup] Hardware acceleration disabled via LUMBERJACK_DISABLE_GPU",
   );
 }
-
-// Early imports needed for settings loading before app ready
-import * as path from "path";
-import * as fs from "fs";
 
 // V8 Optimizations for faster JavaScript execution
 // --turbo-fast-api-calls: Faster native API calls
@@ -114,17 +151,6 @@ if (process.platform === "win32") {
   // Skip print preview initialization
   app.commandLine.appendSwitch("disable-print-preview");
 }
-import { spawn } from "node:child_process";
-import log from "electron-log/main";
-import { crashReporter } from "electron";
-import type { LogEntry } from "../types/ipc";
-import { SettingsService } from "../services/SettingsService";
-import { NetworkService } from "../services/NetworkService";
-import { PerformanceService } from "../services/PerformanceService";
-import { AdaptiveBatchService } from "../services/AdaptiveBatchService";
-import { AsyncFileWriter } from "../services/AsyncFileWriter";
-import { HealthMonitor } from "../services/HealthMonitor";
-import { LoggingStrategy, LogLevel } from "../services/LoggingStrategy";
 // Lazy import for AutoUpdaterService to avoid loading electron-updater at startup
 // This significantly improves startup time for portable versions
 let _autoUpdaterServiceModule:
@@ -156,33 +182,6 @@ try {
 } catch (e) {
   console.error("[crash-reporter] Failed to initialize:", e);
 }
-import { FeatureFlags } from "../services/FeatureFlags";
-import { ShutdownCoordinator } from "../services/ShutdownCoordinator";
-import { registerIpcHandlers } from "./ipcHandlers";
-import { getSharedMainApi } from "./sharedMainApi";
-import { initI18n, t } from "../locales/mainI18n";
-
-// Import utility modules
-import {
-  isDev as isDevEnv,
-  MULTI_INSTANCE_FLAG,
-  NEW_WINDOW_FLAG,
-  DEFAULT_MAX_PENDING_APPENDS,
-  MIN_PENDING_APPENDS,
-  MAX_BATCH_ENTRIES,
-  MEMORY_HIGH_THRESHOLD,
-  MEMORY_LOW_THRESHOLD,
-  LOG_FILE_MAX_SIZE,
-  APP_ID_WINDOWS,
-  MEMORY_CHECK_INTERVAL_MS,
-} from "./util/constants";
-import { prepareRenderBatch } from "./util/logEntryUtils";
-import {
-  resolveIconPathSync,
-  resolveIconPathAsync,
-  resolveMacIconPath,
-} from "./util/iconResolver";
-import { showAboutDialog } from "./util/dialogs";
 
 // Environment (use imported constant)
 const isDev = isDevEnv;
@@ -1310,10 +1309,14 @@ function buildMenu(): void {
               (win as BrowserWindow | null | undefined) || null,
             ),
         },
-        { type: "separator" as const },
-        { role: "reload" as const },
-        { role: "forceReload" as const },
-        ...(isDev ? [{ role: "toggleDevTools" as const }] : []),
+        ...(isDev
+          ? [
+              { type: "separator" as const },
+              { role: "reload" as const },
+              { role: "forceReload" as const },
+              { role: "toggleDevTools" as const },
+            ]
+          : []),
         { type: "separator" as const },
         { role: "resetZoom" as const },
         { role: "zoomIn" as const },
