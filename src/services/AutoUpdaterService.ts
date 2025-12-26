@@ -14,8 +14,8 @@
 
 import {
   autoUpdater,
-  type UpdateInfo,
   type ProgressInfo,
+  type UpdateInfo,
 } from "electron-updater";
 import { app, BrowserWindow, ipcMain } from "electron";
 import log from "electron-log/main";
@@ -54,6 +54,11 @@ export class AutoUpdaterService {
 
     // Allow downgrade (useful for testing)
     autoUpdater.allowDowngrade = false;
+
+    // Disable code signing verification for unsigned builds
+    // Required for macOS when building without Apple Developer ID
+    // @ts-expect-error - forceCodeSigning is not in the type definitions but is supported
+    autoUpdater.forceCodeSigning = false;
 
     // Configure GitHub token for private repositories
     // Token can be set via GH_TOKEN or GITHUB_TOKEN environment variable

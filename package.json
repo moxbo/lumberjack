@@ -1,6 +1,6 @@
 {
   "name": "lumberjack",
-  "version": "1.0.2",
+  "version": "1.0.4",
   "description": "Lumberjack - A log file viewer",
   "main": "dist-main/main.cjs",
   "type": "module",
@@ -35,6 +35,7 @@
     "build:portable:x64": "npm run prepack:app && npm run build:prod && cross-env CSC_IDENTITY_AUTO_DISCOVERY=false electron-builder --win portable --x64",
     "build:dir:x64": "npm run prepack:app && npm run build:prod && cross-env CSC_IDENTITY_AUTO_DISCOVERY=false electron-builder --win dir --x64",
     "build:mac:dmg": "npm run prepack:app && npm run build:prod && cross-env ELECTRON_BUILDER_DISABLE_PUBLISH=true CSC_IDENTITY_AUTO_DISCOVERY=false electron-builder --mac dmg zip --publish never",
+    "build:mac:publish": "npm run prepack:app && npm run build:prod && cross-env CSC_IDENTITY_AUTO_DISCOVERY=false electron-builder --mac dmg zip --publish always",
     "prepare": "husky"
   },
   "author": {
@@ -159,15 +160,16 @@
       "artifactName": "Lumberjack-${version}-${arch}-setup.${ext}"
     },
     "mac": {
+      "artifactName": "Lumberjack-${version}-${arch}.${ext}",
       "target": [
         {
-          "target": "zip",
+          "target": "dmg",
           "arch": [
             "arm64"
           ]
         },
         {
-          "target": "dmg",
+          "target": "zip",
           "arch": [
             "arm64"
           ]
