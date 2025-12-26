@@ -257,9 +257,9 @@ jobs:
             Write-Host "win-unpacked directory not found, skipping fast portable ZIP"
           }
 
-      - name: Build macOS DMG and ZIP
+      - name: Build macOS app bundle
         if: ${{ matrix.platform == 'mac' }}
-        run: npx electron-builder --mac dmg zip --${{ matrix.arch }} --publish never
+        run: npx electron-builder --mac dir --${{ matrix.arch }} --publish never
         env:
           CI: true
           # Code Signing & Notarization: Set these secrets to enable
@@ -268,6 +268,33 @@ jobs:
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+
+      - name: Ad-hoc sign macOS app (if not already signed)
+        if: ${{ matrix.platform == 'mac' }}
+        shell: bash
+        run: |
+          # Find the .app bundle in the build output
+          app_path=$(find release/build -name "*.app" -type d | head -1)
+          if [[ -n "$app_path" ]]; then
+            echo "Checking signature of $app_path..."
+            # Check if already signed with a valid identity
+            if ! codesign -v "$app_path" 2>/dev/null; then
+              echo "App is not signed or signature is invalid. Applying ad-hoc signature..."
+              codesign --force --deep --sign - "$app_path"
+              echo "Ad-hoc signature applied successfully"
+              codesign -v "$app_path" && echo "Signature verification passed"
+            else
+              echo "App is already properly signed"
+            fi
+          else
+            echo "No .app bundle found, skipping ad-hoc signing"
+          fi
+
+      - name: Build macOS DMG and ZIP from signed app
+        if: ${{ matrix.platform == 'mac' }}
+        run: npx electron-builder --mac dmg zip --${{ matrix.arch }} --publish never --prepackaged "release/build/mac-${{ matrix.arch }}"
+        env:
+          CI: true
 
       - name: Organize Windows build outputs into arch subfolder
         if: ${{ matrix.platform == 'win' && always() }}
