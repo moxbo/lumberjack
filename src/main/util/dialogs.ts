@@ -3,11 +3,12 @@
  * Reusable dialog functions for About, Help, and Confirmation dialogs
  */
 
-import { app, BrowserWindow, dialog } from "electron";
+import { app, BrowserWindow, dialog, nativeImage } from "electron";
 import log from "electron-log/main";
 import os from "node:os";
 import { isDev } from "./constants";
 import { t } from "../../locales/mainI18n";
+import { resolveIconPathSync, resolveMacIconPath } from "./iconResolver";
 
 /**
  * Show the About dialog with application information
@@ -43,6 +44,13 @@ export function showAboutDialog(): void {
       `© ${year} - Open Source Software`,
     ].join("\n");
 
+    // Resolve icon for About dialog
+    const iconPath =
+      process.platform === "darwin"
+        ? resolveMacIconPath()
+        : resolveIconPathSync();
+    const icon = iconPath ? nativeImage.createFromPath(iconPath) : undefined;
+
     const options: Electron.MessageBoxOptions = {
       type: "info",
       title: t("main.about.title"),
@@ -51,6 +59,7 @@ export function showAboutDialog(): void {
       buttons: ["OK"],
       noLink: true,
       normalizeAccessKeys: true,
+      ...(icon && !icon.isEmpty() ? { icon } : {}),
     };
 
     if (win) {
