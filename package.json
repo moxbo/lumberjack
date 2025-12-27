@@ -49,8 +49,8 @@
     "@playwright/test": "^1.57.0",
     "@preact/preset-vite": "^2.10.2",
     "@types/node": "^25.0.3",
-    "@typescript-eslint/eslint-plugin": "^8.50.0",
-    "@typescript-eslint/parser": "^8.50.0",
+    "@typescript-eslint/eslint-plugin": "^8.50.1",
+    "@typescript-eslint/parser": "^8.50.1",
     "concurrently": "^9.2.1",
     "cross-env": "^10.1.0",
     "electron": "^39.2.7",
@@ -79,7 +79,7 @@
     "adm-zip": "^0.5.16",
     "electron-log": "^5.4.3",
     "electron-updater": "^6.6.2",
-    "preact": "^10.28.0"
+    "preact": "^10.28.1"
   },
   "build": {
     "appId": "de.moxbo.lumberjack",
