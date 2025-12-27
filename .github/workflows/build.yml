@@ -147,7 +147,7 @@ jobs:
           - os: macos-latest
             arch: arm64
             platform: mac
-          - os: macos-latest
+          - os: macos-13
             arch: x64
             platform: mac
     steps:
