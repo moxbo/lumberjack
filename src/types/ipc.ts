@@ -319,6 +319,7 @@ export interface AutoUpdaterStatusResult {
 export type ElectronAPI = {
   settingsGet: () => Promise<SettingsResult>;
   settingsSet: (patch: Partial<Settings>) => Promise<SettingsResult>;
+  getDefaultLogPath: () => Promise<string>;
   windowTitleGet: () => Promise<WindowTitleResult>;
   windowTitleSet: (title: string) => Promise<Result<void>>;
   windowPermsGet: () => Promise<WindowPermsResult>;

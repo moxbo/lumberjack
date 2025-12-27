@@ -3,23 +3,23 @@
  * Handles IPC communication between main and renderer processes
  */
 
-import { ipcMain, dialog, BrowserWindow, app } from "electron";
+import { app, BrowserWindow, dialog, ipcMain } from "electron";
 import log from "electron-log/main";
 import * as path from "path";
 import * as fs from "fs";
 import { getSharedMainApi } from "./sharedMainApi";
 import { t } from "../locales/mainI18n";
 import {
-  Settings,
-  ElasticSearchOptions,
-  ParseResult,
-  SettingsResult,
   DroppedFile,
-  WindowPermsResult,
-  Result,
-  ExportViewOptions,
+  ElasticSearchOptions,
   ExportResult,
+  ExportViewOptions,
   LogEntry,
+  ParseResult,
+  Result,
+  Settings,
+  SettingsResult,
+  WindowPermsResult,
 } from "../types/ipc";
 import type { SettingsService } from "../services/SettingsService";
 import type { NetworkService } from "../services/NetworkService";
@@ -190,6 +190,16 @@ export function registerIpcHandlers(
         ok: false,
         error: err instanceof Error ? err.message : String(err),
       };
+    }
+  });
+
+  ipcMain.handle("settings:getDefaultLogPath", (): string => {
+    try {
+      // Get the actual log file path from electron-log
+      return log.transports.file.getFile().path;
+    } catch {
+      // Fallback to standard logs directory
+      return path.join(app.getPath("logs"), "main.log");
     }
   });
 

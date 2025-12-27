@@ -5,22 +5,22 @@
 
 import { contextBridge, ipcRenderer, type IpcRendererEvent } from "electron";
 import type {
-  ElectronAPI,
-  LogEntry,
-  TcpStatus,
-  MenuCommand,
-  SettingsResult,
-  ParseResult,
+  AutoUpdaterStatus,
   DroppedFile,
   ElasticSearchOptions,
+  ElectronAPI,
+  ExportPathResult,
+  ExportResult,
+  ExportViewOptions,
   HttpPollResult,
+  LogEntry,
+  MenuCommand,
+  ParseResult,
   Result,
   Settings,
+  SettingsResult,
+  TcpStatus,
   WindowTitleResult,
-  AutoUpdaterStatus,
-  ExportViewOptions,
-  ExportResult,
-  ExportPathResult,
 } from "./src/types/ipc";
 
 /**
@@ -33,6 +33,9 @@ const api: ElectronAPI = {
 
   settingsSet: (patch: Partial<Settings>): Promise<SettingsResult> =>
     ipcRenderer.invoke("settings:set", patch),
+
+  getDefaultLogPath: (): Promise<string> =>
+    ipcRenderer.invoke("settings:getDefaultLogPath"),
 
   // Window title (session) operations
   windowTitleGet: (): Promise<WindowTitleResult> =>

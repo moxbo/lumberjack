@@ -1,7 +1,8 @@
 /**
  * Settings Modal Component - Modern Design
  */
-import { useI18n, type Locale } from "../../utils/i18n";
+import { useEffect, useState } from "preact/hooks";
+import { type Locale, useI18n } from "../../utils/i18n";
 import logger from "../../utils/logger";
 import type { SettingsForm, SettingsTab } from "../../hooks";
 import { useFeatureFlags } from "../../hooks";
@@ -142,6 +143,20 @@ export function SettingsModal({
 }: SettingsModalProps) {
   const { t } = useI18n();
   const { features, loading } = useFeatureFlags();
+  const [defaultLogPath, setDefaultLogPath] = useState<string>("");
+
+  // Load default log path when modal opens
+  useEffect(() => {
+    if (open && !defaultLogPath) {
+      window.api
+        .getDefaultLogPath()
+        .then(setDefaultLogPath)
+        .catch(() => {
+          // Fallback if API call fails
+          setDefaultLogPath("");
+        });
+    }
+  }, [open, defaultLogPath]);
 
   if (!open) return null;
 
@@ -593,7 +608,10 @@ export function SettingsModal({
                             logFilePath: e.currentTarget.value,
                           })
                         }
-                        placeholder={t("settings.logging.filePlaceholder")}
+                        placeholder={
+                          defaultLogPath ||
+                          t("settings.logging.filePlaceholder")
+                        }
                         disabled={!fileLoggingEnabled || !form.logToFile}
                       />
                       <button
