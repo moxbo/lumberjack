@@ -147,9 +147,6 @@ jobs:
           - os: macos-latest
             arch: arm64
             platform: mac
-          - os: macos-13
-            arch: x64
-            platform: mac
     steps:
       - uses: actions/checkout@v4
         with:
