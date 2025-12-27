@@ -219,7 +219,6 @@ jobs:
         env:
           CI: true
 
-
       - name: Build Windows NSIS Installer
         if: ${{ matrix.platform == 'win' && matrix.arch == 'x64' }}
         run: npx electron-builder --win nsis --x64 --publish never
