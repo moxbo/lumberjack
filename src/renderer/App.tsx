@@ -1,5 +1,11 @@
 /* eslint-disable @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-return, @typescript-eslint/no-unsafe-argument */
 // TODO: Gradually fix these eslint issues and remove the disable directives above
+// NOTE: This file uses the following extracted hooks from src/hooks/:
+// - useFilterState: Filter state management
+// - useDebounce: Value debouncing
+// - useHistoryPopovers: History dropdown state management
+// - useAlerts: Alert dialog management
+// See also src/utils/debugFunctions.ts for debug utilities
 import {
   useCallback,
   useEffect,
@@ -23,6 +29,11 @@ import type { ElasticSearchOptions } from "../types/ipc";
 import { MDCListener } from "../store/mdcListener";
 import { clearHighlightCache, LogRow } from "./LogRow";
 import { clearTimestampCache, fmtTimestamp } from "../utils/format";
+import {
+  setupDebugFunctions,
+  setDebugEntriesRef,
+  setDebugFilteredIdxRef,
+} from "../utils/debugFunctions";
 
 // Import refactored constants
 import { BASE_MARK_COLORS, TRIM_THRESHOLD_ENTRIES } from "../constants";
@@ -31,7 +42,12 @@ import { BASE_MARK_COLORS, TRIM_THRESHOLD_ENTRIES } from "../constants";
 import { entrySignature, mergeSorted } from "../utils/entryUtils";
 
 // Import refactored hooks
-import { useDebounce, useFilterState } from "../hooks";
+import {
+  useDebounce,
+  useFilterState,
+  useHistoryPopovers,
+  useAlerts,
+} from "../hooks";
 
 // Import refactored components
 import {
@@ -56,133 +72,7 @@ const IPC_PROCESS_INTERVAL = 16; // Reduced from 50ms to one frame at 60fps
 const DCFilterDialog = lazy(() => import("./DCFilterDialog"));
 const ElasticSearchDialog = lazy(() => import("./ElasticSearchDialog"));
 
-// Global debug reference for console access
-let debugEntriesRef: { current: any[] } | null = null;
-let debugFilteredIdxRef: { current: number[] } | null = null;
-
-// Global debug function - call from console: window.ljDebug.findInEntries("TimeTableRead")
-function setupDebugFunctions(): void {
-  (window as any).ljDebug = {
-    findInEntries: (term: string) => {
-      const entries = debugEntriesRef?.current || [];
-      const filteredIdx = debugFilteredIdxRef?.current || [];
-      const termLower = term.toLowerCase();
-
-      // eslint-disable-next-line no-console
-      console.log(
-        "[ljDebug] Searching for '" +
-          term +
-          "' in " +
-          entries.length +
-          " total entries...",
-      );
-
-      const foundInAll: number[] = [];
-      const foundInFiltered: number[] = [];
-
-      for (let i = 0; i < entries.length; i++) {
-        const e = entries[i];
-        if (!e) continue;
-        const msg = String(e.message || "").toLowerCase();
-        const raw = JSON.stringify(e.raw || e).toLowerCase();
-
-        if (msg.includes(termLower) || raw.includes(termLower)) {
-          foundInAll.push(i);
-          if (filteredIdx.includes(i)) {
-            foundInFiltered.push(i);
-          }
-        }
-      }
-
-      // eslint-disable-next-line no-console
-      console.log(
-        "[ljDebug] Found " +
-          foundInAll.length +
-          " entries containing '" +
-          term +
-          "'",
-      );
-      // eslint-disable-next-line no-console
-      console.log(
-        "[ljDebug] Of those, " +
-          foundInFiltered.length +
-          " are visible (not filtered out)",
-      );
-
-      if (foundInAll.length > 0 && foundInFiltered.length === 0) {
-        console.warn(
-          "[ljDebug] WARNING: All " +
-            foundInAll.length +
-            " entries with '" +
-            term +
-            "' are filtered out!",
-        );
-        const firstIdx = foundInAll[0];
-        if (firstIdx !== undefined) {
-          // eslint-disable-next-line no-console
-          console.log("[ljDebug] First matching entry:", entries[firstIdx]);
-        }
-      }
-
-      return {
-        total: foundInAll.length,
-        visible: foundInFiltered.length,
-        indices: foundInAll,
-      };
-    },
-    // Find largest messages in the loaded entries
-    largestMessages: (count = 10) => {
-      const entries = debugEntriesRef?.current || [];
-      const sized = entries.map((e, i) => ({
-        index: i,
-        size: new TextEncoder().encode(String(e?.message || "")).length,
-        timestamp: e?.timestamp,
-        logger: e?.logger,
-        level: e?.level,
-        messagePreview: String(e?.message || "").substring(0, 100),
-      }));
-      sized.sort((a, b) => b.size - a.size);
-      const top = sized.slice(0, count);
-      // eslint-disable-next-line no-console
-      console.log("[ljDebug] Top " + count + " largest messages:");
-      // eslint-disable-next-line no-console
-      console.table(top);
-      return top;
-    },
-    // Get statistics about loaded entries
-    stats: () => {
-      const entries = debugEntriesRef?.current || [];
-      const filteredIdx = debugFilteredIdxRef?.current || [];
-      const totalSize = entries.reduce(
-        (sum, e) =>
-          sum + new TextEncoder().encode(String(e?.message || "")).length,
-        0,
-      );
-      const levels: Record<string, number> = {};
-      entries.forEach((e) => {
-        const lvl = String(e?.level || "UNKNOWN").toUpperCase();
-        levels[lvl] = (levels[lvl] || 0) + 1;
-      });
-      const stats = {
-        totalEntries: entries.length,
-        filteredEntries: filteredIdx.length,
-        hiddenEntries: entries.length - filteredIdx.length,
-        totalMessageSize: (totalSize / 1024 / 1024).toFixed(2) + " MB",
-        levelCounts: levels,
-      };
-      // eslint-disable-next-line no-console
-      console.log("[ljDebug] Entry statistics:", stats);
-      return stats;
-    },
-    getFilterState: () => {
-      // eslint-disable-next-line no-console
-      console.log(
-        "[ljDebug] Use window.ljDebug.findInEntries('searchterm') to search",
-      );
-      return "Check the filter toolbar in the app";
-    },
-  };
-}
+// Initialize debug functions on module load
 setupDebugFunctions();
 
 export default function App(): JSX.Element {
@@ -271,121 +161,32 @@ export default function App(): JSX.Element {
   // NEU: Resize-Feedback State
   const [resizeHeight, setResizeHeight] = useState<number | null>(null);
 
-  // Globaler Keyboard-Shortcut Ref für Suchfeld-Fokus
-  const searchInputRef = useRef<HTMLInputElement | null>(null);
-  // NEU: Sichtbarkeit der Popover-Listen + Refs für Outside-Click
-  const [showSearchHist, setShowSearchHist] = useState<boolean>(false);
-  const [searchHistHighlightIdx, setSearchHistHighlightIdx] =
-    useState<number>(-1);
-  const [showLoggerHist, setShowLoggerHist] = useState<boolean>(false);
-  const [showThreadHist, setShowThreadHist] = useState<boolean>(false);
-  const [showMessageHist, setShowMessageHist] = useState<boolean>(false);
-  const searchHistRef = useRef<HTMLDivElement | null>(null);
-  const loggerHistRef = useRef<HTMLDivElement | null>(null);
-  const threadHistRef = useRef<HTMLDivElement | null>(null);
-  const messageHistRef = useRef<HTMLDivElement | null>(null);
-  // Popover-Container-Refs (für Outside-Click) + Positionen
-  const searchPopRef = useRef<HTMLDivElement | null>(null);
-  const loggerPopRef = useRef<HTMLDivElement | null>(null);
-  const threadPopRef = useRef<HTMLDivElement | null>(null);
-  const messagePopRef = useRef<HTMLDivElement | null>(null);
-  const [searchPos, setSearchPos] = useState<{
-    left: number;
-    top: number;
-    width: number;
-  } | null>(null);
-  const [loggerPos, setLoggerPos] = useState<{
-    left: number;
-    top: number;
-    width: number;
-  } | null>(null);
-  const [threadPos, setThreadPos] = useState<{
-    left: number;
-    top: number;
-    width: number;
-  } | null>(null);
-  const [messagePos, setMessagePos] = useState<{
-    left: number;
-    top: number;
-    width: number;
-  } | null>(null);
-
-  function computePosFor(
-    el: HTMLElement | null,
-  ): { left: number; top: number; width: number } | null {
-    if (!el) return null;
-    const r = el.getBoundingClientRect();
-    return {
-      left: Math.round(r.left),
-      top: Math.round(r.bottom + 2),
-      width: Math.round(r.width),
-    };
-  }
-  function updateVisiblePopoverPositions(): void {
-    // Für das Suchfeld verwenden wir jetzt searchInputRef statt searchHistRef
-    if (showSearchHist) setSearchPos(computePosFor(searchInputRef.current));
-    if (showLoggerHist) setLoggerPos(computePosFor(loggerHistRef.current));
-    if (showThreadHist) setThreadPos(computePosFor(threadHistRef.current));
-    if (showMessageHist) setMessagePos(computePosFor(messageHistRef.current));
-  }
-  useEffect(() => {
-    // Bei Öffnen Position initial berechnen
-    updateVisiblePopoverPositions();
-  }, [showSearchHist, showLoggerHist, showThreadHist, showMessageHist]);
-  useEffect(() => {
-    if (
-      !showSearchHist &&
-      !showLoggerHist &&
-      !showThreadHist &&
-      !showMessageHist
-    )
-      return;
-    const onResize = (): void => updateVisiblePopoverPositions();
-    const onScroll = (): void => updateVisiblePopoverPositions();
-    window.addEventListener("resize", onResize);
-    window.addEventListener("scroll", onScroll, true);
-    return () => {
-      window.removeEventListener("resize", onResize);
-      window.removeEventListener("scroll", onScroll, true);
-    };
-  }, [showSearchHist, showLoggerHist, showThreadHist, showMessageHist]);
-
-  function closeAllHistoryPopovers(): void {
-    setShowSearchHist(false);
-    setShowLoggerHist(false);
-    setShowThreadHist(false);
-    setShowMessageHist(false);
-    setShowSearchOptions(false);
-  }
-  useEffect(() => {
-    if (
-      !showSearchHist &&
-      !showLoggerHist &&
-      !showThreadHist &&
-      !showMessageHist
-    )
-      return;
-    const onDocDown = (ev: MouseEvent): void => {
-      try {
-        const t = ev.target as Node;
-        if (
-          (searchHistRef.current && searchHistRef.current.contains(t)) ||
-          (loggerHistRef.current && loggerHistRef.current.contains(t)) ||
-          (threadHistRef.current && threadHistRef.current.contains(t)) ||
-          (messageHistRef.current && messageHistRef.current.contains(t)) ||
-          (searchPopRef.current && searchPopRef.current.contains(t)) ||
-          (loggerPopRef.current && loggerPopRef.current.contains(t)) ||
-          (threadPopRef.current && threadPopRef.current.contains(t)) ||
-          (messagePopRef.current && messagePopRef.current.contains(t))
-        ) {
-          return; // Klick innerhalb eines Wrappers → nicht schließen
-        }
-      } catch {}
-      closeAllHistoryPopovers();
-    };
-    window.addEventListener("mousedown", onDocDown, true);
-    return () => window.removeEventListener("mousedown", onDocDown, true);
-  }, [showSearchHist, showLoggerHist, showThreadHist, showMessageHist]);
+  // History popovers - using extracted hook
+  const {
+    showSearchHist,
+    setShowSearchHist,
+    searchHistHighlightIdx,
+    setSearchHistHighlightIdx,
+    searchPos,
+    searchHistRef,
+    searchPopRef,
+    showLoggerHist,
+    setShowLoggerHist,
+    loggerPos,
+    loggerHistRef,
+    loggerPopRef,
+    showThreadHist,
+    setShowThreadHist,
+    threadPos,
+    threadHistRef,
+    threadPopRef,
+    showMessageHist,
+    setShowMessageHist,
+    messagePos,
+    messageHistRef,
+    messagePopRef,
+    searchInputRef,
+  } = useHistoryPopovers();
 
   // re-render trigger for MDC filter changes
   const [dcVersion, setDcVersion] = useState<number>(0);
@@ -1139,12 +940,12 @@ export default function App(): JSX.Element {
   useEffect(() => {
     filteredIdxRef.current = filteredIdx;
     // Update debug reference
-    debugFilteredIdxRef = filteredIdxRef;
+    setDebugFilteredIdxRef(filteredIdxRef);
   }, [filteredIdx]);
   useEffect(() => {
     entriesRef.current = entries;
     // Update debug reference
-    debugEntriesRef = entriesRef;
+    setDebugEntriesRef(entriesRef);
   }, [entries]);
 
   const countTotal = entries.length;
@@ -2064,84 +1865,14 @@ export default function App(): JSX.Element {
   const [showTitleDlg, setShowTitleDlg] = useState<boolean>(false);
   const [showHelpDlg, setShowHelpDlg] = useState<boolean>(false);
 
-  // Alert dialog state for feature-disabled warnings
-  const [alertState, setAlertState] = useState<{
-    open: boolean;
-    title?: string;
-    message: string;
-    type?: "info" | "warning" | "error";
-  }>({ open: false, message: "" });
-
-  // General alert helper function
-  const showAlert = useCallback(
-    (
-      message: string,
-      options?: { title?: string; type?: "info" | "warning" | "error" },
-    ) => {
-      setAlertState({
-        open: true,
-        message,
-        title: options?.title,
-        type: options?.type || "error",
-      });
-    },
-    [],
-  );
+  // Alert dialog state - using extracted hook
+  const { alertState, showAlert, closeAlert, handleFeatureError } = useAlerts();
 
   // Ref for showAlert so it can be used in useEffects
   const showAlertRef = useRef(showAlert);
   useEffect(() => {
     showAlertRef.current = showAlert;
   }, [showAlert]);
-
-  // Helper to show feature-disabled alert
-  const showFeatureDisabledAlert = useCallback(
-    (featureName: string, reason?: string) => {
-      const featureLabel = t(`featureFlags.features.${featureName}`);
-      const message = t("featureFlags.alertMessage", { feature: featureLabel });
-      setAlertState({
-        open: true,
-        title: t("featureFlags.alertTitle"),
-        message: reason
-          ? `${message}\n\n${t("featureFlags.reason")}: ${reason}`
-          : message,
-        type: "warning",
-      });
-    },
-    [t],
-  );
-
-  // Helper to check if error is from disabled feature and show alert
-  const handleFeatureError = useCallback(
-    (error: string | undefined): boolean => {
-      if (!error) return false;
-
-      // Check for feature-disabled error patterns
-      const featurePatterns: { pattern: RegExp; feature: string }[] = [
-        { pattern: /TCP.*deaktiviert|TCP.*disabled/i, feature: "TCP_SERVER" },
-        {
-          pattern: /HTTP.*deaktiviert|HTTP.*disabled/i,
-          feature: "HTTP_POLLING",
-        },
-        {
-          pattern: /Elasticsearch.*deaktiviert|Elasticsearch.*disabled/i,
-          feature: "ELASTICSEARCH",
-        },
-      ];
-
-      for (const { pattern, feature } of featurePatterns) {
-        if (pattern.test(error)) {
-          // Extract reason if present (after colon)
-          const reasonMatch = error.match(/:\s*(.+)$/);
-          const reason = reasonMatch?.[1];
-          showFeatureDisabledAlert(feature, reason);
-          return true;
-        }
-      }
-      return false;
-    },
-    [showFeatureDisabledAlert],
-  );
 
   // Ref for handleFeatureError so it can be used in useEffect without adding dependencies
   const handleFeatureErrorRef = useRef(handleFeatureError);
@@ -3716,8 +3447,11 @@ export default function App(): JSX.Element {
                 if (key === "ArrowDown") {
                   if (showSearchHist && fltHistSearch.length > 0) {
                     e.preventDefault();
-                    setSearchHistHighlightIdx((prev) =>
-                      Math.min(prev + 1, fltHistSearch.length - 1),
+                    setSearchHistHighlightIdx(
+                      Math.min(
+                        searchHistHighlightIdx + 1,
+                        fltHistSearch.length - 1,
+                      ),
                     );
                   } else {
                     setShowSearchHist(true);
@@ -3727,7 +3461,9 @@ export default function App(): JSX.Element {
                 }
                 if (key === "ArrowUp" && showSearchHist) {
                   e.preventDefault();
-                  setSearchHistHighlightIdx((prev) => Math.max(prev - 1, 0));
+                  setSearchHistHighlightIdx(
+                    Math.max(searchHistHighlightIdx - 1, 0),
+                  );
                   return;
                 }
                 if (key === "Escape" && showSearchHist) {
@@ -4592,7 +4328,7 @@ export default function App(): JSX.Element {
         title={alertState.title}
         message={alertState.message}
         type={alertState.type}
-        onClose={() => setAlertState({ ...alertState, open: false })}
+        onClose={closeAlert}
       />
 
       {/* Update-Benachrichtigung */}

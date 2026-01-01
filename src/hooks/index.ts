@@ -18,3 +18,6 @@ export { useKeyboardNavigation } from "./useKeyboardNavigation";
 export { useResizable } from "./useResizable";
 export { useFeatureFlags } from "./useFeatureFlags";
 export type { FeatureName } from "./useFeatureFlags";
+export { useAlerts } from "./useAlerts";
+export type { AlertType } from "./useAlerts";
+export { useHistoryPopovers } from "./useHistoryPopovers";
