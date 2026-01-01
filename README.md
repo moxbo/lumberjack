@@ -2,7 +2,7 @@
 
 Ein schneller, schlanker Electron-basierter Log-Viewer mit leistungsfähigen Filtern.
 
-[![Version](https://img.shields.io/badge/version-1.0.2-blue.svg)](package.json)
+[![Version](https://img.shields.io/github/v/release/moritzbohm/lumberjack)](https://github.com/moritzbohm/lumberjack/releases/latest)
 [![License](https://img.shields.io/badge/license-ISC-green.svg)](LICENSE)
 [![Electron](https://img.shields.io/badge/electron-39.x-brightgreen.svg)](https://electronjs.org)
 
@@ -270,6 +270,27 @@ npm run format       # Code formatieren
 npm run icon:generate # Icons neu generieren
 npm run diagnose:memory # Speicher-Diagnose
 ```
+
+### Release-Workflow
+
+Die Version wird automatisch aus Git-Tags ermittelt:
+
+```bash
+# 1. Tag erstellen (Version ohne "v" wird in der App verwendet)
+git tag v1.0.5
+
+# 2. Push
+git push && git push --tags
+
+# 3. Build erstellen (Version wird automatisch aus Tag übernommen)
+npm run build:portable:x64  # Windows
+npm run build:mac:dmg       # macOS
+```
+
+**Versions-Logik:**
+- **Exakter Tag auf HEAD**: `v1.0.5` → Version `1.0.5`
+- **Commits nach Tag**: `v1.0.5` + 3 Commits → Version `1.0.5-dev.3`
+- **Umgebungsvariable**: `RELEASE_VERSION=1.2.0` überschreibt alles
 
 ### Architektur
 
