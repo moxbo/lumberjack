@@ -336,7 +336,21 @@ try {
 // Register health checks for monitoring
 healthMonitor.registerCheck("memory", async () => {
   const mem = process.memoryUsage();
+  const heapUsedMB = mem.heapUsed / (1024 * 1024);
+  const heapTotalMB = mem.heapTotal / (1024 * 1024);
   const heapPercent = mem.heapUsed / mem.heapTotal;
+
+  // Ignore percentage-based check if heap is still small (< 50MB)
+  // V8 starts with a small heap and grows on demand
+  if (heapTotalMB < 50) {
+    return true; // Healthy - heap hasn't grown yet
+  }
+
+  // Also healthy if absolute usage is low (< 200MB), regardless of percentage
+  if (heapUsedMB < 200) {
+    return true;
+  }
+
   return heapPercent < 0.9; // Healthy if heap usage below 90%
 });
 
@@ -604,6 +618,8 @@ const pendingAppendsByWindow = new Map<number, LogEntry[]>();
 let lastMemoryWarningTime = 0;
 const MEMORY_WARNING_COOLDOWN_MS = 60000; // Only warn once per minute
 const MEMORY_CRITICAL_THRESHOLD = 0.85; // 85% heap usage - critical warning
+const MEMORY_MIN_HEAP_FOR_WARNING_MB = 50; // Don't warn if heap is smaller than this
+const MEMORY_MIN_USAGE_FOR_WARNING_MB = 200; // Don't warn if usage is below this
 
 // Adaptive Memory Management - DEFERRED until after window is shown
 // This interval is started in whenReady() to not impact startup time
@@ -619,14 +635,21 @@ function startMemoryManagement(): void {
       const heapUsed = mem.heapUsed;
       const heapTotal = mem.heapTotal;
       const heapPercent = heapUsed / heapTotal;
+      const heapUsedMB = Math.round(heapUsed / (1024 * 1024));
+      const heapTotalMB = Math.round(heapTotal / (1024 * 1024));
+
+      // Skip critical warning if heap is still small (V8 starts small and grows on demand)
+      // or if absolute usage is low - percentage-based warnings are misleading in these cases
+      const shouldWarn =
+        heapPercent > MEMORY_CRITICAL_THRESHOLD &&
+        heapTotalMB >= MEMORY_MIN_HEAP_FOR_WARNING_MB &&
+        heapUsedMB >= MEMORY_MIN_USAGE_FOR_WARNING_MB;
 
       // Send critical memory warning to renderer (once per minute max)
-      if (heapPercent > MEMORY_CRITICAL_THRESHOLD) {
+      if (shouldWarn) {
         const now = Date.now();
         if (now - lastMemoryWarningTime > MEMORY_WARNING_COOLDOWN_MS) {
           lastMemoryWarningTime = now;
-          const heapUsedMB = Math.round(heapUsed / (1024 * 1024));
-          const heapTotalMB = Math.round(heapTotal / (1024 * 1024));
           log.warn(
             `[memory] Critical memory usage: ${heapUsedMB}MB / ${heapTotalMB}MB (${Math.round(heapPercent * 100)}%)`,
           );
