@@ -179,12 +179,20 @@ Build-Artefakte befinden sich in `release/build/`.
 
 ### Installation
 
-> ⚠️ **Hinweis:** Beim ersten Start kann eine Sicherheitswarnung erscheinen, da die App nicht signiert ist.
+> ⚠️ **Hinweis:** Beim ersten Start kann eine Sicherheitswarnung erscheinen, da die App nicht mit einem Apple Developer Zertifikat signiert ist.
 >
-> - **macOS**: Rechtsklick → "Öffnen" → "Öffnen" bestätigen
-> - **Windows**: "Weitere Informationen" → "Trotzdem ausführen"
+> **macOS** (bei Meldung "beschädigt oder unvollständig"):
+> ```bash
+> # Terminal öffnen und ausführen:
+> xattr -cr /Applications/Lumberjack.app
+> # Oder für DMG-Dateien im Downloads-Ordner:
+> xattr -cr ~/Downloads/Lumberjack*.dmg
+> ```
+> Alternativ: Rechtsklick → "Öffnen" → "Öffnen" bestätigen
 >
-> Siehe [Troubleshooting](docs/user/TROUBLESHOOTING_AND_FAQ.md#️-sicherheitswarnungen-beim-ersten-start) für Details.
+> **Windows**: "Weitere Informationen" → "Trotzdem ausführen"
+>
+> Siehe [Troubleshooting](docs/user/TROUBLESHOOTING_AND_FAQ.md) für weitere Details.
 
 ---
 

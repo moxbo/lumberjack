@@ -5,6 +5,29 @@
 
 ## ⚠️ SICHERHEITSWARNUNGEN BEIM ERSTEN START
 
+### macOS: "App ist beschädigt oder unvollständig"
+
+**Symptom:**
+> "Du kannst das Programm „Lumberjack" nicht öffnen, da es möglicherweise beschädigt oder unvollständig ist."
+
+**Ursache:** macOS setzt bei Downloads aus dem Internet ein "Quarantine"-Attribut. Bei Apps ohne Apple-Notarisierung wird dieses nicht automatisch entfernt.
+
+**Lösung (Terminal):**
+```bash
+# Für installierte App:
+xattr -cr /Applications/Lumberjack.app
+
+# Für DMG im Downloads-Ordner:
+xattr -cr ~/Downloads/Lumberjack*.dmg
+
+# Für ZIP im Downloads-Ordner:
+xattr -cr ~/Downloads/Lumberjack*.zip
+```
+
+Nach dem Entfernen des Quarantine-Attributs kann die App normal geöffnet werden.
+
+---
+
 ### macOS: "App kann nicht geöffnet werden"
 
 **Symptom:**
