@@ -278,7 +278,12 @@ jobs:
 
       - name: Build macOS DMG and ZIP from signed app
         if: ${{ matrix.platform == 'mac' }}
-        run: npx electron-builder --mac dmg zip --${{ matrix.arch }} --publish never --prepackaged "release/build/mac-${{ matrix.arch }}"
+        shell: bash
+        run: |
+          # --prepackaged muss auf die .app zeigen, nicht auf den Ordner
+          app_path="release/build/mac-${{ matrix.arch }}/Lumberjack.app"
+          echo "Creating DMG/ZIP from $app_path"
+          npx electron-builder --mac dmg zip --${{ matrix.arch }} --publish never --prepackaged "$app_path"
         env:
           CI: true
 
