@@ -281,7 +281,8 @@
       "followMode": "Follow-Modus",
       "helpMenu": "Hilfe",
       "helpGuide": "Hilfe / Anleitung…",
-      "settings": "Einstellungen…"
+      "settings": "Einstellungen…",
+      "speech": "Sprachausgabe"
     },
     "about": {
       "title": "Über Lumberjack",

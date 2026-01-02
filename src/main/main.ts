@@ -1195,11 +1195,23 @@ function buildMenu(): void {
   const canTcp = getWindowCanTcpControl(focused);
   const template: Electron.MenuItemConstructorOptions[] = [
     ...(isMac
-      ? [
+      ? ([
           {
             label: app.name,
             submenu: [
               { role: "about" as const },
+              { type: "separator" as const },
+              {
+                label: t("settings.title"),
+                accelerator: "CmdOrCtrl+,",
+                click: (_mi, win) =>
+                  sendMenuCmd(
+                    { type: "open-settings" },
+                    (win as BrowserWindow | null | undefined) || null,
+                  ),
+              },
+              { type: "separator" as const },
+              { role: "services" as const },
               { type: "separator" as const },
               { role: "hide" as const },
               { role: "hideOthers" as const },
@@ -1208,7 +1220,7 @@ function buildMenu(): void {
               { role: "quit" as const },
             ],
           },
-        ]
+        ] as Electron.MenuItemConstructorOptions[])
       : []),
     {
       label: t("main.menu.file"),
@@ -1238,15 +1250,20 @@ function buildMenu(): void {
             ),
         },
         { type: "separator" as const },
-        {
-          label: t("settings.title"),
-          accelerator: "CmdOrCtrl+,",
-          click: (_mi, win) =>
-            sendMenuCmd(
-              { type: "open-settings" },
-              (win as BrowserWindow | null | undefined) || null,
-            ),
-        },
+        // Einstellungen nur auf Windows/Linux im Datei-Menü anzeigen
+        ...(!isMac
+          ? ([
+              {
+                label: t("settings.title"),
+                accelerator: "CmdOrCtrl+,",
+                click: (_mi, win) =>
+                  sendMenuCmd(
+                    { type: "open-settings" },
+                    (win as BrowserWindow | null | undefined) || null,
+                  ),
+              },
+            ] as Electron.MenuItemConstructorOptions[])
+          : []),
         {
           label: t("main.menu.setTitle"),
           click: (_mi, win) =>
@@ -1270,7 +1287,25 @@ function buildMenu(): void {
         { role: "cut" as const, label: t("main.menu.cut") },
         { role: "copy" as const, label: t("main.menu.copy") },
         { role: "paste" as const, label: t("main.menu.paste") },
-        { role: "selectAll" as const, label: t("main.menu.selectAll") },
+        ...(isMac
+          ? ([
+              { role: "pasteAndMatchStyle" as const },
+              { role: "delete" as const },
+              { role: "selectAll" as const },
+              { type: "separator" as const },
+              {
+                label: t("main.menu.speech") || "Speech",
+                submenu: [
+                  { role: "startSpeaking" as const },
+                  { role: "stopSpeaking" as const },
+                ],
+              },
+            ] as Electron.MenuItemConstructorOptions[])
+          : ([
+              { role: "delete" as const },
+              { type: "separator" as const },
+              { role: "selectAll" as const, label: t("main.menu.selectAll") },
+            ] as Electron.MenuItemConstructorOptions[])),
       ],
     },
     {
@@ -1348,10 +1383,29 @@ function buildMenu(): void {
         { role: "togglefullscreen" as const },
       ],
     },
+    // Window-Menü (macOS Standard)
+    ...(isMac
+      ? ([
+          {
+            label: t("main.menu.window") || "Window",
+            submenu: [
+              { role: "minimize" as const },
+              { role: "zoom" as const },
+              { type: "separator" as const },
+              { role: "front" as const },
+              { type: "separator" as const },
+              { role: "window" as const },
+            ],
+          },
+        ] as Electron.MenuItemConstructorOptions[])
+      : []),
     {
+      role: "help" as const,
       label: t("main.menu.helpMenu"),
       submenu: [
-        { label: t("main.menu.about"), click: () => showAboutDialog() },
+        ...(isMac
+          ? []
+          : [{ label: t("main.menu.about"), click: () => showAboutDialog() }]),
         {
           label: t("main.menu.helpGuide"),
           accelerator: "F1",
