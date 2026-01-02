@@ -103,9 +103,38 @@ jobs:
         if: ${{ steps.meta.outputs.should_release == 'true' && steps.meta.outputs.promote_only != 'true' }}
         uses: actions/checkout@v4
         with:
-          ref: ${{ steps.meta.outputs.checkout_ref }}
+          ref: main
           fetch-depth: 0
           fetch-tags: true
+
+      - name: Update version in package.json and commit
+        if: ${{ steps.meta.outputs.should_release == 'true' && steps.meta.outputs.promote_only != 'true' }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          tag="${{ steps.meta.outputs.release_tag }}"
+          version="${tag#v}"  # Entferne v-Präfix (v1.0.7 -> 1.0.7)
+          
+          # Prüfe ob Version bereits aktuell ist
+          current_version=$(node -p "require('./package.json').version")
+          if [[ "$current_version" == "$version" ]]; then
+            echo "Version $version is already set in package.json, skipping update"
+            exit 0
+          fi
+          
+          # Aktualisiere Version in package.json
+          npm version "$version" --no-git-tag-version --allow-same-version
+          echo "Updated package.json to version $version"
+          
+          # Commit und Push zu main
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add package.json package-lock.json
+          git commit -m "chore: bump version to $version [skip ci]"
+          git push origin main
+          echo "Committed and pushed version $version to main"
 
       - name: Create tag and draft GitHub Release (once)
         if: ${{ steps.meta.outputs.should_release == 'true' && steps.meta.outputs.promote_only != 'true' }}
@@ -123,8 +152,6 @@ jobs:
           # Create tag if it doesn't exist (for workflow_dispatch)
           if ! git rev-parse "$tag" >/dev/null 2>&1; then
             echo "Creating tag $tag..."
-            git config user.name "github-actions[bot]"
-            git config user.email "github-actions[bot]@users.noreply.github.com"
             git tag -a "$tag" -m "Release $tag"
             git push origin "$tag"
           fi
@@ -198,12 +225,21 @@ jobs:
         run: npm test
 
       - name: Build application
-        run: npm run build
+        shell: bash
+        run: |
+          echo "RELEASE_VERSION=$RELEASE_VERSION"
+          # Aktualisiere Version in Haupt-package.json (ohne Git-Commit)
+          if [[ -n "$RELEASE_VERSION" ]]; then
+            version="${RELEASE_VERSION#v}"  # Entferne v-Präfix
+            npm version "$version" --no-git-tag-version --allow-same-version
+            echo "Updated root package.json to version $version"
+          fi
+          npm run build
+          echo "Built version: $(node -p "require('./release/app/package.json').version")"
         env:
           CI: true
-          # Version wird automatisch aus Git-Tag ermittelt via prepare-release-metadata.cjs
-          # Bei Release-Builds wird die Version explizit gesetzt
-          RELEASE_VERSION: ${{ needs.prepare-release.outputs.should_release == 'true' && needs.prepare-release.outputs.release_tag || '' }}
+          # Version wird aus dem Release-Tag übernommen (z.B. v1.0.7 -> 1.0.7)
+          RELEASE_VERSION: ${{ needs.prepare-release.outputs.release_tag }}
 
       - name: Build Windows NSIS Installer
         if: ${{ matrix.platform == 'win' && matrix.arch == 'x64' }}
@@ -466,13 +502,14 @@ jobs:
             echo "Generating changelog from $previous_tag to $tag"
             
             # Get commits between tags, grouped by type
+            # Exclude version bump commits (chore: bump version) from all categories
             features=$(git log "$previous_tag..$tag" --pretty=format:"- %s (%h)" --grep="^feat" --regexp-ignore-case 2>/dev/null || echo "")
             fixes=$(git log "$previous_tag..$tag" --pretty=format:"- %s (%h)" --grep="^fix" --regexp-ignore-case 2>/dev/null || echo "")
             docs=$(git log "$previous_tag..$tag" --pretty=format:"- %s (%h)" --grep="^docs" --regexp-ignore-case 2>/dev/null || echo "")
             refactor=$(git log "$previous_tag..$tag" --pretty=format:"- %s (%h)" --grep="^refactor" --regexp-ignore-case 2>/dev/null || echo "")
             perf=$(git log "$previous_tag..$tag" --pretty=format:"- %s (%h)" --grep="^perf" --regexp-ignore-case 2>/dev/null || echo "")
-            deps=$(git log "$previous_tag..$tag" --pretty=format:"- %s (%h)" --grep="^deps\|^chore.*dep\|upgrade\|bump" --regexp-ignore-case 2>/dev/null || echo "")
-            chore=$(git log "$previous_tag..$tag" --pretty=format:"- %s (%h)" --grep="^chore" --regexp-ignore-case 2>/dev/null | grep -vi "dep\|upgrade\|bump" || echo "")
+            deps=$(git log "$previous_tag..$tag" --pretty=format:"- %s (%h)" --grep="^deps\|^chore.*dep\|upgrade" --regexp-ignore-case 2>/dev/null | grep -vi "bump version" || echo "")
+            chore=$(git log "$previous_tag..$tag" --pretty=format:"- %s (%h)" --grep="^chore" --regexp-ignore-case 2>/dev/null | grep -vi "dep\|upgrade\|bump version" || echo "")
             build=$(git log "$previous_tag..$tag" --pretty=format:"- %s (%h)" --grep="^build\|^ci" --regexp-ignore-case 2>/dev/null || echo "")
             
             # Build changelog with sections (Spring Framework style)
