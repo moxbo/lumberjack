@@ -134,9 +134,32 @@ jobs:
             gh release create "$tag" --draft --title "$tag" --notes "Release $tag"
           fi
 
+  # Schneller CI-Job: Nur Tests, läuft bei allen Pushes
+  ci:
+    runs-on: ubuntu-latest
+    # Nicht bei Tag-Pushes ausführen (da wird der release-Job verwendet)
+    if: ${{ !startsWith(github.ref, 'refs/tags/') && github.event.inputs.release_tag == '' }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run tests
+        run: npm test
+
+      - name: Lint check
+        run: npm run lint
+
+  # Voller Build & Release: Nur bei Tags oder manuellem Release
   release:
     needs: prepare-release
-    if: needs.prepare-release.outputs.promote_only != 'true'
+    if: ${{ needs.prepare-release.outputs.should_release == 'true' && needs.prepare-release.outputs.promote_only != 'true' }}
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
