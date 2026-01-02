@@ -2,7 +2,7 @@
 
 Ein schneller, schlanker Electron-basierter Log-Viewer mit leistungsfähigen Filtern.
 
-[![Version](https://img.shields.io/github/v/release/moritzbohm/lumberjack)](https://github.com/moritzbohm/lumberjack/releases/latest)
+[![Version](https://img.shields.io/github/v/release/moxbo/lumberjack)](https://github.com/moxbo/lumberjack/releases/latest)
 [![License](https://img.shields.io/badge/license-ISC-green.svg)](LICENSE)
 [![Electron](https://img.shields.io/badge/electron-39.x-brightgreen.svg)](https://electronjs.org)
 
