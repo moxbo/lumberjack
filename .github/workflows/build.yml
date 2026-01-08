@@ -116,18 +116,18 @@ jobs:
           set -euo pipefail
           tag="${{ steps.meta.outputs.release_tag }}"
           version="${tag#v}"  # Entferne v-Präfix (v1.0.7 -> 1.0.7)
-          
+
           # Prüfe ob Version bereits aktuell ist
           current_version=$(node -p "require('./package.json').version")
           if [[ "$current_version" == "$version" ]]; then
             echo "Version $version is already set in package.json, skipping update"
             exit 0
           fi
-          
+
           # Aktualisiere Version in package.json
           npm version "$version" --no-git-tag-version --allow-same-version
           echo "Updated package.json to version $version"
-          
+
           # Commit und Push zu main
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
