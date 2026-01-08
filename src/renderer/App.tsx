@@ -49,24 +49,43 @@ import {
   useAlerts,
 } from "../hooks";
 
-// Import refactored components
+// Import refactored components - core components loaded eagerly
 import {
   AlertDialog,
   ContextMenu,
   DetailPanel,
   FilterSection,
-  HelpDialog,
-  HttpLoadDialog,
-  HttpPollDialog,
-  SettingsModal,
-  TitleDialog,
   UpdateNotification,
 } from "./components";
+import { SkeletonLoader } from "./components/SkeletonLoader";
 import { JSX } from "preact/jsx-runtime";
 
 // IPC batching constants - reduced to prevent UI freezes ("Keine Rückmeldung")
 const IPC_BATCH_SIZE = 1000; // Reduced from 5000
 const IPC_PROCESS_INTERVAL = 16; // Reduced from 50ms to one frame at 60fps
+
+// Lazy-load dialogs that are not shown on initial render for faster startup
+const HelpDialog = lazy(() =>
+  import("./components/HelpDialog").then((m) => ({ default: m.HelpDialog })),
+);
+const TitleDialog = lazy(() =>
+  import("./components/TitleDialog").then((m) => ({ default: m.TitleDialog })),
+);
+const SettingsModal = lazy(() =>
+  import("./components/SettingsModal").then((m) => ({
+    default: m.SettingsModal,
+  })),
+);
+const HttpLoadDialog = lazy(() =>
+  import("./components/HttpDialogs").then((m) => ({
+    default: m.HttpLoadDialog,
+  })),
+);
+const HttpPollDialog = lazy(() =>
+  import("./components/HttpDialogs").then((m) => ({
+    default: m.HttpPollDialog,
+  })),
+);
 
 // Lazy-load DCFilterDialog as a component
 const DCFilterDialog = lazy(() => import("./DCFilterDialog"));
@@ -91,6 +110,9 @@ export default function App(): JSX.Element {
   useEffect(() => {
     tRef.current = t;
   }, [t]);
+
+  // Track when initial settings are loaded for skeleton UI
+  const [settingsLoaded, setSettingsLoaded] = useState<boolean>(false);
 
   const [entries, setEntries] = useState<any[]>([]);
   const [nextId, setNextId] = useState<number>(1);
@@ -1880,23 +1902,29 @@ export default function App(): JSX.Element {
     handleFeatureErrorRef.current = handleFeatureError;
   }, [handleFeatureError]);
 
-  // Settings laden (deferred to not block initial render)
+  // Settings laden - OPTIMIZED: Settings are pre-cached in preload script,
+  // so settingsGet() returns immediately from cache without IPC round-trip
   useEffect(() => {
-    // Use requestIdleCallback to defer settings load until after initial render
     const loadSettings = async () => {
       rendererPerf.mark("settings-load-start");
       try {
         if (!window.api?.settingsGet) {
           logger.error("window.api.settingsGet is not available.");
+          setSettingsLoaded(true);
           return;
         }
+        // This is now instant because settings are cached in preload
         const result = await window.api.settingsGet();
         if (!result || !result.ok) {
           logger.warn("Failed to load settings:", (result as any)?.error);
+          setSettingsLoaded(true);
           return;
         }
         const r = result.settings as any;
-        if (!r) return;
+        if (!r) {
+          setSettingsLoaded(true);
+          return;
+        }
         if (r.tcpPort != null) setTcpPort(Number(r.tcpPort) || 5000);
         if (typeof r.httpUrl === "string") setHttpUrl(r.httpUrl);
         // Support both httpPollInterval (persisted) and httpInterval (legacy)
@@ -1953,6 +1981,8 @@ export default function App(): JSX.Element {
         rendererPerf.mark("settings-loaded");
       } catch (e) {
         logger.error("Error loading settings:", e);
+      } finally {
+        setSettingsLoaded(true);
       }
       // Per-Window Berechtigungen laden
       try {
@@ -1963,14 +1993,8 @@ export default function App(): JSX.Element {
       }
     };
 
-    // Use requestIdleCallback with a timeout to ensure settings load eventually
-    const idleId = requestIdleCallback(
-      () => {
-        void loadSettings();
-      },
-      { timeout: 100 },
-    );
-    return () => cancelIdleCallback(idleId);
+    // Call directly - no need for requestIdleCallback since settings are pre-cached
+    void loadSettings();
   }, []);
   // ...existing code...
   async function openSettingsModal(
@@ -2902,6 +2926,9 @@ export default function App(): JSX.Element {
 
   return (
     <div style="height:100%; display:flex; flex-direction:column;">
+      {/* Skeleton loader während Settings geladen werden */}
+      {!settingsLoaded && <SkeletonLoader />}
+
       {dragActive && (
         <div className="drop-overlay">
           Dateien hierher ziehen (.log, .json, .zip)
@@ -3211,25 +3238,74 @@ export default function App(): JSX.Element {
         </Suspense>
       )}
 
-      {/* HTTP Load Dialog */}
-      <HttpLoadDialog
-        open={showHttpLoadDlg}
-        initialUrl={httpLoadUrl}
-        onClose={() => setShowHttpLoadDlg(false)}
-        onLoad={async (url) => {
-          await withBusy(async () => {
+      {/* HTTP Load Dialog - lazy loaded */}
+      <Suspense fallback={null}>
+        <HttpLoadDialog
+          open={showHttpLoadDlg}
+          initialUrl={httpLoadUrl}
+          onClose={() => setShowHttpLoadDlg(false)}
+          onLoad={async (url) => {
+            await withBusy(async () => {
+              try {
+                setHttpUrl(url);
+                await window.api.settingsSet({ httpUrl: url } as any);
+                const res = await window.api.httpLoadOnce(url);
+                if (res.ok) {
+                  appendEntries((res.entries || []) as any[]);
+                } else {
+                  // Check if this is a feature-disabled error
+                  if (!handleFeatureError(res.error)) {
+                    setHttpStatus(
+                      t("status.error", {
+                        message: res.error || t("status.errorUnknown"),
+                      }),
+                    );
+                  }
+                }
+              } catch (e) {
+                setHttpStatus(
+                  t("status.error", {
+                    message: (e as any)?.message || String(e),
+                  }),
+                );
+              }
+            });
+          }}
+        />
+      </Suspense>
+
+      {/* HTTP Poll Dialog - lazy loaded */}
+      <Suspense fallback={null}>
+        <HttpPollDialog
+          open={showHttpPollDlg}
+          initialUrl={httpPollForm.url}
+          initialInterval={httpPollForm.interval}
+          isPollActive={httpPollId != null}
+          onClose={() => setShowHttpPollDlg(false)}
+          onStart={async (url, sec) => {
             try {
               setHttpUrl(url);
-              await window.api.settingsSet({ httpUrl: url } as any);
-              const res = await window.api.httpLoadOnce(url);
-              if (res.ok) {
-                appendEntries((res.entries || []) as any[]);
+              setHttpInterval(sec);
+              await window.api.settingsSet({
+                httpUrl: url,
+                httpPollInterval: sec,
+              } as any);
+              const r = await window.api.httpStartPoll({
+                url,
+                intervalSec: sec,
+              });
+              if (r.ok) {
+                setHttpPollId(r.id!);
+                setHttpStatus(t("status.httpPolling", { id: String(r.id) }));
+                // Convert to ms for internal timer tracking
+                setNextPollDueAt(Date.now() + sec * 1000);
+                setCurrentPollInterval(sec * 1000);
               } else {
                 // Check if this is a feature-disabled error
-                if (!handleFeatureError(res.error)) {
+                if (!handleFeatureError(r.error)) {
                   setHttpStatus(
                     t("status.error", {
-                      message: res.error || t("status.errorUnknown"),
+                      message: r.error || t("status.errorUnknown"),
                     }),
                   );
                 }
@@ -3241,66 +3317,28 @@ export default function App(): JSX.Element {
                 }),
               );
             }
-          });
-        }}
-      />
+          }}
+        />
+      </Suspense>
 
-      {/* HTTP Poll Dialog */}
-      <HttpPollDialog
-        open={showHttpPollDlg}
-        initialUrl={httpPollForm.url}
-        initialInterval={httpPollForm.interval}
-        isPollActive={httpPollId != null}
-        onClose={() => setShowHttpPollDlg(false)}
-        onStart={async (url, sec) => {
-          try {
-            setHttpUrl(url);
-            setHttpInterval(sec);
-            await window.api.settingsSet({
-              httpUrl: url,
-              httpPollInterval: sec,
-            } as any);
-            const r = await window.api.httpStartPoll({ url, intervalSec: sec });
-            if (r.ok) {
-              setHttpPollId(r.id!);
-              setHttpStatus(t("status.httpPolling", { id: String(r.id) }));
-              // Convert to ms for internal timer tracking
-              setNextPollDueAt(Date.now() + sec * 1000);
-              setCurrentPollInterval(sec * 1000);
-            } else {
-              // Check if this is a feature-disabled error
-              if (!handleFeatureError(r.error)) {
-                setHttpStatus(
-                  t("status.error", {
-                    message: r.error || t("status.errorUnknown"),
-                  }),
-                );
-              }
-            }
-          } catch (e) {
-            setHttpStatus(
-              t("status.error", { message: (e as any)?.message || String(e) }),
-            );
-          }
-        }}
-      />
-
-      {/* Einstellungen (Tabs) */}
-      <SettingsModal
-        open={showSettings}
-        tab={settingsTab}
-        form={form}
-        elasticHasPass={elasticHasPass}
-        canTcpControlWindow={canTcpControlWindow}
-        locale={locale}
-        onTabChange={setSettingsTab}
-        onFormChange={setForm}
-        onCanTcpControlWindowChange={setCanTcpControlWindow}
-        onLocaleChange={setLocale}
-        onSave={saveSettingsModal}
-        onClose={() => setShowSettings(false)}
-        applyThemeMode={applyThemeMode}
-      />
+      {/* Einstellungen (Tabs) - lazy loaded */}
+      <Suspense fallback={null}>
+        <SettingsModal
+          open={showSettings}
+          tab={settingsTab}
+          form={form}
+          elasticHasPass={elasticHasPass}
+          canTcpControlWindow={canTcpControlWindow}
+          locale={locale}
+          onTabChange={setSettingsTab}
+          onFormChange={setForm}
+          onCanTcpControlWindowChange={setCanTcpControlWindow}
+          onLocaleChange={setLocale}
+          onSave={saveSettingsModal}
+          onClose={() => setShowSettings(false)}
+          applyThemeMode={applyThemeMode}
+        />
+      </Suspense>
 
       {/* Toolbar */}
       <header className="toolbar">
@@ -4316,11 +4354,18 @@ export default function App(): JSX.Element {
         onCopyTsMsg={copyTsMsg}
       />
 
-      {/* Hilfe-Dialog */}
-      <HelpDialog open={showHelpDlg} onClose={() => setShowHelpDlg(false)} />
+      {/* Hilfe-Dialog - lazy loaded */}
+      <Suspense fallback={null}>
+        <HelpDialog open={showHelpDlg} onClose={() => setShowHelpDlg(false)} />
+      </Suspense>
 
-      {/* Titel-Dialog */}
-      <TitleDialog open={showTitleDlg} onClose={() => setShowTitleDlg(false)} />
+      {/* Titel-Dialog - lazy loaded */}
+      <Suspense fallback={null}>
+        <TitleDialog
+          open={showTitleDlg}
+          onClose={() => setShowTitleDlg(false)}
+        />
+      </Suspense>
 
       {/* Alert-Dialog für Feature-Warnungen */}
       <AlertDialog
