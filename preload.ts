@@ -23,16 +23,42 @@ import type {
   WindowTitleResult,
 } from "./src/types/ipc";
 
+// OPTIMIZATION: Eagerly fetch settings during preload to avoid IPC round-trip on first render
+// Settings are already loaded synchronously in main process, so this is fast
+let cachedSettings: SettingsResult | null = null;
+let settingsPromise: Promise<SettingsResult> | null = null;
+
+// Start fetching settings immediately (non-blocking)
+settingsPromise = (
+  ipcRenderer.invoke("settings:get") as Promise<SettingsResult>
+).then((result: SettingsResult) => {
+  cachedSettings = result;
+  return result;
+});
+
 /**
  * Secure API exposed to renderer via contextBridge
  */
 const api: ElectronAPI = {
-  // Settings operations
-  settingsGet: (): Promise<SettingsResult> =>
-    ipcRenderer.invoke("settings:get"),
+  // Settings operations - returns cached settings if available for instant access
+  settingsGet: (): Promise<SettingsResult> => {
+    if (cachedSettings) {
+      return Promise.resolve(cachedSettings);
+    }
+    // If still loading, return the pending promise
+    if (settingsPromise) {
+      return settingsPromise;
+    }
+    // Fallback to fresh fetch (shouldn't normally happen)
+    return ipcRenderer.invoke("settings:get");
+  },
 
-  settingsSet: (patch: Partial<Settings>): Promise<SettingsResult> =>
-    ipcRenderer.invoke("settings:set", patch),
+  settingsSet: (patch: Partial<Settings>): Promise<SettingsResult> => {
+    // Invalidate cache when settings are updated
+    cachedSettings = null;
+    settingsPromise = null;
+    return ipcRenderer.invoke("settings:set", patch);
+  },
 
   getDefaultLogPath: (): Promise<string> =>
     ipcRenderer.invoke("settings:getDefaultLogPath"),
