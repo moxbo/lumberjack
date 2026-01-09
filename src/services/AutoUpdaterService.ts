@@ -10,17 +10,24 @@
  * - Download progress notifications
  * - User-controlled install (restart prompt)
  * - Logging of all update events
+ *
+ * Memory Optimizations:
+ * - Lazy initialization of electron-updater module
+ * - Proper event listener cleanup via dispose()
+ * - WeakRef for mainWindow to prevent memory leaks
+ * - Throttled progress events to reduce IPC overhead
+ * - Cached update info to avoid redundant checks
  */
 
-import {
-  autoUpdater,
-  type ProgressInfo,
-  type UpdateInfo,
-} from "electron-updater";
-import { app, BrowserWindow, ipcMain } from "electron";
+import { app, BrowserWindow, ipcMain, type IpcMainInvokeEvent } from "electron";
 import log from "electron-log/main";
 import * as fs from "fs";
 import * as path from "path";
+
+// Lazy-loaded types - actual import deferred until needed
+type AutoUpdater = typeof import("electron-updater").autoUpdater;
+type UpdateInfo = import("electron-updater").UpdateInfo;
+type ProgressInfo = import("electron-updater").ProgressInfo;
 
 export interface UpdateStatus {
   status:
@@ -35,11 +42,43 @@ export interface UpdateStatus {
   error?: string;
 }
 
+// IPC handler signatures for type safety
+type IpcHandler = (event: IpcMainInvokeEvent, ...args: unknown[]) => unknown;
+
+// Constants for progress throttling
+const PROGRESS_THROTTLE_MS = 100;
+
 export class AutoUpdaterService {
-  private mainWindow: BrowserWindow | null = null;
+  // Use WeakRef to prevent memory leaks if window is destroyed elsewhere
+  private mainWindowRef: WeakRef<BrowserWindow> | null = null;
   private isCheckingForUpdates = false;
   private updateDownloaded = false;
   private autoUpdatesAvailable: boolean | null = null;
+
+  // Lazy-loaded autoUpdater instance
+  private _autoUpdater: AutoUpdater | null = null;
+  private _isInitialized = false;
+
+  // Bound event handlers for proper cleanup
+  // Using 'any' for handler type to allow different event signatures
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  private readonly boundHandlers = new Map<string, (...args: any[]) => void>();
+
+  // Registered IPC handlers for cleanup
+  private readonly registeredIpcChannels: string[] = [];
+
+  // Progress throttling
+  private lastProgressUpdate = 0;
+  private pendingProgressUpdate: ProgressInfo | null = null;
+  private progressThrottleTimer: ReturnType<typeof setTimeout> | null = null;
+
+  // Cached update check result to avoid redundant network calls
+  private cachedUpdateInfo: UpdateInfo | null = null;
+  private lastUpdateCheck = 0;
+  private readonly updateCheckCacheMs = 60000; // Cache for 1 minute
+
+  // Startup check timer reference for cleanup
+  private startupCheckTimer: ReturnType<typeof setTimeout> | null = null;
 
   constructor() {
     // Check if auto-updates are available for this installation
@@ -54,6 +93,33 @@ export class AutoUpdaterService {
       );
       return;
     }
+
+    // Defer full initialization until actually needed (lazy loading)
+    log.info("[auto-updater] Service created (lazy initialization enabled)");
+  }
+
+  /**
+   * Get the autoUpdater instance, initializing lazily if needed
+   * This defers the heavy electron-updater import until first use
+   */
+  private get autoUpdater(): AutoUpdater {
+    if (!this._autoUpdater) {
+      this.initializeAutoUpdater();
+    }
+    return this._autoUpdater!;
+  }
+
+  /**
+   * Initialize electron-updater lazily
+   * This defers the module import and setup until first actual use
+   */
+  private initializeAutoUpdater(): void {
+    if (this._isInitialized) return;
+
+    // Dynamic import to defer loading
+    const { autoUpdater } =
+      require("electron-updater") as typeof import("electron-updater");
+    this._autoUpdater = autoUpdater;
 
     // Configure electron-updater to use electron-log
     autoUpdater.logger = log;
@@ -77,13 +143,14 @@ export class AutoUpdaterService {
     autoUpdater.forceCodeSigning = false;
 
     // Configure GitHub token for private repositories
-    // Token can be set via GH_TOKEN or GITHUB_TOKEN environment variable
-    // or via app settings (stored securely)
     this.configurePrivateRepoAccess();
 
+    // Setup event handlers with bound references for cleanup
     this.setupEventHandlers();
 
-    log.info("[auto-updater] Service initialized", {
+    this._isInitialized = true;
+
+    log.info("[auto-updater] Fully initialized", {
       currentVersion: autoUpdater.currentVersion?.version || "unknown",
       allowPrerelease: autoUpdater.allowPrerelease,
       hasToken: !!process.env.GH_TOKEN || !!process.env.GITHUB_TOKEN,
@@ -141,7 +208,7 @@ export class AutoUpdaterService {
 
       // Force electron-updater to use GitHub API instead of Atom feed
       // This is required for private repositories
-      autoUpdater.setFeedURL({
+      this.autoUpdater.setFeedURL({
         provider: "github",
         owner: "moxbo",
         repo: "lumberjack",
@@ -171,7 +238,12 @@ export class AutoUpdaterService {
       );
       return;
     }
-    autoUpdater.allowPrerelease = allow;
+    this.autoUpdater.allowPrerelease = allow;
+
+    // Invalidate cache when settings change - different releases may be available
+    this.cachedUpdateInfo = null;
+    this.lastUpdateCheck = 0;
+
     log.info("[auto-updater] allowPrerelease set to:", allow);
   }
 
@@ -182,97 +254,194 @@ export class AutoUpdaterService {
     if (!this.autoUpdatesAvailable) {
       return false;
     }
-    return autoUpdater.allowPrerelease;
+    return this.autoUpdater.allowPrerelease;
   }
 
   /**
    * Set the main window for sending update notifications
+   * Uses WeakRef to prevent memory leaks
    */
   setMainWindow(window: BrowserWindow | null): void {
-    this.mainWindow = window;
+    this.mainWindowRef = window ? new WeakRef(window) : null;
+  }
+
+  /**
+   * Get main window safely via WeakRef
+   */
+  private get mainWindow(): BrowserWindow | null {
+    const window = this.mainWindowRef?.deref() ?? null;
+    // Clear stale reference if window was garbage collected
+    if (this.mainWindowRef && !window) {
+      this.mainWindowRef = null;
+    }
+    return window;
   }
 
   /**
    * Setup electron-updater event handlers
+   * Uses bound handlers stored in Map for proper cleanup
    */
   private setupEventHandlers(): void {
-    autoUpdater.on("checking-for-update", () => {
+    const autoUpdater = this.autoUpdater;
+
+    // Create and store bound handlers for cleanup
+    const checkingHandler = () => {
       log.info("[auto-updater] Checking for updates...");
       this.sendStatusToRenderer({ status: "checking" });
-    });
+    };
+    this.boundHandlers.set("checking-for-update", checkingHandler);
+    autoUpdater.on("checking-for-update", checkingHandler);
 
-    autoUpdater.on("update-available", (info: UpdateInfo) => {
+    const availableHandler = (info: UpdateInfo) => {
       log.info("[auto-updater] Update available:", info.version);
+      this.cachedUpdateInfo = info;
+      this.lastUpdateCheck = Date.now();
       this.sendStatusToRenderer({ status: "available", info });
-    });
+    };
+    this.boundHandlers.set("update-available", availableHandler);
+    autoUpdater.on("update-available", availableHandler);
 
-    autoUpdater.on("update-not-available", (info: UpdateInfo) => {
+    const notAvailableHandler = (info: UpdateInfo) => {
       log.info(
         "[auto-updater] No update available. Current version:",
         info.version,
       );
+      this.cachedUpdateInfo = info;
+      this.lastUpdateCheck = Date.now();
       this.sendStatusToRenderer({ status: "not-available", info });
-    });
+    };
+    this.boundHandlers.set("update-not-available", notAvailableHandler);
+    autoUpdater.on("update-not-available", notAvailableHandler);
 
-    autoUpdater.on("download-progress", (progress: ProgressInfo) => {
-      log.debug(
-        `[auto-updater] Download progress: ${progress.percent.toFixed(1)}% ` +
-          `(${(progress.bytesPerSecond / 1024 / 1024).toFixed(2)} MB/s)`,
-      );
-      this.sendStatusToRenderer({ status: "downloading", progress });
-    });
+    // Throttled progress handler to reduce IPC overhead
+    const progressHandler = (progress: ProgressInfo) => {
+      this.handleProgressUpdate(progress);
+    };
+    this.boundHandlers.set("download-progress", progressHandler);
+    autoUpdater.on("download-progress", progressHandler);
 
-    autoUpdater.on("update-downloaded", (info: UpdateInfo) => {
+    const downloadedHandler = (info: UpdateInfo) => {
       log.info("[auto-updater] Update downloaded:", info.version);
       this.updateDownloaded = true;
+      // Clear any pending progress updates
+      this.clearPendingProgress();
       this.sendStatusToRenderer({ status: "downloaded", info });
-    });
+    };
+    this.boundHandlers.set("update-downloaded", downloadedHandler);
+    autoUpdater.on("update-downloaded", downloadedHandler);
 
-    autoUpdater.on("error", (error: Error) => {
+    const errorHandler = (error: Error) => {
       log.error("[auto-updater] Error:", error.message);
+      // Clear any pending progress updates on error
+      this.clearPendingProgress();
       this.sendStatusToRenderer({ status: "error", error: error.message });
-    });
+    };
+    this.boundHandlers.set("error", errorHandler);
+    autoUpdater.on("error", errorHandler);
+  }
+
+  /**
+   * Clear pending progress state
+   * Called when download completes or fails to prevent memory leaks
+   */
+  private clearPendingProgress(): void {
+    if (this.progressThrottleTimer) {
+      clearTimeout(this.progressThrottleTimer);
+      this.progressThrottleTimer = null;
+    }
+    this.pendingProgressUpdate = null;
+    this.lastProgressUpdate = 0;
+  }
+
+  /**
+   * Handle progress updates with throttling
+   * Prevents excessive IPC calls during fast downloads
+   */
+  private handleProgressUpdate(progress: ProgressInfo): void {
+    const now = Date.now();
+
+    // Store latest progress
+    this.pendingProgressUpdate = progress;
+
+    // If we've sent an update recently, schedule a deferred update
+    if (now - this.lastProgressUpdate < PROGRESS_THROTTLE_MS) {
+      if (!this.progressThrottleTimer) {
+        this.progressThrottleTimer = setTimeout(() => {
+          this.progressThrottleTimer = null;
+          if (this.pendingProgressUpdate) {
+            this.sendProgressUpdate(this.pendingProgressUpdate);
+            this.pendingProgressUpdate = null;
+          }
+        }, PROGRESS_THROTTLE_MS);
+      }
+      return;
+    }
+
+    // Send immediately if enough time has passed
+    this.sendProgressUpdate(progress);
+    this.pendingProgressUpdate = null;
+  }
+
+  /**
+   * Send progress update to renderer
+   */
+  private sendProgressUpdate(progress: ProgressInfo): void {
+    this.lastProgressUpdate = Date.now();
+    log.debug(
+      `[auto-updater] Download progress: ${progress.percent.toFixed(1)}% ` +
+        `(${(progress.bytesPerSecond / 1024 / 1024).toFixed(2)} MB/s)`,
+    );
+    this.sendStatusToRenderer({ status: "downloading", progress });
   }
 
   /**
    * Setup IPC handlers for renderer communication
+   * Tracks registered channels for cleanup
    */
   private setupIpcHandlers(): void {
+    // Helper to register and track handlers
+    const registerHandler = (channel: string, handler: IpcHandler): void => {
+      ipcMain.handle(channel, handler);
+      this.registeredIpcChannels.push(channel);
+    };
+
     // Check for updates manually
-    ipcMain.handle("auto-updater:check", async () => {
+    registerHandler("auto-updater:check", async () => {
       return this.checkForUpdates();
     });
 
     // Download available update
-    ipcMain.handle("auto-updater:download", async () => {
+    registerHandler("auto-updater:download", async () => {
       return this.downloadUpdate();
     });
 
     // Install downloaded update (restart app)
-    ipcMain.handle("auto-updater:install", () => {
+    registerHandler("auto-updater:install", () => {
       return this.installUpdate();
     });
 
     // Get current update status
-    ipcMain.handle("auto-updater:status", () => {
+    registerHandler("auto-updater:status", () => {
       return {
         updateDownloaded: this.updateDownloaded,
         isChecking: this.isCheckingForUpdates,
-        allowPrerelease: this.autoUpdatesAvailable
-          ? autoUpdater.allowPrerelease
-          : false,
+        allowPrerelease:
+          this.autoUpdatesAvailable && this._isInitialized
+            ? (this._autoUpdater?.allowPrerelease ?? false)
+            : false,
         autoUpdatesAvailable: this.autoUpdatesAvailable,
       };
     });
 
     // Get/Set pre-release setting
-    ipcMain.handle("auto-updater:getAllowPrerelease", () => {
+    registerHandler("auto-updater:getAllowPrerelease", () => {
       return this.getAllowPrerelease();
     });
 
-    ipcMain.handle(
+    registerHandler(
       "auto-updater:setAllowPrerelease",
-      (_event, allow: boolean) => {
+      (_event: IpcMainInvokeEvent, ...args: unknown[]) => {
+        const allow = args[0] as boolean;
         this.setAllowPrerelease(allow);
         return { ok: true };
       },
@@ -281,6 +450,7 @@ export class AutoUpdaterService {
 
   /**
    * Check for available updates
+   * Uses caching to avoid redundant network calls
    */
   async checkForUpdates(): Promise<UpdateInfo | null> {
     // Early return if auto-updates are not available
@@ -298,9 +468,18 @@ export class AutoUpdaterService {
       return null;
     }
 
+    // Return cached result if still valid
+    if (
+      this.cachedUpdateInfo &&
+      Date.now() - this.lastUpdateCheck < this.updateCheckCacheMs
+    ) {
+      log.debug("[auto-updater] Returning cached update info");
+      return this.cachedUpdateInfo;
+    }
+
     try {
       this.isCheckingForUpdates = true;
-      const result = await autoUpdater.checkForUpdates();
+      const result = await this.autoUpdater.checkForUpdates();
       return result?.updateInfo ?? null;
     } catch (error) {
       const errorMsg = error instanceof Error ? error.message : String(error);
@@ -339,7 +518,7 @@ export class AutoUpdaterService {
     try {
       // Send downloading status immediately so UI updates right away
       this.sendStatusToRenderer({ status: "downloading" });
-      await autoUpdater.downloadUpdate();
+      await this.autoUpdater.downloadUpdate();
     } catch (error) {
       log.error("[auto-updater] Download failed:", error);
       throw error;
@@ -361,7 +540,7 @@ export class AutoUpdaterService {
     }
 
     log.info("[auto-updater] Installing update and restarting...");
-    autoUpdater.quitAndInstall(false, true);
+    this.autoUpdater.quitAndInstall(false, true);
   }
 
   /**
@@ -393,7 +572,9 @@ export class AutoUpdaterService {
       `[auto-updater] Will check for updates in ${delayMs / 1000}s (hasToken: ${hasToken})`,
     );
 
-    setTimeout(() => {
+    // Store timer reference for cleanup
+    this.startupCheckTimer = setTimeout(() => {
+      this.startupCheckTimer = null;
       log.info("[auto-updater] Checking for updates on start...");
       this.checkForUpdates().catch((err) => {
         log.warn("[auto-updater] Startup check failed:", err);
@@ -413,6 +594,70 @@ export class AutoUpdaterService {
       value,
     );
   }
+
+  /**
+   * Dispose of all resources
+   * Call this during app shutdown to prevent memory leaks
+   */
+  dispose(): void {
+    log.info("[auto-updater] Disposing service...");
+
+    // Clear startup check timer
+    if (this.startupCheckTimer) {
+      clearTimeout(this.startupCheckTimer);
+      this.startupCheckTimer = null;
+    }
+
+    // Clear progress throttle state
+    this.clearPendingProgress();
+
+    // Remove all IPC handlers
+    for (const channel of this.registeredIpcChannels) {
+      ipcMain.removeHandler(channel);
+    }
+    this.registeredIpcChannels.length = 0;
+
+    // Remove all event listeners from autoUpdater
+    if (this._autoUpdater && this._isInitialized) {
+      // Cast autoUpdater to access generic removeListener
+      const updater = this._autoUpdater as unknown as {
+        removeListener: (
+          event: string,
+          handler: (...args: unknown[]) => void,
+        ) => void;
+      };
+      for (const [event, handler] of this.boundHandlers) {
+        updater.removeListener(event, handler);
+      }
+    }
+    this.boundHandlers.clear();
+
+    // Clear references
+    this.mainWindowRef = null;
+    this.cachedUpdateInfo = null;
+
+    // Reset state flags
+    this.isCheckingForUpdates = false;
+    this.updateDownloaded = false;
+    this.lastUpdateCheck = 0;
+
+    // Clear singleton reference
+    this._autoUpdater = null;
+    this._isInitialized = false;
+
+    log.info("[auto-updater] Service disposed");
+  }
+
+  /**
+   * Reset singleton instance for testing purposes
+   * @internal
+   */
+  static resetForTesting(): void {
+    if (autoUpdaterService) {
+      autoUpdaterService.dispose();
+      autoUpdaterService = null;
+    }
+  }
 }
 
 // Singleton instance
@@ -422,5 +667,12 @@ export function getAutoUpdaterService(): AutoUpdaterService {
   if (!autoUpdaterService) {
     autoUpdaterService = new AutoUpdaterService();
   }
+  return autoUpdaterService;
+}
+
+/**
+ * Get the singleton instance if it exists (for cleanup purposes)
+ */
+export function getAutoUpdaterServiceIfExists(): AutoUpdaterService | null {
   return autoUpdaterService;
 }
