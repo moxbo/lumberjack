@@ -21,7 +21,19 @@ import { compareByTimestampId } from "../utils/sort";
 import { TimeFilter } from "../store/timeFilter";
 import { createPortal, lazy, Suspense } from "preact/compat";
 import type { ElasticSearchOptions } from "../types/ipc";
-import type { RendererLogEntry, ElasticFormState } from "../types/renderer";
+import type {
+  RendererLogEntry,
+  ElasticFormState,
+  ContextMenuState,
+  HttpPollFormState,
+  DividerResizeState,
+  ColumnResizeState,
+  ThemeMode,
+  SettingsTab,
+  SettingsFormState,
+  TimeFormState,
+  FilterStats,
+} from "../types/renderer";
 import { MDCListener } from "../store/mdcListener";
 import { clearHighlightCache, LogRow } from "./LogRow";
 import { clearTimestampCache, fmtTimestamp } from "../utils/format";
@@ -32,10 +44,10 @@ import {
 } from "../utils/debugFunctions";
 
 // Import refactored constants
-import { BASE_MARK_COLORS, TRIM_THRESHOLD_ENTRIES } from "../constants";
+import { BASE_MARK_COLORS } from "../constants";
 
 // Import refactored utilities
-import { entrySignature, mergeSorted } from "../utils/entryUtils";
+import { entrySignature } from "../utils/entryUtils";
 
 // Import refactored hooks
 import {
@@ -43,6 +55,9 @@ import {
   useFilterState,
   useHistoryPopovers,
   useAlerts,
+  useContextMenuActions,
+  useResizeHandlers,
+  useEntryManagement2,
 } from "../hooks";
 
 // Import refactored components - core components loaded eagerly
@@ -55,9 +70,6 @@ import {
 } from "./components";
 import { SkeletonLoader } from "./components/SkeletonLoader";
 import { JSX } from "preact/jsx-runtime";
-
-// Import IPC batching constants from centralized location
-import { IPC_BATCH_SIZE, IPC_PROCESS_INTERVAL } from "../constants/logViewer";
 
 // Lazy-load dialogs that are not shown on initial render for faster startup
 const HelpDialog = lazy(() =>
@@ -109,25 +121,26 @@ export default function App(): JSX.Element {
   // Track when initial settings are loaded for skeleton UI
   const [settingsLoaded, setSettingsLoaded] = useState<boolean>(false);
 
-  const [entries, setEntries] = useState<RendererLogEntry[]>([]);
-  const [nextId, setNextId] = useState<number>(1);
-  // Keep a ref in sync with nextId for atomic id assignment in appendEntries
-  const nextIdRef = useRef<number>(1);
-  useEffect(() => {
-    nextIdRef.current = nextId;
-  }, [nextId]);
-
-  // IPC batching queue to prevent renderer overload
-  const ipcQueueRef = useRef<RendererLogEntry[]>([]);
-  const ipcProcessingRef = useRef<boolean>(false);
-  const ipcFlushTimerRef = useRef<number | null>(null);
-
-  // Dedupe caches
-  const fileSigCacheRef = useRef<Map<string, Set<string>>>(new Map());
-  const httpSigCacheRef = useRef<Map<string, Set<string>>>(new Map());
-
   // Persistenz: Markierungen (signature -> color)
   const [marksMap, setMarksMap] = useState<Record<string, string>>({});
+
+  // Use alerts hook
+  const { alertState, showAlert, closeAlert, handleFeatureError } = useAlerts();
+
+  // Entry management hook (entries, IPC batching, deduplication)
+  const {
+    entries,
+    setEntries,
+    setNextId,
+    appendEntries,
+    fileSigCacheRef,
+    httpSigCacheRef,
+  } = useEntryManagement2({
+    marksMap,
+    showAlert,
+    t,
+  });
+
   const [selected, setSelected] = useState<Set<number>>(new Set());
   const lastClicked = useRef<number | null>(null);
 
@@ -135,9 +148,7 @@ export default function App(): JSX.Element {
   const [follow, setFollow] = useState<boolean>(false);
 
   // Theme Mode
-  const [themeMode, setThemeMode] = useState<"system" | "light" | "dark">(
-    "system",
-  );
+  const [themeMode, setThemeMode] = useState<ThemeMode>("system");
   function applyThemeMode(mode: string | null | undefined): void {
     const root = document.documentElement;
     if (!mode || mode === "system") {
@@ -174,9 +185,6 @@ export default function App(): JSX.Element {
   // Debounced Filter-Werte für bessere Performance beim Tippen (200ms Verzögerung)
   const debouncedSearch = useDebounce(search, 200);
   const debouncedFilter = useDebounce(filter, 200);
-
-  // NEU: Resize-Feedback State
-  const [resizeHeight, setResizeHeight] = useState<number | null>(null);
 
   // History popovers - using extracted hook
   const {
@@ -234,18 +242,16 @@ export default function App(): JSX.Element {
   const [showDcDialog, setShowDcDialog] = useState<boolean>(false);
   // Zeit-Filter Dialog-State
   const [showTimeDialog, setShowTimeDialog] = useState<boolean>(false);
-  const [timeForm, setTimeForm] = useState({
+  const [timeForm, setTimeForm] = useState<TimeFormState>({
     enabled: true,
-    mode: "relative", // 'relative' | 'absolute'
+    mode: "relative",
     duration: "15m",
     from: "",
     to: "",
-    // Elastic-Suchfelder
     application_name: "",
     logger: "",
     level: "",
     environment: "",
-    // NEW: Felder für Index & Environment-Case
     index: "",
     environmentCase: "original",
   });
@@ -391,7 +397,7 @@ export default function App(): JSX.Element {
       setHistAppName((prev) => {
         const list = [v, ...prev.filter((x) => x !== v)].slice(0, 10);
         try {
-          void window.api.settingsSet({ histAppName: list } as any);
+          void window.api.settingsSet({ histAppName: list });
         } catch (e) {
           logger.error("Failed to save histAppName settings:", e);
           showAlert(t("errors.histAppNameSaveFailed"));
@@ -402,7 +408,7 @@ export default function App(): JSX.Element {
       setHistEnvironment((prev) => {
         const list = [v, ...prev.filter((x) => x !== v)].slice(0, 10);
         try {
-          void window.api.settingsSet({ histEnvironment: list } as any);
+          void window.api.settingsSet({ histEnvironment: list });
         } catch (e) {
           logger.error("Failed to save histEnvironment settings:", e);
           showAlert(t("errors.histEnvironmentSaveFailed"));
@@ -413,7 +419,7 @@ export default function App(): JSX.Element {
       setHistIndex((prev) => {
         const list = [v, ...prev.filter((x) => x !== v)].slice(0, 10);
         try {
-          void window.api.settingsSet({ histIndex: list } as any);
+          void window.api.settingsSet({ histIndex: list });
         } catch (e) {
           logger.error("Failed to save histIndex settings:", e);
           showAlert(t("errors.histIndexSaveFailed"));
@@ -432,10 +438,8 @@ export default function App(): JSX.Element {
   const [httpUrl, setHttpUrl] = useState<string>("");
   const [httpInterval, setHttpInterval] = useState<number>(5000);
   const [showSettings, setShowSettings] = useState<boolean>(false);
-  const [settingsTab, setSettingsTab] = useState<
-    "tcp" | "http" | "elastic" | "logging" | "appearance" | "features"
-  >("tcp");
-  const [form, setForm] = useState({
+  const [settingsTab, setSettingsTab] = useState<SettingsTab>("tcp");
+  const [form, setForm] = useState<SettingsFormState>({
     tcpPort: 5000,
     httpUrl: "",
     httpInterval: 5000,
@@ -463,10 +467,7 @@ export default function App(): JSX.Element {
   const [showHttpLoadDlg, setShowHttpLoadDlg] = useState<boolean>(false);
   const [httpLoadUrl, setHttpLoadUrl] = useState<string>("");
   const [showHttpPollDlg, setShowHttpPollDlg] = useState<boolean>(false);
-  const [httpPollForm, setHttpPollForm] = useState<{
-    url: string;
-    interval: number;
-  }>({
+  const [httpPollForm, setHttpPollForm] = useState<HttpPollFormState>({
     url: "",
     interval: 5000,
   });
@@ -535,11 +536,7 @@ export default function App(): JSX.Element {
   const [elasticMaxParallel, setElasticMaxParallel] = useState<number>(1);
 
   // Kontextmenü + Farbpalette
-  const [ctxMenu, setCtxMenu] = useState<{
-    open: boolean;
-    x: number;
-    y: number;
-  }>({
+  const [ctxMenu, setCtxMenu] = useState<ContextMenuState>({
     open: false,
     x: 0,
     y: 0,
@@ -775,17 +772,9 @@ export default function App(): JSX.Element {
   }, [httpPollId, currentPollInterval]);
 
   // Filter statistics for debugging why entries are filtered out
-  const [lastFilterStats, setLastFilterStats] = useState<{
-    total: number;
-    passed: number;
-    rejectedByOnlyMarked: number;
-    rejectedByLevel: number;
-    rejectedByLogger: number;
-    rejectedByThread: number;
-    rejectedByMessage: number;
-    rejectedByTime: number;
-    rejectedByDC: number;
-  } | null>(null);
+  const [lastFilterStats, setLastFilterStats] = useState<FilterStats | null>(
+    null,
+  );
 
   // Refs/Layout/Virtualizer
   const parentRef = useRef<HTMLDivElement | null>(null);
@@ -803,24 +792,10 @@ export default function App(): JSX.Element {
   }, []); // Only run once on mount
 
   const layoutRef = useRef<HTMLDivElement | null>(null);
-  const dividerElRef = useRef<HTMLElement | null>(null);
-  const dividerStateRef = useRef<{
-    _resizing: boolean;
-    _startY: number;
-    _startH: number;
-  }>({
-    _resizing: false,
-    _startY: 0,
-    _startH: 0,
-  });
-  const colResize = useRef<{
-    active: null | string;
-    startX: number;
-    startW: number;
-  }>({
-    active: null,
-    startX: 0,
-    startW: 0,
+
+  // Use resize handlers hook for divider and column resize
+  const { dividerElRef, resizeHeight, onColMouseDown } = useResizeHandlers({
+    layoutRef,
   });
 
   // Filtered indices - uses debounced filter values for better typing performance
@@ -1000,7 +975,7 @@ export default function App(): JSX.Element {
       if (distanceFromBottom > 100) {
         setFollow(false);
         try {
-          void window.api.settingsSet({ follow: false } as any);
+          void window.api.settingsSet({ follow: false });
         } catch (err) {
           logger.warn("Persisting follow flag failed:", err);
         }
@@ -1414,353 +1389,7 @@ export default function App(): JSX.Element {
     scrollToIndexCenter(targetVi);
   }
 
-  // Process queued entries - defined as a ref to avoid stale closure issues
-  const processIpcQueueRef = useRef<() => void>(() => {});
-
-  // Queue entries and schedule processing
-  // This prevents the renderer from being overwhelmed by rapid IPC messages
-  function appendEntries(
-    newEntries: any[],
-    options?: { ignoreExistingForElastic?: boolean },
-  ) {
-    console.log(
-      `[renderer-diag] appendEntries called with ${newEntries?.length || 0} entries, isArray: ${Array.isArray(newEntries)}`,
-    );
-    if (!Array.isArray(newEntries) || newEntries.length === 0) {
-      console.log(
-        "[renderer-diag] appendEntries: rejecting - not array or empty",
-      );
-      return;
-    }
-
-    // For small batches or Elastic queries, process directly
-    // For large batches (HTTP/TCP streams), queue to prevent overload and UI freezes
-    const isElasticBatch = newEntries.some(
-      (e) => typeof e?.source === "string" && e.source.startsWith("elastic://"),
-    );
-
-    // Reduced threshold from 500 to 200 to prevent "Keine Rückmeldung"
-    if (
-      newEntries.length <= 200 ||
-      isElasticBatch ||
-      options?.ignoreExistingForElastic
-    ) {
-      // Small batch or Elastic: process immediately
-      appendEntriesInternal(newEntries, options);
-    } else {
-      // Large batch (likely TCP stream): queue for controlled processing
-      ipcQueueRef.current.push(...newEntries);
-      console.log(
-        `[renderer-memory] Queued ${newEntries.length} entries, total queued: ${ipcQueueRef.current.length}`,
-      );
-
-      // Limit queue size to prevent memory issues
-      const MAX_QUEUE_SIZE = 100_000;
-      if (ipcQueueRef.current.length > MAX_QUEUE_SIZE) {
-        const overflow = ipcQueueRef.current.length - MAX_QUEUE_SIZE;
-        ipcQueueRef.current.splice(0, overflow);
-        console.warn(
-          `[renderer-memory] Queue overflow, discarded ${overflow} oldest entries`,
-        );
-      }
-
-      // Start processing if not already running
-      if (!ipcFlushTimerRef.current && !ipcProcessingRef.current) {
-        // Use setTimeout to defer processing to next tick, ensuring processIpcQueue is defined
-        setTimeout(() => processIpcQueueRef.current(), 0);
-      }
-    }
-  }
-
-  // Internal append function that does the actual work
-  function appendEntriesInternal(
-    newEntries: any[],
-    options?: { ignoreExistingForElastic?: boolean },
-  ) {
-    if (!Array.isArray(newEntries) || newEntries.length === 0) {
-      return;
-    }
-
-    const ignoreExistingForElastic = !!options?.ignoreExistingForElastic;
-
-    // Prüfe, ob Eintrag aus Elasticsearch stammt
-    const isElastic = (e: any) =>
-      typeof e?.source === "string" && e.source.startsWith("elastic://");
-    // Datei-Quelle: source ohne Schema (kein "://")
-    const isFileSource = (e: any) => {
-      const s = e?.source;
-      return typeof s === "string" && !s.includes("://");
-    };
-    // HTTP-Quelle: source startet mit http:// oder https://
-    const isHttpSource = (e: any) => {
-      const s = e?.source;
-      return (
-        typeof s === "string" &&
-        (s.startsWith("http://") || s.startsWith("https://"))
-      );
-    };
-
-    // Bedarf für Dedupe bestimmen
-    const needEsDedup = newEntries.some((e) => isElastic(e));
-    const needFileDedup = newEntries.some((e) => isFileSource(e));
-    const needHttpDedup = newEntries.some((e) => isHttpSource(e));
-
-    // Signatur-Set für bereits existierende ES-Einträge aufbauen (nur falls nötig)
-    let existingEsSigs: Set<string> | null = null;
-    if (needEsDedup && !ignoreExistingForElastic) {
-      existingEsSigs = new Set<string>();
-      for (const e of entries) {
-        if (isElastic(e)) existingEsSigs.add(entrySignature(e));
-      }
-    }
-
-    // Datei-Quelle: vorhandene Signaturen pro Quelle initialisieren, falls leer
-    if (needFileDedup && fileSigCacheRef.current.size === 0 && entries.length) {
-      const map = fileSigCacheRef.current;
-      for (const e of entries) {
-        if (!isFileSource(e)) continue;
-        const src = String(e.source);
-        let set = map.get(src);
-        if (!set) {
-          set = new Set<string>();
-          map.set(src, set);
-        }
-        set.add(entrySignature(e));
-      }
-    }
-
-    // HTTP-Quelle: vorhandene Signaturen pro Quelle initialisieren, falls leer
-    if (needHttpDedup && httpSigCacheRef.current.size === 0 && entries.length) {
-      const map = httpSigCacheRef.current;
-      for (const e of entries) {
-        if (!isHttpSource(e)) continue;
-        const src = String(e.source);
-        let set = map.get(src);
-        if (!set) {
-          set = new Set<string>();
-          map.set(src, set);
-        }
-        set.add(entrySignature(e));
-      }
-    }
-
-    // Batch-Deduplizierung: ES intern + Datei-Quelle pro source intern + HTTP-Quelle pro source intern
-    const batchEsSigs = new Set<string>();
-    const batchFileSigsBySrc = new Map<string, Set<string>>();
-    const batchHttpSigsBySrc = new Map<string, Set<string>>();
-    const accepted: any[] = [];
-
-    // Debug: Track rejection reasons
-    let rejectedByEsDedup = 0;
-    let rejectedByFileDedup = 0;
-    let rejectedByHttpDedup = 0;
-
-    for (const e of newEntries) {
-      // Elasticsearch-Dedupe
-      if (needEsDedup && isElastic(e)) {
-        const sig = entrySignature(e);
-        if (
-          !ignoreExistingForElastic &&
-          existingEsSigs &&
-          existingEsSigs.has(sig)
-        ) {
-          rejectedByEsDedup++;
-          continue;
-        }
-        if (batchEsSigs.has(sig)) {
-          rejectedByEsDedup++;
-          continue;
-        }
-        batchEsSigs.add(sig);
-        accepted.push(e);
-        continue;
-      }
-      // Datei-Quellen-Dedupe (pro source)
-      if (needFileDedup && isFileSource(e)) {
-        const src = String(e.source || "");
-        const sig = entrySignature(e);
-        const existingSet = fileSigCacheRef.current.get(src);
-        if (existingSet && existingSet.has(sig)) {
-          rejectedByFileDedup++;
-          continue;
-        }
-        let batchSet = batchFileSigsBySrc.get(src);
-        if (!batchSet) {
-          batchSet = new Set<string>();
-          batchFileSigsBySrc.set(src, batchSet);
-        }
-        if (batchSet.has(sig)) {
-          rejectedByFileDedup++;
-          continue;
-        }
-        batchSet.add(sig);
-        accepted.push(e);
-        continue;
-      }
-      // HTTP-Quellen-Dedupe (pro source)
-      if (needHttpDedup && isHttpSource(e)) {
-        const src = String(e.source || "");
-        const sig = entrySignature(e);
-        const existingSet = httpSigCacheRef.current.get(src);
-        if (existingSet && existingSet.has(sig)) {
-          rejectedByHttpDedup++;
-          continue;
-        }
-        let batchSet = batchHttpSigsBySrc.get(src);
-        if (!batchSet) {
-          batchSet = new Set<string>();
-          batchHttpSigsBySrc.set(src, batchSet);
-        }
-        if (batchSet.has(sig)) {
-          rejectedByHttpDedup++;
-          continue;
-        }
-        batchSet.add(sig);
-        accepted.push(e);
-        continue;
-      }
-      // Alle anderen Quellen unverändert
-      accepted.push(e);
-    }
-
-    // Debug logging
-    if (newEntries.length !== accepted.length) {
-      // eslint-disable-next-line no-console
-      console.log(
-        `[dedupe-diag] Input: ${newEntries.length}, Accepted: ${accepted.length}, ` +
-          `Rejected by ES: ${rejectedByEsDedup}, File: ${rejectedByFileDedup}, HTTP: ${rejectedByHttpDedup}`,
-      );
-    }
-
-    if (accepted.length === 0) return;
-
-    // IDs atomar über Ref vergeben und Marks anwenden
-    const baseId = nextIdRef.current;
-    const toAdd = accepted.map((e, i) => {
-      const n = { ...e, _id: baseId + i };
-      const sig = entrySignature(n);
-      if (marksMap[sig]) (n as any)._mark = marksMap[sig];
-      return n;
-    });
-    nextIdRef.current = baseId + toAdd.length;
-
-    // Datei-Cache mit neu akzeptierten Einträgen aktualisieren
-    if (needFileDedup) {
-      const map = fileSigCacheRef.current;
-      for (const n of toAdd) {
-        if (!isFileSource(n)) continue;
-        const src = String(n.source || "");
-        let set = map.get(src);
-        if (!set) {
-          set = new Set<string>();
-          map.set(src, set);
-        }
-        set.add(entrySignature(n));
-      }
-    }
-
-    // HTTP-Cache mit neu akzeptierten Einträgen aktualisieren
-    if (needHttpDedup) {
-      const map = httpSigCacheRef.current;
-      for (const n of toAdd) {
-        if (!isHttpSource(n)) continue;
-        const src = String(n.source || "");
-        let set = map.get(src);
-        if (!set) {
-          set = new Set<string>();
-          map.set(src, set);
-        }
-        set.add(entrySignature(n));
-      }
-    }
-
-    console.log(
-      `[renderer-diag] Adding ${toAdd.length} entries to state (after dedup from ${accepted.length})`,
-    );
-    try {
-      (LoggingStore as any).addEvents(toAdd);
-    } catch (e) {
-      logger.error("LoggingStore.addEvents error:", e);
-      showAlert(
-        t("errors.parsePathsFailed", {
-          message: (e as any)?.message || String(e),
-        }),
-      );
-    }
-    setEntries((prev) => {
-      // Sort new entries only, then merge with existing sorted array - O(m log m + n+m) instead of O((n+m) log (n+m))
-      const sortedNew = toAdd.slice().sort(compareByTimestampId as any);
-      let newState = mergeSorted(prev, sortedNew);
-
-      // Memory safety: Trim oldest entries if we exceed the threshold
-      // This prevents the renderer from running out of memory with large log volumes
-      if (newState.length > TRIM_THRESHOLD_ENTRIES) {
-        const trimCount =
-          newState.length - Math.floor(TRIM_THRESHOLD_ENTRIES * 0.8);
-        console.warn(
-          `[renderer-memory] Trimming ${trimCount} oldest entries (${newState.length} -> ${newState.length - trimCount}) to prevent memory overflow`,
-        );
-        // Remove oldest entries (beginning of sorted array)
-        newState = newState.slice(trimCount);
-      }
-
-      console.log(
-        `[renderer-diag] State updated: ${prev.length} -> ${newState.length} entries`,
-      );
-      return newState;
-    });
-    setNextId((prev) => prev + toAdd.length);
-  }
-
-  // Process queued entries in controlled batches to prevent renderer overload
-  // Uses requestIdleCallback when available to avoid blocking the UI thread
-  function processIpcQueue(): void {
-    if (ipcProcessingRef.current) return;
-    if (ipcQueueRef.current.length === 0) return;
-
-    ipcProcessingRef.current = true;
-
-    // Take a batch from the queue
-    const batch = ipcQueueRef.current.splice(0, IPC_BATCH_SIZE);
-    const remaining = ipcQueueRef.current.length;
-
-    if (remaining > 0) {
-      console.log(
-        `[renderer-memory] Processing batch of ${batch.length}, ${remaining} entries still queued`,
-      );
-    }
-
-    // Process this batch
-    appendEntriesInternal(batch);
-
-    ipcProcessingRef.current = false;
-
-    // Schedule next batch if there are more entries
-    if (ipcQueueRef.current.length > 0) {
-      if (ipcFlushTimerRef.current) {
-        clearTimeout(ipcFlushTimerRef.current);
-      }
-
-      // Use requestIdleCallback for smoother processing when available
-      // Falls back to setTimeout on browsers that don't support it
-      if (typeof requestIdleCallback === "function") {
-        requestIdleCallback(
-          () => {
-            ipcFlushTimerRef.current = null;
-            processIpcQueue();
-          },
-          { timeout: IPC_PROCESS_INTERVAL * 3 }, // Max wait time before forcing processing
-        );
-      } else {
-        ipcFlushTimerRef.current = window.setTimeout(() => {
-          ipcFlushTimerRef.current = null;
-          processIpcQueue();
-        }, IPC_PROCESS_INTERVAL);
-      }
-    }
-  }
-  // Keep ref in sync
-  processIpcQueueRef.current = processIpcQueue;
+  // Entry management functions (appendEntries, processIpcQueue) are now in useEntryManagement2 hook
 
   // Prüft, ob ein Message-Filter erweiterte Syntax enthält (& | ! ())
   function hasAdvancedSyntax(filter: string): boolean {
@@ -1799,18 +1428,18 @@ export default function App(): JSX.Element {
       // Standard Arrow Keys
       if (e.key === "ArrowDown") {
         e.preventDefault();
-        moveSelectionBy(1, !!(e as any).shiftKey);
+        moveSelectionBy(1, !!e.shiftKey);
       } else if (e.key === "ArrowUp") {
         e.preventDefault();
-        moveSelectionBy(-1, !!(e as any).shiftKey);
+        moveSelectionBy(-1, !!e.shiftKey);
       }
       // Vim-Style Navigation
       else if (e.key === "j" && !e.ctrlKey && !e.metaKey && !e.altKey) {
         e.preventDefault();
-        moveSelectionBy(1, !!(e as any).shiftKey);
+        moveSelectionBy(1, !!e.shiftKey);
       } else if (e.key === "k" && !e.ctrlKey && !e.metaKey && !e.altKey) {
         e.preventDefault();
-        moveSelectionBy(-1, !!(e as any).shiftKey);
+        moveSelectionBy(-1, !!e.shiftKey);
       }
       // gg = go to start (double g)
       else if (e.key === "g" && !e.ctrlKey && !e.metaKey) {
@@ -1884,10 +1513,7 @@ export default function App(): JSX.Element {
   const [showTitleDlg, setShowTitleDlg] = useState<boolean>(false);
   const [showHelpDlg, setShowHelpDlg] = useState<boolean>(false);
 
-  // Alert dialog state - using extracted hook
-  const { alertState, showAlert, closeAlert, handleFeatureError } = useAlerts();
-
-  // Ref for showAlert so it can be used in useEffects
+  // Alert refs for use in useEffects (useAlerts hook is called earlier with useEntryManagement2)
   const showAlertRef = useRef(showAlert);
   useEffect(() => {
     showAlertRef.current = showAlert;
@@ -2718,138 +2344,7 @@ export default function App(): JSX.Element {
     }
   }
 
-  // Divider Drag mit Resize-Feedback
-  useEffect(() => {
-    function onMouseMove(e: MouseEvent) {
-      if (!dividerStateRef.current._resizing) return;
-      const startY = dividerStateRef.current._startY;
-      const startH = dividerStateRef.current._startH;
-      const dy = e.clientY - startY;
-      let newH = startH - dy;
-      const layout = layoutRef.current;
-      const total = layout
-        ? (layout as any).clientHeight
-        : document.body.clientHeight || window.innerHeight;
-      const minDetail = 150;
-      const minList = 140;
-      const csRoot = getComputedStyle(document.documentElement);
-      const divVar = csRoot.getPropertyValue("--divider-h").trim();
-      const dividerSize = Math.max(
-        0,
-        parseInt(divVar.replace("px", ""), 10) || 8,
-      );
-      const maxDetail = Math.max(minDetail, total - minList - dividerSize);
-      if (newH < minDetail) newH = minDetail;
-      if (newH > maxDetail) newH = maxDetail;
-      document.documentElement.style.setProperty(
-        "--detail-height",
-        `${Math.round(newH)}px`,
-      );
-      // NEU: Resize-Feedback aktualisieren
-      setResizeHeight(Math.round(newH));
-    }
-    async function onMouseUp() {
-      dividerStateRef.current._resizing = false;
-      document.body.style.userSelect = "";
-      document.body.style.cursor = "";
-      // NEU: Resize-Feedback ausblenden
-      setResizeHeight(null);
-      // NEU: Resizing-Klasse entfernen
-      dividerElRef.current?.classList.remove("resizing");
-      window.removeEventListener("mousemove", onMouseMove);
-      window.removeEventListener("mouseup", onMouseUp);
-      try {
-        const cs = getComputedStyle(document.documentElement);
-        const h = cs.getPropertyValue("--detail-height").trim();
-        const num = Number(h.replace("px", "")) || 300;
-        await window.api.settingsSet({ detailHeight: Math.round(num) });
-      } catch (e) {
-        logger.warn("Setting detailHeight via API failed:", e);
-      }
-    }
-    function onMouseDown(e: MouseEvent) {
-      dividerStateRef.current._resizing = true;
-      dividerStateRef.current._startY = e.clientY;
-      const cs = getComputedStyle(document.documentElement);
-      const h = cs.getPropertyValue("--detail-height").trim();
-      dividerStateRef.current._startH = Number(h.replace("px", "")) || 300;
-      document.body.style.userSelect = "none";
-      document.body.style.cursor = "row-resize";
-      // NEU: Resizing-Klasse hinzufügen für visuelles Feedback
-      dividerElRef.current?.classList.add("resizing");
-      // NEU: Initiales Resize-Feedback
-      setResizeHeight(dividerStateRef.current._startH);
-      window.addEventListener("mousemove", onMouseMove);
-      window.addEventListener("mouseup", onMouseUp);
-    }
-    const el = dividerElRef.current;
-    if (el) el.addEventListener("mousedown", onMouseDown as any);
-    return () => {
-      if (el) el.removeEventListener("mousedown", onMouseDown as any);
-      window.removeEventListener("mousemove", onMouseMove);
-      window.removeEventListener("mouseup", onMouseUp);
-    };
-  }, []);
-
-  // Spalten-Resize (Zeit/Level/Logger)
-  function onColMouseDown(key: "ts" | "lvl" | "logger", e: MouseEvent) {
-    const varMap: Record<string, string> = {
-      ts: "--col-ts",
-      lvl: "--col-lvl",
-      logger: "--col-logger",
-    };
-    const active = varMap[key];
-    if (!active) return;
-    const cs = getComputedStyle(document.documentElement);
-    const cur = cs.getPropertyValue(active).trim();
-    const curW = Number(cur.replace("px", "")) || 0;
-    const onMove = (ev: MouseEvent) => onColMouseMove(ev);
-    const onUp = async () => {
-      await onColMouseUp();
-    };
-    colResize.current = { active, startX: e.clientX, startW: curW };
-    document.body.style.userSelect = "none";
-    document.body.style.cursor = "col-resize";
-    window.addEventListener("mousemove", onMove);
-    window.addEventListener("mouseup", onUp);
-  }
-  function onColMouseMove(e: MouseEvent) {
-    const st = colResize.current;
-    if (!st.active) return;
-    let newW = st.startW + (e.clientX - st.startX);
-    const clamp = (v: number, min: number, max: number) =>
-      Math.max(min, Math.min(max, v));
-    if (st.active === "--col-ts") newW = clamp(newW, 140, 600);
-    if (st.active === "--col-lvl") newW = clamp(newW, 70, 200);
-    if (st.active === "--col-logger") newW = clamp(newW, 160, 800);
-    document.documentElement.style.setProperty(
-      st.active,
-      `${Math.round(newW)}px`,
-    );
-  }
-  async function onColMouseUp() {
-    const st = colResize.current;
-    colResize.current = { active: null, startX: 0, startW: 0 };
-    document.body.style.userSelect = "";
-    document.body.style.cursor = "";
-    window.removeEventListener("mousemove", onColMouseMove as any);
-    window.removeEventListener("mouseup", onColMouseUp as any);
-    try {
-      if (!st.active) return;
-      const cs = getComputedStyle(document.documentElement);
-      const val = cs.getPropertyValue(st.active).trim();
-      const num = Number(val.replace("px", "")) || 0;
-      const keyMap: Record<string, string> = {
-        "--col-ts": "colTs",
-        "--col-lvl": "colLvl",
-        "--col-logger": "colLogger",
-      };
-      const k = keyMap[st.active];
-      if (k) await window.api.settingsSet({ [k]: Math.round(num) } as any);
-    } catch (e) {
-      logger.warn("Column resize setting failed:", e);
-    }
-  }
+  // Divider and Column resize logic is now in useResizeHandlers hook
 
   // Starte MDCListener früh, damit Keys/Werte gesammelt werden, sobald Events eintreffen
   useEffect(() => {

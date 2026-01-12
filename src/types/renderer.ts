@@ -57,6 +57,57 @@ export interface ElasticFormState {
 }
 
 /**
+ * Theme mode options
+ */
+export type ThemeMode = "system" | "light" | "dark";
+
+/**
+ * Settings tab options
+ */
+export type SettingsTab =
+  | "tcp"
+  | "http"
+  | "elastic"
+  | "logging"
+  | "appearance"
+  | "features";
+
+/**
+ * Context menu state
+ */
+export interface ContextMenuState {
+  open: boolean;
+  x: number;
+  y: number;
+}
+
+/**
+ * HTTP poll form state
+ */
+export interface HttpPollFormState {
+  url: string;
+  interval: number;
+}
+
+/**
+ * Column resize state
+ */
+export interface ColumnResizeState {
+  active: string | null;
+  startX: number;
+  startW: number;
+}
+
+/**
+ * Divider resize state
+ */
+export interface DividerResizeState {
+  _resizing: boolean;
+  _startY: number;
+  _startH: number;
+}
+
+/**
  * Settings form state for the settings modal
  */
 export interface SettingsFormState {
@@ -79,17 +130,18 @@ export interface SettingsFormState {
 }
 
 /**
- * Theme mode options
+ * Time form state for Elasticsearch time filter dialog
  */
-export type ThemeMode = "system" | "light" | "dark";
-
-/**
- * Settings tab options
- */
-export type SettingsTab =
-  | "tcp"
-  | "http"
-  | "elastic"
-  | "logging"
-  | "appearance"
-  | "features";
+export interface TimeFormState {
+  enabled: boolean;
+  mode: "relative" | "absolute";
+  duration: string;
+  from: string;
+  to: string;
+  application_name: string;
+  logger: string;
+  level: string;
+  environment: string;
+  index: string;
+  environmentCase: string;
+}

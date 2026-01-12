@@ -21,3 +21,20 @@ export type { FeatureName } from "./useFeatureFlags";
 export { useAlerts } from "./useAlerts";
 export type { AlertType } from "./useAlerts";
 export { useHistoryPopovers } from "./useHistoryPopovers";
+
+// New hooks for code extraction
+export { useContextMenuActions } from "./useContextMenuActions";
+export type {
+  UseContextMenuActionsOptions,
+  UseContextMenuActionsReturn,
+} from "./useContextMenuActions";
+export { useResizeHandlers } from "./useResizeHandlers";
+export type {
+  UseResizeHandlersOptions,
+  UseResizeHandlersReturn,
+} from "./useResizeHandlers";
+export { useEntryManagement as useEntryManagement2 } from "./useEntryManagement2";
+export type {
+  UseEntryManagementOptions as UseEntryManagement2Options,
+  UseEntryManagementReturn as UseEntryManagement2Return,
+} from "./useEntryManagement2";
