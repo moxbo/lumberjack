@@ -1,11 +1,6 @@
-/* eslint-disable @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-return, @typescript-eslint/no-unsafe-argument */
-// TODO: Gradually fix these eslint issues and remove the disable directives above
-// NOTE: This file uses the following extracted hooks from src/hooks/:
-// - useFilterState: Filter state management
-// - useDebounce: Value debouncing
-// - useHistoryPopovers: History dropdown state management
-// - useAlerts: Alert dialog management
-// See also src/utils/debugFunctions.ts for debug utilities
+/* eslint-disable @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-explicit-any */
+// NOTE: This file still has some `any` types that should be gradually replaced
+// See extracted hooks in src/hooks/ for properly typed state management
 import {
   useCallback,
   useEffect,
@@ -26,6 +21,7 @@ import { compareByTimestampId } from "../utils/sort";
 import { TimeFilter } from "../store/timeFilter";
 import { createPortal, lazy, Suspense } from "preact/compat";
 import type { ElasticSearchOptions } from "../types/ipc";
+import type { RendererLogEntry, ElasticFormState } from "../types/renderer";
 import { MDCListener } from "../store/mdcListener";
 import { clearHighlightCache, LogRow } from "./LogRow";
 import { clearTimestampCache, fmtTimestamp } from "../utils/format";
@@ -60,9 +56,8 @@ import {
 import { SkeletonLoader } from "./components/SkeletonLoader";
 import { JSX } from "preact/jsx-runtime";
 
-// IPC batching constants - reduced to prevent UI freezes ("Keine Rückmeldung")
-const IPC_BATCH_SIZE = 1000; // Reduced from 5000
-const IPC_PROCESS_INTERVAL = 16; // Reduced from 50ms to one frame at 60fps
+// Import IPC batching constants from centralized location
+import { IPC_BATCH_SIZE, IPC_PROCESS_INTERVAL } from "../constants/logViewer";
 
 // Lazy-load dialogs that are not shown on initial render for faster startup
 const HelpDialog = lazy(() =>
@@ -114,7 +109,7 @@ export default function App(): JSX.Element {
   // Track when initial settings are loaded for skeleton UI
   const [settingsLoaded, setSettingsLoaded] = useState<boolean>(false);
 
-  const [entries, setEntries] = useState<any[]>([]);
+  const [entries, setEntries] = useState<RendererLogEntry[]>([]);
   const [nextId, setNextId] = useState<number>(1);
   // Keep a ref in sync with nextId for atomic id assignment in appendEntries
   const nextIdRef = useRef<number>(1);
@@ -123,7 +118,7 @@ export default function App(): JSX.Element {
   }, [nextId]);
 
   // IPC batching queue to prevent renderer overload
-  const ipcQueueRef = useRef<any[]>([]);
+  const ipcQueueRef = useRef<RendererLogEntry[]>([]);
   const ipcProcessingRef = useRef<boolean>(false);
   const ipcFlushTimerRef = useRef<number | null>(null);
 
@@ -314,7 +309,7 @@ export default function App(): JSX.Element {
       };
       const { lastApp, lastEnv, lastIndex, lastEnvCase } = await getLasts();
       // Bestimme zuletzt verwendete Werte aus der letzten Suche (falls vorhanden)
-      const prev = lastEsForm || {};
+      const prev: Partial<ElasticFormState> = lastEsForm || {};
       const initIndex = String(prev.index || lastIndex || "");
       const initEnvCase = String(
         prev.environmentCase ||
@@ -337,7 +332,7 @@ export default function App(): JSX.Element {
       });
     } catch {
       const { lastApp, lastEnv, lastIndex, lastEnvCase } = await getLasts();
-      const prev = lastEsForm || {};
+      const prev: Partial<ElasticFormState> = lastEsForm || {};
       const initIndex = String(prev.index || lastIndex || "");
       const initEnvCase = String(
         prev.environmentCase ||
@@ -626,8 +621,9 @@ export default function App(): JSX.Element {
       const newMap: Record<string, string> = { ...marksMap };
       for (const i of selected) {
         if (i >= 0 && i < next.length) {
-          const e = next[i] || {};
-          const n = { ...e };
+          const e = next[i];
+          if (!e) continue;
+          const n: RendererLogEntry = { ...e };
           if (color) {
             n._mark = color;
             newMap[entrySignature(n)] = color;
@@ -635,7 +631,7 @@ export default function App(): JSX.Element {
             if (n._mark) delete newMap[entrySignature(n)];
             delete n._mark;
           }
-          (next as any)[i] = n;
+          next[i] = n;
         }
       }
       setMarksMap(newMap);
@@ -698,10 +694,11 @@ export default function App(): JSX.Element {
     }
     closeContextMenu();
   }
-  async function copyTsMsg() {
+  async function copyTsMsg(): Promise<void> {
     const list = Array.from(selected).sort((a, b) => a - b);
     const lines = list.map((i) => {
-      const e = entries[i] || {};
+      const e: RendererLogEntry | undefined = entries[i];
+      if (!e) return "";
       return `${fmtTimestamp(e.timestamp)}\n${String(e.message ?? "")}`;
     });
     const text = lines.join("\n");
@@ -1318,7 +1315,7 @@ export default function App(): JSX.Element {
     for (let vi = 0; vi < filteredIdx.length; vi++) {
       const idx = filteredIdx[vi]!;
       const e = entries[idx];
-      if (msgMatches(e?.message, s, { mode: searchMode })) out.push(vi);
+      if (msgMatches(e?.message ?? "", s, { mode: searchMode })) out.push(vi);
     }
     return out;
   }, [debouncedSearch, filteredIdx, entries, searchMode]);
@@ -2443,7 +2440,7 @@ export default function App(): JSX.Element {
   const [esNextSearchAfter, setEsNextSearchAfter] = useState<Array<
     string | number
   > | null>(null);
-  const [lastEsForm, setLastEsForm] = useState<any>(null);
+  const [lastEsForm, setLastEsForm] = useState<ElasticFormState | null>(null);
   const [esTotal, setEsTotal] = useState<number | null>(null);
   const [esBaseline, setEsBaseline] = useState<number>(0);
   const [esPitSessionId, setEsPitSessionId] = useState<string | null>(null);
@@ -4108,7 +4105,7 @@ export default function App(): JSX.Element {
                 await withBusy(async () => {
                   setEsBusy(true);
                   try {
-                    const f = lastEsForm || {};
+                    const f: Partial<ElasticFormState> = lastEsForm || {};
                     const mode = (f?.mode || "relative") as
                       | "relative"
                       | "absolute";
@@ -4119,10 +4116,9 @@ export default function App(): JSX.Element {
                       size: batchSize,
                       index: f?.index || undefined,
                       sort: f?.sort || undefined,
-                      duration:
-                        mode === "relative" ? (f?.duration as any) : undefined,
-                      from: mode === "absolute" ? (f?.from as any) : undefined,
-                      to: mode === "absolute" ? (f?.to as any) : undefined,
+                      duration: mode === "relative" ? f?.duration : undefined,
+                      from: mode === "absolute" ? f?.from : undefined,
+                      to: mode === "absolute" ? f?.to : undefined,
                       application_name: f?.application_name,
                       logger: f?.logger,
                       level: f?.level,
@@ -4131,10 +4127,10 @@ export default function App(): JSX.Element {
                       environmentCase: f?.environmentCase || "original",
                       allowInsecureTLS: !!f?.allowInsecureTLS,
                       ...(token && Array.isArray(token) && token.length > 0
-                        ? { searchAfter: token as any }
+                        ? { searchAfter: token as Array<string | number> }
                         : {}),
                       pitSessionId: esPitSessionId || undefined,
-                    } as any;
+                    };
                     const messageFilter = f?.message || "";
                     const res = await window.api.elasticSearch(opts);
                     if (res?.ok) {
@@ -4272,11 +4268,10 @@ export default function App(): JSX.Element {
                 typeof vi?.index === "number" ? (vi.index as number) : -1;
               if (viIndex < 0 || viIndex >= filteredIdx.length) return null;
               const globalIdx: number = filteredIdx[viIndex]!;
-              const e = entries[globalIdx] || {};
+              const e: RendererLogEntry | undefined = entries[globalIdx];
+              if (!e) return null;
               const isSel = selected.has(globalIdx);
-              const markColor = (e && (e._mark || e.color)) as
-                | string
-                | undefined;
+              const markColor = e._mark || e.color;
               const y: number =
                 typeof vi?.start === "number" ? (vi.start as number) : 0;
               const key = (vi && vi.key) || `row-${globalIdx}`;

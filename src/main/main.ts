@@ -45,6 +45,7 @@ import {
   MULTI_INSTANCE_FLAG,
   NEW_WINDOW_FLAG,
 } from "./util/constants";
+import { loadHeapSizeSync } from "./util/settingsLoader";
 import { prepareRenderBatch } from "./util/logEntryUtils";
 import {
   resolveIconPathAsync,
@@ -120,22 +121,8 @@ if (process.platform === "win32") {
   // Skip WebGL initialization if not needed immediately
   app.commandLine.appendSwitch("disable-accelerated-2d-canvas");
 
-  // Load heap size from settings (sync read before app ready)
-  // This must happen early before the js-flags switch is set
-  let heapSizeMB = 2048; // Default 2GB
-  try {
-    const settingsPath = path.join(app.getPath("userData"), "settings.json");
-    if (fs.existsSync(settingsPath)) {
-      const settingsRaw = fs.readFileSync(settingsPath, "utf-8");
-      const settings = JSON.parse(settingsRaw);
-      if (typeof settings.heapSizeMB === "number") {
-        // Clamp to reasonable bounds: min 512MB, max 8192MB (8GB)
-        heapSizeMB = Math.max(512, Math.min(8192, settings.heapSizeMB));
-      }
-    }
-  } catch {
-    // Ignore errors, use default
-  }
+  // Load heap size from settings using centralized loader
+  const heapSizeMB = loadHeapSizeSync();
 
   // Log the heap size being used (console.warn is allowed by ESLint)
   console.warn(`[startup] Heap size configured: ${heapSizeMB}MB`);
@@ -263,24 +250,8 @@ log.info("[diag] Application starting", {
       : "disabled",
 });
 
-// Log configured heap size (read from settings at startup)
-// This helps diagnose OOM issues
-{
-  let configuredHeapMB = 2048; // default
-  try {
-    const settingsPath = path.join(app.getPath("userData"), "settings.json");
-    if (fs.existsSync(settingsPath)) {
-      const raw = fs.readFileSync(settingsPath, "utf-8");
-      const parsed = JSON.parse(raw) as { heapSizeMB?: number };
-      if (typeof parsed.heapSizeMB === "number") {
-        configuredHeapMB = Math.max(512, Math.min(8192, parsed.heapSizeMB));
-      }
-    }
-  } catch {
-    // ignore
-  }
-  log.info("[memory] Heap size configured:", `${configuredHeapMB}MB`);
-}
+// Log configured heap size (using centralized loader)
+log.info("[memory] Heap size configured:", `${loadHeapSizeSync()}MB`);
 
 // Set AppUserModelId for Windows taskbar and notifications
 // This must be done early in the app lifecycle
@@ -414,8 +385,6 @@ function getParsers(): typeof import("./parsers.cjs") {
 
 // Windows/Meta
 let mainWindow: BrowserWindow | null = null;
-const iconPlay: NativeImage | null = null;
-const iconStop: NativeImage | null = null;
 const windows = new Set<BrowserWindow>();
 const loadedWindows = new Set<number>(); // Track windows that have finished loading
 
@@ -1341,9 +1310,6 @@ function buildMenu(): void {
           label: tcpStatus.running
             ? t("main.menu.tcpToggleStop")
             : t("main.menu.tcpToggleStart"),
-          icon: tcpStatus.running
-            ? (iconStop ?? undefined)
-            : (iconPlay ?? undefined),
           click: (_mi, win) =>
             sendMenuCmd(
               { type: tcpStatus.running ? "tcp-stop" : "tcp-start" },
