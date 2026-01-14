@@ -17,7 +17,6 @@ import { useI18n } from "../utils/i18n";
 import { LoggingStore } from "../store/loggingStore";
 import { canonicalDcKey, DiagnosticContextFilter } from "../store/dcFilter";
 import { DragAndDropManager } from "../utils/dnd";
-import { compareByTimestampId } from "../utils/sort";
 import { TimeFilter } from "../store/timeFilter";
 import { createPortal, lazy, Suspense } from "preact/compat";
 import type { ElasticSearchOptions } from "../types/ipc";
@@ -26,8 +25,6 @@ import type {
   ElasticFormState,
   ContextMenuState,
   HttpPollFormState,
-  DividerResizeState,
-  ColumnResizeState,
   ThemeMode,
   SettingsTab,
   SettingsFormState,
@@ -55,9 +52,8 @@ import {
   useFilterState,
   useHistoryPopovers,
   useAlerts,
-  useContextMenuActions,
   useResizeHandlers,
-  useEntryManagement2,
+  useEntryManagement,
 } from "../hooks";
 
 // Import refactored components - core components loaded eagerly
@@ -135,10 +131,8 @@ export default function App(): JSX.Element {
     appendEntries,
     fileSigCacheRef,
     httpSigCacheRef,
-  } = useEntryManagement2({
+  } = useEntryManagement({
     marksMap,
-    showAlert,
-    t,
   });
 
   const [selected, setSelected] = useState<Set<number>>(new Set());

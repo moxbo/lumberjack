@@ -329,5 +329,8 @@ export function useEntryManagement({ marksMap }: UseEntryManagementOptions) {
     appendEntries,
     clearEntries,
     nextId,
+    setNextId,
+    fileSigCacheRef,
+    httpSigCacheRef,
   };
 }

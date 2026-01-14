@@ -33,8 +33,3 @@ export type {
   UseResizeHandlersOptions,
   UseResizeHandlersReturn,
 } from "./useResizeHandlers";
-export { useEntryManagement as useEntryManagement2 } from "./useEntryManagement2";
-export type {
-  UseEntryManagementOptions as UseEntryManagement2Options,
-  UseEntryManagementReturn as UseEntryManagement2Return,
-} from "./useEntryManagement2";
