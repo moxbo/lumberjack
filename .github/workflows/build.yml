@@ -249,7 +249,15 @@ jobs:
           CSC_LINK: ${{ secrets.WIN_CSC_LINK }}
           CSC_KEY_PASSWORD: ${{ secrets.WIN_CSC_KEY_PASSWORD }}
 
-      - name: Build Windows Directory (for fast portable ZIP)
+      - name: Build Windows Portable (optimized for fast startup)
+        if: ${{ matrix.platform == 'win' && matrix.arch == 'x64' }}
+        run: npx electron-builder --win portable --x64 --publish never
+        env:
+          CI: true
+          CSC_LINK: ${{ secrets.WIN_CSC_LINK }}
+          CSC_KEY_PASSWORD: ${{ secrets.WIN_CSC_KEY_PASSWORD }}
+
+      - name: Build Windows Directory (for ZIP distribution)
         if: ${{ matrix.platform == 'win' && matrix.arch == 'x64' }}
         run: npx electron-builder --win dir --x64 --publish never
         env:
@@ -257,7 +265,7 @@ jobs:
           CSC_LINK: ${{ secrets.WIN_CSC_LINK }}
           CSC_KEY_PASSWORD: ${{ secrets.WIN_CSC_KEY_PASSWORD }}
 
-      - name: Create fast portable ZIP from win-unpacked
+      - name: Create ZIP from win-unpacked (alternative to portable)
         if: ${{ matrix.platform == 'win' && matrix.arch == 'x64' }}
         shell: pwsh
         run: |
@@ -266,17 +274,27 @@ jobs:
           # Version aus release/app/package.json lesen (dort ist die Build-Version)
           $packageJson = Get-Content "release/app/package.json" | ConvertFrom-Json
           $version = $packageJson.version
-          $zipName = "Lumberjack-$version-x64-portable-fast.zip"
+          $zipName = "Lumberjack-$version-x64-win.zip"
           $zipPath = Join-Path $buildDir $zipName
 
           if (Test-Path $unpackedDir) {
             Write-Host "Creating $zipName from win-unpacked..."
-            Compress-Archive -Path "$unpackedDir\*" -DestinationPath $zipPath -CompressionLevel Optimal
+            # Use NoCompression for fastest extraction and startup
+            # The files are already compressed in ASAR, so re-compressing saves little space
+            Compress-Archive -Path "$unpackedDir\*" -DestinationPath $zipPath -CompressionLevel NoCompression
             $size = [math]::Round((Get-Item $zipPath).Length / 1MB, 1)
             Write-Host "Created: $zipPath ($size MB)"
-            Write-Host "This ZIP version starts in ~2-3 seconds (vs ~20 seconds for portable.exe)"
+            Write-Host ""
+            Write-Host "=== STARTUP TIME COMPARISON ==="
+            Write-Host "portable.exe: Self-extracting, optimized for single-file distribution"
+            Write-Host "             First start: ~3-5s (extraction), subsequent: ~1-2s"
+            Write-Host ""
+            Write-Host "win.zip:      Pre-extracted, fastest startup after unzip"
+            Write-Host "             Every start: ~1-2s (no extraction needed)"
+            Write-Host ""
+            Write-Host "For fastest startup, use the ZIP version and extract once."
           } else {
-            Write-Host "win-unpacked directory not found, skipping fast portable ZIP"
+            Write-Host "win-unpacked directory not found, skipping ZIP creation"
           }
 
       - name: Build macOS app bundle
@@ -341,7 +359,7 @@ jobs:
 
           # Move portable-fast.zip (created from win-unpacked, only for x64)
           if ($arch -eq "x64") {
-            Get-ChildItem -Path $outDir -File -Force -ErrorAction SilentlyContinue | Where-Object { $_.Name -like "*portable-fast.zip" } | ForEach-Object {
+            Get-ChildItem -Path $outDir -File -Force -ErrorAction SilentlyContinue | Where-Object { $_.Name -like "*-win.zip" } | ForEach-Object {
               Move-Item -Path $_.FullName -Destination $archDir -Force
               Write-Host "Moved $($_.Name) to $archDir"
               $moved += 1

@@ -146,7 +146,7 @@
       "artifactName": "Lumberjack-${version}-${arch}-portable.${ext}",
       "unpackDirName": "Lumberjack-portable",
       "splashImage": false,
-      "useZip": false,
+      "useZip": true,
       "warningsAsErrors": false
     },
     "nsis": {

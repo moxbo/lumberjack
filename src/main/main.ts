@@ -110,16 +110,15 @@ if (process.platform === "win32") {
   app.commandLine.appendSwitch("disable-background-networking");
   // Skip Chromium's field trials which add latency
   app.commandLine.appendSwitch("disable-field-trial-config");
-  // Skip GPU info collection (can be slow on some systems)
-  app.commandLine.appendSwitch("disable-gpu-sandbox");
-  // Faster font rendering initialization
-  app.commandLine.appendSwitch("disable-font-subpixel-positioning");
-  // Reduce memory usage during startup
-  app.commandLine.appendSwitch("disable-dev-shm-usage");
-  // Faster first paint
-  app.commandLine.appendSwitch("disable-gpu-vsync");
-  // Skip WebGL initialization if not needed immediately
-  app.commandLine.appendSwitch("disable-accelerated-2d-canvas");
+
+  // Disable checking for default browser (not needed)
+  app.commandLine.appendSwitch("no-default-browser-check");
+
+  // Skip first-run tasks that slow down initial launch
+  app.commandLine.appendSwitch("no-first-run");
+
+  // Disable Domain Reliability to skip networking setup
+  app.commandLine.appendSwitch("disable-domain-reliability");
 
   // Load heap size from settings using centralized loader
   const heapSizeMB = loadHeapSizeSync();
