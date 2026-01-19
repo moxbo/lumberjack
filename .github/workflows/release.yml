@@ -3,7 +3,7 @@ name: Release
 on:
   push:
     tags:
-      - 'v*'
+      - "v*"
 
 permissions:
   contents: write
@@ -17,13 +17,13 @@ jobs:
         include:
           - os: windows-latest
             build-cmd: npm run build:portable:x64
-            artifact-pattern: 'release/build/*.exe'
+            artifact-pattern: "release/build/*.exe"
           - os: macos-latest
             build-cmd: npm run build:mac:dmg
-            artifact-pattern: 'release/build/*.dmg'
+            artifact-pattern: "release/build/*.dmg"
           - os: ubuntu-latest
             build-cmd: npm run build:linux
-            artifact-pattern: 'release/build/*.AppImage'
+            artifact-pattern: "release/build/*.AppImage"
 
     steps:
       - name: Checkout repository
@@ -35,7 +35,7 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: 20.x
-          cache: 'npm'
+          cache: "npm"
 
       - name: Install dependencies
         run: npm ci
