@@ -1,20 +1,20 @@
 # Contributing to Lumberjack
 
-Vielen Dank für Ihr Interesse an Lumberjack! Dieses Dokument beschreibt, wie Sie zum Projekt beitragen können.
+Thank you for your interest in contributing to Lumberjack! This document describes how you can contribute to the project.
 
 ---
 
-## 🚀 Schnellstart
+## 🚀 Quick Start
 
 ```bash
-# Repository klonen
+# Clone the repository
 git clone https://github.com/moxbo/lumberjack.git
 cd lumberjack
 
-# Dependencies installieren
+# Install dependencies
 npm install
 
-# Entwicklungsmodus starten
+# Start development mode
 npm run dev
 ```
 
@@ -22,37 +22,37 @@ npm run dev
 
 ## 📋 Contribution Workflow
 
-### 1. Issue erstellen oder finden
+### 1. Create or Find an Issue
 
-- Prüfen Sie, ob bereits ein Issue existiert
-- Bei neuen Features: Issue erstellen und auf Feedback warten
-- Bei Bugs: Issue mit Reproduktionsschritten erstellen
+- Check if an issue already exists
+- For new features: Create an issue and wait for feedback
+- For bugs: Create an issue with reproduction steps
 
 ### 2. Fork & Branch
 
 ```bash
-# Fork erstellen (via GitHub UI)
-# Dann:
-git clone https://github.com/IHR_USERNAME/lumberjack.git
+# Create fork (via GitHub UI)
+# Then:
+git clone https://github.com/YOUR_USERNAME/lumberjack.git
 cd lumberjack
-git checkout -b feature/mein-feature
-# oder
-git checkout -b fix/mein-bugfix
+git checkout -b feature/my-feature
+# or
+git checkout -b fix/my-bugfix
 ```
 
-### 3. Entwickeln
+### 3. Develop
 
 ```bash
-# Entwicklungsmodus
+# Development mode
 npm run dev
 
-# Tests ausführen
+# Run tests
 npm test
 
 # Linting
 npm run lint
 
-# Formatierung
+# Formatting
 npm run format
 ```
 
@@ -60,59 +60,59 @@ npm run format
 
 ```bash
 git add .
-git commit -m "feat: Beschreibung des Features"
-git push origin feature/mein-feature
+git commit -m "feat: Description of the feature"
+git push origin feature/my-feature
 ```
 
 ### 5. Pull Request
 
-- PR gegen `main` Branch erstellen
-- PR-Template ausfüllen
-- Auf CI-Check warten
+- Create PR against `main` branch
+- Fill out the PR template
+- Wait for CI checks
 
 ---
 
-## 📝 Commit-Konventionen
+## 📝 Commit Conventions
 
-Wir verwenden [Conventional Commits](https://www.conventionalcommits.org/):
+We use [Conventional Commits](https://www.conventionalcommits.org/):
 
-| Prefix | Verwendung |
-|--------|------------|
-| `feat:` | Neue Features |
-| `fix:` | Bugfixes |
-| `docs:` | Dokumentation |
-| `style:` | Formatierung (kein Code-Change) |
-| `refactor:` | Code-Refactoring |
-| `test:` | Tests hinzufügen/ändern |
-| `chore:` | Wartung, Dependencies |
+| Prefix | Usage |
+|--------|-------|
+| `feat:` | New features |
+| `fix:` | Bug fixes |
+| `docs:` | Documentation |
+| `style:` | Formatting (no code change) |
+| `refactor:` | Code refactoring |
+| `test:` | Add/modify tests |
+| `chore:` | Maintenance, dependencies |
 
-**Beispiele:**
+**Examples:**
 ```
-feat: TCP-Listener für Echtzeit-Logs hinzugefügt
-fix: Icon wird jetzt korrekt in Taskbar angezeigt
-docs: README mit Build-Anleitung erweitert
+feat: Add TCP listener for real-time logs
+fix: Icon now displays correctly in taskbar
+docs: Extend README with build instructions
 ```
 
 ---
 
 ## 🧪 Tests
 
-### Unit-Tests ausführen
+### Run Unit Tests
 
 ```bash
 npm test
 ```
 
-### E2E-Tests ausführen
+### Run E2E Tests
 
 ```bash
 npm run test:e2e
 ```
 
-### Einzelne Test-Suites
+### Run Specific Test Suites
 
 ```bash
-# Spezifischer Test
+# Specific test
 tsx ./scripts/test-msg-filter.ts
 ```
 
@@ -120,26 +120,26 @@ tsx ./scripts/test-msg-filter.ts
 
 ## 🎨 Code Style
 
-- **TypeScript** für Main- und Renderer-Prozess
-- **Preact** für UI-Komponenten
-- **ESLint + Prettier** für Formatierung
+- **TypeScript** for main and renderer process
+- **Preact** for UI components
+- **ESLint + Prettier** for formatting
 
-### Automatische Formatierung
+### Automatic Formatting
 
 ```bash
-npm run format       # Alle Dateien formatieren
-npm run lint:fix     # Lint-Fehler automatisch beheben
+npm run format       # Format all files
+npm run lint:fix     # Auto-fix lint errors
 ```
 
 ### Pre-Commit Hooks
 
-Husky führt automatisch `lint-staged` aus:
-- `.ts/.tsx` Dateien: ESLint + Prettier
+Husky automatically runs `lint-staged`:
+- `.ts/.tsx` files: ESLint + Prettier
 - `.json/.md/.css/.html`: Prettier
 
 ---
 
-## 📁 Projektstruktur
+## 📁 Project Structure
 
 ```
 lumberjack/
@@ -147,55 +147,54 @@ lumberjack/
 │   ├── main/         # Electron Main Process
 │   ├── renderer/     # Preact UI
 │   ├── services/     # Business Logic
-│   ├── types/        # TypeScript Definitionen
-│   └── utils/        # Hilfsfunktionen
+│   ├── types/        # TypeScript Definitions
+│   └── utils/        # Utility Functions
 ├── scripts/          # Build & Test Scripts
 ├── tests/            # E2E Tests
-└── docs/             # Dokumentation
+└── docs/             # Documentation
 ```
 
 ---
 
-## 🔧 Entwicklungs-Setup
+## 🔧 Development Setup
 
-### Voraussetzungen
+### Prerequisites
 
-- Node.js 20+ (LTS empfohlen)
+- Node.js 20+ (LTS recommended)
 - npm 9+
 - Git
 
-### IDE-Empfehlungen
+### IDE Recommendations
 
-- **VS Code** oder **WebStorm**
-- Empfohlene Extensions:
+- **VS Code** or **WebStorm**
+- Recommended Extensions:
   - ESLint
   - Prettier
   - TypeScript
 
 ---
 
-## 📖 Hilfreiche Dokumentation
+## 📖 Helpful Documentation
 
-| Dokument | Beschreibung |
-|----------|--------------|
-| [docs/INDEX.md](docs/INDEX.md) | Dokumentationsübersicht |
-| [docs/developer/ARCHITECTURE_DECISION.md](docs/developer/ARCHITECTURE_DECISION.md) | Architektur-Entscheidungen |
-| [docs/developer/PERFORMANCE.md](docs/developer/PERFORMANCE.md) | Performance-Optimierungen |
+| Document | Description |
+|----------|-------------|
+| [docs/INDEX.md](docs/INDEX.md) | Documentation overview |
+| [docs/developer/ARCHITECTURE_DECISION.md](docs/developer/ARCHITECTURE_DECISION.md) | Architecture decisions |
+| [docs/developer/PERFORMANCE.md](docs/developer/PERFORMANCE.md) | Performance optimizations |
 
 ---
 
-## ❓ Fragen?
+## ❓ Questions?
 
 - Issues: [GitHub Issues](https://github.com/moxbo/lumberjack/issues)
-- Diskussionen: [GitHub Discussions](https://github.com/moxbo/lumberjack/discussions)
+- Discussions: [GitHub Discussions](https://github.com/moxbo/lumberjack/discussions)
 
 ---
 
-## 📄 Lizenz
+## 📄 License
 
-Mit dem Einreichen eines Beitrags stimmen Sie zu, dass Ihr Beitrag unter der [MIT-Lizenz](LICENSE) lizenziert wird.
+By submitting a contribution, you agree that your contribution will be licensed under the [MIT License](LICENSE).
 
 ---
 
-Vielen Dank für Ihre Beiträge! 🪓
-
+Thank you for your contributions! 🪓

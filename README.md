@@ -1,19 +1,21 @@
 # 🪓 Lumberjack
 
-Ein schneller, schlanker Electron-basierter Log-Viewer mit leistungsfähigen Filtern.
+A fast, lightweight Electron-based log viewer with powerful filtering capabilities.
 
 [![Version](https://img.shields.io/github/v/release/moxbo/lumberjack)](https://github.com/moxbo/lumberjack/releases/latest)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 [![Electron](https://img.shields.io/badge/electron-39.x-brightgreen.svg)](https://electronjs.org)
+[![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](CONTRIBUTING.md)
+[![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-blue.svg)](#-quick-start)
 
 ---
 
 ## 📸 Screenshots
 
-### Hauptansicht
-![Hauptansicht](images/screenshot/main.png)
+### Main View
+![Main View](images/screenshot/main.png)
 
-### Filter in Aktion
+### Filter in Action
 ![Filter](images/screenshot/filter.png)
 
 ### MDC/Diagnostic Context Filter
@@ -22,40 +24,42 @@ Ein schneller, schlanker Electron-basierter Log-Viewer mit leistungsfähigen Fil
 ### Elasticsearch Integration
 ![Elasticsearch](images/screenshot/elastic.png)
 
-### Einstellungen
-![Einstellungen](images/screenshot/settings.png)
+### Settings
+![Settings](images/screenshot/settings.png)
 
 ---
 
 ## ✨ Features
 
-- **Leistungsstarke Filter**: UND (`&`), ODER (`|`), NICHT (`!`) Operatoren
-- **Schneller Startup**: < 2 Sekunden Kaltstart
-- **Effizientes Rendering**: 100.000+ Log-Einträge bei 60 FPS
-- **TCP Log-Empfang**: Echtzeit Log-Streaming
+- **Powerful Filters**: AND (`&`), OR (`|`), NOT (`!`) operators
+- **Fast Startup**: < 2 seconds cold start
+- **Efficient Rendering**: 100,000+ log entries at 60 FPS
+- **TCP Log Reception**: Real-time log streaming
 - **Cross-Platform**: Windows, macOS, Linux
+- **Elasticsearch Integration**: Query and view logs from Elasticsearch
+- **MDC/Diagnostic Context**: Filter by diagnostic context fields
 
 ---
 
-## 📡 TCP Log-Streaming Konfiguration
+## 📡 TCP Log-Streaming Configuration
 
-Lumberjack kann Logs in Echtzeit über TCP empfangen. Konfiguriere deine Anwendung, um Logs an Lumberjack zu senden:
+Lumberjack can receive logs in real-time via TCP. Configure your application to send logs to Lumberjack:
 
 ### Logback (logback.xml)
 
-Lumberjack erwartet **JSON-formatierte Logs** über TCP. Verwende den `LogstashTcpSocketAppender` mit `LogstashEncoder`:
+Lumberjack expects **JSON-formatted logs** via TCP. Use the `LogstashTcpSocketAppender` with `LogstashEncoder`:
 
 ```xml
 <?xml version="1.0" encoding="UTF-8"?>
 <configuration>
-    <!-- Konsolen-Appender für lokale Ausgabe -->
+    <!-- Console appender for local output -->
     <appender name="CONSOLE" class="ch.qos.logback.core.ConsoleAppender">
         <encoder>
             <pattern>%d{yyyy-MM-dd HH:mm:ss.SSS} [%thread] %-5level %logger{36} - %msg%n</pattern>
         </encoder>
     </appender>
 
-    <!-- TCP Socket-Appender für Lumberjack (JSON-Format) -->
+    <!-- TCP Socket appender for Lumberjack (JSON format) -->
     <appender name="LUMBERJACK" class="net.logstash.logback.appender.LogstashTcpSocketAppender">
         <destination>localhost:4445</destination>
         <encoder class="net.logstash.logback.encoder.LogstashEncoder">
@@ -63,7 +67,7 @@ Lumberjack erwartet **JSON-formatierte Logs** über TCP. Verwende den `LogstashT
         </encoder>
     </appender>
 
-    <!-- Async-Wrapper für bessere Performance (optional) -->
+    <!-- Async wrapper for better performance (optional) -->
     <appender name="ASYNC_LUMBERJACK" class="ch.qos.logback.classic.AsyncAppender">
         <queueSize>500</queueSize>
         <discardingThreshold>0</discardingThreshold>
@@ -77,7 +81,7 @@ Lumberjack erwartet **JSON-formatierte Logs** über TCP. Verwende den `LogstashT
 </configuration>
 ```
 
-> **Hinweis:** Du benötigst die Dependency `logstash-logback-encoder` in deinem Projekt:
+> **Note:** You need the `logstash-logback-encoder` dependency in your project:
 > ```xml
 > <dependency>
 >     <groupId>net.logstash.logback</groupId>
@@ -96,7 +100,7 @@ Lumberjack erwartet **JSON-formatierte Logs** über TCP. Verwende den `LogstashT
             <PatternLayout pattern="%d{yyyy-MM-dd HH:mm:ss.SSS} [%t] %-5level %logger{36} - %msg%n"/>
         </Console>
 
-        <!-- TCP Socket für Lumberjack -->
+        <!-- TCP Socket for Lumberjack -->
         <Socket name="Lumberjack" host="localhost" port="4445" protocol="TCP">
             <PatternLayout pattern="%d{yyyy-MM-dd HH:mm:ss.SSS} [%t] %-5level %logger{36} - %msg%n"/>
         </Socket>
@@ -114,12 +118,12 @@ Lumberjack erwartet **JSON-formatierte Logs** über TCP. Verwende den `LogstashT
 ### Log4j 1.x (log4j.properties)
 
 ```properties
-# Konsolen-Appender
+# Console appender
 log4j.appender.console=org.apache.log4j.ConsoleAppender
 log4j.appender.console.layout=org.apache.log4j.PatternLayout
 log4j.appender.console.layout.ConversionPattern=%d{yyyy-MM-dd HH:mm:ss.SSS} [%t] %-5p %c{1} - %m%n
 
-# TCP Socket für Lumberjack
+# TCP Socket for Lumberjack
 log4j.appender.lumberjack=org.apache.log4j.net.SocketAppender
 log4j.appender.lumberjack.remoteHost=localhost
 log4j.appender.lumberjack.port=4445
@@ -129,36 +133,36 @@ log4j.appender.lumberjack.reconnectionDelay=10000
 log4j.rootLogger=INFO, console, lumberjack
 ```
 
-> 💡 **Tipp**: In Lumberjack den TCP-Port unter *Einstellungen → TCP Port* konfigurieren (Standard: 4445)
+> 💡 **Tip**: Configure the TCP port in Lumberjack under *Settings → TCP Port* (default: 4445)
 
 ---
 
-### Filter-Beispiele
+### Filter Examples
 
 ```
-error|warn           → Nachrichten mit "error" ODER "warn"
-service&timeout      → Nachrichten mit "service" UND "timeout"
-QcStatus&!CB23       → "QcStatus", aber NICHT "CB23"
+error|warn           → Messages containing "error" OR "warn"
+service&timeout      → Messages containing "service" AND "timeout"
+QcStatus&!CB23       → "QcStatus", but NOT "CB23"
 ```
 
 ---
 
-## 🚀 Schnellstart
+## 🚀 Quick Start
 
-### Voraussetzungen
+### Prerequisites
 - Node.js LTS (18+)
 - npm
 
-### Entwicklung
+### Development
 
 ```bash
-# Installation
+# Install dependencies
 npm install
 
-# Entwicklungsmodus starten
+# Start development mode
 npm run dev
 
-# Tests ausführen
+# Run tests
 npm test
 ```
 
@@ -175,28 +179,28 @@ npm run build:x64
 npm run build:mac:dmg
 ```
 
-Build-Artefakte befinden sich in `release/build/`.
+Build artifacts are located in `release/build/`.
 
 ### Installation
 
-> ⚠️ **Hinweis:** Beim ersten Start kann eine Sicherheitswarnung erscheinen, da die App nicht mit einem Apple Developer Zertifikat signiert ist.
+> ⚠️ **Note:** On first launch, you may see a security warning because the app is not signed with an Apple Developer certificate.
 >
-> **macOS** (bei Meldung "beschädigt oder unvollständig"):
+> **macOS** (if you see "damaged or incomplete" message):
 > ```bash
-> # Terminal öffnen und ausführen:
+> # Open Terminal and run:
 > xattr -cr /Applications/Lumberjack.app
-> # Oder für DMG-Dateien im Downloads-Ordner:
+> # Or for DMG files in the Downloads folder:
 > xattr -cr ~/Downloads/Lumberjack*.dmg
 > ```
-> Alternativ: Rechtsklick → "Öffnen" → "Öffnen" bestätigen
+> Alternatively: Right-click → "Open" → Confirm "Open"
 >
-> **Windows**: "Weitere Informationen" → "Trotzdem ausführen"
+> **Windows**: Click "More info" → "Run anyway"
 >
-> Siehe [Troubleshooting](docs/user/TROUBLESHOOTING_AND_FAQ.md) für weitere Details.
+> See [Troubleshooting](docs/user/TROUBLESHOOTING_AND_FAQ.md) for more details.
 
 ---
 
-## 📦 Projekt-Struktur
+## 📦 Project Structure
 
 ```
 lumberjack/
@@ -204,33 +208,33 @@ lumberjack/
 │   ├── main/         # Electron Main Process
 │   └── renderer/     # React/Preact UI
 ├── assets/           # Icons (ico, icns)
-├── docs/             # Dokumentation
+├── docs/             # Documentation
 ├── scripts/          # Build & Test Scripts
 └── release/          # Build Output
 ```
 
 ---
 
-## 📖 Dokumentation
+## 📖 Documentation
 
-Die vollständige Dokumentation befindet sich im [`docs/`](docs/INDEX.md) Ordner:
+Full documentation is available in the [`docs/`](docs/INDEX.md) folder:
 
-| Thema | Dokument |
+| Topic | Document |
 |-------|----------|
-| **Übersicht** | [docs/INDEX.md](docs/INDEX.md) |
+| **Overview** | [docs/INDEX.md](docs/INDEX.md) |
 | **Deployment** | [docs/DEPLOYMENT_GUIDE.md](docs/DEPLOYMENT_GUIDE.md) |
 | **Troubleshooting** | [docs/user/TROUBLESHOOTING_AND_FAQ.md](docs/user/TROUBLESHOOTING_AND_FAQ.md) |
 | **Performance** | [docs/developer/PERFORMANCE.md](docs/developer/PERFORMANCE.md) |
-| **Architektur** | [docs/developer/ARCHITECTURE_DECISION.md](docs/developer/ARCHITECTURE_DECISION.md) |
+| **Architecture** | [docs/developer/ARCHITECTURE_DECISION.md](docs/developer/ARCHITECTURE_DECISION.md) |
 
 ---
 
 ## ⚡ Performance
 
-- **Cold Start**: < 2 Sekunden
-- **Warm Start**: < 0.3 Sekunden
+- **Cold Start**: < 2 seconds
+- **Warm Start**: < 0.3 seconds
 - **Bundle Size**: 38 KB (12 KB gzipped)
-- **Virtual Scrolling**: 100.000+ Einträge @ 60 FPS
+- **Virtual Scrolling**: 100,000+ entries @ 60 FPS
 
 ### Production-Ready Features
 
@@ -244,71 +248,71 @@ Die vollständige Dokumentation befindet sich im [`docs/`](docs/INDEX.md) Ordner
 
 ## 🔧 Troubleshooting
 
-### Logs finden
+### Finding Logs
 
-| OS | Pfad |
+| OS | Path |
 |----|------|
 | Windows | `%APPDATA%\Lumberjack\logs\main.log` |
 | macOS | `~/Library/Logs/Lumberjack/main.log` |
 | Linux | `~/.config/Lumberjack/logs/main.log` |
 
-### Häufige Probleme
+### Common Issues
 
-| Problem | Lösung |
-|---------|--------|
-| Icon nicht sichtbar | `npm run icon:generate` ausführen, neu bauen |
-| App hängt | Logs prüfen, ggf. `npm run diagnose:memory` |
-| Startup langsam | Siehe [Performance-Dokumentation](docs/developer/PERFORMANCE.md) |
+| Problem | Solution |
+|---------|----------|
+| Icon not visible | Run `npm run icon:generate`, then rebuild |
+| App hangs | Check logs, run `npm run diagnose:memory` |
+| Slow startup | See [Performance docs](docs/developer/PERFORMANCE.md) |
 
-Weitere Informationen: [Troubleshooting Guide](docs/user/TROUBLESHOOTING_AND_FAQ.md)
+More information: [Troubleshooting Guide](docs/user/TROUBLESHOOTING_AND_FAQ.md)
 
 ---
 
-## 🛠️ Entwicklung
+## 🛠️ Development
 
-### Verfügbare Scripts
+### Available Scripts
 
 ```bash
-npm run dev          # Entwicklungsmodus
-npm run build        # Production Build
-npm test             # Tests ausführen
-npm run lint         # Code prüfen
-npm run lint:fix     # Code automatisch korrigieren
-npm run format       # Code formatieren
-npm run icon:generate # Icons neu generieren
-npm run diagnose:memory # Speicher-Diagnose
+npm run dev          # Development mode
+npm run build        # Production build
+npm test             # Run tests
+npm run lint         # Check code
+npm run lint:fix     # Auto-fix code issues
+npm run format       # Format code
+npm run icon:generate # Regenerate icons
+npm run diagnose:memory # Memory diagnostics
 ```
 
-### Release-Workflow
+### Release Workflow
 
-Die Version wird automatisch aus Git-Tags ermittelt:
+The version is automatically determined from Git tags:
 
 ```bash
-# 1. Tag erstellen (Version ohne "v" wird in der App verwendet)
+# 1. Create tag (version without "v" is used in the app)
 git tag v1.0.5
 
 # 2. Push
 git push && git push --tags
 
-# 3. Build erstellen (Version wird automatisch aus Tag übernommen)
+# 3. Build (version is automatically taken from tag)
 npm run build:portable:x64  # Windows
 npm run build:mac:dmg       # macOS
 ```
 
-**Versions-Logik:**
-- **Exakter Tag auf HEAD**: `v1.0.5` → Version `1.0.5`
-- **Commits nach Tag**: `v1.0.5` + 3 Commits → Version `1.0.5-dev.3`
-- **Umgebungsvariable**: `RELEASE_VERSION=1.2.0` überschreibt alles
+**Version Logic:**
+- **Exact tag on HEAD**: `v1.0.5` → Version `1.0.5`
+- **Commits after tag**: `v1.0.5` + 3 commits → Version `1.0.5-dev.3`
+- **Environment variable**: `RELEASE_VERSION=1.2.0` overrides all
 
-### Architektur
+### Architecture
 
 - **Main Process**: Electron, TCP Server, File I/O
 - **Renderer Process**: Preact, Virtual Scrolling
-- **IPC**: Strukturierte Kommunikation via contextBridge
+- **IPC**: Structured communication via contextBridge
 
 ---
 
-## 📄 Lizenz
+## 📄 License
 
 [MIT](LICENSE) © Moritz Bohm
 
@@ -316,18 +320,18 @@ npm run build:mac:dmg       # macOS
 
 ## 🤝 Contributing
 
-Wir freuen uns über Beiträge! Siehe [CONTRIBUTING.md](CONTRIBUTING.md) für Details.
+Contributions are welcome! See [CONTRIBUTING.md](CONTRIBUTING.md) for details.
 
-Kurz-Anleitung:
-1. Fork erstellen
-2. Feature Branch: `git checkout -b feature/amazing-feature`
+Quick guide:
+1. Fork the repository
+2. Create feature branch: `git checkout -b feature/amazing-feature`
 3. Commit: `git commit -m 'Add amazing feature'`
 4. Push: `git push origin feature/amazing-feature`
-5. Pull Request öffnen
+5. Open a Pull Request
 
 ---
 
 ## 🔒 Security
 
-Sicherheitslücken melden? Siehe [SECURITY.md](SECURITY.md).
+Found a security vulnerability? See [SECURITY.md](SECURITY.md).
 
