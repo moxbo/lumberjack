@@ -20,6 +20,7 @@ import {
   IPC_PROCESS_INTERVAL,
   TRIM_THRESHOLD_ENTRIES,
 } from "../constants";
+import { getRendererLogEntryPool } from "../store/RendererLogEntryPool";
 
 interface UseEntryManagementOptions {
   marksMap: Record<string, string>;
@@ -34,6 +35,15 @@ export function useEntryManagement({ marksMap }: UseEntryManagementOptions) {
   useEffect(() => {
     nextIdRef.current = nextId;
   }, [nextId]);
+
+  // Memory Pool for log entries - reduces GC pressure with 100k+ entries
+  const poolRef = useRef(
+    getRendererLogEntryPool({
+      maxSize: 50_000,
+      initialSize: 2_000,
+      enableLogging: false,
+    }),
+  );
 
   // IPC batching queue to prevent renderer overload
   const ipcQueueRef = useRef<any[]>([]);
@@ -227,6 +237,11 @@ export function useEntryManagement({ marksMap }: UseEntryManagementOptions) {
           console.warn(
             `[renderer-memory] Trimming ${trimCount} oldest entries (${newState.length} -> ${newState.length - trimCount})`,
           );
+
+          // Recycle trimmed entries back to pool to reduce GC pressure
+          const trimmedEntries = newState.slice(0, trimCount);
+          poolRef.current.releaseBatch(trimmedEntries);
+
           newState = newState.slice(trimCount);
         }
 
@@ -308,7 +323,14 @@ export function useEntryManagement({ marksMap }: UseEntryManagementOptions) {
 
   // Clear all entries
   const clearEntries = useCallback(() => {
-    setEntries([]);
+    // Recycle all entries back to pool before clearing
+    setEntries((prev) => {
+      if (prev.length > 0) {
+        poolRef.current.releaseBatch(prev);
+      }
+      return [];
+    });
+
     setNextId(1);
     nextIdRef.current = 1;
     fileSigCacheRef.current = new Map();
@@ -323,6 +345,11 @@ export function useEntryManagement({ marksMap }: UseEntryManagementOptions) {
     }
   }, []);
 
+  // Get pool statistics for debugging/monitoring
+  const getPoolStats = useCallback(() => {
+    return poolRef.current.getStats();
+  }, []);
+
   return {
     entries,
     setEntries,
@@ -332,5 +359,6 @@ export function useEntryManagement({ marksMap }: UseEntryManagementOptions) {
     setNextId,
     fileSigCacheRef,
     httpSigCacheRef,
+    getPoolStats,
   };
 }
