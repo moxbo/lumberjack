@@ -22,6 +22,9 @@ SHASUMS256.txt
 compile_commands.json
 .envrc
 
+# Test coverage
+/coverage/
+
 # npm package
 /npm/dist
 /npm/path.txt

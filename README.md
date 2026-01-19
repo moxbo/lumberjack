@@ -5,6 +5,8 @@ A fast, lightweight Electron-based log viewer with powerful filtering capabiliti
 [![Version](https://img.shields.io/github/v/release/moxbo/lumberjack)](https://github.com/moxbo/lumberjack/releases/latest)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 [![Electron](https://img.shields.io/badge/electron-39.x-brightgreen.svg)](https://electronjs.org)
+[![CI](https://github.com/moxbo/lumberjack/actions/workflows/ci.yml/badge.svg)](https://github.com/moxbo/lumberjack/actions/workflows/ci.yml)
+[![codecov](https://codecov.io/gh/moxbo/lumberjack/branch/main/graph/badge.svg)](https://codecov.io/gh/moxbo/lumberjack)
 [![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](CONTRIBUTING.md)
 [![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-blue.svg)](#-quick-start)
 
@@ -152,6 +154,22 @@ QcStatus&!CB23       → "QcStatus", but NOT "CB23"
 ### Prerequisites
 - Node.js LTS (18+)
 - npm
+
+### Installation
+
+#### macOS (Homebrew)
+
+```bash
+brew tap moxbo/tap
+brew install --cask lumberjack
+```
+
+#### macOS / Windows / Linux (Manual)
+
+Download the latest release from [GitHub Releases](https://github.com/moxbo/lumberjack/releases/latest):
+- **macOS**: `Lumberjack-x.x.x-arm64.dmg` or `Lumberjack-x.x.x-x64.dmg`
+- **Windows**: `Lumberjack-x.x.x-portable.exe` or `Lumberjack-Setup-x.x.x.exe`
+- **Linux**: `Lumberjack-x.x.x.AppImage`
 
 ### Development
 

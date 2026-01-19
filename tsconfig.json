@@ -41,7 +41,8 @@
     "scripts/**/*",
     "tests/**/*",
     "playwright.config.ts",
-    "vite.config.mjs"
+    "vite.config.mjs",
+    "vitest.config.ts"
   ],
   "exclude": ["node_modules", "dist", "release"]
 }
