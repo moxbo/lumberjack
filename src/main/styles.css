@@ -3246,7 +3246,7 @@ input[type="checkbox"] {
 }
 
 .command-palette-shortcut {
-  font-family: var(--font-family-mono);
+  font-family: var(--font-family-mono), monospace;
   font-size: var(--font-size-xs);
   padding: 2px 6px;
   background: var(--color-bg-hover);
@@ -3353,7 +3353,7 @@ input[type="checkbox"] {
 }
 
 .command-palette-item-shortcut {
-  font-family: var(--font-family-mono);
+  font-family: var(--font-family-mono), monospace;
   font-size: var(--font-size-xs);
   padding: 2px 6px;
   background: var(--color-bg-hover);
@@ -3376,7 +3376,7 @@ input[type="checkbox"] {
 }
 
 .command-palette-footer kbd {
-  font-family: var(--font-family-mono);
+  font-family: var(--font-family-mono), monospace;
   font-size: 10px;
   padding: 1px 4px;
   background: var(--color-bg-paper);
@@ -3395,4 +3395,286 @@ input[type="checkbox"] {
 
 [data-theme="dark"] .command-palette-overlay {
   background: rgba(0, 0, 0, 0.6);
+}
+
+/* ==========================================================================
+   Filter Profiles Dropdown
+   ========================================================================== */
+
+.filter-profiles-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 10px;
+  background: var(--color-bg-paper);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 500;
+  transition: all var(--transition-fast);
+  white-space: nowrap;
+}
+
+.filter-profiles-btn:hover:not(:disabled) {
+  background: var(--color-bg-hover);
+  border-color: var(--color-primary);
+}
+
+.filter-profiles-btn.active {
+  background: var(--color-bg-hover);
+  border-color: var(--color-primary);
+}
+
+.filter-profiles-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.filter-profiles-btn .profile-count {
+  background: var(--accent-gradient);
+  color: white;
+  font-size: 10px;
+  padding: 1px 5px;
+  border-radius: var(--radius-full);
+  font-weight: 600;
+  min-width: 16px;
+  text-align: center;
+}
+
+.filter-profiles-dropdown {
+  background: var(--color-bg-paper);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-lg);
+  max-height: 400px;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+.filter-profiles-header {
+  padding: 10px 12px 8px;
+  border-bottom: 1px solid var(--color-divider);
+}
+
+.filter-profiles-header h4 {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--color-text-primary);
+}
+
+.filter-profiles-save {
+  display: flex;
+  gap: 6px;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--color-divider);
+  background: var(--color-bg-default);
+}
+
+.filter-profiles-save .profile-name-input {
+  flex: 1;
+  min-width: 0;
+  padding: 5px 8px;
+  font-size: 12px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-bg-paper);
+  color: var(--color-text-primary);
+}
+
+.filter-profiles-save .profile-name-input:focus {
+  border-color: var(--color-primary);
+  outline: none;
+  box-shadow: 0 0 0 2px rgba(10, 132, 255, 0.1);
+}
+
+.filter-profiles-save .btn-primary {
+  padding: 5px 12px;
+  font-size: 12px;
+  font-weight: 500;
+  background: var(--accent-gradient);
+  color: white;
+  border: none;
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  transition: all var(--transition-fast);
+  white-space: nowrap;
+}
+
+.filter-profiles-save .btn-primary:hover:not(:disabled) {
+  filter: brightness(1.1);
+}
+
+.filter-profiles-save .btn-primary:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.filter-profiles-error {
+  padding: 6px 12px;
+  background: rgba(255, 59, 48, 0.1);
+  color: var(--color-error);
+  font-size: 11px;
+  border-bottom: 1px solid var(--color-divider);
+}
+
+.filter-profiles-success {
+  padding: 6px 12px;
+  background: rgba(52, 199, 89, 0.1);
+  color: var(--color-success, #34c759);
+  font-size: 11px;
+  border-bottom: 1px solid var(--color-divider);
+}
+
+.filter-profiles-current {
+  padding: 8px 12px;
+  background: var(--color-bg-default);
+  border-bottom: 1px solid var(--color-divider);
+}
+
+.filter-profiles-current small {
+  display: block;
+  font-size: 10px;
+  color: var(--color-text-secondary);
+  margin-bottom: 4px;
+}
+
+.filter-profiles-current .current-filter-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.filter-profiles-current .chip {
+  padding: 2px 6px;
+  background: var(--color-bg-hover);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  font-size: 10px;
+  color: var(--color-text-secondary);
+  max-width: 80px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.filter-profiles-list {
+  flex: 1;
+  overflow-y: auto;
+  max-height: 220px;
+}
+
+.filter-profiles-list .no-profiles {
+  padding: 20px 12px;
+  text-align: center;
+  color: var(--color-text-secondary);
+  font-size: 12px;
+}
+
+.filter-profiles-list .profile-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--color-divider);
+  transition: background var(--transition-fast);
+}
+
+.filter-profiles-list .profile-item:last-child {
+  border-bottom: none;
+}
+
+.filter-profiles-list .profile-item:hover {
+  background: var(--color-bg-hover);
+}
+
+.filter-profiles-list .profile-item.confirm-delete {
+  background: rgba(255, 59, 48, 0.05);
+}
+
+.filter-profiles-list .profile-info {
+  flex: 1;
+  min-width: 0;
+  cursor: pointer;
+}
+
+.filter-profiles-list .profile-name {
+  display: block;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--color-text-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.filter-profiles-list .profile-summary {
+  display: block;
+  font-size: 10px;
+  color: var(--color-text-secondary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  margin-top: 2px;
+}
+
+.filter-profiles-list .profile-actions {
+  display: flex;
+  gap: 4px;
+  flex-shrink: 0;
+}
+
+.filter-profiles-list .btn-icon {
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  color: var(--color-text-secondary);
+  transition: all var(--transition-fast);
+}
+
+.filter-profiles-list .btn-icon:hover {
+  background: var(--color-bg-hover);
+  border-color: var(--color-border);
+  color: var(--color-text-primary);
+}
+
+.filter-profiles-list .btn-load:hover {
+  color: var(--color-primary);
+}
+
+.filter-profiles-list .btn-delete:hover {
+  color: var(--color-error);
+}
+
+.filter-profiles-list .btn-delete.confirm {
+  background: var(--color-error);
+  border-color: var(--color-error);
+  color: white;
+}
+
+.filter-profiles-list .btn-delete.confirm:hover {
+  filter: brightness(1.1);
+}
+
+/* Dark theme adjustments */
+[data-theme="dark"] .filter-profiles-dropdown {
+  background: var(--color-bg-paper);
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
+}
+
+[data-theme="dark"] .filter-profiles-error {
+  background: rgba(255, 69, 58, 0.15);
+}
+
+[data-theme="dark"] .filter-profiles-success {
+  background: rgba(48, 209, 88, 0.15);
 }

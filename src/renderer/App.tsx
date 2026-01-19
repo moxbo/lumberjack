@@ -3640,6 +3640,52 @@ export default function App(): JSX.Element {
               logger.error("Resetting TimeFilter failed:", e);
             }
           }}
+          search={search}
+          onApplyProfile={(profile) => {
+            setFilter({
+              level: profile.filters.level,
+              logger: profile.filters.logger,
+              thread: profile.filters.thread,
+              service: "",
+              message: profile.filters.message,
+            });
+            setSearch(profile.filters.search || "");
+            setStdFiltersEnabled(profile.filters.stdFiltersEnabled);
+            // Apply MDC filters if available
+            if (
+              profile.filters.mdcFilters &&
+              profile.filters.mdcFilters.length > 0
+            ) {
+              try {
+                for (const mdc of profile.filters.mdcFilters) {
+                  (DiagnosticContextFilter as any).addMdcEntry(
+                    mdc.key,
+                    mdc.value,
+                  );
+                  if (mdc.active) {
+                    (DiagnosticContextFilter as any).activateMdcEntry(
+                      mdc.key,
+                      mdc.value,
+                    );
+                  }
+                }
+                (DiagnosticContextFilter as any).setEnabled(true);
+              } catch (e) {
+                logger.error("Applying MDC filters from profile failed:", e);
+              }
+            }
+          }}
+          getMdcFilters={() => {
+            try {
+              return DiagnosticContextFilter.getDcEntries().map((e) => ({
+                key: e.key,
+                value: e.val,
+                active: e.active,
+              }));
+            } catch {
+              return [];
+            }
+          }}
           esBusy={esBusy}
         />
         <div className="section">
