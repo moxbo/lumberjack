@@ -54,6 +54,7 @@ import {
   useAlerts,
   useResizeHandlers,
   useEntryManagement,
+  useCommands,
 } from "../hooks";
 
 // Import refactored components - core components loaded eagerly
@@ -93,6 +94,11 @@ const HttpPollDialog = lazy(() =>
 // Lazy-load DCFilterDialog as a component
 const DCFilterDialog = lazy(() => import("./DCFilterDialog"));
 const ElasticSearchDialog = lazy(() => import("./ElasticSearchDialog"));
+const CommandPalette = lazy(() =>
+  import("./components/CommandPalette").then((m) => ({
+    default: m.CommandPalette,
+  })),
+);
 
 // Initialize debug functions on module load
 setupDebugFunctions();
@@ -1506,6 +1512,7 @@ export default function App(): JSX.Element {
 
   const [showTitleDlg, setShowTitleDlg] = useState<boolean>(false);
   const [showHelpDlg, setShowHelpDlg] = useState<boolean>(false);
+  const [showCommandPalette, setShowCommandPalette] = useState<boolean>(false);
 
   // Alert refs for use in useEffects (useAlerts hook is called earlier with useEntryManagement2)
   const showAlertRef = useRef(showAlert);
@@ -2395,10 +2402,115 @@ export default function App(): JSX.Element {
         e.preventDefault();
         setShowHelpDlg(true);
       }
+      // Cmd+K / Ctrl+K = Command Palette öffnen
+      else if ((e.metaKey || e.ctrlKey) && e.key === "k") {
+        e.preventDefault();
+        setShowCommandPalette(true);
+      }
     }
     window.addEventListener("keydown", onGlobalKeyDown);
     return () => window.removeEventListener("keydown", onGlobalKeyDown);
   }, [search, showHelpDlg]);
+
+  // Command Palette Commands
+  const commands = useCommands({
+    // Navigation
+    onGotoStart: () => {
+      try {
+        virtualizer.scrollToIndex(0, { align: "start" });
+      } catch {}
+    },
+    onGotoEnd: () => {
+      try {
+        const lastIdx = filteredIdx.length - 1;
+        if (lastIdx >= 0) {
+          virtualizer.scrollToIndex(lastIdx, { align: "end" });
+        }
+      } catch {}
+    },
+    onToggleFollow: () => setFollow((f) => !f),
+    isFollowing: follow,
+
+    // Filter
+    onSetLevelFilter: (level: string) => {
+      setFilter((prev) => ({ ...prev, level }));
+      setStdFiltersEnabled(true);
+    },
+    onClearFilters: () => {
+      setFilter({
+        level: "",
+        logger: "",
+        thread: "",
+        service: "",
+        message: "",
+      });
+      setSearch("");
+      setOnlyMarked(false);
+    },
+    onToggleMarked: () => setOnlyMarked((m) => !m),
+    isOnlyMarked: onlyMarked,
+    onFocusSearch: () => {
+      try {
+        searchInputRef.current?.focus();
+      } catch {}
+    },
+
+    // Dialogs
+    onOpenSettings: () => setShowSettings(true),
+    onOpenElastic: () => openTimeFilterDialog(),
+    onOpenHelp: () => setShowHelpDlg(true),
+
+    // File
+    onOpenFile: async () => {
+      try {
+        const result = await window.api.openFiles();
+        if (result && result.length > 0) {
+          const parsed = await window.api.parsePaths(result);
+          if (parsed?.ok && parsed.entries && parsed.entries.length > 0) {
+            appendEntries(parsed.entries);
+          }
+        }
+      } catch (err) {
+        logger.error("Open file failed:", err);
+      }
+    },
+    onClearLogs: clearLogs,
+    onExportLogs: async () => {
+      try {
+        await exportCurrentView();
+      } catch (err) {
+        logger.error("Export failed:", err);
+      }
+    },
+
+    // TCP
+    onStartTcp: () => {
+      try {
+        window.api?.tcpStart?.(tcpPort);
+      } catch (err) {
+        logger.error("TCP start failed:", err);
+      }
+    },
+    onStopTcp: () => {
+      try {
+        window.api?.tcpStop?.();
+      } catch (err) {
+        logger.error("TCP stop failed:", err);
+      }
+    },
+    isTcpActive: tcpStatus.includes("aktiv") || tcpStatus.includes("active"),
+
+    // Theme
+    onToggleTheme: () => {
+      const newTheme = themeMode === "dark" ? "light" : "dark";
+      setThemeMode(newTheme);
+      applyThemeMode(newTheme);
+      try {
+        void window.api.settingsSet({ themeMode: newTheme });
+      } catch {}
+    },
+    currentTheme: themeMode,
+  });
 
   // Track when the component has fully mounted and is interactive
   useEffect(() => {
@@ -3862,6 +3974,15 @@ export default function App(): JSX.Element {
 
       {/* Update-Benachrichtigung */}
       <UpdateNotification />
+
+      {/* Command Palette - lazy loaded */}
+      <Suspense fallback={null}>
+        <CommandPalette
+          open={showCommandPalette}
+          onClose={() => setShowCommandPalette(false)}
+          commands={commands}
+        />
+      </Suspense>
     </div>
   );
 }
