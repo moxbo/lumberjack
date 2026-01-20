@@ -99,6 +99,11 @@ const CommandPalette = lazy(() =>
     default: m.CommandPalette,
   })),
 );
+const TraceTimeline = lazy(() =>
+  import("./components/TraceTimeline").then((m) => ({
+    default: m.TraceTimeline,
+  })),
+);
 
 // Initialize debug functions on module load
 setupDebugFunctions();
@@ -242,6 +247,9 @@ export default function App(): JSX.Element {
   const [showDcDialog, setShowDcDialog] = useState<boolean>(false);
   // Zeit-Filter Dialog-State
   const [showTimeDialog, setShowTimeDialog] = useState<boolean>(false);
+  // TraceTimeline Dialog-State
+  const [showTraceTimeline, setShowTraceTimeline] = useState<boolean>(false);
+  const [traceTimelineId, setTraceTimelineId] = useState<string>("");
   const [timeForm, setTimeForm] = useState<TimeFormState>({
     enabled: true,
     mode: "relative",
@@ -3489,7 +3497,25 @@ export default function App(): JSX.Element {
             const dcEntries = DiagnosticContextFilter.getDcEntries().filter(
               (e) => e.active,
             );
+            // Check if TraceID is in active DC filters
+            const activeTraceId = dcEntries.find(
+              (e) =>
+                e.key === "TraceID" || e.key.toLowerCase().includes("trace"),
+            );
             if (DiagnosticContextFilter.isEnabled() && dcEntries.length > 0) {
+              // Add Timeline button if TraceID is active
+              if (activeTraceId) {
+                activeFilters.push({
+                  type: "trace-timeline",
+                  label: "📊",
+                  value: t("traceTimeline.openTimeline"),
+                  colorClass: "trace-timeline-chip",
+                  onRemove: () => {
+                    setTraceTimelineId(activeTraceId.val);
+                    setShowTraceTimeline(true);
+                  },
+                });
+              }
               dcEntries.slice(0, 3).forEach((entry) => {
                 activeFilters.push({
                   type: "dc",
@@ -3518,26 +3544,40 @@ export default function App(): JSX.Element {
 
             return (
               <>
-                {activeFilters.map((f, i) => (
-                  <span
-                    key={`${f.type}-${i}`}
-                    className={`filter-chip ${f.colorClass || ""}`}
-                  >
-                    {f.label && <span className="chip-label">{f.label}:</span>}
-                    <span className="chip-value" title={f.value}>
-                      {f.value}
+                {activeFilters.map((f, i) =>
+                  f.type === "trace-timeline" ? (
+                    <button
+                      key={`${f.type}-${i}`}
+                      className="filter-chip trace-timeline-chip"
+                      onClick={f.onRemove}
+                      title={t("traceTimeline.openTimelineTooltip")}
+                    >
+                      <span className="chip-label">{f.label}</span>
+                      <span className="chip-value">{f.value}</span>
+                    </button>
+                  ) : (
+                    <span
+                      key={`${f.type}-${i}`}
+                      className={`filter-chip ${f.colorClass || ""}`}
+                    >
+                      {f.label && (
+                        <span className="chip-label">{f.label}:</span>
+                      )}
+                      <span className="chip-value" title={f.value}>
+                        {f.value}
+                      </span>
+                      {f.type !== "dc-more" && (
+                        <button
+                          className="chip-remove"
+                          onClick={f.onRemove}
+                          title="Filter entfernen"
+                        >
+                          ×
+                        </button>
+                      )}
                     </span>
-                    {f.type !== "dc-more" && (
-                      <button
-                        className="chip-remove"
-                        onClick={f.onRemove}
-                        title="Filter entfernen"
-                      >
-                        ×
-                      </button>
-                    )}
-                  </span>
-                ))}
+                  ),
+                )}
                 {activeFilters.length > 0 && (
                   <button
                     style={{
@@ -4029,6 +4069,28 @@ export default function App(): JSX.Element {
           commands={commands}
         />
       </Suspense>
+
+      {/* Trace Timeline - lazy loaded */}
+      {showTraceTimeline && traceTimelineId && (
+        <Suspense fallback={null}>
+          <TraceTimeline
+            entries={filteredIdx.map((i) => entries[i]).filter(Boolean)}
+            traceId={traceTimelineId}
+            onClose={() => setShowTraceTimeline(false)}
+            onEntryClick={(entry) => {
+              if (entry._id !== undefined) {
+                setSelected(new Set([entry._id]));
+                // Scroll to entry
+                const idx = filteredIdx.indexOf(entry._id);
+                if (idx >= 0) {
+                  virtualizer.scrollToIndex(idx, { align: "center" });
+                }
+              }
+              setShowTraceTimeline(false);
+            }}
+          />
+        </Suspense>
+      )}
     </div>
   );
 }

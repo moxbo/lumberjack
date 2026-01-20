@@ -17,3 +17,4 @@ export { UpdateNotification } from "./UpdateNotification";
 export { CommandPalette } from "./CommandPalette";
 export type { Command } from "./CommandPalette";
 export { FilterProfilesDropdown } from "./FilterProfilesDropdown";
+export { TraceTimeline } from "./TraceTimeline";

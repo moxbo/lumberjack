@@ -377,6 +377,19 @@
     "manage": "Manage Profiles",
     "button": "Profiles"
   },
+  "traceTimeline": {
+    "title": "Trace Timeline",
+    "close": "Close",
+    "totalDuration": "Total Duration",
+    "services": "Services",
+    "spans": "Spans",
+    "entries": "Log Entries",
+    "legend": "Legend",
+    "noTraceId": "No TraceID selected",
+    "noEntries": "No entries found for this TraceID",
+    "openTimeline": "Open Timeline",
+    "openTimelineTooltip": "Show timeline visualization for this TraceID"
+  },
   "commandPalette": {
     "placeholder": "Search commands...",
     "noResults": "No commands found",
