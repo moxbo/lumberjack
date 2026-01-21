@@ -178,13 +178,51 @@ export function useEntryManagement({ marksMap }: UseEntryManagementOptions) {
 
       if (accepted.length === 0) return;
 
-      // Assign IDs and apply marks
+      // Assign IDs and apply marks using pool for efficient memory management
       const baseId = nextIdRef.current;
+      // Acquire pooled objects for better memory efficiency at 100k+ entries
+      const pooledEntries = poolRef.current.acquireBatch(accepted.length);
       const toAdd = accepted.map((e, i) => {
-        const n = { ...e, _id: baseId + i };
-        const sig = entrySignature(n);
-        if (marksMap[sig]) (n as any)._mark = marksMap[sig];
-        return n;
+        // Use pooled entry and copy properties (fallback to new object if pool exhausted)
+        const pooled = pooledEntries[i] ?? {
+          timestamp: null,
+          level: null,
+          logger: null,
+          thread: null,
+          message: "",
+          traceId: null,
+          stackTrace: null,
+          raw: null,
+          source: "",
+          _id: undefined,
+          _mark: undefined,
+          mdc: undefined,
+          service: undefined,
+          _fullMessage: undefined,
+          _truncated: undefined,
+          _messageSize: undefined,
+        };
+        pooled.timestamp = e.timestamp ?? null;
+        pooled.level = e.level ?? null;
+        pooled.logger = e.logger ?? null;
+        pooled.thread = e.thread ?? null;
+        pooled.message = e.message ?? "";
+        pooled.traceId = e.traceId ?? null;
+        pooled.stackTrace = e.stackTrace ?? null;
+        pooled.raw = e.raw ?? null;
+        pooled.source = e.source ?? "";
+        pooled.mdc = e.mdc;
+        pooled.service = e.service;
+        pooled._fullMessage = e._fullMessage;
+        pooled._truncated = e._truncated;
+        pooled._messageSize = e._messageSize;
+        pooled._id = baseId + i;
+
+        // Apply marks
+        const sig = entrySignature(pooled);
+        if (marksMap[sig]) pooled._mark = marksMap[sig];
+
+        return pooled;
       });
       nextIdRef.current = baseId + toAdd.length;
 

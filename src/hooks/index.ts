@@ -36,3 +36,4 @@ export type {
   UseResizeHandlersReturn,
 } from "./useResizeHandlers";
 export { useCommands } from "./useCommands";
+export { useFilterWorker } from "./useFilterWorker";
