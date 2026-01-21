@@ -21,9 +21,10 @@ export default defineConfig({
   reporter: process.env.CI
     ? [["github"], ["html", { open: "never" }]]
     : [["list"], ["html", { open: "on-failure" }]],
-  timeout: 60000, // 60s timeout for Electron startup
+  // Increased timeout for CI environments where startup is slower
+  timeout: process.env.CI ? 120000 : 60000,
   expect: {
-    timeout: 10000,
+    timeout: process.env.CI ? 30000 : 10000,
   },
   use: {
     // Trace: Zeichnet alle Aktionen auf (Netzwerk, DOM-Snapshots, Konsole)
