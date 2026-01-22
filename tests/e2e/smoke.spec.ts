@@ -145,7 +145,7 @@ test.describe("Accessibility", () => {
 
     // Check for basic accessibility
     const html = await window.locator("html").getAttribute("lang");
-    expect(html).toBe("de");
+    expect(html).toBe("en");
 
     // Check for proper title
     const title = await window.title();

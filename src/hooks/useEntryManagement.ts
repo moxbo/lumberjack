@@ -20,6 +20,7 @@ import {
   IPC_PROCESS_INTERVAL,
   TRIM_THRESHOLD_ENTRIES,
 } from "../constants";
+import { getRendererLogEntryPool } from "../store/RendererLogEntryPool";
 
 interface UseEntryManagementOptions {
   marksMap: Record<string, string>;
@@ -34,6 +35,15 @@ export function useEntryManagement({ marksMap }: UseEntryManagementOptions) {
   useEffect(() => {
     nextIdRef.current = nextId;
   }, [nextId]);
+
+  // Memory Pool for log entries - reduces GC pressure with 100k+ entries
+  const poolRef = useRef(
+    getRendererLogEntryPool({
+      maxSize: 50_000,
+      initialSize: 2_000,
+      enableLogging: false,
+    }),
+  );
 
   // IPC batching queue to prevent renderer overload
   const ipcQueueRef = useRef<any[]>([]);
@@ -168,13 +178,51 @@ export function useEntryManagement({ marksMap }: UseEntryManagementOptions) {
 
       if (accepted.length === 0) return;
 
-      // Assign IDs and apply marks
+      // Assign IDs and apply marks using pool for efficient memory management
       const baseId = nextIdRef.current;
+      // Acquire pooled objects for better memory efficiency at 100k+ entries
+      const pooledEntries = poolRef.current.acquireBatch(accepted.length);
       const toAdd = accepted.map((e, i) => {
-        const n = { ...e, _id: baseId + i };
-        const sig = entrySignature(n);
-        if (marksMap[sig]) (n as any)._mark = marksMap[sig];
-        return n;
+        // Use pooled entry and copy properties (fallback to new object if pool exhausted)
+        const pooled = pooledEntries[i] ?? {
+          timestamp: null,
+          level: null,
+          logger: null,
+          thread: null,
+          message: "",
+          traceId: null,
+          stackTrace: null,
+          raw: null,
+          source: "",
+          _id: undefined,
+          _mark: undefined,
+          mdc: undefined,
+          service: undefined,
+          _fullMessage: undefined,
+          _truncated: undefined,
+          _messageSize: undefined,
+        };
+        pooled.timestamp = e.timestamp ?? null;
+        pooled.level = e.level ?? null;
+        pooled.logger = e.logger ?? null;
+        pooled.thread = e.thread ?? null;
+        pooled.message = e.message ?? "";
+        pooled.traceId = e.traceId ?? null;
+        pooled.stackTrace = e.stackTrace ?? null;
+        pooled.raw = e.raw ?? null;
+        pooled.source = e.source ?? "";
+        pooled.mdc = e.mdc;
+        pooled.service = e.service;
+        pooled._fullMessage = e._fullMessage;
+        pooled._truncated = e._truncated;
+        pooled._messageSize = e._messageSize;
+        pooled._id = baseId + i;
+
+        // Apply marks
+        const sig = entrySignature(pooled);
+        if (marksMap[sig]) pooled._mark = marksMap[sig];
+
+        return pooled;
       });
       nextIdRef.current = baseId + toAdd.length;
 
@@ -227,6 +275,11 @@ export function useEntryManagement({ marksMap }: UseEntryManagementOptions) {
           console.warn(
             `[renderer-memory] Trimming ${trimCount} oldest entries (${newState.length} -> ${newState.length - trimCount})`,
           );
+
+          // Recycle trimmed entries back to pool to reduce GC pressure
+          const trimmedEntries = newState.slice(0, trimCount);
+          poolRef.current.releaseBatch(trimmedEntries);
+
           newState = newState.slice(trimCount);
         }
 
@@ -308,7 +361,14 @@ export function useEntryManagement({ marksMap }: UseEntryManagementOptions) {
 
   // Clear all entries
   const clearEntries = useCallback(() => {
-    setEntries([]);
+    // Recycle all entries back to pool before clearing
+    setEntries((prev) => {
+      if (prev.length > 0) {
+        poolRef.current.releaseBatch(prev);
+      }
+      return [];
+    });
+
     setNextId(1);
     nextIdRef.current = 1;
     fileSigCacheRef.current = new Map();
@@ -323,6 +383,11 @@ export function useEntryManagement({ marksMap }: UseEntryManagementOptions) {
     }
   }, []);
 
+  // Get pool statistics for debugging/monitoring
+  const getPoolStats = useCallback(() => {
+    return poolRef.current.getStats();
+  }, []);
+
   return {
     entries,
     setEntries,
@@ -332,5 +397,6 @@ export function useEntryManagement({ marksMap }: UseEntryManagementOptions) {
     setNextId,
     fileSigCacheRef,
     httpSigCacheRef,
+    getPoolStats,
   };
 }

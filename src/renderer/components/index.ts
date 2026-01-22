@@ -14,3 +14,7 @@ export { DetailPanel } from "./DetailPanel";
 export { FeatureFlagsPanel } from "./FeatureFlagsPanel";
 export { AlertDialog } from "./AlertDialog";
 export { UpdateNotification } from "./UpdateNotification";
+export { CommandPalette } from "./CommandPalette";
+export type { Command } from "./CommandPalette";
+export { FilterProfilesDropdown } from "./FilterProfilesDropdown";
+export { TraceTimeline } from "./TraceTimeline";

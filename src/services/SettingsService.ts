@@ -30,7 +30,7 @@ const DEFAULT_SETTINGS: Settings = {
   elasticSize: 10000,
   themeMode: "system",
   // NEW: default UI language
-  locale: "de",
+  locale: "en",
   histLogger: [],
   // NEW histories for ElasticSearch dialog
   histAppName: [],

@@ -3,6 +3,8 @@
  * Usage: window.ljDebug.findInEntries("searchterm")
  */
 
+import { getRendererLogEntryPool } from "../store/RendererLogEntryPool";
+
 // Global debug reference for console access
 let debugEntriesRef: { current: any[] } | null = null;
 let debugFilteredIdxRef: { current: number[] } | null = null;
@@ -137,6 +139,75 @@ export function setupDebugFunctions(): void {
         "[ljDebug] Use window.ljDebug.findInEntries('searchterm') to search",
       );
       return "Check the filter toolbar in the app";
+    },
+
+    poolStats: () => {
+      const pool = getRendererLogEntryPool();
+      const stats = pool.getStats();
+      // eslint-disable-next-line no-console
+      console.log("[ljDebug] LogEntry Pool Statistics:");
+      // eslint-disable-next-line no-console
+      console.log("  Available in pool: " + stats.available);
+      // eslint-disable-next-line no-console
+      console.log("  Total created: " + stats.totalCreated);
+      // eslint-disable-next-line no-console
+      console.log("  Reused: " + stats.reused);
+      // eslint-disable-next-line no-console
+      console.log("  Returned: " + stats.returned);
+      // eslint-disable-next-line no-console
+      console.log("  Hit rate: " + (stats.hitRate * 100).toFixed(1) + "%");
+      // eslint-disable-next-line no-console
+      console.log("  Max size: " + stats.maxSize);
+      return stats;
+    },
+
+    memoryUsage: () => {
+      const entries = debugEntriesRef?.current || [];
+      const pool = getRendererLogEntryPool();
+      const poolStats = pool.getStats();
+
+      // Estimate memory usage
+      let totalStringSize = 0;
+      let mdcCount = 0;
+      let stackTraceCount = 0;
+
+      entries.forEach((e) => {
+        if (e?.message) totalStringSize += e.message.length * 2; // UTF-16
+        if (e?.logger) totalStringSize += e.logger.length * 2;
+        if (e?.timestamp) totalStringSize += e.timestamp.length * 2;
+        if (e?.stackTrace) {
+          totalStringSize += e.stackTrace.length * 2;
+          stackTraceCount++;
+        }
+        if (e?.mdc && Object.keys(e.mdc).length > 0) {
+          mdcCount++;
+          Object.entries(e.mdc).forEach(([k, v]) => {
+            totalStringSize += (k.length + String(v).length) * 2;
+          });
+        }
+      });
+
+      const estimatedMB = (totalStringSize / 1024 / 1024).toFixed(2);
+      const avgPerEntry = entries.length
+        ? (totalStringSize / entries.length).toFixed(0)
+        : 0;
+
+      const report = {
+        entries: entries.length,
+        estimatedStringMemory: estimatedMB + " MB",
+        averageBytesPerEntry: avgPerEntry + " bytes",
+        entriesWithMDC: mdcCount,
+        entriesWithStackTrace: stackTraceCount,
+        pool: {
+          available: poolStats.available,
+          hitRate: (poolStats.hitRate * 100).toFixed(1) + "%",
+          reused: poolStats.reused,
+        },
+      };
+
+      // eslint-disable-next-line no-console
+      console.log("[ljDebug] Memory Usage Estimate:", report);
+      return report;
     },
   };
 }

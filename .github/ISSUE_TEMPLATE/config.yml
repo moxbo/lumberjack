@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: 💬 GitHub Discussions
+    url: https://github.com/moxbo/lumberjack/discussions
+    about: Ask questions and share ideas with the community
+  - name: 📖 Documentation
+    url: https://github.com/moxbo/lumberjack/tree/main/docs
+    about: Check out the documentation before opening an issue

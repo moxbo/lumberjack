@@ -54,6 +54,8 @@ import {
   useAlerts,
   useResizeHandlers,
   useEntryManagement,
+  useCommands,
+  useFilterWorker,
 } from "../hooks";
 
 // Import refactored components - core components loaded eagerly
@@ -93,6 +95,16 @@ const HttpPollDialog = lazy(() =>
 // Lazy-load DCFilterDialog as a component
 const DCFilterDialog = lazy(() => import("./DCFilterDialog"));
 const ElasticSearchDialog = lazy(() => import("./ElasticSearchDialog"));
+const CommandPalette = lazy(() =>
+  import("./components/CommandPalette").then((m) => ({
+    default: m.CommandPalette,
+  })),
+);
+const TraceTimeline = lazy(() =>
+  import("./components/TraceTimeline").then((m) => ({
+    default: m.TraceTimeline,
+  })),
+);
 
 // Initialize debug functions on module load
 setupDebugFunctions();
@@ -236,6 +248,9 @@ export default function App(): JSX.Element {
   const [showDcDialog, setShowDcDialog] = useState<boolean>(false);
   // Zeit-Filter Dialog-State
   const [showTimeDialog, setShowTimeDialog] = useState<boolean>(false);
+  // TraceTimeline Dialog-State
+  const [showTraceTimeline, setShowTraceTimeline] = useState<boolean>(false);
+  const [traceTimelineId, setTraceTimelineId] = useState<string>("");
   const [timeForm, setTimeForm] = useState<TimeFormState>({
     enabled: true,
     mode: "relative",
@@ -792,126 +807,55 @@ export default function App(): JSX.Element {
     layoutRef,
   });
 
-  // Filtered indices - uses debounced filter values for better typing performance
-  const filteredIdx = useMemo(() => {
-    const out: number[] = [];
-    const filterStats = {
-      total: 0,
-      passed: 0,
-      rejectedByOnlyMarked: 0,
-      rejectedByLevel: 0,
-      rejectedByLogger: 0,
-      rejectedByThread: 0,
-      rejectedByMessage: 0,
-      rejectedByTime: 0,
-      rejectedByDC: 0,
+  // Use Filter Worker for large datasets (>10,000 entries)
+  const {
+    filteredIndices: workerFilteredIdx,
+    isFiltering,
+    stats: workerFilterStats,
+    filterEntries,
+  } = useFilterWorker();
+
+  // Track if we have ever triggered filtering (to show loading state on initial large load)
+  const hasTriggeredFilterRef = useRef(false);
+
+  // Trigger filtering when dependencies change
+  useEffect(() => {
+    // Build DC filter entries from DiagnosticContextFilter state
+    const dcState = (DiagnosticContextFilter as any).getState?.() || {
+      entries: [],
+      enabled: false,
     };
+    const dcFilterEntries = (dcState.entries || []).map(
+      (e: { key: string; value: string; active: boolean }) => ({
+        key: e.key,
+        value: e.value,
+        active: e.active,
+      }),
+    );
+    const dcFilterEnabled = dcState.enabled === true;
 
-    for (let i = 0; i < entries.length; i++) {
-      const e = entries[i];
-      filterStats.total++;
+    // Build time filter state from TimeFilter
+    const timeState = (TimeFilter as any).getState?.() || {};
+    const timeFilterEnabled = timeState.enabled === true;
+    const timeFilterFrom = timeState.from || undefined;
+    const timeFilterTo = timeState.to || undefined;
 
-      if (!e) continue;
-      if (onlyMarked && !e._mark) {
-        filterStats.rejectedByOnlyMarked++;
-        continue;
-      }
-      if (stdFiltersEnabled) {
-        if (debouncedFilter.level) {
-          const lev = String(e.level || "").toUpperCase();
-          if (lev !== String(debouncedFilter.level).toUpperCase()) {
-            filterStats.rejectedByLevel++;
-            continue;
-          }
-        }
-        if (debouncedFilter.logger) {
-          const q = String(debouncedFilter.logger || "").toLowerCase();
-          if (
-            !String(e.logger || "")
-              .toLowerCase()
-              .includes(q)
-          ) {
-            filterStats.rejectedByLogger++;
-            continue;
-          }
-        }
-        if (debouncedFilter.thread) {
-          const q = String(debouncedFilter.thread || "").toLowerCase();
-          if (
-            !String(e.thread || "")
-              .toLowerCase()
-              .includes(q)
-          ) {
-            filterStats.rejectedByThread++;
-            continue;
-          }
-        }
-        if (debouncedFilter.message) {
-          if (
-            !msgMatches(e.message, debouncedFilter.message, {
-              mode: searchMode,
-            })
-          ) {
-            filterStats.rejectedByMessage++;
-            continue;
-          }
-        }
-      }
-      const isElasticSrc =
-        typeof e?.source === "string" && e.source.startsWith("elastic://");
-      // Zeitfilter nur für Elastic-Quellen anwenden; Nicht-Elastic nie durch Zeitfilter ausblenden
-      if (isElasticSrc) {
-        try {
-          if (!(TimeFilter as any).matchesTs(e.timestamp)) {
-            filterStats.rejectedByTime++;
-            continue;
-          }
-        } catch (err) {
-          logger.error("TimeFilter.matchesTs error:", err);
-          filterStats.rejectedByTime++;
-          continue;
-        }
-      }
-      try {
-        if (!(DiagnosticContextFilter as any).matches(e.mdc || {})) {
-          filterStats.rejectedByDC++;
-          continue;
-        }
-      } catch (err) {
-        logger.error("DiagnosticContextFilter.matches error:", err);
-      }
-      filterStats.passed++;
-      out.push(i);
-    }
-
-    // Save filter stats for debugging (always, not just in development)
-    // Use setTimeout to avoid updating state during render
-    setTimeout(() => {
-      setLastFilterStats({ ...filterStats });
-      // Also expose via debug API
-      (window as any).ljDebug.filterStats = filterStats;
-    }, 0);
-
-    // Reduced logging: only log filter stats when count changes significantly or all entries are filtered
-    if (
-      process.env.NODE_ENV === "development" &&
-      (filterStats.total % 5000 === 0 ||
-        (filterStats.passed === 0 && filterStats.total > 0))
-    ) {
-      // eslint-disable-next-line no-console
-      console.log("[filter-diag] Filter stats:", filterStats);
-      if (filterStats.passed === 0 && filterStats.total > 0) {
-        console.warn("[filter-diag] WARNING: All entries filtered out!", {
-          total: filterStats.total,
-          onlyMarked,
-          stdFiltersEnabled,
-          debouncedFilter,
-          dcFilterEnabled: (DiagnosticContextFilter as any).isEnabled?.(),
-        });
-      }
-    }
-
-    return out;
+    hasTriggeredFilterRef.current = true;
+    filterEntries(entries, {
+      stdFiltersEnabled,
+      filter: {
+        level: debouncedFilter.level || "",
+        logger: debouncedFilter.logger || "",
+        thread: debouncedFilter.thread || "",
+        message: debouncedFilter.message || "",
+      },
+      onlyMarked,
+      dcFilterEnabled,
+      dcFilterEntries,
+      timeFilterEnabled,
+      timeFilterFrom,
+      timeFilterTo,
+    });
   }, [
     entries,
     stdFiltersEnabled,
@@ -920,7 +864,39 @@ export default function App(): JSX.Element {
     timeVersion,
     onlyMarked,
     searchMode,
+    filterEntries,
   ]);
+
+  // Use worker results for filtered indices
+  const filteredIdx = workerFilteredIdx;
+
+  // Update filter stats from worker
+  useEffect(() => {
+    if (workerFilterStats) {
+      setLastFilterStats(workerFilterStats);
+      // Also expose via debug API
+      (window as any).ljDebug.filterStats = workerFilterStats;
+
+      // Reduced logging: only log filter stats when count changes significantly or all entries are filtered
+      if (
+        process.env.NODE_ENV === "development" &&
+        (workerFilterStats.total % 5000 === 0 ||
+          (workerFilterStats.passed === 0 && workerFilterStats.total > 0))
+      ) {
+        // eslint-disable-next-line no-console
+        console.log("[filter-diag] Filter stats:", workerFilterStats);
+        if (workerFilterStats.passed === 0 && workerFilterStats.total > 0) {
+          console.warn("[filter-diag] WARNING: All entries filtered out!", {
+            total: workerFilterStats.total,
+            onlyMarked,
+            stdFiltersEnabled,
+            debouncedFilter,
+            dcFilterEnabled: (DiagnosticContextFilter as any).isEnabled?.(),
+          });
+        }
+      }
+    }
+  }, [workerFilterStats, onlyMarked, stdFiltersEnabled, debouncedFilter]);
 
   // Refs to track current values for menu handlers (avoid stale closures)
   const filteredIdxRef = useRef<number[]>(filteredIdx);
@@ -1506,6 +1482,7 @@ export default function App(): JSX.Element {
 
   const [showTitleDlg, setShowTitleDlg] = useState<boolean>(false);
   const [showHelpDlg, setShowHelpDlg] = useState<boolean>(false);
+  const [showCommandPalette, setShowCommandPalette] = useState<boolean>(false);
 
   // Alert refs for use in useEffects (useAlerts hook is called earlier with useEntryManagement2)
   const showAlertRef = useRef(showAlert);
@@ -2395,10 +2372,115 @@ export default function App(): JSX.Element {
         e.preventDefault();
         setShowHelpDlg(true);
       }
+      // Cmd+K / Ctrl+K = Command Palette öffnen
+      else if ((e.metaKey || e.ctrlKey) && e.key === "k") {
+        e.preventDefault();
+        setShowCommandPalette(true);
+      }
     }
     window.addEventListener("keydown", onGlobalKeyDown);
     return () => window.removeEventListener("keydown", onGlobalKeyDown);
   }, [search, showHelpDlg]);
+
+  // Command Palette Commands
+  const commands = useCommands({
+    // Navigation
+    onGotoStart: () => {
+      try {
+        virtualizer.scrollToIndex(0, { align: "start" });
+      } catch {}
+    },
+    onGotoEnd: () => {
+      try {
+        const lastIdx = filteredIdx.length - 1;
+        if (lastIdx >= 0) {
+          virtualizer.scrollToIndex(lastIdx, { align: "end" });
+        }
+      } catch {}
+    },
+    onToggleFollow: () => setFollow((f) => !f),
+    isFollowing: follow,
+
+    // Filter
+    onSetLevelFilter: (level: string) => {
+      setFilter((prev) => ({ ...prev, level }));
+      setStdFiltersEnabled(true);
+    },
+    onClearFilters: () => {
+      setFilter({
+        level: "",
+        logger: "",
+        thread: "",
+        service: "",
+        message: "",
+      });
+      setSearch("");
+      setOnlyMarked(false);
+    },
+    onToggleMarked: () => setOnlyMarked((m) => !m),
+    isOnlyMarked: onlyMarked,
+    onFocusSearch: () => {
+      try {
+        searchInputRef.current?.focus();
+      } catch {}
+    },
+
+    // Dialogs
+    onOpenSettings: () => setShowSettings(true),
+    onOpenElastic: () => openTimeFilterDialog(),
+    onOpenHelp: () => setShowHelpDlg(true),
+
+    // File
+    onOpenFile: async () => {
+      try {
+        const result = await window.api.openFiles();
+        if (result && result.length > 0) {
+          const parsed = await window.api.parsePaths(result);
+          if (parsed?.ok && parsed.entries && parsed.entries.length > 0) {
+            appendEntries(parsed.entries);
+          }
+        }
+      } catch (err) {
+        logger.error("Open file failed:", err);
+      }
+    },
+    onClearLogs: clearLogs,
+    onExportLogs: async () => {
+      try {
+        await exportCurrentView();
+      } catch (err) {
+        logger.error("Export failed:", err);
+      }
+    },
+
+    // TCP
+    onStartTcp: () => {
+      try {
+        window.api?.tcpStart?.(tcpPort);
+      } catch (err) {
+        logger.error("TCP start failed:", err);
+      }
+    },
+    onStopTcp: () => {
+      try {
+        window.api?.tcpStop?.();
+      } catch (err) {
+        logger.error("TCP stop failed:", err);
+      }
+    },
+    isTcpActive: tcpStatus.includes("aktiv") || tcpStatus.includes("active"),
+
+    // Theme
+    onToggleTheme: () => {
+      const newTheme = themeMode === "dark" ? "light" : "dark";
+      setThemeMode(newTheme);
+      applyThemeMode(newTheme);
+      try {
+        void window.api.settingsSet({ themeMode: newTheme });
+      } catch {}
+    },
+    currentTheme: themeMode,
+  });
 
   // Track when the component has fully mounted and is interactive
   useEffect(() => {
@@ -2874,7 +2956,7 @@ export default function App(): JSX.Element {
                     : undefined,
               }}
             >
-              {countFiltered}
+              {isFiltering ? "..." : countFiltered}
             </span>{" "}
             {t("toolbar.filtered")},{" "}
             <span id="countSelected" className="count">
@@ -3377,7 +3459,25 @@ export default function App(): JSX.Element {
             const dcEntries = DiagnosticContextFilter.getDcEntries().filter(
               (e) => e.active,
             );
+            // Check if TraceID is in active DC filters
+            const activeTraceId = dcEntries.find(
+              (e) =>
+                e.key === "TraceID" || e.key.toLowerCase().includes("trace"),
+            );
             if (DiagnosticContextFilter.isEnabled() && dcEntries.length > 0) {
+              // Add Timeline button if TraceID is active
+              if (activeTraceId) {
+                activeFilters.push({
+                  type: "trace-timeline",
+                  label: "📊",
+                  value: t("traceTimeline.openTimeline"),
+                  colorClass: "trace-timeline-chip",
+                  onRemove: () => {
+                    setTraceTimelineId(activeTraceId.val);
+                    setShowTraceTimeline(true);
+                  },
+                });
+              }
               dcEntries.slice(0, 3).forEach((entry) => {
                 activeFilters.push({
                   type: "dc",
@@ -3406,26 +3506,40 @@ export default function App(): JSX.Element {
 
             return (
               <>
-                {activeFilters.map((f, i) => (
-                  <span
-                    key={`${f.type}-${i}`}
-                    className={`filter-chip ${f.colorClass || ""}`}
-                  >
-                    {f.label && <span className="chip-label">{f.label}:</span>}
-                    <span className="chip-value" title={f.value}>
-                      {f.value}
+                {activeFilters.map((f, i) =>
+                  f.type === "trace-timeline" ? (
+                    <button
+                      key={`${f.type}-${i}`}
+                      className="filter-chip trace-timeline-chip"
+                      onClick={f.onRemove}
+                      title={t("traceTimeline.openTimelineTooltip")}
+                    >
+                      <span className="chip-label">{f.label}</span>
+                      <span className="chip-value">{f.value}</span>
+                    </button>
+                  ) : (
+                    <span
+                      key={`${f.type}-${i}`}
+                      className={`filter-chip ${f.colorClass || ""}`}
+                    >
+                      {f.label && (
+                        <span className="chip-label">{f.label}:</span>
+                      )}
+                      <span className="chip-value" title={f.value}>
+                        {f.value}
+                      </span>
+                      {f.type !== "dc-more" && (
+                        <button
+                          className="chip-remove"
+                          onClick={f.onRemove}
+                          title="Filter entfernen"
+                        >
+                          ×
+                        </button>
+                      )}
                     </span>
-                    {f.type !== "dc-more" && (
-                      <button
-                        className="chip-remove"
-                        onClick={f.onRemove}
-                        title="Filter entfernen"
-                      >
-                        ×
-                      </button>
-                    )}
-                  </span>
-                ))}
+                  ),
+                )}
                 {activeFilters.length > 0 && (
                   <button
                     style={{
@@ -3526,6 +3640,52 @@ export default function App(): JSX.Element {
               (TimeFilter as any).reset?.();
             } catch (e) {
               logger.error("Resetting TimeFilter failed:", e);
+            }
+          }}
+          search={search}
+          onApplyProfile={(profile) => {
+            setFilter({
+              level: profile.filters.level,
+              logger: profile.filters.logger,
+              thread: profile.filters.thread,
+              service: "",
+              message: profile.filters.message,
+            });
+            setSearch(profile.filters.search || "");
+            setStdFiltersEnabled(profile.filters.stdFiltersEnabled);
+            // Apply MDC filters if available
+            if (
+              profile.filters.mdcFilters &&
+              profile.filters.mdcFilters.length > 0
+            ) {
+              try {
+                for (const mdc of profile.filters.mdcFilters) {
+                  (DiagnosticContextFilter as any).addMdcEntry(
+                    mdc.key,
+                    mdc.value,
+                  );
+                  if (mdc.active) {
+                    (DiagnosticContextFilter as any).activateMdcEntry(
+                      mdc.key,
+                      mdc.value,
+                    );
+                  }
+                }
+                (DiagnosticContextFilter as any).setEnabled(true);
+              } catch (e) {
+                logger.error("Applying MDC filters from profile failed:", e);
+              }
+            }
+          }}
+          getMdcFilters={() => {
+            try {
+              return DiagnosticContextFilter.getDcEntries().map((e) => ({
+                key: e.key,
+                value: e.val,
+                active: e.active,
+              }));
+            } catch {
+              return [];
             }
           }}
           esBusy={esBusy}
@@ -3862,6 +4022,37 @@ export default function App(): JSX.Element {
 
       {/* Update-Benachrichtigung */}
       <UpdateNotification />
+
+      {/* Command Palette - lazy loaded */}
+      <Suspense fallback={null}>
+        <CommandPalette
+          open={showCommandPalette}
+          onClose={() => setShowCommandPalette(false)}
+          commands={commands}
+        />
+      </Suspense>
+
+      {/* Trace Timeline - lazy loaded */}
+      {showTraceTimeline && traceTimelineId && (
+        <Suspense fallback={null}>
+          <TraceTimeline
+            entries={filteredIdx.map((i) => entries[i]).filter(Boolean)}
+            traceId={traceTimelineId}
+            onClose={() => setShowTraceTimeline(false)}
+            onEntryClick={(entry) => {
+              if (entry._id !== undefined) {
+                setSelected(new Set([entry._id]));
+                // Scroll to entry
+                const idx = filteredIdx.indexOf(entry._id);
+                if (idx >= 0) {
+                  virtualizer.scrollToIndex(idx, { align: "center" });
+                }
+              }
+              setShowTraceTimeline(false);
+            }}
+          />
+        </Suspense>
+      )}
     </div>
   );
 }

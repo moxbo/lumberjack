@@ -39,18 +39,34 @@ export const test = base.extend<{
       );
     }
 
+    // Detect CI environment
+    const isCI = process.env.CI === "true" || process.env.CI === "1";
+
     // Launch Electron app with the project directory as cwd
     const electronApp = await electron.launch({
-      args: [mainPath],
+      args: [
+        mainPath,
+        // Disable GPU for CI stability (headless environments)
+        ...(isCI
+          ? [
+              "--disable-gpu",
+              "--disable-software-rasterizer",
+              "--no-sandbox",
+              "--disable-dev-shm-usage",
+            ]
+          : []),
+      ],
       cwd: projectRoot,
       env: {
         ...process.env,
         NODE_ENV: "test",
         LUMBERJACK_E2E_TEST: "1",
         // Disable hardware acceleration for CI stability
-        LUMBERJACK_DISABLE_GPU: "1",
+        LUMBERJACK_DISABLE_GPU: isCI ? "1" : "0",
+        // Increase timeout for CI
+        ELECTRON_ENABLE_LOGGING: isCI ? "1" : "0",
       },
-      timeout: 60000,
+      timeout: isCI ? 120000 : 60000, // Longer timeout for CI
     });
 
     // Use the fixture

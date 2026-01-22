@@ -21,6 +21,8 @@ export type { FeatureName } from "./useFeatureFlags";
 export { useAlerts } from "./useAlerts";
 export type { AlertType } from "./useAlerts";
 export { useHistoryPopovers } from "./useHistoryPopovers";
+export { useFilterProfiles } from "./useFilterProfiles";
+export type { UseFilterProfilesReturn } from "./useFilterProfiles";
 
 // New hooks for code extraction
 export { useContextMenuActions } from "./useContextMenuActions";
@@ -33,3 +35,5 @@ export type {
   UseResizeHandlersOptions,
   UseResizeHandlersReturn,
 } from "./useResizeHandlers";
+export { useCommands } from "./useCommands";
+export { useFilterWorker } from "./useFilterWorker";

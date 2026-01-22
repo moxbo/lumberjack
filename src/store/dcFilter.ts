@@ -107,7 +107,15 @@ class DiagnosticContextFilterImpl {
     if (!k) return;
     const v = this._normalizeVal(val);
     const id = entryKey(k, v);
-    if (this._map.has(id)) return;
+    const existing = this._map.get(id);
+    if (existing) {
+      // Entry exists - reactivate if it was deactivated
+      if (!existing.active) {
+        existing.active = true;
+        this._em.emit();
+      }
+      return;
+    }
     this._map.set(id, { key: k, val: v, active: true });
     this._em.emit();
   }

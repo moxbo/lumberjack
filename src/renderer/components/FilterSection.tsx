@@ -6,6 +6,8 @@ import type { RefObject } from "preact";
 import { useEffect, useRef, useState } from "preact/hooks";
 import { useI18n } from "../../utils/i18n";
 import type { FilterState } from "../../hooks";
+import { FilterProfilesDropdown } from "./FilterProfilesDropdown";
+import type { FilterProfile } from "../../store/filterProfiles";
 
 interface FilterSectionProps {
   expanded: boolean;
@@ -52,6 +54,11 @@ interface FilterSectionProps {
   onShowTimeDialog: () => void;
   onClearAllFilters: () => void;
 
+  // Filter Profiles
+  search: string;
+  onApplyProfile: (profile: FilterProfile) => void;
+  getMdcFilters?: () => Array<{ key: string; value: string; active: boolean }>;
+
   // Busy state for elastic
   esBusy: boolean;
 }
@@ -87,6 +94,9 @@ export function FilterSection({
   onShowDcDialog,
   onShowTimeDialog,
   onClearAllFilters,
+  search,
+  onApplyProfile,
+  getMdcFilters,
   esBusy,
 }: FilterSectionProps) {
   const { t } = useI18n();
@@ -344,6 +354,17 @@ export function FilterSection({
         <button id="btnClearFilters" onClick={onClearAllFilters}>
           {t("toolbar.clearFilters")}
         </button>
+
+        <span className="filter-divider" />
+
+        <FilterProfilesDropdown
+          filter={filter}
+          search={search}
+          stdFiltersEnabled={stdFiltersEnabled}
+          onApplyProfile={onApplyProfile}
+          getMdcFilters={getMdcFilters}
+          disabled={esBusy}
+        />
       </div>
     </div>
   );
