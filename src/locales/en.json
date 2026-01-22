@@ -212,7 +212,9 @@
       "urlPlaceholder": "https://…/logs.json",
       "cancel": "Cancel",
       "load": "Load",
-      "invalidUrl": "Please enter a valid URL"
+      "invalidUrl": "Please enter a valid URL",
+      "allowInsecureSSL": "Allow insecure SSL certificates",
+      "allowInsecureSSLHint": "Enable for self-signed certificates (development servers). WARNING: Do not use in production!"
     },
     "httpPoll": {
       "title": "Start HTTP polling",

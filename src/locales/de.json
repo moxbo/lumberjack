@@ -212,7 +212,9 @@
       "urlPlaceholder": "https://…/logs.json",
       "cancel": "Abbrechen",
       "load": "Laden",
-      "invalidUrl": "Bitte eine gültige URL eingeben"
+      "invalidUrl": "Bitte eine gültige URL eingeben",
+      "allowInsecureSSL": "Unsichere SSL-Zertifikate erlauben",
+      "allowInsecureSSLHint": "Aktivieren für selbst-signierte Zertifikate (Entwicklungsserver). WARNUNG: Nicht für Produktion verwenden!"
     },
     "httpPoll": {
       "title": "HTTP Poll starten",

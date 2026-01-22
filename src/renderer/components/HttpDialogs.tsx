@@ -19,10 +19,15 @@ export function HttpLoadDialog({
 }: HttpLoadDialogProps) {
   const { t } = useI18n();
   const [url, setUrl] = useState<string>(initialUrl);
+  const [allowInsecureSSL, setAllowInsecureSSL] = useState<boolean>(false);
 
   useEffect(() => {
     if (open) {
       setUrl(initialUrl);
+      // Load current insecure SSL setting
+      void window.api?.httpGetAllowInsecureSSL?.().then((val) => {
+        setAllowInsecureSSL(val);
+      });
     }
   }, [open, initialUrl]);
 
@@ -32,6 +37,8 @@ export function HttpLoadDialog({
       alert(t("dialogs.httpLoad.invalidUrl"));
       return;
     }
+    // Apply insecure SSL setting before loading
+    await window.api?.httpSetAllowInsecureSSL?.(allowInsecureSSL);
     onClose();
     await onLoad(trimmedUrl);
   };
@@ -51,6 +58,18 @@ export function HttpLoadDialog({
             placeholder={t("dialogs.httpLoad.urlPlaceholder")}
             autoFocus
           />
+        </div>
+        <div className="kv">
+          <label style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+            <input
+              type="checkbox"
+              checked={allowInsecureSSL}
+              onChange={(e) => setAllowInsecureSSL(e.currentTarget.checked)}
+            />
+            <span title={t("dialogs.httpLoad.allowInsecureSSLHint")}>
+              {t("dialogs.httpLoad.allowInsecureSSL")}
+            </span>
+          </label>
         </div>
         <div className="modal-actions">
           <button onClick={onClose}>{t("dialogs.httpLoad.cancel")}</button>

@@ -342,6 +342,9 @@ export type ElectronAPI = {
     intervalSec: number;
   }) => Promise<HttpPollResult>;
   httpStopPoll: (id: number) => Promise<Result<void>>;
+  // HTTP insecure SSL options
+  httpSetAllowInsecureSSL: (allow: boolean) => Promise<{ ok: boolean }>;
+  httpGetAllowInsecureSSL: () => Promise<boolean>;
   elasticSearch: (options: ElasticSearchOptions) => Promise<ParseResult>;
   elasticClosePit: (sessionId: string) => Promise<Result<void>>;
   onAppend: (callback: (entries: LogEntry[]) => void) => () => void;

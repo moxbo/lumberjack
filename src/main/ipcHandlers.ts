@@ -714,6 +714,19 @@ export function registerIpcHandlers(
     return result;
   });
 
+  // HTTP insecure SSL handler
+  ipcMain.handle(
+    "http:setAllowInsecureSSL",
+    (_event, allow: boolean): { ok: boolean } => {
+      networkService.setAllowInsecureSSL(allow);
+      return { ok: true };
+    },
+  );
+
+  ipcMain.handle("http:getAllowInsecureSSL", (): boolean => {
+    return networkService.getAllowInsecureSSL();
+  });
+
   // Elasticsearch handler
   ipcMain.handle(
     "elastic:search",

@@ -125,6 +125,13 @@ const api: ElectronAPI = {
   httpStopPoll: (id: number): Promise<Result<void>> =>
     ipcRenderer.invoke("http:stopPoll", id),
 
+  // HTTP insecure SSL options
+  httpSetAllowInsecureSSL: (allow: boolean): Promise<{ ok: boolean }> =>
+    ipcRenderer.invoke("http:setAllowInsecureSSL", allow),
+
+  httpGetAllowInsecureSSL: (): Promise<boolean> =>
+    ipcRenderer.invoke("http:getAllowInsecureSSL"),
+
   // Elasticsearch operations
   elasticSearch: (options: ElasticSearchOptions): Promise<ParseResult> =>
     ipcRenderer.invoke("elastic:search", options),

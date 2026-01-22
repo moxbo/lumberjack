@@ -4,6 +4,7 @@
  */
 
 import * as net from "net";
+import * as https from "https";
 import log from "electron-log/main";
 import type { LogEntry } from "../types/ipc";
 
@@ -68,6 +69,10 @@ export class NetworkService {
   private parseTextLines: TextParserFn | null = null;
   private toEntry: EntryConverterFn | null = null;
 
+  // SSL/TLS options
+  private allowInsecureSSL = false;
+  private insecureHttpsAgent: https.Agent | null = null;
+
   // Memory leak prevention constants
   private static readonly MAX_BUFFER_SIZE = 50 * 1024 * 1024; // 50MB max buffer per socket (increased for large messages)
   private static readonly SOCKET_TIMEOUT_MS = 5 * 60 * 1000; // 5 minutes timeout
@@ -100,6 +105,33 @@ export class NetworkService {
    */
   setLogCallback(callback: LogCallback): void {
     this.logCallback = callback;
+  }
+
+  /**
+   * Enable or disable insecure SSL/TLS connections
+   * When enabled, self-signed certificates and certificate errors are ignored
+   * WARNING: Only use for development/testing, not in production!
+   */
+  setAllowInsecureSSL(allow: boolean): void {
+    this.allowInsecureSSL = allow;
+    if (allow && !this.insecureHttpsAgent) {
+      this.insecureHttpsAgent = new https.Agent({
+        rejectUnauthorized: false,
+      });
+      log.warn(
+        "[http] Insecure SSL mode enabled - certificate validation disabled",
+      );
+    } else if (!allow) {
+      this.insecureHttpsAgent = null;
+      log.info("[http] Insecure SSL mode disabled");
+    }
+  }
+
+  /**
+   * Get current insecure SSL setting
+   */
+  getAllowInsecureSSL(): boolean {
+    return this.allowInsecureSSL;
   }
 
   /**
@@ -488,6 +520,79 @@ export class NetworkService {
   }
 
   /**
+   * Fetch HTTPS URL using native Node.js https module with insecure SSL option
+   * This allows self-signed certificates and other certificate errors
+   */
+  private fetchWithNodeHttps(
+    _url: string,
+    parsedUrl: URL,
+    signal: AbortSignal,
+  ): Promise<string> {
+    return new Promise((resolve, reject) => {
+      if (signal.aborted) {
+        reject(new Error("Request aborted"));
+        return;
+      }
+
+      const options: https.RequestOptions = {
+        hostname: parsedUrl.hostname,
+        port: parsedUrl.port || 443,
+        path: parsedUrl.pathname + parsedUrl.search,
+        method: "GET",
+        rejectUnauthorized: false, // Skip certificate validation
+        headers: {
+          "Cache-Control": "no-store",
+        },
+      };
+
+      const req = https.request(options, (res) => {
+        // Check HTTP status
+        if (res.statusCode && (res.statusCode < 200 || res.statusCode >= 300)) {
+          reject(new Error(`HTTP ${res.statusCode}: ${res.statusMessage}`));
+          return;
+        }
+
+        let data = "";
+        res.setEncoding("utf8");
+
+        res.on("data", (chunk: string) => {
+          data += chunk;
+          // Check size limit during download
+          if (data.length > NetworkService.HTTP_MAX_RESPONSE_SIZE) {
+            req.destroy();
+            reject(
+              new Error(
+                `Response too large (max: ${NetworkService.HTTP_MAX_RESPONSE_SIZE})`,
+              ),
+            );
+          }
+        });
+
+        res.on("end", () => {
+          resolve(data);
+        });
+
+        res.on("error", (err) => {
+          reject(err);
+        });
+      });
+
+      req.on("error", (err) => {
+        reject(err);
+      });
+
+      // Handle abort signal
+      const onAbort = (): void => {
+        req.destroy();
+        reject(new Error("Request aborted"));
+      };
+      signal.addEventListener("abort", onAbort, { once: true });
+
+      req.end();
+    });
+  }
+
+  /**
    * Fetch text from HTTP URL with timeout and size limits
    * @param url - URL to fetch
    * @param externalSignal - Optional AbortSignal to allow external cancellation (e.g., on poll stop)
@@ -520,13 +625,39 @@ export class NetworkService {
       }
 
       try {
+        // Validate URL before attempting fetch
+        let parsedUrl: URL;
+        try {
+          parsedUrl = new URL(url);
+          if (!["http:", "https:"].includes(parsedUrl.protocol)) {
+            throw new Error(
+              `Invalid protocol: ${parsedUrl.protocol} (must be http: or https:)`,
+            );
+          }
+        } catch (urlErr) {
+          if (urlErr instanceof Error && urlErr.message.includes("protocol")) {
+            throw urlErr;
+          }
+          throw new Error(`Invalid URL: ${url}`);
+        }
+
+        // For HTTPS with insecure SSL option, use native Node.js https module
+        if (this.allowInsecureSSL && parsedUrl.protocol === "https:") {
+          const text = await this.fetchWithNodeHttps(
+            url,
+            parsedUrl,
+            controller.signal,
+          );
+          return text;
+        }
+
         const res = await fetch(url, {
           cache: "no-store",
           signal: controller.signal,
         });
 
         if (!res.ok) {
-          throw new Error(`${res.status} ${res.statusText}`);
+          throw new Error(`HTTP ${res.status}: ${res.statusText}`);
         }
 
         // Check Content-Length header if available
@@ -559,6 +690,35 @@ export class NetworkService {
           throw new Error(
             `Request timeout after ${NetworkService.HTTP_FETCH_TIMEOUT_MS}ms`,
           );
+        }
+        // Provide more helpful error messages for common network errors
+        if (err instanceof Error) {
+          const errMsg = err.message.toLowerCase();
+          if (errMsg.includes("enotfound") || errMsg.includes("getaddrinfo")) {
+            throw new Error(`DNS lookup failed: Host not found for ${url}`);
+          }
+          if (errMsg.includes("econnrefused")) {
+            throw new Error(
+              `Connection refused: Server at ${url} is not accepting connections`,
+            );
+          }
+          if (errMsg.includes("econnreset")) {
+            throw new Error(`Connection reset: Server closed the connection`);
+          }
+          if (errMsg.includes("etimedout") || errMsg.includes("timeout")) {
+            throw new Error(`Connection timeout: Could not reach ${url}`);
+          }
+          if (
+            errMsg.includes("cert") ||
+            errMsg.includes("ssl") ||
+            errMsg.includes("tls")
+          ) {
+            throw new Error(`SSL/TLS error: ${err.message}`);
+          }
+          if (errMsg.includes("fetch failed")) {
+            // Generic fetch error - provide URL for context
+            throw new Error(`Network error: Could not connect to ${url}`);
+          }
         }
         throw err;
       } finally {
