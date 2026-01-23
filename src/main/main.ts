@@ -1549,8 +1549,48 @@ function createWindow(opts: { makePrimary?: boolean } = {}): BrowserWindow {
     win.on("focus", () => {
       lastFocusedWindowId = win.id;
       updateMenu();
+      // Ensure webContents receives focus for keyboard input
+      // This is important when multiple instances are running
+      try {
+        if (
+          !win.isDestroyed() &&
+          win.webContents &&
+          !win.webContents.isDestroyed()
+        ) {
+          win.webContents.focus();
+        }
+      } catch {
+        // Ignore focus errors
+      }
     });
     win.on("blur", () => updateMenu());
+    // Ensure focus is set when window is shown
+    win.on("show", () => {
+      try {
+        if (
+          !win.isDestroyed() &&
+          win.webContents &&
+          !win.webContents.isDestroyed()
+        ) {
+          // Delay focus slightly to ensure window is fully visible
+          setTimeout(() => {
+            try {
+              if (
+                !win.isDestroyed() &&
+                win.webContents &&
+                !win.webContents.isDestroyed()
+              ) {
+                win.webContents.focus();
+              }
+            } catch {
+              // Ignore
+            }
+          }, 50);
+        }
+      } catch {
+        // Ignore focus errors
+      }
+    });
   } catch {
     // Intentionally empty - ignore errors
   }
@@ -1565,6 +1605,20 @@ function createWindow(opts: { makePrimary?: boolean } = {}): BrowserWindow {
     );
 
     applyWindowTitles();
+
+    // Ensure webContents has focus for keyboard input after load
+    // This is critical for input fields to work correctly
+    try {
+      if (
+        !win.isDestroyed() &&
+        win.webContents &&
+        !win.webContents.isDestroyed()
+      ) {
+        win.webContents.focus();
+      }
+    } catch {
+      // Ignore focus errors
+    }
 
     // Flush queued menu cmds for this window
     try {
@@ -1626,6 +1680,20 @@ function createWindow(opts: { makePrimary?: boolean } = {}): BrowserWindow {
     }
 
     if (!win.isVisible()) win.show();
+
+    // Ensure webContents has focus for keyboard input
+    // This fixes issues where inputs don't work after window shows
+    try {
+      if (
+        !win.isDestroyed() &&
+        win.webContents &&
+        !win.webContents.isDestroyed()
+      ) {
+        win.webContents.focus();
+      }
+    } catch {
+      // Ignore focus errors
+    }
 
     // macOS: Dock-Icon setzen
     if (process.platform === "darwin") {
@@ -2430,6 +2498,25 @@ if (!gotLock) {
       if (win.isMinimized()) win.restore();
       win.show();
       win.focus();
+      // Ensure webContents receives focus for keyboard input after window focus
+      // This fixes input issues when multiple instances try to start
+      try {
+        if (
+          !win.isDestroyed() &&
+          win.webContents &&
+          !win.webContents.isDestroyed()
+        ) {
+          setTimeout(() => {
+            try {
+              win.webContents.focus();
+            } catch {
+              // Ignore focus errors
+            }
+          }, 100);
+        }
+      } catch {
+        // Ignore errors
+      }
     }
   });
 } else {
