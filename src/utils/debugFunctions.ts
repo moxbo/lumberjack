@@ -4,6 +4,8 @@
  */
 
 import { getRendererLogEntryPool } from "../store/RendererLogEntryPool";
+import { msgMatches } from "./msgFilter";
+import { LoggingStore } from "../store/loggingStore";
 
 // Global debug reference for console access
 let debugEntriesRef: { current: any[] } | null = null;
@@ -208,6 +210,82 @@ export function setupDebugFunctions(): void {
       // eslint-disable-next-line no-console
       console.log("[ljDebug] Memory Usage Estimate:", report);
       return report;
+    },
+
+    /**
+     * Test the msgMatches function directly.
+     * Useful for debugging filter expressions.
+     * @example window.ljDebug.msgMatches("Tom&Jerry", "Tom\\&Jerry") // true
+     */
+    msgMatches: (message: string, expr: string, mode?: string) => {
+      return msgMatches(
+        message,
+        expr,
+        mode ? { mode: mode as any } : undefined,
+      );
+    },
+
+    /**
+     * Add test log entries for E2E testing.
+     * @param entries Array of {message, level?, logger?} objects
+     * @example window.ljDebug.addTestEntries([{message: "Tom&Jerry cartoon"}])
+     */
+    addTestEntries: (
+      entries: Array<{
+        message: string;
+        level?: string;
+        logger?: string;
+        thread?: string;
+      }>,
+    ) => {
+      const now = new Date().toISOString();
+      const logEvents = entries.map((e, i) => ({
+        timestamp: now,
+        level: e.level || "INFO",
+        logger: e.logger || "test.logger",
+        thread: e.thread || "test-thread",
+        message: e.message,
+        traceId: null,
+        stackTrace: null,
+        raw: { message: e.message },
+        source: "test://e2e-test",
+        _testId: `test-${Date.now()}-${i}`,
+      }));
+      (LoggingStore as any).addEvents(logEvents);
+      // eslint-disable-next-line no-console
+      console.log(`[ljDebug] Added ${logEvents.length} test entries`);
+      return logEvents.length;
+    },
+
+    /**
+     * Clear all log entries (for test cleanup).
+     */
+    clearEntries: () => {
+      (LoggingStore as any).reset();
+      // eslint-disable-next-line no-console
+      console.log("[ljDebug] Cleared all entries");
+    },
+
+    /**
+     * Get the count of currently visible (filtered) entries.
+     */
+    getVisibleCount: () => {
+      return debugFilteredIdxRef?.current?.length || 0;
+    },
+
+    /**
+     * Get the total count of entries.
+     */
+    getTotalCount: () => {
+      // Try debugEntriesRef first, then fall back to LoggingStore
+      const refCount = debugEntriesRef?.current?.length || 0;
+      if (refCount > 0) return refCount;
+      // Fall back to LoggingStore directly
+      try {
+        return (LoggingStore as any).getAllEvents?.()?.length || 0;
+      } catch {
+        return 0;
+      }
     },
   };
 }

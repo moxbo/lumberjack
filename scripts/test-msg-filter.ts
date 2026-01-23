@@ -51,6 +51,22 @@ fails += expect("a b c", "a|b&c", true); // & hat Vorrang vor |
 fails += expect("b c", "a|b&c", true);
 fails += expect("b x", "a|b&c", false);
 
+// Escape-Mechanismus für literale Sonderzeichen
+fails += expect("Tom&Jerry", "Tom\\&Jerry", true);
+fails += expect("Tom Jerry", "Tom\\&Jerry", false);
+fails += expect("foo|bar", "foo\\|bar", true);
+fails += expect("foo bar", "foo\\|bar", false);
+fails += expect("foo!bar", "foo\\!bar", true);
+fails += expect("foo bar", "foo\\!bar", false);
+fails += expect("(test)", "\\(test\\)", true);
+fails += expect("test", "\\(test\\)", false);
+// Escape in Kombination mit Operatoren
+fails += expect("Tom&Jerry cartoon", "Tom\\&Jerry&cartoon", true);
+fails += expect("Tom&Jerry movie", "Tom\\&Jerry&cartoon", false);
+// Escape von Backslash selbst
+fails += expect("foo\\bar", "foo\\\\bar", true);
+fails += expect("foobar", "foo\\\\bar", false);
+
 if (fails) {
   console.error(`Tests failed: ${fails}`);
   process.exit(1);

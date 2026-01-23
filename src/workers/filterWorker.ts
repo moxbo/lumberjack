@@ -45,29 +45,192 @@ interface FilterStats {
   rejectedByDC: number;
 }
 
-// Simple message matching (supports wildcards * and ?)
+// Token types for the parser
+type TokType = "AND" | "OR" | "NOT" | "LPAREN" | "RPAREN" | "WORD";
+interface Token {
+  readonly t: TokType;
+  readonly v?: string;
+}
+
+// Full message matching with AND, OR, NOT operators and escape support
+// Syntax:
+//  - OR with '|'
+//  - AND with '&'
+//  - Negation with '!' prefix
+//  - Parentheses '(' and ')' for grouping
+//  - Escape with '\' for literal special characters: \& \| \! \( \)
 function msgMatches(message: unknown, pattern: string): boolean {
   if (!pattern) return true;
-  const msg = String(message || "").toLowerCase();
-  const pat = pattern.toLowerCase().trim();
+  const rawMsg = String(message || "");
+  const rawExpr = pattern.trim();
 
-  if (!pat) return true;
+  if (!rawExpr) return true;
 
-  // Simple wildcard support
-  if (pat.includes("*") || pat.includes("?")) {
-    const regexPattern = pat
-      .replace(/[.+^${}()|[\]\\]/g, "\\$&")
-      .replace(/\*/g, ".*")
-      .replace(/\?/g, ".");
-    try {
-      const regex = new RegExp(regexPattern, "i");
-      return regex.test(msg);
-    } catch {
-      return msg.includes(pat);
+  const m = rawMsg.toLowerCase();
+  const q = rawExpr.toLowerCase();
+
+  // Tokenizer with escape support
+  function tokenize(s: string): Token[] {
+    const toks: Token[] = [];
+    let i = 0;
+    const N = s.length;
+    const isOp = (ch: string): boolean =>
+      ch === "&" || ch === "|" || ch === "!" || ch === "(" || ch === ")";
+
+    while (i < N) {
+      const ch = s[i]!;
+      if (ch <= " ") {
+        i++;
+        continue;
+      }
+      // Escape handling
+      if (ch === "\\" && i + 1 < N) {
+        let j = i;
+        let word = "";
+        while (j < N) {
+          const c = s[j]!;
+          if (c <= " ") break;
+          if (c === "\\" && j + 1 < N) {
+            word += s[j + 1]!;
+            j += 2;
+            continue;
+          }
+          if (isOp(c)) break;
+          word += c;
+          j++;
+        }
+        if (word) toks.push({ t: "WORD", v: word });
+        i = j;
+        continue;
+      }
+      if (isOp(ch)) {
+        if (ch === "&") toks.push({ t: "AND" });
+        else if (ch === "|") toks.push({ t: "OR" });
+        else if (ch === "!") toks.push({ t: "NOT" });
+        else if (ch === "(") toks.push({ t: "LPAREN" });
+        else if (ch === ")") toks.push({ t: "RPAREN" });
+        i++;
+        continue;
+      }
+      // Collect word with escape support
+      let j = i;
+      let word = "";
+      while (j < N) {
+        const c = s[j]!;
+        if (c <= " ") break;
+        if (c === "\\" && j + 1 < N) {
+          word += s[j + 1]!;
+          j += 2;
+          continue;
+        }
+        if (isOp(c)) break;
+        word += c;
+        j++;
+      }
+      if (word) toks.push({ t: "WORD", v: word });
+      i = j;
+    }
+    return toks;
+  }
+
+  const tokens = tokenize(q);
+  if (tokens.length === 0) return true;
+
+  let pos = 0;
+  const peek = (): Token | undefined => tokens[pos];
+  const take = (): Token | undefined => tokens[pos++];
+
+  function evalPrimary(): boolean {
+    const tk = peek();
+    if (!tk) return true;
+    if (tk.t === "WORD") {
+      take();
+      return m.includes(tk.v!);
+    }
+    if (tk.t === "LPAREN") {
+      take();
+      const val = evalOr();
+      if (peek()?.t === "RPAREN") take();
+      return val;
+    }
+    take();
+    return true;
+  }
+
+  function evalNot(): boolean {
+    let neg = false;
+    while (peek()?.t === "NOT") {
+      take();
+      neg = !neg;
+    }
+    const v = evalPrimary();
+    return neg ? !v : v;
+  }
+
+  function skipPrimary(): void {
+    const tk = peek();
+    if (!tk) return;
+    if (tk.t === "WORD") {
+      take();
+      return;
+    }
+    if (tk.t === "LPAREN") {
+      take();
+      skipOr();
+      if (peek()?.t === "RPAREN") take();
+      return;
+    }
+    take();
+  }
+
+  function skipNotExpr(): void {
+    while (peek()?.t === "NOT") take();
+    skipPrimary();
+  }
+
+  function skipAnd(): void {
+    skipNotExpr();
+    while (peek()?.t === "AND") {
+      take();
+      skipNotExpr();
     }
   }
 
-  return msg.includes(pat);
+  function skipOr(): void {
+    skipAnd();
+    while (peek()?.t === "OR") {
+      take();
+      skipAnd();
+    }
+  }
+
+  function evalAnd(): boolean {
+    let left = evalNot();
+    while (peek()?.t === "AND") {
+      take();
+      if (!left) {
+        skipNotExpr();
+      } else {
+        left = evalNot();
+      }
+    }
+    return left;
+  }
+
+  function evalOr(): boolean {
+    let left = evalAnd();
+    while (peek()?.t === "OR") {
+      take();
+      if (left) {
+        skipAnd();
+      } else {
+        left = evalAnd();
+      }
+    }
+    return left;
+  }
+
+  return evalOr();
 }
 
 // Check if timestamp is within time range

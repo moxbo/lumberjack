@@ -4,12 +4,14 @@
 //  - AND mit '&'
 //  - Negation mit '!' als Präfix (mehrfach erlaubt: '!!foo' == 'foo')
 //  - Klammern '(' und ')' zur Gruppierung
+//  - Escape mit '\' für literale Sonderzeichen: \& \| \! \( \)
 //  - Optional: Case-sensitive oder Regex-Modus
 // Beispiele:
 //  - foo&bar: message enthält foo UND bar
 //  - foo|bar: message enthält foo ODER bar
 //  - !bar: message enthält NICHT bar
 //  - xml&(CB|AGV): message enthält xml UND (CB ODER AGV)
+//  - Tom\&Jerry: message enthält wörtlich "Tom&Jerry"
 
 export type SearchMode = "insensitive" | "sensitive" | "regex";
 
@@ -52,6 +54,7 @@ export function msgMatches(
   if (!q) return true;
 
   // Tokenizer: zerlegt in Operatoren und Wörter; ignoriert Whitespace
+  // Escape-Mechanismus: \& \| \! \( \) werden als literale Zeichen behandelt
   function tokenize(s: string): Token[] {
     const toks: Token[] = [];
     let i = 0;
@@ -64,6 +67,28 @@ export function msgMatches(
         i++;
         continue;
       }
+      // Escape-Handling: \x behandelt x als literales Zeichen
+      if (ch === "\\" && i + 1 < N) {
+        // Escaped character wird als Teil eines Wortes behandelt
+        let j = i;
+        let word = "";
+        while (j < N) {
+          const c = s[j]!;
+          if (c <= " ") break;
+          // Handle escape sequences within words
+          if (c === "\\" && j + 1 < N) {
+            word += s[j + 1]!;
+            j += 2;
+            continue;
+          }
+          if (isOp(c)) break;
+          word += c;
+          j++;
+        }
+        if (word) toks.push({ t: "WORD", v: word });
+        i = j;
+        continue;
+      }
       if (isOp(ch)) {
         if (ch === "&") toks.push({ t: "AND" });
         else if (ch === "|") toks.push({ t: "OR" });
@@ -73,14 +98,22 @@ export function msgMatches(
         i++;
         continue;
       }
-      // Wort sammeln bis nächster Operator/Whitespace
+      // Wort sammeln bis nächster Operator/Whitespace, mit Escape-Support
       let j = i;
+      let word = "";
       while (j < N) {
         const c = s[j]!;
-        if (c <= " " || isOp(c)) break;
+        if (c <= " ") break;
+        // Handle escape sequences within words
+        if (c === "\\" && j + 1 < N) {
+          word += s[j + 1]!;
+          j += 2;
+          continue;
+        }
+        if (isOp(c)) break;
+        word += c;
         j++;
       }
-      const word = s.slice(i, j).trim();
       if (word) toks.push({ t: "WORD", v: word });
       i = j;
     }
