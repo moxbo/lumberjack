@@ -143,9 +143,9 @@ test.describe("Accessibility", () => {
   test("should have proper document structure", async ({ window }) => {
     await window.waitForSelector("#app", { state: "visible", timeout: 30000 });
 
-    // Check for basic accessibility
+    // Check for basic accessibility - app uses German (de) as default language
     const html = await window.locator("html").getAttribute("lang");
-    expect(html).toBe("en");
+    expect(html).toBe("de");
 
     // Check for proper title
     const title = await window.title();
@@ -185,5 +185,100 @@ test.describe("Error Handling", () => {
 
     // Allow some tolerance for minor issues during testing
     expect(unexpectedErrors.length).toBeLessThan(5);
+  });
+});
+
+test.describe("Multi-Instance Input Behavior", () => {
+  test("input fields should accept text input", async ({ window }) => {
+    // Wait for app to load
+    await window.waitForSelector("#app", { state: "visible", timeout: 30000 });
+
+    // Find the search input
+    const searchInput = window
+      .locator('input[type="text"], input[type="search"]')
+      .first();
+
+    const searchCount = await searchInput.count();
+    if (searchCount > 0) {
+      // Focus the input
+      await searchInput.click();
+
+      // Type some text
+      const testText = "test search query";
+      await searchInput.fill(testText);
+
+      // Verify the text was entered
+      const inputValue = await searchInput.inputValue();
+      expect(inputValue).toBe(testText);
+
+      // Clear and try typing character by character
+      await searchInput.clear();
+      await searchInput.type("hello world", { delay: 50 });
+
+      const typedValue = await searchInput.inputValue();
+      expect(typedValue).toBe("hello world");
+    }
+  });
+
+  test("input should maintain focus and accept keystrokes", async ({
+    window,
+  }) => {
+    await window.waitForSelector("#app", { state: "visible", timeout: 30000 });
+
+    const searchInput = window
+      .locator('input[type="text"], input[type="search"]')
+      .first();
+
+    const searchCount = await searchInput.count();
+    if (searchCount > 0) {
+      // Click to focus
+      await searchInput.click();
+
+      // Check that input has focus
+      const isFocused = await searchInput.evaluate(
+        (el) => document.activeElement === el,
+      );
+      expect(isFocused).toBe(true);
+
+      // Press keys and verify they're received
+      await window.keyboard.press("a");
+      await window.keyboard.press("b");
+      await window.keyboard.press("c");
+
+      const value = await searchInput.inputValue();
+      expect(value).toBe("abc");
+    }
+  });
+
+  test("keyboard events should not be swallowed by global handlers", async ({
+    window,
+  }) => {
+    await window.waitForSelector("#app", { state: "visible", timeout: 30000 });
+
+    const searchInput = window
+      .locator('input[type="text"], input[type="search"]')
+      .first();
+
+    const searchCount = await searchInput.count();
+    if (searchCount > 0) {
+      await searchInput.click();
+      await searchInput.clear();
+
+      // Test various keys that might be captured by global shortcuts
+      await window.keyboard.type("filter test");
+
+      const value = await searchInput.inputValue();
+      expect(value).toBe("filter test");
+
+      // Test special keys
+      await searchInput.clear();
+      await searchInput.press("End");
+      await searchInput.type("start");
+      await searchInput.press("Home");
+      await searchInput.type("end");
+
+      const finalValue = await searchInput.inputValue();
+      expect(finalValue).toContain("start");
+    }
   });
 });
