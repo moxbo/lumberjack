@@ -810,7 +810,6 @@ export default function App(): JSX.Element {
   // Use Filter Worker for large datasets (>10,000 entries)
   const {
     filteredIndices: workerFilteredIdx,
-    isFiltering,
     stats: workerFilterStats,
     filterEntries,
   } = useFilterWorker();
@@ -2956,7 +2955,7 @@ export default function App(): JSX.Element {
                     : undefined,
               }}
             >
-              {isFiltering ? "..." : countFiltered}
+              {countFiltered}
             </span>{" "}
             {t("toolbar.filtered")},{" "}
             <span id="countSelected" className="count">
