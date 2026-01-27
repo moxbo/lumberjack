@@ -5,6 +5,7 @@
 
 import { getRendererLogEntryPool } from "../store/RendererLogEntryPool";
 import { LoggingStore } from "../store/loggingStore";
+import { DiagnosticContextFilter } from "../store/dcFilter";
 import { msgMatches as msgMatchesFn } from "./msgFilter";
 
 // Global debug reference for console access
@@ -227,8 +228,8 @@ export function setupDebugFunctions(): void {
 
     /**
      * Add test log entries for E2E testing.
-     * @param entries Array of {message, level?, logger?} objects
-     * @example window.ljDebug.addTestEntries([{message: "Tom&Jerry cartoon"}])
+     * @param entries Array of {message, level?, logger?, mdc?} objects
+     * @example window.ljDebug.addTestEntries([{message: "Test", mdc: {userId: "123"}}])
      */
     addTestEntries: (
       entries: Array<{
@@ -236,6 +237,7 @@ export function setupDebugFunctions(): void {
         level?: string;
         logger?: string;
         thread?: string;
+        mdc?: Record<string, string>;
       }>,
     ) => {
       const now = new Date().toISOString();
@@ -247,7 +249,8 @@ export function setupDebugFunctions(): void {
         message: e.message,
         traceId: null,
         stackTrace: null,
-        raw: { message: e.message },
+        mdc: e.mdc || null,
+        raw: { message: e.message, mdc: e.mdc },
         source: "test://e2e-test",
         _testId: `test-${Date.now()}-${i}`,
       }));
@@ -287,5 +290,17 @@ export function setupDebugFunctions(): void {
         return 0;
       }
     },
+
+    /**
+     * Access to DiagnosticContextFilter for E2E testing.
+     * Allows testing DC filter functionality:
+     * - getState(): Get current filter entries and enabled state
+     * - isEnabled(): Check if filter is enabled
+     * - addMdcEntry(key, val): Add a filter entry
+     * - removeMdcEntry(key, val): Remove a filter entry
+     * - setEnabled(bool): Enable/disable the filter
+     * - reset(): Clear all filter entries
+     */
+    DiagnosticContextFilter,
   };
 }

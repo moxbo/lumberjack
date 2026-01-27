@@ -177,6 +177,24 @@ class DiagnosticContextFilterImpl {
       (a, b) => a.key.localeCompare(b.key) || a.val.localeCompare(b.val),
     );
   }
+  /**
+   * Returns the complete state of the DC filter for use by the filter worker.
+   * This method provides both the enabled status and all entries in one call.
+   * Note: Returns 'value' instead of 'val' for compatibility with the filter worker API.
+   */
+  getState(): {
+    entries: Array<{ key: string; value: string; active: boolean }>;
+    enabled: boolean;
+  } {
+    return {
+      entries: this.getDcEntries().map((e) => ({
+        key: e.key,
+        value: e.val,
+        active: e.active,
+      })),
+      enabled: this._enabled,
+    };
+  }
   private _hasActive(): boolean {
     for (const e of this._map.values()) if (e.active) return true;
     return false;

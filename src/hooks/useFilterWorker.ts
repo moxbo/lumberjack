@@ -446,6 +446,42 @@ export function useFilterWorker(): UseFilterWorkerResult {
           }
         }
 
+        // DC Filter support for synchronous filtering
+        if (options.dcFilterEnabled && options.dcFilterEntries) {
+          const activeEntries = options.dcFilterEntries.filter(
+            (entry) => entry.active,
+          );
+          if (activeEntries.length > 0) {
+            const mdc = e.mdc as Record<string, unknown> | null | undefined;
+            if (!mdc || typeof mdc !== "object") {
+              filterStats.rejectedByDC++;
+              continue;
+            }
+            let dcMatched = true;
+            for (const entry of activeEntries) {
+              const key = entry.key.toLowerCase();
+              let found = false;
+              for (const mdcKey of Object.keys(mdc)) {
+                if (mdcKey.toLowerCase() === key) {
+                  const val = String(mdc[mdcKey] || "").toLowerCase();
+                  if (val === entry.value.toLowerCase()) {
+                    found = true;
+                    break;
+                  }
+                }
+              }
+              if (!found) {
+                dcMatched = false;
+                break;
+              }
+            }
+            if (!dcMatched) {
+              filterStats.rejectedByDC++;
+              continue;
+            }
+          }
+        }
+
         filterStats.passed++;
         indices.push(i);
       }
