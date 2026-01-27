@@ -1,5 +1,6 @@
 // filepath: /Users/mo/develop/my-electron-app/src/hooks/useFilterWorker.ts
 import { useState, useEffect, useRef, useCallback } from "preact/hooks";
+import { msgMatches } from "../utils/msgFilter";
 
 interface FilterOptions {
   stdFiltersEnabled: boolean;
@@ -437,9 +438,8 @@ export function useFilterWorker(): UseFilterWorkerResult {
             }
           }
           if (options.filter.message) {
-            const msg = String(e.message || "").toLowerCase();
-            const pat = options.filter.message.toLowerCase();
-            if (!msg.includes(pat)) {
+            const msg = String(e.message || "");
+            if (!msgMatches(msg, options.filter.message)) {
               filterStats.rejectedByMessage++;
               continue;
             }

@@ -4,8 +4,8 @@
  */
 
 import { getRendererLogEntryPool } from "../store/RendererLogEntryPool";
-import { msgMatches } from "./msgFilter";
 import { LoggingStore } from "../store/loggingStore";
+import { msgMatches as msgMatchesFn } from "./msgFilter";
 
 // Global debug reference for console access
 let debugEntriesRef: { current: any[] } | null = null;
@@ -218,7 +218,7 @@ export function setupDebugFunctions(): void {
      * @example window.ljDebug.msgMatches("Tom&Jerry", "Tom\\&Jerry") // true
      */
     msgMatches: (message: string, expr: string, mode?: string) => {
-      return msgMatches(
+      return msgMatchesFn(
         message,
         expr,
         mode ? { mode: mode as any } : undefined,
