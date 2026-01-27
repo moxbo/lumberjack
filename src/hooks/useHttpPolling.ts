@@ -136,6 +136,7 @@ export function useHttpPolling({
         const res = await window.api.httpLoadOnce(trimmedUrl);
         if (res.ok) {
           appendEntries((res.entries || []) as any[]);
+          setHttpStatus("");
         } else {
           setHttpStatus("Fehler: " + (res.error || "unbekannt"));
         }

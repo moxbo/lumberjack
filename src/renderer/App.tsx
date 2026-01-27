@@ -2819,6 +2819,7 @@ export default function App(): JSX.Element {
                 const res = await window.api.httpLoadOnce(url);
                 if (res.ok) {
                   appendEntries((res.entries || []) as any[]);
+                  setHttpStatus(""); // Clear error status on success
                 } else {
                   // Check if this is a feature-disabled error
                   if (!handleFeatureError(res.error)) {
@@ -3376,8 +3377,11 @@ export default function App(): JSX.Element {
           )}
           {/* HTTP Status - nur anzeigen wenn aktiv */}
           {httpStatus && !httpStatus.includes("inaktiv") && (
-            <span id="httpStatus" className="status status-active">
-              🟢 {httpStatus}
+            <span
+              id="httpStatus"
+              className={`status ${httpStatus.startsWith("Fehler:") ? "status-error" : "status-active"}`}
+            >
+              {httpStatus.startsWith("Fehler:") ? "🔴" : "🟢"} {httpStatus}
             </span>
           )}
           {nextPollIn && (
