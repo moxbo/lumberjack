@@ -26,8 +26,9 @@ interface LogRowProps {
 }
 
 // Cache for highlighted messages to avoid repeated regex operations
+// Increased from 500 to 2000 for better performance with 300k+ entries
 const highlightCache = new Map<string, string>();
-const MAX_CACHE_SIZE = 500;
+const MAX_CACHE_SIZE = 2000;
 let lastSearchTerm = "";
 
 // Clear cache when search term changes significantly
@@ -61,9 +62,10 @@ function getCachedHighlight(
   if (cached !== undefined) return cached;
 
   // Evict oldest entries if cache is too large
+  // Delete 25% of entries to avoid frequent evictions
   if (highlightCache.size >= MAX_CACHE_SIZE) {
-    // Delete the first 50 entries to avoid repeated evictions
-    const keysToDelete = Array.from(highlightCache.keys()).slice(0, 50);
+    const evictCount = Math.floor(MAX_CACHE_SIZE * 0.25);
+    const keysToDelete = Array.from(highlightCache.keys()).slice(0, evictCount);
     for (const key of keysToDelete) {
       highlightCache.delete(key);
     }
@@ -160,6 +162,8 @@ export const LogRow = memo(LogRowComponent, (prevProps, nextProps) => {
     prevProps.markColor === nextProps.markColor &&
     prevProps.yOffset === nextProps.yOffset &&
     prevProps.compact === nextProps.compact &&
+    // Compare highlightFn reference to catch highlight function changes
+    prevProps.highlightFn === nextProps.highlightFn &&
     // Only re-render if the actual entry object changed
     prevProps.entry === nextProps.entry
   );

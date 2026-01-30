@@ -961,23 +961,26 @@ export default function App(): JSX.Element {
   const estimateSize = useCallback(() => rowHeight, []);
 
   // Memoize getItemKey to prevent re-initialization
-  const getItemKey = useCallback(
-    (index: number) => {
-      const globalIdx = filteredIdx[index];
-      return globalIdx !== undefined ? `row-${globalIdx}` : `row-temp-${index}`;
-    },
-    [filteredIdx],
-  );
+  // Use existing filteredIdxRef to avoid dependency on filteredIdx which changes frequently
+  const getItemKey = useCallback((index: number) => {
+    const globalIdx = filteredIdxRef.current[index];
+    return globalIdx !== undefined ? `row-${globalIdx}` : `row-temp-${index}`;
+  }, []);
 
   // Only create virtualizer if we have a scroll element to prevent initialization issues
   const hasScrollElement = parentRef.current !== null;
+
+  // Dynamic overscan: increase for large datasets to prevent visual gaps during fast scrolling
+  // For 300k+ entries, use higher overscan to keep scrolling smooth
+  const dynamicOverscan =
+    filteredIdx.length > 100000 ? 25 : filteredIdx.length > 50000 ? 20 : 15;
 
   const virtualizer = useVirtualizer({
     count: hasScrollElement ? filteredIdx.length : 0,
     getScrollElement,
     estimateSize,
     // Erhöhe overscan für glatteres Scrollen bei schnellem Scrollen
-    overscan: 15,
+    overscan: dynamicOverscan,
     // getItemKey für stabile Keys und besseres Re-Rendering
     getItemKey,
     // CRITICAL: Disable automatic measurement which can cause render loops
@@ -1244,7 +1247,11 @@ export default function App(): JSX.Element {
 
   const markedIdx = useMemo(() => {
     const out: number[] = [];
-    for (let vi = 0; vi < filteredIdx.length; vi++) {
+    const len = filteredIdx.length;
+    // Performance: Bei sehr großen Listen nur die ersten 100k durchsuchen
+    // um UI-Freezes zu vermeiden
+    const searchLimit = Math.min(len, 100_000);
+    for (let vi = 0; vi < searchLimit; vi++) {
       const idx = filteredIdx[vi]!;
       const e = entries[idx];
       if (e?._mark) out.push(vi);
@@ -1256,7 +1263,11 @@ export default function App(): JSX.Element {
     const s = String(debouncedSearch || "").trim();
     if (!s) return [] as number[];
     const out: number[] = [];
-    for (let vi = 0; vi < filteredIdx.length; vi++) {
+    const len = filteredIdx.length;
+    // Performance: Bei sehr großen Listen nur die ersten 50k durchsuchen
+    // für Search-Navigation, um UI-Freezes zu vermeiden
+    const searchLimit = Math.min(len, 50_000);
+    for (let vi = 0; vi < searchLimit; vi++) {
       const idx = filteredIdx[vi]!;
       const e = entries[idx];
       if (msgMatches(e?.message ?? "", s, { mode: searchMode })) out.push(vi);
@@ -3939,7 +3950,7 @@ export default function App(): JSX.Element {
                   rowHeight={rowHeight}
                   yOffset={y}
                   markColor={markColor}
-                  search={search}
+                  search={debouncedSearch}
                   onSelect={handleRowSelect}
                   onContextMenu={handleRowContextMenu}
                   highlightFn={stableHighlightFn}

@@ -26,6 +26,14 @@ interface Token {
   readonly v?: string;
 }
 
+// Cache für tokenisierte Ausdrücke - vermeidet wiederholtes Parsing
+const tokenCache = new Map<string, Token[]>();
+const MAX_TOKEN_CACHE = 50;
+
+// Cache für kompilierte Regex im Regex-Modus
+const regexFilterCache = new Map<string, RegExp | null>();
+const MAX_REGEX_FILTER_CACHE = 50;
+
 export function msgMatches(
   message: string,
   expr: string,
@@ -39,10 +47,26 @@ export function msgMatches(
   // Für Regex-Modus: gesamten Ausdruck als Regex behandeln (ohne AND/OR-Parsing)
   if (mode === "regex") {
     if (!rawExpr) return true;
-    try {
-      const re = new RegExp(rawExpr, "i"); // Regex ist immer case-insensitive
+
+    // Versuche gecachte Regex zu verwenden
+    let re = regexFilterCache.get(rawExpr);
+    if (re === undefined) {
+      try {
+        re = new RegExp(rawExpr, "i"); // Regex ist immer case-insensitive
+      } catch {
+        re = null; // Ungültiger Regex markieren
+      }
+      // Cache verwalten
+      if (regexFilterCache.size >= MAX_REGEX_FILTER_CACHE) {
+        const firstKey = regexFilterCache.keys().next().value;
+        if (firstKey) regexFilterCache.delete(firstKey);
+      }
+      regexFilterCache.set(rawExpr, re);
+    }
+
+    if (re) {
       return re.test(rawMsg);
-    } catch {
+    } else {
       // Ungültiger Regex: fallback auf einfache Suche
       return rawMsg.toLowerCase().includes(rawExpr.toLowerCase());
     }
@@ -120,7 +144,18 @@ export function msgMatches(
     return toks;
   }
 
-  const tokens = tokenize(q);
+  // Versuche gecachte Tokens zu verwenden
+  let tokens = tokenCache.get(q);
+  if (!tokens) {
+    tokens = tokenize(q);
+    // Cache verwalten
+    if (tokenCache.size >= MAX_TOKEN_CACHE) {
+      const firstKey = tokenCache.keys().next().value;
+      if (firstKey) tokenCache.delete(firstKey);
+    }
+    tokenCache.set(q, tokens);
+  }
+
   if (tokens.length === 0) return true;
 
   // Parser/Evaluator (rekursiver Abstieg) mit Kurzschlusslogik

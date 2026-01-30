@@ -38,7 +38,8 @@ interface UseFilterWorkerResult {
 }
 
 // Threshold for using web worker (entries count)
-const WORKER_THRESHOLD = 10000;
+// Lowered from 10000 to 5000 for better responsiveness with large datasets
+const WORKER_THRESHOLD = 5000;
 
 // Worker code as a function string (avoids template literal escaping issues)
 function getWorkerCode(): string {

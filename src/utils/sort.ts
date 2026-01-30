@@ -1,6 +1,14 @@
 // Generic sorting helpers for log entries
 // compareByTimestampId: ascending by timestamp with sub-millisecond precision if available; ties and invalid timestamps by _id
 
+// Cache für Timestamp-Parsing - reduziert teure Date-Operationen
+// Begrenzte Größe um Memory-Leaks zu vermeiden
+const timestampParseCache = new Map<
+  string | number,
+  { valid: boolean; ms: number; extra: number }
+>();
+const MAX_TS_PARSE_CACHE = 10_000;
+
 function extractFractionBeyondMs(ts: unknown): number {
   // Extract digits after the decimal point in the seconds field, beyond the first 3 (milliseconds)
   // Example: 2025-10-23T15:46:12.0493117+02:00 -> fracAll=0493117 -> beyondMs=3117 -> normalized to 6 digits
@@ -31,15 +39,55 @@ function toMillisEx(ts: unknown): {
   extra: number;
 } {
   if (ts == null) return { valid: false, ms: NaN, extra: 0 };
+
+  // Check cache for string/number timestamps
+  const cacheKey = typeof ts === "string" || typeof ts === "number" ? ts : null;
+  if (cacheKey !== null) {
+    const cached = timestampParseCache.get(cacheKey);
+    if (cached !== undefined) return cached;
+  }
+
   try {
     // Ensure ts is a valid Date constructor argument
     const dateArg =
       typeof ts === "string" || typeof ts === "number" ? ts : String(ts);
     const d = new Date(dateArg);
     const ms = d.getTime();
-    if (!Number.isFinite(ms)) return { valid: false, ms: NaN, extra: 0 };
+    if (!Number.isFinite(ms)) {
+      const result = { valid: false, ms: NaN, extra: 0 };
+      if (cacheKey !== null) {
+        // Cache invalid results too
+        if (timestampParseCache.size >= MAX_TS_PARSE_CACHE) {
+          // Evict 25% of entries
+          const evictCount = Math.floor(MAX_TS_PARSE_CACHE * 0.25);
+          const keys = Array.from(timestampParseCache.keys()).slice(
+            0,
+            evictCount,
+          );
+          for (const k of keys) timestampParseCache.delete(k);
+        }
+        timestampParseCache.set(cacheKey, result);
+      }
+      return result;
+    }
     const extra = extractFractionBeyondMs(ts);
-    return { valid: true, ms, extra };
+    const result = { valid: true, ms, extra };
+
+    // Cache the result
+    if (cacheKey !== null) {
+      if (timestampParseCache.size >= MAX_TS_PARSE_CACHE) {
+        // Evict 25% of entries
+        const evictCount = Math.floor(MAX_TS_PARSE_CACHE * 0.25);
+        const keys = Array.from(timestampParseCache.keys()).slice(
+          0,
+          evictCount,
+        );
+        for (const k of keys) timestampParseCache.delete(k);
+      }
+      timestampParseCache.set(cacheKey, result);
+    }
+
+    return result;
   } catch {
     return { valid: false, ms: NaN, extra: 0 };
   }
@@ -68,4 +116,9 @@ export function compareByTimestampId(
   const am = String(a?.message ?? "");
   const bm = String(b?.message ?? "");
   return am.localeCompare(bm);
+}
+
+// Clear timestamp parse cache (call when clearing logs)
+export function clearTimestampParseCache(): void {
+  timestampParseCache.clear();
 }
