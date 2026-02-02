@@ -16,8 +16,9 @@ export function levelClass(level: string | null | undefined): string {
 }
 
 // Cache für Timestamp-Formatierung (begrenzte Größe)
+// Erhöht auf 5000 für bessere Performance bei 300k+ Einträgen
 const timestampCache = new Map<string | number, string>();
-const MAX_TS_CACHE_SIZE = 1000;
+const MAX_TS_CACHE_SIZE = 5000;
 
 export function fmtTimestamp(
   ts: string | number | Date | null | undefined,
@@ -47,8 +48,12 @@ export function fmtTimestamp(
     // Cache das Ergebnis
     if (cacheKey !== null) {
       if (timestampCache.size >= MAX_TS_CACHE_SIZE) {
-        // Lösche die ersten 100 Einträge
-        const keysToDelete = Array.from(timestampCache.keys()).slice(0, 100);
+        // Lösche 25% der Einträge für weniger häufige Evictions
+        const evictCount = Math.floor(MAX_TS_CACHE_SIZE * 0.25);
+        const keysToDelete = Array.from(timestampCache.keys()).slice(
+          0,
+          evictCount,
+        );
         for (const key of keysToDelete) {
           timestampCache.delete(key);
         }

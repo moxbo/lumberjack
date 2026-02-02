@@ -24,33 +24,58 @@ export function setDebugFilteredIdxRef(
 
 export function setupDebugFunctions(): void {
   (window as any).ljDebug = {
-    findInEntries: (term: string) => {
+    /**
+     * Search for a term in log entries.
+     * By default, searches only in filtered (visible) entries for better performance.
+     * @param term - The search term
+     * @param searchAll - If true, search all entries (not just filtered). Default: false
+     */
+    findInEntries: (term: string, searchAll = false) => {
       const entries = debugEntriesRef?.current || [];
       const filteredIdx = debugFilteredIdxRef?.current || [];
       const termLower = term.toLowerCase();
+
+      const isFilterActive = filteredIdx.length < entries.length;
+      const searchScope = searchAll ? entries.length : filteredIdx.length;
 
       // eslint-disable-next-line no-console
       console.log(
         "[ljDebug] Searching for '" +
           term +
           "' in " +
-          entries.length +
-          " total entries...",
+          searchScope +
+          (searchAll ? " total" : " filtered") +
+          " entries" +
+          (isFilterActive && !searchAll
+            ? " (filter active, use findInEntries(term, true) to search all)"
+            : "") +
+          "...",
       );
 
-      const foundInAll: number[] = [];
-      const foundInFiltered: number[] = [];
+      const found: number[] = [];
 
-      for (let i = 0; i < entries.length; i++) {
-        const e = entries[i];
-        if (!e) continue;
-        const msg = String(e.message || "").toLowerCase();
-        const raw = JSON.stringify(e.raw || e).toLowerCase();
+      if (searchAll) {
+        // Search all entries
+        for (let i = 0; i < entries.length; i++) {
+          const e = entries[i];
+          if (!e) continue;
+          const msg = String(e.message || "").toLowerCase();
+          const raw = JSON.stringify(e.raw || e).toLowerCase();
 
-        if (msg.includes(termLower) || raw.includes(termLower)) {
-          foundInAll.push(i);
-          if (filteredIdx.includes(i)) {
-            foundInFiltered.push(i);
+          if (msg.includes(termLower) || raw.includes(termLower)) {
+            found.push(i);
+          }
+        }
+      } else {
+        // Search only filtered entries (more performant)
+        for (const idx of filteredIdx) {
+          const e = entries[idx];
+          if (!e) continue;
+          const msg = String(e.message || "").toLowerCase();
+          const raw = JSON.stringify(e.raw || e).toLowerCase();
+
+          if (msg.includes(termLower) || raw.includes(termLower)) {
+            found.push(idx);
           }
         }
       }
@@ -58,37 +83,31 @@ export function setupDebugFunctions(): void {
       // eslint-disable-next-line no-console
       console.log(
         "[ljDebug] Found " +
-          foundInAll.length +
+          found.length +
           " entries containing '" +
           term +
-          "'",
-      );
-      // eslint-disable-next-line no-console
-      console.log(
-        "[ljDebug] Of those, " +
-          foundInFiltered.length +
-          " are visible (not filtered out)",
+          "'" +
+          (searchAll && isFilterActive
+            ? " (of which " +
+              found.filter((i) => filteredIdx.includes(i)).length +
+              " are visible)"
+            : ""),
       );
 
-      if (foundInAll.length > 0 && foundInFiltered.length === 0) {
-        console.warn(
-          "[ljDebug] WARNING: All " +
-            foundInAll.length +
-            " entries with '" +
+      if (found.length === 0 && !searchAll && isFilterActive) {
+        // eslint-disable-next-line no-console
+        console.log(
+          "[ljDebug] Tip: No matches in filtered entries. Try findInEntries('" +
             term +
-            "' are filtered out!",
+            "', true) to search all entries.",
         );
-        const firstIdx = foundInAll[0];
-        if (firstIdx !== undefined) {
-          // eslint-disable-next-line no-console
-          console.log("[ljDebug] First matching entry:", entries[firstIdx]);
-        }
       }
 
       return {
-        total: foundInAll.length,
-        visible: foundInFiltered.length,
-        indices: foundInAll,
+        count: found.length,
+        indices: found,
+        searchedAll: searchAll,
+        filterActive: isFilterActive,
       };
     },
 

@@ -13,6 +13,8 @@ import {
 } from "../utils/entryUtils";
 import { clearHighlightCache } from "../renderer/LogRow";
 import { clearTimestampCache } from "../utils/format";
+import { clearRegexCache } from "../utils/highlight";
+import { clearTimestampParseCache } from "../utils/sort";
 import logger from "../utils/logger";
 import {
   IPC_BATCH_SIZE,
@@ -37,10 +39,11 @@ export function useEntryManagement({ marksMap }: UseEntryManagementOptions) {
   }, [nextId]);
 
   // Memory Pool for log entries - reduces GC pressure with 100k+ entries
+  // Erhöhte Größe für bessere Performance bei 300k+ Einträgen
   const poolRef = useRef(
     getRendererLogEntryPool({
-      maxSize: 50_000,
-      initialSize: 2_000,
+      maxSize: 100_000,
+      initialSize: 5_000,
       enableLogging: false,
     }),
   );
@@ -312,15 +315,25 @@ export function useEntryManagement({ marksMap }: UseEntryManagementOptions) {
     appendEntriesInternal(batch);
     ipcProcessingRef.current = false;
 
-    // Schedule next batch
+    // Schedule next batch using requestIdleCallback for better UI responsiveness
     if (ipcQueueRef.current.length > 0) {
       if (ipcFlushTimerRef.current) {
         clearTimeout(ipcFlushTimerRef.current);
       }
-      ipcFlushTimerRef.current = window.setTimeout(() => {
-        ipcFlushTimerRef.current = null;
-        processIpcQueueRef.current();
-      }, IPC_PROCESS_INTERVAL);
+      // Use requestIdleCallback if available for non-blocking processing
+      if (typeof requestIdleCallback === "function") {
+        requestIdleCallback(
+          () => {
+            processIpcQueueRef.current();
+          },
+          { timeout: IPC_PROCESS_INTERVAL * 2 },
+        );
+      } else {
+        ipcFlushTimerRef.current = window.setTimeout(() => {
+          ipcFlushTimerRef.current = null;
+          processIpcQueueRef.current();
+        }, IPC_PROCESS_INTERVAL);
+      }
     }
   }, [appendEntriesInternal]);
 
@@ -375,6 +388,8 @@ export function useEntryManagement({ marksMap }: UseEntryManagementOptions) {
     httpSigCacheRef.current = new Map();
     clearHighlightCache();
     clearTimestampCache();
+    clearTimestampParseCache();
+    clearRegexCache();
 
     try {
       (LoggingStore as any).reset();

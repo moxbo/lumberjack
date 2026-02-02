@@ -4,6 +4,11 @@
 
 import { compareByTimestampId } from "./sort";
 
+// Cache für Entry-Signaturen - reduziert String-Operationen bei wiederholten Aufrufen
+// WeakMap ermöglicht automatische Garbage Collection wenn Entries entfernt werden
+const signatureCache = new WeakMap<object, string>();
+const mergeSignatureCache = new WeakMap<object, string>();
+
 /**
  * Entry signature for deduplication (without _id, since that's assigned later)
  * Uses _fullMessage if available (for truncated entries) to ensure unique signatures
@@ -12,6 +17,11 @@ import { compareByTimestampId } from "./sort";
  */
 export function entrySignatureForMerge(e: any): string {
   if (!e) return "";
+
+  // Check cache first
+  const cached = mergeSignatureCache.get(e);
+  if (cached !== undefined) return cached;
+
   const ts = e?.timestamp != null ? String(e.timestamp) : "";
   const lg = e?.logger != null ? String(e.logger) : "";
   // Use _fullMessage (original before truncation) if available, otherwise use message
@@ -29,7 +39,14 @@ export function entrySignatureForMerge(e: any): string {
   }
 
   const src = e?.source != null ? String(e.source) : "";
-  return `${ts}|${lg}|${msg}|${src}`;
+  const result = `${ts}|${lg}|${msg}|${src}`;
+
+  // Cache the result
+  if (typeof e === "object" && e !== null) {
+    mergeSignatureCache.set(e, result);
+  }
+
+  return result;
 }
 
 /**
@@ -40,6 +57,12 @@ export function entrySignatureForMerge(e: any): string {
  * For very large messages, uses prefix + length to avoid memory issues.
  */
 export function entrySignature(e: any): string {
+  if (!e) return "";
+
+  // Check cache first
+  const cached = signatureCache.get(e);
+  if (cached !== undefined) return cached;
+
   const ts = e?.timestamp != null ? String(e.timestamp) : "";
   const lg = e?.logger != null ? String(e.logger) : "";
 
@@ -59,10 +82,19 @@ export function entrySignature(e: any): string {
 
   // For ES entries, include source (contains doc ID) to distinguish same-content entries
   const src = e?.source;
+  let result: string;
   if (typeof src === "string" && src.startsWith("elastic://")) {
-    return `${ts}|${lg}|${msg}|${src}`;
+    result = `${ts}|${lg}|${msg}|${src}`;
+  } else {
+    result = `${ts}|${lg}|${msg}`;
   }
-  return `${ts}|${lg}|${msg}`;
+
+  // Cache the result
+  if (typeof e === "object" && e !== null) {
+    signatureCache.set(e, result);
+  }
+
+  return result;
 }
 
 /**

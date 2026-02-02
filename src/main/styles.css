@@ -744,6 +744,10 @@ body {
   margin: 0;
   padding: 0;
   font-size: 13px;
+  /* Performance: contain für besseres Layout-Verhalten bei großen Listen */
+  contain: strict;
+  /* Optimiert für Compositing */
+  isolation: isolate;
 }
 
 .row {
@@ -757,9 +761,12 @@ body {
   pointer-events: auto;
   cursor: pointer;
   user-select: none;
-  transition: background-color var(--transition-fast);
+  /* Performance: Keine Transition für bessere Scroll-Performance bei 300k+ Einträgen */
+  /* transition: background-color var(--transition-fast); */
   /* Performance-Optimierungen für virtualisierte Listen */
   contain: layout style paint;
+  /* GPU-Beschleunigung für Transform-basiertes Positionieren */
+  will-change: transform;
   /* content-visibility entfernt - verursacht Render-Probleme beim schnellen Scrollen */
 }
 
@@ -2398,18 +2405,23 @@ input[type="checkbox"] {
 .filter-chip.level-trace {
   background: var(--color-level-trace);
 }
+
 .filter-chip.level-debug {
   background: var(--color-level-debug);
 }
+
 .filter-chip.level-info {
   background: var(--color-level-info);
 }
+
 .filter-chip.level-warn {
   background: var(--color-level-warn);
 }
+
 .filter-chip.level-error {
   background: var(--color-level-error);
 }
+
 .filter-chip.level-fatal {
   background: var(--color-level-fatal);
 }
@@ -3144,6 +3156,7 @@ button.filter-chip.trace-timeline-chip .chip-label {
 .update-notification[data-status="downloaded"] {
   border-color: var(--color-success);
 }
+
 /* ============================
    Skeleton Loader Styles
    ============================ */
@@ -3153,6 +3166,7 @@ button.filter-chip.trace-timeline-chip .chip-label {
   flex-direction: column;
   gap: 12px;
 }
+
 .skeleton-header {
   height: 24px;
   width: 40%;
@@ -3166,6 +3180,7 @@ button.filter-chip.trace-timeline-chip .chip-label {
   animation: skeleton-shimmer 1.5s infinite;
   border-radius: 4px;
 }
+
 .skeleton-line {
   height: 16px;
   width: 100%;
@@ -3179,12 +3194,15 @@ button.filter-chip.trace-timeline-chip .chip-label {
   animation: skeleton-shimmer 1.5s infinite;
   border-radius: 4px;
 }
+
 .skeleton-line--short {
   width: 30%;
 }
+
 .skeleton-line--medium {
   width: 60%;
 }
+
 @keyframes skeleton-shimmer {
   0% {
     background-position: 200% 0;
@@ -3780,7 +3798,7 @@ button.filter-chip.trace-timeline-chip .chip-label {
 }
 
 .trace-timeline-trace-id code {
-  font-family: var(--font-family-mono);
+  font-family: var(--font-family-mono), monospace;
   font-size: var(--font-size-xs);
   background: var(--color-bg-hover);
   padding: 2px 8px;
@@ -3826,7 +3844,7 @@ button.filter-chip.trace-timeline-chip .chip-label {
   font-size: var(--font-size-xl);
   font-weight: 700;
   color: var(--color-text-primary);
-  font-family: var(--font-family-mono);
+  font-family: var(--font-family-mono), monospace;
 }
 
 .trace-timeline-stats .stat-label {
@@ -3848,7 +3866,7 @@ button.filter-chip.trace-timeline-chip .chip-label {
 
 .trace-timeline-axis .time-label {
   font-size: var(--font-size-xs);
-  font-family: var(--font-family-mono);
+  font-family: var(--font-family-mono), monospace;
   color: var(--color-text-secondary);
   white-space: nowrap;
 }
@@ -3882,7 +3900,7 @@ button.filter-chip.trace-timeline-chip .chip-label {
   left: 4px;
   transform: translateY(-50%);
   font-size: 10px;
-  font-family: var(--font-family-mono);
+  font-family: var(--font-family-mono), monospace;
   color: var(--color-text-disabled);
   white-space: nowrap;
 }
@@ -3964,7 +3982,7 @@ button.filter-chip.trace-timeline-chip .chip-label {
 
 .trace-span .span-label {
   font-size: 10px;
-  font-family: var(--font-family-mono);
+  font-family: var(--font-family-mono), monospace;
   color: white;
   text-shadow: 0 1px 2px rgba(0, 0, 0, 0.3);
   padding: 0 4px;
@@ -4022,11 +4040,11 @@ button.filter-chip.trace-timeline-chip .chip-label {
 
 .trace-timeline-details .level-badge.level-debug {
   background: rgba(142, 142, 147, 0.15);
-  color: var(--color-debug, #8e8e93);
+  color: var(--color-level-debug, #8e8e93);
 }
 
 .trace-timeline-details .duration {
-  font-family: var(--font-family-mono);
+  font-family: var(--font-family-mono), monospace;
   font-size: var(--font-size-sm);
   color: var(--color-text-secondary);
   margin-left: auto;
@@ -4050,7 +4068,7 @@ button.filter-chip.trace-timeline-chip .chip-label {
 }
 
 .trace-timeline-details .entry-time {
-  font-family: var(--font-family-mono);
+  font-family: var(--font-family-mono), monospace;
   font-size: var(--font-size-xs);
   color: var(--color-text-secondary);
   white-space: nowrap;
