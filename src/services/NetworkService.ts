@@ -360,13 +360,9 @@ export class NetworkService {
       });
 
       socket.on("error", (err) => {
+        // Only log internally, don't send to UI log list - these are internal socket errors
+        // (like ECONNRESET when client disconnects), not actual application log data
         log.warn(`[tcp] Socket error on ${socketId}:`, err.message);
-        const errorEntry = toEntry(
-          { level: "ERROR", message: `TCP socket error: ${err.message}` },
-          "",
-          "tcp",
-        );
-        this.sendLogs([errorEntry]);
       });
 
       socket.on("timeout", () => {
