@@ -1587,6 +1587,13 @@ export default function App(): JSX.Element {
         logger.error("Error loading settings:", e);
       } finally {
         setSettingsLoaded(true);
+        // Hide the splash screen now that app is ready
+        const splash = document.getElementById("splash-screen");
+        if (splash) {
+          splash.classList.add("hidden");
+          // Remove from DOM after transition completes
+          setTimeout(() => splash.remove(), 300);
+        }
       }
       // Per-Window Berechtigungen laden
       try {
