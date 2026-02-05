@@ -257,6 +257,17 @@ const api: ElectronAPI = {
       ipcRenderer.removeListener("memory:critical", listener);
     };
   },
+
+  // Window focus listener - helps fix input issues when switching between windows
+  onWindowFocus: (callback: () => void): (() => void) => {
+    const listener = (): void => {
+      callback();
+    };
+    ipcRenderer.on("window:focus", listener);
+    return (): void => {
+      ipcRenderer.removeListener("window:focus", listener);
+    };
+  },
 };
 
 // Expose the API to the renderer process in a secure way

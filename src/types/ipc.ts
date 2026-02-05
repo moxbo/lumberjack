@@ -380,6 +380,8 @@ export type ElectronAPI = {
       heapPercent: number;
     }) => void,
   ) => () => void;
+  // Window focus - helps fix input issues when switching between windows
+  onWindowFocus: (callback: () => void) => () => void;
 };
 
 declare global {

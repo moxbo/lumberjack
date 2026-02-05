@@ -1979,6 +1979,31 @@ export default function App(): JSX.Element {
     } catch (e) {
       logger.error("onTcpStatus setup failed:", e);
     }
+    // Handle window focus events to fix input issues when switching between windows
+    try {
+      if (window.api?.onWindowFocus) {
+        const off = window.api.onWindowFocus(() => {
+          // When window receives focus, ensure the document body can receive input
+          // This fixes issues where inputs don't work after switching between multiple windows
+          try {
+            // If no element is focused, or focus is on body, don't force focus change
+            // This allows the focused input to stay focused
+            if (
+              document.activeElement === document.body ||
+              !document.activeElement
+            ) {
+              // Trigger a focus event on the document to ensure inputs are interactive
+              document.body.focus();
+            }
+          } catch {
+            // Ignore focus errors
+          }
+        });
+        offs.push(off);
+      }
+    } catch (e) {
+      logger.error("onWindowFocus setup failed:", e);
+    }
     rendererPerf.mark("ipc-setup-complete");
     return () => {
       for (const f of offs)

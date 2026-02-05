@@ -1550,18 +1550,36 @@ function createWindow(opts: { makePrimary?: boolean } = {}): BrowserWindow {
       lastFocusedWindowId = win.id;
       updateMenu();
       // Ensure webContents receives focus for keyboard input
-      // This is important when multiple instances are running
-      try {
-        if (
-          !win.isDestroyed() &&
-          win.webContents &&
-          !win.webContents.isDestroyed()
-        ) {
-          win.webContents.focus();
-        }
-      } catch {
-        // Ignore focus errors
-      }
+      // This is important when multiple instances/windows are running
+      // Use multiple delayed attempts to handle OS-level focus race conditions
+      const focusWebContents = (delay: number) => {
+        setTimeout(() => {
+          try {
+            if (
+              !win.isDestroyed() &&
+              win.webContents &&
+              !win.webContents.isDestroyed() &&
+              win.isFocused()
+            ) {
+              win.webContents.focus();
+              // Also notify the renderer to handle focus restoration
+              // This helps fix input issues when switching between multiple windows
+              try {
+                win.webContents.send("window:focus");
+              } catch {
+                // Ignore send errors
+              }
+            }
+          } catch {
+            // Ignore focus errors
+          }
+        }, delay);
+      };
+      // Immediate attempt
+      focusWebContents(0);
+      // Delayed attempts to handle race conditions with OS window manager
+      focusWebContents(50);
+      focusWebContents(150);
     });
     win.on("blur", () => updateMenu());
     // Ensure focus is set when window is shown
