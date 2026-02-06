@@ -315,7 +315,8 @@ export class SettingsService {
       );
       this.loadSync();
     }
-    const result = JSON.parse(JSON.stringify(this.settings)) as Settings;
+    // Node 22+/Chrome 134+: structuredClone ist schneller als JSON.parse/stringify
+    const result = structuredClone(this.settings);
     log.debug(
       "[settings] get() returning settings with httpUrl:",
       result.httpUrl || "(empty)",

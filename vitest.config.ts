@@ -4,6 +4,8 @@ export default defineConfig({
   test: {
     globals: true,
     environment: "node",
+    // Vitest 4.0.18+: Thread-Pool für schnellere parallele Tests
+    pool: "threads",
     include: ["src/**/*.test.ts", "src/**/*.spec.ts"],
     exclude: [
       "node_modules",
@@ -29,6 +31,8 @@ export default defineConfig({
         "src/types/**",
         "node_modules/**",
       ],
+      // Threshold für Coverage-Qualität (optional aktivieren)
+      // thresholds: { lines: 80, functions: 80, branches: 80, statements: 80 },
     },
     testTimeout: 30000,
   },

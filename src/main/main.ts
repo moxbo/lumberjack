@@ -2624,6 +2624,17 @@ try {
   app.on("will-quit", (e) => {
     try {
       log.info("[diag] will-quit fired; defaultPrevented=", e.defaultPrevented);
+
+      // Shutdown FilterService UtilityProcess (Electron 40+)
+      try {
+        const { getFilterService } =
+          require("../services/FilterService") as typeof import("../services/FilterService");
+        getFilterService().shutdown();
+        log.info("[diag] FilterService shutdown complete");
+      } catch {
+        // FilterService may not have been initialized, ignore
+      }
+
       forceFlushLogs();
     } catch (err) {
       log.error(

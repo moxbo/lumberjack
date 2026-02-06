@@ -382,7 +382,58 @@ export type ElectronAPI = {
   ) => () => void;
   // Window focus - helps fix input issues when switching between windows
   onWindowFocus: (callback: () => void) => () => void;
+  // Filter UtilityProcess API (Electron 40+)
+  filterEntries: (
+    entries: unknown[],
+    options: FilterOptions,
+  ) => Promise<FilterResult>;
+  filterIsAvailable: () => Promise<{ ok: boolean; available: boolean }>;
 };
+
+/**
+ * Filter options for UtilityProcess filtering
+ */
+export interface FilterOptions {
+  stdFiltersEnabled: boolean;
+  filter: {
+    level: string;
+    logger: string;
+    thread: string;
+    message: string;
+  };
+  onlyMarked: boolean;
+  dcFilterEnabled: boolean;
+  dcFilterEntries: Array<{ key: string; value: string; active: boolean }>;
+  timeFilterEnabled: boolean;
+  timeFilterFrom?: string;
+  timeFilterTo?: string;
+}
+
+/**
+ * Filter result from UtilityProcess
+ */
+export interface FilterResult {
+  ok: boolean;
+  error?: string;
+  filteredIndices: number[];
+  stats: FilterStats;
+}
+
+/**
+ * Filter statistics
+ */
+export interface FilterStats {
+  total: number;
+  passed: number;
+  rejectedByOnlyMarked: number;
+  rejectedByLevel: number;
+  rejectedByLogger: number;
+  rejectedByThread: number;
+  rejectedByMessage: number;
+  rejectedByTime: number;
+  rejectedByDC: number;
+  processingTimeMs?: number;
+}
 
 declare global {
   interface Window {

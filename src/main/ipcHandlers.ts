@@ -953,4 +953,101 @@ export function registerIpcHandlers(
     app.exit(0);
     return { ok: true };
   });
+
+  // ============================================================================
+  // Filter UtilityProcess Handler (Electron 40+)
+  // ============================================================================
+
+  // Lazy import to avoid loading FilterService at startup
+  let _filterService: import("../services/FilterService").FilterService | null =
+    null;
+
+  function getFilterServiceLazy(): import("../services/FilterService").FilterService {
+    if (!_filterService) {
+      // Dynamic import to defer loading
+      const { getFilterService } =
+        require("../services/FilterService") as typeof import("../services/FilterService");
+      _filterService = getFilterService();
+    }
+    return _filterService;
+  }
+
+  /**
+   * Filter entries using UtilityProcess for better performance
+   * Falls back to returning empty result on error
+   */
+  ipcMain.handle(
+    "filter:entries",
+    async (
+      _event,
+      {
+        entries,
+        options,
+      }: {
+        entries: unknown[];
+        options: {
+          stdFiltersEnabled: boolean;
+          filter: {
+            level: string;
+            logger: string;
+            thread: string;
+            message: string;
+          };
+          onlyMarked: boolean;
+          dcFilterEnabled: boolean;
+          dcFilterEntries: Array<{
+            key: string;
+            value: string;
+            active: boolean;
+          }>;
+          timeFilterEnabled: boolean;
+          timeFilterFrom?: string;
+          timeFilterTo?: string;
+        };
+      },
+    ) => {
+      try {
+        const filterService = getFilterServiceLazy();
+        const result = await filterService.filter(entries, options);
+        return {
+          ok: true,
+          filteredIndices: result.filteredIndices,
+          stats: result.stats,
+        };
+      } catch (error) {
+        log.warn(
+          "[filter] UtilityProcess filter failed, returning empty result:",
+          error instanceof Error ? error.message : String(error),
+        );
+        return {
+          ok: false,
+          error: error instanceof Error ? error.message : String(error),
+          filteredIndices: [],
+          stats: {
+            total: entries.length,
+            passed: 0,
+            rejectedByOnlyMarked: 0,
+            rejectedByLevel: 0,
+            rejectedByLogger: 0,
+            rejectedByThread: 0,
+            rejectedByMessage: 0,
+            rejectedByTime: 0,
+            rejectedByDC: 0,
+          },
+        };
+      }
+    },
+  );
+
+  /**
+   * Check if UtilityProcess filter is available
+   */
+  ipcMain.handle("filter:isAvailable", () => {
+    try {
+      const filterService = getFilterServiceLazy();
+      return { ok: true, available: filterService.isAvailable() };
+    } catch {
+      return { ok: true, available: false };
+    }
+  });
 }

@@ -36,6 +36,9 @@ export default defineConfig({
 
     // Video: "on" = immer, "retain-on-failure" = nur bei Fehler behalten
     video: "retain-on-failure",
+
+    // Playwright 1.58+: Accessibility-Testing mit Aria-Snapshots
+    // Ermöglicht das Testen von ARIA-Labels für bessere Accessibility
   },
   outputDir: "test-results",
 });

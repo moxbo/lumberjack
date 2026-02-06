@@ -268,6 +268,53 @@ const api: ElectronAPI = {
       ipcRenderer.removeListener("window:focus", listener);
     };
   },
+
+  // ============================================================================
+  // Filter UtilityProcess API (Electron 40+)
+  // ============================================================================
+
+  /**
+   * Filter entries using UtilityProcess for better performance with large datasets
+   */
+  filterEntries: (
+    entries: unknown[],
+    options: {
+      stdFiltersEnabled: boolean;
+      filter: {
+        level: string;
+        logger: string;
+        thread: string;
+        message: string;
+      };
+      onlyMarked: boolean;
+      dcFilterEnabled: boolean;
+      dcFilterEntries: Array<{ key: string; value: string; active: boolean }>;
+      timeFilterEnabled: boolean;
+      timeFilterFrom?: string;
+      timeFilterTo?: string;
+    },
+  ): Promise<{
+    ok: boolean;
+    error?: string;
+    filteredIndices: number[];
+    stats: {
+      total: number;
+      passed: number;
+      rejectedByOnlyMarked: number;
+      rejectedByLevel: number;
+      rejectedByLogger: number;
+      rejectedByThread: number;
+      rejectedByMessage: number;
+      rejectedByTime: number;
+      rejectedByDC: number;
+    };
+  }> => ipcRenderer.invoke("filter:entries", { entries, options }),
+
+  /**
+   * Check if UtilityProcess filter is available
+   */
+  filterIsAvailable: (): Promise<{ ok: boolean; available: boolean }> =>
+    ipcRenderer.invoke("filter:isAvailable"),
 };
 
 // Expose the API to the renderer process in a secure way

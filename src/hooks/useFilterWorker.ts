@@ -1,4 +1,15 @@
 // filepath: /Users/mo/develop/my-electron-app/src/hooks/useFilterWorker.ts
+/**
+ * Filter Worker Hook
+ *
+ * Nutzt bevorzugt den Electron 40+ UtilityProcess für bessere Performance.
+ * Fällt auf Web Worker oder synchrones Filtering zurück wenn nötig.
+ *
+ * Vorteile des UtilityProcess:
+ * - Eigener V8-Isolate (bessere Memory-Isolation)
+ * - Kein Blob-URL-Workaround nötig
+ * - Bessere Performance bei großen Datensätzen (>5000 Entries)
+ */
 import { useState, useEffect, useRef, useCallback } from "preact/hooks";
 import { msgMatches } from "../utils/msgFilter";
 
@@ -35,9 +46,11 @@ interface UseFilterWorkerResult {
   isFiltering: boolean;
   stats: FilterStats | null;
   filterEntries: (entries: unknown[], options: FilterOptions) => void;
+  /** True wenn UtilityProcess verwendet wird, false für Web Worker/Sync */
+  useUtilityProcess: boolean;
 }
 
-// Threshold for using web worker (entries count)
+// Threshold for using worker/utility process (entries count)
 // Lowered from 10000 to 5000 for better responsiveness with large datasets
 const WORKER_THRESHOLD = 5000;
 
@@ -320,17 +333,45 @@ function getWorkerCode(): string {
 }
 
 /**
- * Hook that uses a Web Worker for filtering large datasets.
- * Falls back to synchronous filtering for smaller datasets.
+ * Hook that uses UtilityProcess (Electron 40+) or Web Worker for filtering large datasets.
+ * Falls back to synchronous filtering for smaller datasets or when UtilityProcess unavailable.
+ *
+ * Priority:
+ * 1. UtilityProcess (best performance, separate process)
+ * 2. Web Worker (fallback, runs in renderer thread pool)
+ * 3. Synchronous (for small datasets < 5000 entries)
  */
 export function useFilterWorker(): UseFilterWorkerResult {
   const [filteredIndices, setFilteredIndices] = useState<number[]>([]);
   const [isFiltering, setIsFiltering] = useState(false);
   const [stats, setStats] = useState<FilterStats | null>(null);
+  const [useUtilityProcess, setUseUtilityProcess] = useState(false);
 
   const workerRef = useRef<Worker | null>(null);
   const workerUrlRef = useRef<string | null>(null);
   const pendingRequestRef = useRef<number>(0);
+  const utilityProcessAvailableRef = useRef<boolean | null>(null);
+
+  // Check if UtilityProcess is available on mount
+  useEffect(() => {
+    const checkUtilityProcess = async (): Promise<void> => {
+      try {
+        if (window.api?.filterIsAvailable) {
+          const result = await window.api.filterIsAvailable();
+          utilityProcessAvailableRef.current = result.ok && result.available;
+          setUseUtilityProcess(result.ok && result.available);
+          if (result.ok && result.available) {
+            console.warn(
+              "[FilterWorker] UtilityProcess available, using for large datasets",
+            );
+          }
+        }
+      } catch {
+        utilityProcessAvailableRef.current = false;
+      }
+    };
+    void checkUtilityProcess();
+  }, []);
 
   // Initialize worker
   useEffect(() => {
@@ -492,14 +533,61 @@ export function useFilterWorker(): UseFilterWorkerResult {
     [],
   );
 
-  // Main filter function
+  // Main filter function - uses UtilityProcess, Web Worker, or sync based on availability
   const filterEntries = useCallback(
     (entries: unknown[], options: FilterOptions) => {
       const requestId = Date.now();
       pendingRequestRef.current = requestId;
 
-      // Use worker for large datasets
-      if (entries.length > WORKER_THRESHOLD && workerRef.current) {
+      // For small datasets, use synchronous filtering (fastest for small data)
+      if (entries.length <= WORKER_THRESHOLD) {
+        const result = filterSync(entries, options);
+        setFilteredIndices(result.indices);
+        setStats(result.stats);
+        setIsFiltering(false);
+        return;
+      }
+
+      // For large datasets, prefer UtilityProcess (Electron 40+)
+      if (utilityProcessAvailableRef.current && window.api?.filterEntries) {
+        setIsFiltering(true);
+
+        window.api
+          .filterEntries(entries, options)
+          .then((result) => {
+            // Only apply if this is still the current request
+            if (pendingRequestRef.current === requestId) {
+              if (result.ok) {
+                setFilteredIndices(result.filteredIndices);
+                setStats(result.stats);
+              } else {
+                // UtilityProcess failed, fall back to sync
+                console.warn(
+                  "[FilterWorker] UtilityProcess failed, falling back to sync:",
+                  result.error,
+                );
+                const syncResult = filterSync(entries, options);
+                setFilteredIndices(syncResult.indices);
+                setStats(syncResult.stats);
+              }
+              setIsFiltering(false);
+            }
+          })
+          .catch((error) => {
+            console.warn("[FilterWorker] UtilityProcess error:", error);
+            // Fall back to sync on error
+            if (pendingRequestRef.current === requestId) {
+              const syncResult = filterSync(entries, options);
+              setFilteredIndices(syncResult.indices);
+              setStats(syncResult.stats);
+              setIsFiltering(false);
+            }
+          });
+        return;
+      }
+
+      // Fall back to Web Worker
+      if (workerRef.current) {
         setIsFiltering(true);
         workerRef.current.postMessage({
           type: "filter",
@@ -508,7 +596,7 @@ export function useFilterWorker(): UseFilterWorkerResult {
           requestId,
         });
       } else {
-        // Synchronous filtering for smaller datasets
+        // Last resort: synchronous filtering
         const result = filterSync(entries, options);
         setFilteredIndices(result.indices);
         setStats(result.stats);
@@ -523,5 +611,6 @@ export function useFilterWorker(): UseFilterWorkerResult {
     isFiltering,
     stats,
     filterEntries,
+    useUtilityProcess,
   };
 }
