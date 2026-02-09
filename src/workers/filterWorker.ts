@@ -262,6 +262,7 @@ function matchesTimeRange(
 }
 
 // Check if entry matches DC filter
+// Logic: OR for same keys (e.g., TraceID=A OR TraceID=B), AND across different keys
 function matchesDcFilter(
   mdc: Record<string, unknown> | undefined,
   dcEntries: Array<{ key: string; value: string; active: boolean }>,
@@ -273,22 +274,31 @@ function matchesDcFilter(
 
   if (!mdc || typeof mdc !== "object") return false;
 
-  // All active DC entries must match (AND logic)
+  // Group entries by key (normalized to lowercase)
+  const entriesByKey = new Map<string, string[]>();
   for (const entry of activeEntries) {
     const key = entry.key.toLowerCase();
-    let found = false;
+    const values = entriesByKey.get(key) || [];
+    values.push(entry.value.toLowerCase());
+    entriesByKey.set(key, values);
+  }
+
+  // For each key group: at least one value must match (OR within key)
+  // All key groups must have a match (AND across keys)
+  for (const [key, allowedValues] of entriesByKey) {
+    let keyMatched = false;
 
     for (const [k, v] of Object.entries(mdc)) {
       if (k.toLowerCase() === key) {
         const val = String(v || "").toLowerCase();
-        if (val === entry.value.toLowerCase()) {
-          found = true;
+        if (allowedValues.includes(val)) {
+          keyMatched = true;
           break;
         }
       }
     }
 
-    if (!found) return false;
+    if (!keyMatched) return false;
   }
 
   return true;

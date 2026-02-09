@@ -483,4 +483,187 @@ test.describe("DC Filter with Test Data", () => {
       expect(result.matchesNeither).toBe(false);
     }
   });
+
+  test("DC filter OR logic for same key with multiple values (e.g., multiple TraceIDs)", async ({
+    window,
+  }) => {
+    const result = await window.evaluate(() => {
+      const w = window as any;
+      if (!w.ljDebug?.DiagnosticContextFilter) {
+        return { available: false };
+      }
+
+      const dcf = w.ljDebug.DiagnosticContextFilter;
+
+      // Add multiple TraceIDs (same key, different values) - should be OR logic
+      dcf.addMdcEntry("TraceID", "trace-AAA");
+      dcf.addMdcEntry("TraceID", "trace-BBB");
+      dcf.addMdcEntry("TraceID", "trace-CCC");
+      dcf.setEnabled(true);
+
+      // Test matches() - each TraceID value should match individually
+      const matchesFirst = dcf.matches({ TraceID: "trace-AAA" });
+      const matchesSecond = dcf.matches({ traceId: "trace-BBB" }); // Using variant key
+      const matchesThird = dcf.matches({ trace_id: "trace-CCC" }); // Using another variant
+      const matchesNone = dcf.matches({ TraceID: "trace-XYZ" }); // Value not in filter
+
+      // Clean up
+      dcf.removeMdcEntry("TraceID", "trace-AAA");
+      dcf.removeMdcEntry("TraceID", "trace-BBB");
+      dcf.removeMdcEntry("TraceID", "trace-CCC");
+
+      return {
+        available: true,
+        matchesFirst,
+        matchesSecond,
+        matchesThird,
+        matchesNone,
+      };
+    });
+
+    if (result.available) {
+      // Each TraceID should match individually (OR logic within same key)
+      expect(result.matchesFirst).toBe(true);
+      expect(result.matchesSecond).toBe(true);
+      expect(result.matchesThird).toBe(true);
+      expect(result.matchesNone).toBe(false);
+    }
+  });
+
+  test("DC filter combined OR/AND logic: multiple values for same key AND different keys", async ({
+    window,
+  }) => {
+    const result = await window.evaluate(() => {
+      const w = window as any;
+      if (!w.ljDebug?.DiagnosticContextFilter) {
+        return { available: false };
+      }
+
+      const dcf = w.ljDebug.DiagnosticContextFilter;
+
+      // Add multiple TraceIDs (OR logic) AND a userId (AND with TraceID group)
+      dcf.addMdcEntry("TraceID", "trace-111");
+      dcf.addMdcEntry("TraceID", "trace-222");
+      dcf.addMdcEntry("userId", "user-A");
+      dcf.setEnabled(true);
+
+      // Test: Must match userId AND one of the TraceIDs
+      const matchesBothTraceAndUser = dcf.matches({
+        TraceID: "trace-111",
+        userId: "user-A",
+      });
+      const matchesOtherTraceAndUser = dcf.matches({
+        traceId: "trace-222",
+        userId: "user-A",
+      });
+      const matchesTraceOnly = dcf.matches({
+        TraceID: "trace-111",
+        userId: "user-B",
+      });
+      const matchesUserOnly = dcf.matches({
+        TraceID: "trace-999",
+        userId: "user-A",
+      });
+      const matchesNeither = dcf.matches({
+        TraceID: "trace-999",
+        userId: "user-B",
+      });
+
+      // Clean up
+      dcf.removeMdcEntry("TraceID", "trace-111");
+      dcf.removeMdcEntry("TraceID", "trace-222");
+      dcf.removeMdcEntry("userId", "user-A");
+
+      return {
+        available: true,
+        matchesBothTraceAndUser,
+        matchesOtherTraceAndUser,
+        matchesTraceOnly,
+        matchesUserOnly,
+        matchesNeither,
+      };
+    });
+
+    if (result.available) {
+      // Must have both: one matching TraceID AND matching userId
+      expect(result.matchesBothTraceAndUser).toBe(true);
+      expect(result.matchesOtherTraceAndUser).toBe(true);
+      expect(result.matchesTraceOnly).toBe(false); // Wrong userId
+      expect(result.matchesUserOnly).toBe(false); // Wrong TraceID
+      expect(result.matchesNeither).toBe(false);
+    }
+  });
+
+  test("DC filter OR logic for multiple keys with multiple values each", async ({
+    window,
+  }) => {
+    const result = await window.evaluate(() => {
+      const w = window as any;
+      if (!w.ljDebug?.DiagnosticContextFilter) {
+        return { available: false };
+      }
+
+      const dcf = w.ljDebug.DiagnosticContextFilter;
+
+      // Add multiple values for TraceID (OR) AND multiple values for user.id (OR)
+      // Logic: (TraceID=trace-111 OR TraceID=trace-222) AND (user.id=user-A OR user.id=user-B)
+      dcf.addMdcEntry("TraceID", "trace-111");
+      dcf.addMdcEntry("TraceID", "trace-222");
+      dcf.addMdcEntry("user.id", "user-A");
+      dcf.addMdcEntry("user.id", "user-B");
+      dcf.setEnabled(true);
+
+      // Test: Must match one TraceID AND one user.id
+      const matchesFirstBoth = dcf.matches({
+        TraceID: "trace-111",
+        "user.id": "user-A",
+      });
+      const matchesSecondBoth = dcf.matches({
+        traceId: "trace-222",
+        "user.id": "user-B",
+      });
+      const matchesCrossMatch = dcf.matches({
+        TraceID: "trace-111",
+        "user.id": "user-B",
+      });
+      const matchesOnlyTrace = dcf.matches({
+        TraceID: "trace-111",
+        "user.id": "user-X",
+      });
+      const matchesOnlyUser = dcf.matches({
+        TraceID: "trace-999",
+        "user.id": "user-A",
+      });
+      const matchesNeither = dcf.matches({
+        TraceID: "trace-999",
+        "user.id": "user-X",
+      });
+
+      // Clean up
+      dcf.removeMdcEntry("TraceID", "trace-111");
+      dcf.removeMdcEntry("TraceID", "trace-222");
+      dcf.removeMdcEntry("user.id", "user-A");
+      dcf.removeMdcEntry("user.id", "user-B");
+
+      return {
+        available: true,
+        matchesFirstBoth,
+        matchesSecondBoth,
+        matchesCrossMatch,
+        matchesOnlyTrace,
+        matchesOnlyUser,
+        matchesNeither,
+      };
+    });
+
+    if (result.available) {
+      // Must have one matching TraceID AND one matching user.id
+      expect(result.matchesFirstBoth).toBe(true); // trace-111 + user-A ✓
+      expect(result.matchesSecondBoth).toBe(true); // trace-222 + user-B ✓
+      expect(result.matchesCrossMatch).toBe(true); // trace-111 + user-B ✓ (cross combination)
+      expect(result.matchesOnlyTrace).toBe(false); // trace-111 + user-X ✗
+      expect(result.matchesOnlyUser).toBe(false); // trace-999 + user-A ✗
+      expect(result.matchesNeither).toBe(false); // trace-999 + user-X ✗
+    }
+  });
 });
