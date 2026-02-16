@@ -54,6 +54,52 @@ interface UseFilterWorkerResult {
 // Lowered from 10000 to 5000 for better responsiveness with large datasets
 const WORKER_THRESHOLD = 5000;
 
+// Max entries per postMessage to prevent DataCloneError (out of memory)
+// Large entries with raw/stackTrace can exhaust memory during structured clone
+const MAX_ENTRIES_PER_MESSAGE = 50000;
+
+/**
+ * Slim entry type - only fields needed for filtering
+ * Prevents DataCloneError by not transferring large raw/stackTrace fields
+ */
+interface SlimEntry {
+  level?: string | null;
+  logger?: string | null;
+  thread?: string | null;
+  message?: string | null;
+  timestamp?: string | number | Date | null;
+  source?: string | null;
+  mdc?: Record<string, unknown> | null;
+  _mark?: string | null;
+}
+
+/**
+ * Project full entries to slim entries for worker transfer
+ * This prevents DataCloneError: out of memory when transferring large datasets
+ */
+function projectToSlimEntries(entries: unknown[]): SlimEntry[] {
+  const result: SlimEntry[] = new Array(entries.length);
+  for (let i = 0; i < entries.length; i++) {
+    const e = entries[i] as Record<string, unknown> | null;
+    if (!e) {
+      result[i] = {};
+      continue;
+    }
+    // Only copy fields needed for filtering - skip raw, stackTrace, etc.
+    result[i] = {
+      level: e.level as string | null | undefined,
+      logger: e.logger as string | null | undefined,
+      thread: e.thread as string | null | undefined,
+      message: e.message as string | null | undefined,
+      timestamp: e.timestamp as string | number | Date | null | undefined,
+      source: e.source as string | null | undefined,
+      mdc: e.mdc as Record<string, unknown> | null | undefined,
+      _mark: e._mark as string | null | undefined,
+    };
+  }
+  return result;
+}
+
 // Worker code as a function string (avoids template literal escaping issues)
 function getWorkerCode(): string {
   return [
@@ -561,49 +607,105 @@ export function useFilterWorker(): UseFilterWorkerResult {
       if (utilityProcessAvailableRef.current && window.api?.filterEntries) {
         setIsFiltering(true);
 
-        window.api
-          .filterEntries(entries, options)
-          .then((result) => {
-            // Only apply if this is still the current request
-            if (pendingRequestRef.current === requestId) {
-              if (result.ok) {
-                setFilteredIndices(result.filteredIndices);
-                setStats(result.stats);
-              } else {
-                // UtilityProcess failed, fall back to sync
-                console.warn(
-                  "[FilterWorker] UtilityProcess failed, falling back to sync:",
-                  result.error,
-                );
+        try {
+          // Check if dataset is too large for IPC transfer
+          if (entries.length > MAX_ENTRIES_PER_MESSAGE) {
+            console.warn(
+              `[FilterWorker] Dataset too large for UtilityProcess (${entries.length} entries), falling back to sync`,
+            );
+            const syncResult = filterSync(entries, options);
+            setFilteredIndices(syncResult.indices);
+            setStats(syncResult.stats);
+            setIsFiltering(false);
+            return;
+          }
+
+          // Project to slim entries to prevent DataCloneError (out of memory)
+          const slimEntries = projectToSlimEntries(entries);
+
+          window.api
+            .filterEntries(slimEntries, options)
+            .then((result) => {
+              // Only apply if this is still the current request
+              if (pendingRequestRef.current === requestId) {
+                if (result.ok) {
+                  setFilteredIndices(result.filteredIndices);
+                  setStats(result.stats);
+                } else {
+                  // UtilityProcess failed, fall back to sync
+                  console.warn(
+                    "[FilterWorker] UtilityProcess failed, falling back to sync:",
+                    result.error,
+                  );
+                  const syncResult = filterSync(entries, options);
+                  setFilteredIndices(syncResult.indices);
+                  setStats(syncResult.stats);
+                }
+                setIsFiltering(false);
+              }
+            })
+            .catch((error) => {
+              console.warn("[FilterWorker] UtilityProcess error:", error);
+              // Fall back to sync on error
+              if (pendingRequestRef.current === requestId) {
                 const syncResult = filterSync(entries, options);
                 setFilteredIndices(syncResult.indices);
                 setStats(syncResult.stats);
+                setIsFiltering(false);
               }
-              setIsFiltering(false);
-            }
-          })
-          .catch((error) => {
-            console.warn("[FilterWorker] UtilityProcess error:", error);
-            // Fall back to sync on error
-            if (pendingRequestRef.current === requestId) {
-              const syncResult = filterSync(entries, options);
-              setFilteredIndices(syncResult.indices);
-              setStats(syncResult.stats);
-              setIsFiltering(false);
-            }
-          });
+            });
+        } catch (error) {
+          // Handle DataCloneError or other IPC errors
+          const errorMessage =
+            error instanceof Error ? error.message : String(error);
+          console.warn("[FilterWorker] IPC call failed:", errorMessage);
+          const syncResult = filterSync(entries, options);
+          setFilteredIndices(syncResult.indices);
+          setStats(syncResult.stats);
+          setIsFiltering(false);
+        }
         return;
       }
 
       // Fall back to Web Worker
       if (workerRef.current) {
         setIsFiltering(true);
-        workerRef.current.postMessage({
-          type: "filter",
-          entries,
-          options,
-          requestId,
-        });
+
+        try {
+          // Check if dataset is too large for postMessage
+          if (entries.length > MAX_ENTRIES_PER_MESSAGE) {
+            console.warn(
+              `[FilterWorker] Dataset too large for Web Worker (${entries.length} entries), falling back to sync`,
+            );
+            const syncResult = filterSync(entries, options);
+            setFilteredIndices(syncResult.indices);
+            setStats(syncResult.stats);
+            setIsFiltering(false);
+            return;
+          }
+
+          // Project to slim entries to prevent DataCloneError (out of memory)
+          // Only transfer fields needed for filtering, skip raw/stackTrace/etc.
+          const slimEntries = projectToSlimEntries(entries);
+
+          workerRef.current.postMessage({
+            type: "filter",
+            entries: slimEntries,
+            options,
+            requestId,
+          });
+        } catch (error) {
+          // Handle DataCloneError (out of memory) or other postMessage errors
+          const errorMessage =
+            error instanceof Error ? error.message : String(error);
+          console.warn("[FilterWorker] postMessage failed:", errorMessage);
+
+          // Fall back to synchronous filtering
+          const syncResult = filterSync(entries, options);
+          setFilteredIndices(syncResult.indices);
+          setStats(syncResult.stats);
+          setIsFiltering(false);
+        }
       } else {
         // Last resort: synchronous filtering
         const result = filterSync(entries, options);

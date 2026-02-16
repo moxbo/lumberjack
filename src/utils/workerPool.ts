@@ -174,11 +174,26 @@ class WorkerPool {
 
     const task = this.taskQueue.shift()!;
     availableWorker.busy = true;
-    availableWorker.postMessage({
-      type: task.type,
-      data: task.data,
-      id: task.id,
-    });
+    try {
+      availableWorker.postMessage({
+        type: task.type,
+        data: task.data,
+        id: task.id,
+      });
+    } catch (error) {
+      // Handle DataCloneError (out of memory) or other postMessage errors
+      availableWorker.busy = false;
+      this.pendingTasks.delete(task.id);
+      const errorMessage =
+        error instanceof Error ? error.message : String(error);
+      logger.warn(
+        "[WorkerPool] processNextTask postMessage failed:",
+        errorMessage,
+      );
+      task.reject(new Error(`postMessage failed: ${errorMessage}`));
+      // Try next task
+      this.processNextTask();
+    }
   }
 
   /**
@@ -206,11 +221,21 @@ class WorkerPool {
       const availableWorker = this.workers.find((w) => !w.busy);
       if (availableWorker) {
         availableWorker.busy = true;
-        availableWorker.postMessage({
-          type,
-          data,
-          id: taskId,
-        });
+        try {
+          availableWorker.postMessage({
+            type,
+            data,
+            id: taskId,
+          });
+        } catch (error) {
+          // Handle DataCloneError (out of memory) or other postMessage errors
+          availableWorker.busy = false;
+          this.pendingTasks.delete(taskId);
+          const errorMessage =
+            error instanceof Error ? error.message : String(error);
+          logger.warn("[WorkerPool] postMessage failed:", errorMessage);
+          reject(new Error(`postMessage failed: ${errorMessage}`));
+        }
       } else {
         // Queue the task
         this.taskQueue.push(task);
