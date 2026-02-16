@@ -7,6 +7,13 @@
 // Types
 type AnyMap = Record<string, unknown>;
 
+// Max entries per response to prevent DataCloneError (out of memory)
+// Large log entries with big raw objects can exhaust memory during structured clone
+const MAX_ENTRIES_PER_RESPONSE = 10000;
+
+// Max raw object size (characters when stringified) - larger objects get truncated
+const MAX_RAW_SIZE = 5000;
+
 interface WorkerMessage {
   type: string;
   data: unknown;
@@ -47,6 +54,62 @@ interface LogEntry {
   raw: unknown;
 }
 
+/**
+ * Truncate raw object if too large to prevent DataCloneError
+ */
+function truncateRaw(raw: unknown): unknown {
+  if (raw === null || raw === undefined) return raw;
+
+  try {
+    const stringified = JSON.stringify(raw);
+    if (stringified.length > MAX_RAW_SIZE) {
+      // Return a truncated version
+      return {
+        _truncated: true,
+        _originalSize: stringified.length,
+        _preview: stringified.slice(0, 500) + "...",
+      };
+    }
+    return raw;
+  } catch {
+    // If we can't stringify, return a safe placeholder
+    return { _error: "Could not serialize raw object" };
+  }
+}
+
+/**
+ * Send results in chunks if too large
+ */
+function sendChunkedResults(
+  type: string,
+  id: number,
+  entries: LogEntry[],
+): void {
+  if (entries.length <= MAX_ENTRIES_PER_RESPONSE) {
+    // Small enough to send in one message
+    self.postMessage({ type, id, result: entries });
+  } else {
+    // Send in chunks
+    const totalChunks = Math.ceil(entries.length / MAX_ENTRIES_PER_RESPONSE);
+    for (let i = 0; i < totalChunks; i++) {
+      const start = i * MAX_ENTRIES_PER_RESPONSE;
+      const end = Math.min(start + MAX_ENTRIES_PER_RESPONSE, entries.length);
+      const chunk = entries.slice(start, end);
+
+      self.postMessage({
+        type,
+        id,
+        result: chunk,
+        chunk: {
+          index: i,
+          total: totalChunks,
+          isLast: i === totalChunks - 1,
+        },
+      });
+    }
+  }
+}
+
 // Worker-safe implementation of parsing logic
 self.onmessage = function (e: MessageEvent<WorkerMessage>): void {
   const { type, data, id } = e.data;
@@ -56,14 +119,14 @@ self.onmessage = function (e: MessageEvent<WorkerMessage>): void {
       case "parseLines": {
         const { lines, filename } = data as ParseLinesData;
         const entries = parseTextLinesWorker(lines, filename);
-        self.postMessage({ type: "parseLines", id, result: entries });
+        sendChunkedResults("parseLines", id, entries);
         break;
       }
 
       case "parseJSON": {
         const { text, filename } = data as ParseJSONData;
         const entries = parseJsonWorker(text, filename);
-        self.postMessage({ type: "parseJSON", id, result: entries });
+        sendChunkedResults("parseJSON", id, entries);
         break;
       }
 
@@ -84,7 +147,7 @@ self.onmessage = function (e: MessageEvent<WorkerMessage>): void {
           entryData.forEach((e) => (e.source = `${zipName}::${name}`));
           parsed.push(...entryData);
         }
-        self.postMessage({ type: "parseZipEntries", id, result: parsed });
+        sendChunkedResults("parseZipEntries", id, parsed);
         break;
       }
 
@@ -266,6 +329,6 @@ function toEntry(obj: AnyMap, source: string): LogEntry {
     mdc: (mdc as Record<string, unknown>) || {},
     stackTrace: stackTrace ? safeString(stackTrace) : undefined,
     service: safeString(service),
-    raw: obj,
+    raw: truncateRaw(obj),
   };
 }

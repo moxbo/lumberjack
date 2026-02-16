@@ -10,6 +10,56 @@ import * as path from "path";
 import log from "electron-log/main";
 
 // ============================================================================
+// Slim Entry Projection (prevents DataCloneError: out of memory)
+// ============================================================================
+
+/**
+ * Slim entry type - only fields needed for filtering
+ * Prevents DataCloneError by not transferring large raw/stackTrace fields
+ */
+interface SlimEntry {
+  level?: string | null;
+  logger?: string | null;
+  thread?: string | null;
+  message?: string | null;
+  timestamp?: string | number | Date | null;
+  source?: string | null;
+  mdc?: Record<string, unknown> | null;
+  _mark?: string | null;
+}
+
+/**
+ * Project full entries to slim entries for IPC transfer
+ * This prevents DataCloneError: out of memory when transferring large datasets
+ */
+function projectToSlimEntries(entries: unknown[]): SlimEntry[] {
+  const result: SlimEntry[] = [];
+  result.length = entries.length;
+  for (let i = 0; i < entries.length; i++) {
+    const e = entries[i] as Record<string, unknown> | null;
+    if (!e) {
+      result[i] = {};
+      continue;
+    }
+    // Only copy fields needed for filtering - skip raw, stackTrace, etc.
+    result[i] = {
+      level: e.level as string | null | undefined,
+      logger: e.logger as string | null | undefined,
+      thread: e.thread as string | null | undefined,
+      message: e.message as string | null | undefined,
+      timestamp: e.timestamp as string | number | Date | null | undefined,
+      source: e.source as string | null | undefined,
+      mdc: e.mdc as Record<string, unknown> | null | undefined,
+      _mark: e._mark as string | null | undefined,
+    };
+  }
+  return result;
+}
+
+// Max entries per postMessage to prevent DataCloneError (out of memory)
+const MAX_ENTRIES_PER_MESSAGE = 50000;
+
+// ============================================================================
 // Types
 // ============================================================================
 
@@ -245,6 +295,13 @@ class FilterService {
     entries: unknown[],
     options: FilterOptions,
   ): Promise<FilterResult> {
+    // Check if dataset is too large for IPC transfer
+    if (entries.length > MAX_ENTRIES_PER_MESSAGE) {
+      throw new Error(
+        `Dataset too large for IPC transfer (${entries.length} entries, max ${MAX_ENTRIES_PER_MESSAGE})`,
+      );
+    }
+
     // Stelle sicher, dass der Process läuft
     if (!this.process || !this.ready) {
       await this.startProcess();
@@ -255,6 +312,10 @@ class FilterService {
     }
 
     const requestId = ++this.requestCounter;
+
+    // Project to slim entries to prevent DataCloneError (out of memory)
+    // Only transfer fields needed for filtering, skip raw/stackTrace/etc.
+    const slimEntries = projectToSlimEntries(entries);
 
     return new Promise((resolve, reject) => {
       const timeout = setTimeout(() => {
@@ -268,7 +329,7 @@ class FilterService {
         this.process!.postMessage({
           type: "filter",
           requestId,
-          entries,
+          entries: slimEntries,
           options,
         });
       } catch (error) {

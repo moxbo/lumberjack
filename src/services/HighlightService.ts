@@ -1,6 +1,9 @@
 // Highlight service for managing worker-based formatting
 // Provides an async API for formatting log messages and stack traces
 
+// Max message size to prevent DataCloneError (characters)
+const MAX_MESSAGE_SIZE = 100000; // 100KB
+
 interface HighlightRequest {
   id: string;
   message: string;
@@ -21,6 +24,7 @@ interface PendingRequest {
     formattedStackTrace?: string;
   }) => void;
   reject: (error: Error) => void;
+  timeoutId: ReturnType<typeof setTimeout>;
 }
 
 class HighlightService {
@@ -59,6 +63,7 @@ class HighlightService {
         const pending = this.pendingRequests.get(id);
 
         if (pending) {
+          clearTimeout(pending.timeoutId);
           this.pendingRequests.delete(id);
 
           if (error) {
@@ -73,6 +78,7 @@ class HighlightService {
         console.error("Highlight worker error:", error);
         // Reject all pending requests
         this.pendingRequests.forEach((pending) => {
+          clearTimeout(pending.timeoutId);
           pending.reject(new Error("Worker error"));
         });
         this.pendingRequests.clear();
@@ -88,6 +94,15 @@ class HighlightService {
     level?: string | null,
     stackTrace?: string | null,
   ): Promise<{ formattedMessage: string; formattedStackTrace?: string }> {
+    // Check message size - fall back to sync if too large
+    const totalSize = (message?.length || 0) + (stackTrace?.length || 0);
+    if (totalSize > MAX_MESSAGE_SIZE) {
+      console.warn(
+        `[HighlightService] Message too large (${totalSize} chars), using sync fallback`,
+      );
+      return this.formatLogSync(message, level, stackTrace);
+    }
+
     // Fallback to synchronous formatting if worker is not available
     if (!this.enabled) {
       return this.formatLogSync(message, level, stackTrace);
@@ -102,7 +117,19 @@ class HighlightService {
     return new Promise((resolve, reject) => {
       const id = `req_${++this.requestCounter}`;
 
-      this.pendingRequests.set(id, { resolve, reject });
+      // Timeout after 5 seconds
+      const timeoutId = setTimeout(() => {
+        if (this.pendingRequests.has(id)) {
+          this.pendingRequests.delete(id);
+          // Fall back to sync on timeout instead of rejecting
+          console.warn(
+            `[HighlightService] Request ${id} timed out, using sync fallback`,
+          );
+          resolve(this.formatLogSync(message, level, stackTrace));
+        }
+      }, 5000);
+
+      this.pendingRequests.set(id, { resolve, reject, timeoutId });
 
       const request: HighlightRequest = {
         id,
@@ -111,15 +138,18 @@ class HighlightService {
         stackTrace,
       };
 
-      this.worker!.postMessage(request);
-
-      // Timeout after 5 seconds
-      setTimeout(() => {
-        if (this.pendingRequests.has(id)) {
-          this.pendingRequests.delete(id);
-          reject(new Error("Highlight timeout"));
-        }
-      }, 5000);
+      try {
+        this.worker!.postMessage(request);
+      } catch (error) {
+        // Handle DataCloneError or other postMessage errors
+        clearTimeout(timeoutId);
+        this.pendingRequests.delete(id);
+        console.warn(
+          "[HighlightService] postMessage failed, using sync fallback:",
+          error,
+        );
+        resolve(this.formatLogSync(message, level, stackTrace));
+      }
     });
   }
 
@@ -149,6 +179,10 @@ class HighlightService {
       this.worker.terminate();
       this.worker = null;
     }
+    // Clear all pending requests and their timeouts
+    this.pendingRequests.forEach((pending) => {
+      clearTimeout(pending.timeoutId);
+    });
     this.pendingRequests.clear();
   }
 }

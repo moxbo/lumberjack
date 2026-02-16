@@ -5,6 +5,7 @@
 
 import { Component } from "preact";
 import type { ComponentChildren } from "preact";
+import { I18nContext } from "../utils/i18n";
 
 interface ErrorBoundaryProps {
   children: ComponentChildren;
@@ -14,6 +15,19 @@ interface ErrorBoundaryProps {
 interface ErrorBoundaryState {
   hasError: boolean;
   error: Error | null;
+  errorCount: number;
+}
+
+/**
+ * Check if an error is a DataCloneError (out of memory)
+ */
+function isDataCloneError(error: Error): boolean {
+  return (
+    error.name === "DataCloneError" ||
+    error.message.includes("DataCloneError") ||
+    error.message.includes("out of memory") ||
+    error.message.includes("Data cannot be cloned")
+  );
 }
 
 /**
@@ -24,9 +38,13 @@ export class ErrorBoundary extends Component<
   ErrorBoundaryProps,
   ErrorBoundaryState
 > {
+  // Declare context type
+  static contextType = I18nContext;
+  declare context: { t: (key: string) => string };
+
   constructor(props: ErrorBoundaryProps) {
     super(props);
-    this.state = { hasError: false, error: null };
+    this.state = { hasError: false, error: null, errorCount: 0 };
   }
 
   componentDidCatch(error: Error, errorInfo: Record<string, unknown>): void {
@@ -34,7 +52,11 @@ export class ErrorBoundary extends Component<
     console.error("[ErrorBoundary] Caught error:", error, errorInfo);
 
     // Update state to show fallback UI
-    this.setState({ hasError: true, error });
+    this.setState((prevState) => ({
+      hasError: true,
+      error,
+      errorCount: prevState.errorCount + 1,
+    }));
 
     // Log to main process via IPC if available
     try {
@@ -49,6 +71,7 @@ export class ErrorBoundary extends Component<
               name: error.name,
               message: error.message,
               stack: error.stack,
+              isDataCloneError: isDataCloneError(error),
             },
             errorInfo,
             timestamp: new Date().toISOString(),
@@ -70,12 +93,25 @@ export class ErrorBoundary extends Component<
     this.setState({ hasError: false, error: null });
   };
 
-  render() {
+  /**
+   * Full app reload as last resort
+   */
+  private reloadApp = (): void => {
+    window.location.reload();
+  };
+
+  render(): ComponentChildren {
     if (this.state.hasError && this.state.error) {
       // Use custom fallback if provided
       if (this.props.fallback) {
         return this.props.fallback(this.state.error, this.reset);
       }
+
+      const isMemoryError = isDataCloneError(this.state.error);
+      const showReloadOption = this.state.errorCount > 2;
+
+      // Get translation function from context (with fallback)
+      const t = this.context?.t || ((key: string) => key);
 
       // Default fallback UI
       return (
@@ -83,21 +119,49 @@ export class ErrorBoundary extends Component<
           style={{
             padding: "20px",
             margin: "20px",
-            border: "2px solid #ef4444",
+            border: `2px solid ${isMemoryError ? "#f59e0b" : "#ef4444"}`,
             borderRadius: "8px",
-            backgroundColor: "#fee",
+            backgroundColor: isMemoryError ? "#fef3c7" : "#fee",
           }}
         >
-          <h2 style={{ color: "#ef4444", marginTop: 0 }}>
-            ⚠️ Ein Fehler ist aufgetreten
+          <h2
+            style={{
+              color: isMemoryError ? "#d97706" : "#ef4444",
+              marginTop: 0,
+            }}
+          >
+            {isMemoryError
+              ? `⚠️ ${t("errorBoundary.titleMemory")}`
+              : `⚠️ ${t("errorBoundary.title")}`}
           </h2>
           <p>
-            Die Anwendung hat einen unerwarteten Fehler festgestellt. Sie können
-            versuchen, die Aktion erneut auszuführen.
+            {isMemoryError
+              ? t("errorBoundary.descriptionMemory")
+              : t("errorBoundary.description")}
           </p>
+
+          {isMemoryError && (
+            <div
+              style={{
+                marginTop: "10px",
+                padding: "10px",
+                backgroundColor: "#fff",
+                border: "1px solid #f59e0b",
+                borderRadius: "4px",
+              }}
+            >
+              <strong>{t("errorBoundary.recommendations")}</strong>
+              <ul style={{ marginBottom: 0 }}>
+                <li>{t("errorBoundary.recommendationSmaller")}</li>
+                <li>{t("errorBoundary.recommendationFilter")}</li>
+                <li>{t("errorBoundary.recommendationClose")}</li>
+              </ul>
+            </div>
+          )}
+
           <details style={{ marginTop: "10px" }}>
             <summary style={{ cursor: "pointer", fontWeight: "bold" }}>
-              Fehlerdetails
+              {t("errorBoundary.errorDetails")}
             </summary>
             <pre
               style={{
@@ -115,21 +179,40 @@ export class ErrorBoundary extends Component<
               {this.state.error.stack}
             </pre>
           </details>
-          <button
-            onClick={this.reset}
-            style={{
-              marginTop: "15px",
-              padding: "8px 16px",
-              backgroundColor: "#3b82f6",
-              color: "white",
-              border: "none",
-              borderRadius: "4px",
-              cursor: "pointer",
-              fontWeight: "bold",
-            }}
-          >
-            Erneut versuchen
-          </button>
+
+          <div style={{ marginTop: "15px", display: "flex", gap: "10px" }}>
+            <button
+              onClick={this.reset}
+              style={{
+                padding: "8px 16px",
+                backgroundColor: "#3b82f6",
+                color: "white",
+                border: "none",
+                borderRadius: "4px",
+                cursor: "pointer",
+                fontWeight: "bold",
+              }}
+            >
+              {t("errorBoundary.retry")}
+            </button>
+
+            {showReloadOption && (
+              <button
+                onClick={this.reloadApp}
+                style={{
+                  padding: "8px 16px",
+                  backgroundColor: "#6b7280",
+                  color: "white",
+                  border: "none",
+                  borderRadius: "4px",
+                  cursor: "pointer",
+                  fontWeight: "bold",
+                }}
+              >
+                {t("errorBoundary.reloadApp")}
+              </button>
+            )}
+          </div>
         </div>
       );
     }

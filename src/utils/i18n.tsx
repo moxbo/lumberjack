@@ -43,6 +43,9 @@ const I18nContext = createContext<I18nContextValue>({
   t: (key: string) => key,
 });
 
+// Export context for use in class components
+export { I18nContext };
+
 export const useI18n = (): I18nContextValue => useContext(I18nContext);
 
 interface I18nProviderProps {

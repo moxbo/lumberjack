@@ -433,5 +433,18 @@
       "focusSearch": "Suche fokussieren",
       "focusSearchDesc": "Zum Suchfeld springen"
     }
+  },
+  "errorBoundary": {
+    "title": "Ein Fehler ist aufgetreten",
+    "titleMemory": "Speicherproblem",
+    "description": "Die Anwendung hat einen unerwarteten Fehler festgestellt. Sie können versuchen, die Aktion erneut auszuführen.",
+    "descriptionMemory": "Die Datenmenge ist zu groß für die Verarbeitung. Versuchen Sie, weniger Daten zu laden oder Filter anzuwenden.",
+    "recommendations": "Empfehlungen:",
+    "recommendationSmaller": "Laden Sie kleinere Log-Dateien",
+    "recommendationFilter": "Verwenden Sie Filter, um die Datenmenge zu reduzieren",
+    "recommendationClose": "Schließen Sie andere Anwendungen, um Speicher freizugeben",
+    "errorDetails": "Fehlerdetails",
+    "retry": "Erneut versuchen",
+    "reloadApp": "App neu laden"
   }
 }

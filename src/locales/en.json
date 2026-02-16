@@ -433,5 +433,18 @@
       "focusSearch": "Focus Search",
       "focusSearchDesc": "Jump to search field"
     }
+  },
+  "errorBoundary": {
+    "title": "An error occurred",
+    "titleMemory": "Memory problem",
+    "description": "The application encountered an unexpected error. You can try to retry the action.",
+    "descriptionMemory": "The data is too large to process. Try loading less data or applying filters.",
+    "recommendations": "Recommendations:",
+    "recommendationSmaller": "Load smaller log files",
+    "recommendationFilter": "Use filters to reduce the amount of data",
+    "recommendationClose": "Close other applications to free up memory",
+    "errorDetails": "Error details",
+    "retry": "Retry",
+    "reloadApp": "Reload app"
   }
 }

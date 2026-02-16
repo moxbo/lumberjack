@@ -63,16 +63,54 @@ class WorkerPool {
     }
   }
 
+  // Store for accumulating chunked results
+  private chunkedResults = new Map<number, unknown[]>();
+
   private handleWorkerMessage(e: MessageEvent): void {
     const messageData = e.data as {
       id?: number;
       result?: unknown;
       error?: string;
+      chunk?: {
+        index: number;
+        total: number;
+        isLast: boolean;
+      };
     };
-    const { id, result, error } = messageData || {};
+    const { id, result, error, chunk } = messageData || {};
 
     // Find the worker that sent this message
     const worker = e.target as PWorker | null;
+
+    // Handle chunked responses
+    if (id !== undefined && chunk) {
+      // Accumulate chunks
+      if (!this.chunkedResults.has(id)) {
+        this.chunkedResults.set(id, []);
+      }
+      const accumulated = this.chunkedResults.get(id)!;
+      if (Array.isArray(result)) {
+        accumulated.push(...(result as unknown[]));
+      }
+
+      // Only resolve when we have all chunks
+      if (chunk.isLast) {
+        if (worker) worker.busy = false;
+
+        const task = this.pendingTasks.get(id);
+        if (task) {
+          this.pendingTasks.delete(id);
+          this.chunkedResults.delete(id);
+          task.resolve(accumulated);
+        }
+
+        // Process next task from queue
+        this.processNextTask();
+      }
+      return;
+    }
+
+    // Non-chunked response
     if (worker) worker.busy = false;
 
     // Resolve or reject the pending task
