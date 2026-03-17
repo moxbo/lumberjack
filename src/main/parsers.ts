@@ -497,50 +497,43 @@ async function httpJsonRequest(
             }, timeoutMs)
           : null;
       const req = mod.request(opts, (res: http.IncomingMessage) => {
-        // Determine decompression stream based on content-encoding
-        const encoding = (res.headers["content-encoding"] || "").toLowerCase();
-        let stream: NodeJS.ReadableStream = res;
-
-        try {
-          if (encoding === "gzip") {
-            stream = res.pipe(zlib.createGunzip());
-          } else if (encoding === "deflate") {
-            stream = res.pipe(zlib.createInflate());
-          } else if (encoding === "br") {
-            stream = res.pipe(zlib.createBrotliDecompress());
-          }
-        } catch (e) {
-          log.warn(
-            "httpJsonRequest: decompression stream creation failed, using raw stream:",
-            e,
-          );
-          stream = res;
-        }
-
+        // Collect raw response data and decompress ONCE after all data received.
+        // Previous code piped through a decompression stream AND then tried sync
+        // decompression in the end handler, causing double-decompression errors
+        // ("incorrect header check") and potential data loss when the piped stream
+        // errored (e.g. proxy already decompressed but left content-encoding header).
         const chunks: Buffer[] = [];
-        stream.on("data", (c: Buffer) => chunks.push(c));
-        stream.on("end", () => {
+        res.on("data", (c: Buffer) => chunks.push(c));
+        res.on("end", () => {
           if (timer) clearTimeout(timer);
-          const enc = String(
-            res.headers["content-encoding"] || "",
+          const encoding = (
+            res.headers["content-encoding"] || ""
           ).toLowerCase();
           const raw = Buffer.concat(chunks);
           let buf: Buffer = raw;
           try {
-            if (enc.includes("gzip")) {
+            if (encoding === "gzip" || encoding === "x-gzip") {
               buf = zlib.gunzipSync(raw);
-            } else if (enc.includes("deflate")) {
-              buf = zlib.inflateSync(raw);
+            } else if (encoding === "deflate") {
+              // Some servers send raw deflate instead of zlib-wrapped;
+              // try zlib-wrapped first, fall back to raw deflate
+              try {
+                buf = zlib.inflateSync(raw);
+              } catch {
+                buf = zlib.inflateRawSync(raw);
+              }
             } else if (
-              enc.includes("br") &&
+              encoding === "br" &&
               typeof zlib.brotliDecompressSync === "function"
             ) {
               buf = zlib.brotliDecompressSync(raw);
             }
           } catch (e) {
-            // Wenn Dekomprimierung fehlschlägt, verwende Rohdaten
+            // Decompression failed – server may have sent uncompressed data
+            // despite content-encoding header (e.g. reverse proxy already
+            // decompressed). Fall back to raw data which is likely valid JSON.
             log.warn(
-              "httpJsonRequest: Dekomprimierung fehlgeschlagen:",
+              "httpJsonRequest: Dekomprimierung fehlgeschlagen, verwende Rohdaten:",
               e instanceof Error ? e.message : String(e),
             );
             buf = raw;
@@ -555,7 +548,7 @@ async function httpJsonRequest(
           }
           resolve({ status, text, json });
         });
-        stream.on("error", (err: Error) => {
+        res.on("error", (err: Error) => {
           if (timer) clearTimeout(timer);
           reject(err);
         });
