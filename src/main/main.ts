@@ -1503,9 +1503,11 @@ function createWindow(opts: { makePrimary?: boolean } = {}): BrowserWindow {
       allowRunningInsecureContent: false,
       backgroundThrottling: false, // Prevents slowdown during startup when window briefly loses focus
     },
-    // Windows: show window earlier to appear as "App" in Task Manager faster
-    // This prevents the app being stuck in "Background processes" for too long
-    show: process.platform === "win32",
+    // Always start hidden – show in ready-to-show (or fallback timeout on Windows).
+    // Previously `show: true` on Windows caused the initial focus/show events to fire
+    // BEFORE event handlers were registered, so webContents never received keyboard focus
+    // and inputs were unresponsive until the user Alt-Tabbed away and back.
+    show: false,
     backgroundColor: "#0f1113",
   });
 
@@ -1575,8 +1577,18 @@ function createWindow(opts: { makePrimary?: boolean } = {}): BrowserWindow {
           }
         }, delay);
       };
-      // Immediate attempt
-      focusWebContents(0);
+      // Immediate focus attempt - also call win.focus() to reinforce OS-level focus
+      try {
+        if (
+          !win.isDestroyed() &&
+          win.webContents &&
+          !win.webContents.isDestroyed()
+        ) {
+          win.webContents.focus();
+        }
+      } catch {
+        // Ignore
+      }
       // Delayed attempts to handle race conditions with OS window manager
       focusWebContents(50);
       focusWebContents(150);
@@ -1625,18 +1637,37 @@ function createWindow(opts: { makePrimary?: boolean } = {}): BrowserWindow {
     applyWindowTitles();
 
     // Ensure webContents has focus for keyboard input after load
-    // This is critical for input fields to work correctly
-    try {
-      if (
-        !win.isDestroyed() &&
-        win.webContents &&
-        !win.webContents.isDestroyed()
-      ) {
-        win.webContents.focus();
-      }
-    } catch {
-      // Ignore focus errors
-    }
+    // Use multiple delayed attempts (same pattern as the "focus" event handler)
+    // to reliably transfer keyboard focus to the webContents
+    const focusAfterLoad = (delay: number) => {
+      setTimeout(() => {
+        try {
+          if (
+            !win.isDestroyed() &&
+            win.webContents &&
+            !win.webContents.isDestroyed()
+          ) {
+            if (win.isFocused()) {
+              win.webContents.focus();
+            } else {
+              // Ensure OS-level window focus first, then webContents focus
+              win.focus();
+              win.webContents.focus();
+            }
+            try {
+              win.webContents.send("window:focus");
+            } catch {
+              // Ignore send errors
+            }
+          }
+        } catch {
+          // Ignore focus errors
+        }
+      }, delay);
+    };
+    focusAfterLoad(0);
+    focusAfterLoad(100);
+    focusAfterLoad(300);
 
     // Flush queued menu cmds for this window
     try {
@@ -1669,23 +1700,25 @@ function createWindow(opts: { makePrimary?: boolean } = {}): BrowserWindow {
     }, 50);
   });
 
-  // Windows: Fallback timeout to ensure window shows even if ready-to-show is delayed
-  // This is critical for Task Manager to classify the app as an "App" instead of "Background process"
-  if (process.platform === "win32") {
-    const fallbackShowTimeout = setTimeout(() => {
+  // Fallback timeout to ensure window shows even if ready-to-show is delayed.
+  // On Windows this is critical for Task Manager to classify the app as "App" not "Background process".
+  const fallbackShowTimeout = setTimeout(
+    () => {
       if (!win.isDestroyed() && !win.isVisible()) {
         log.warn(
-          "[PERF] Fallback: Showing window after 2s timeout (ready-to-show delayed)",
+          "[PERF] Fallback: Showing window after timeout (ready-to-show delayed)",
         );
         win.show();
+        win.focus();
       }
-    }, 2000);
+    },
+    process.platform === "win32" ? 1500 : 3000,
+  );
 
-    // Clear the fallback timeout if ready-to-show fires normally
-    win.once("ready-to-show", () => {
-      clearTimeout(fallbackShowTimeout);
-    });
-  }
+  // Clear the fallback timeout if ready-to-show fires normally
+  win.once("ready-to-show", () => {
+    clearTimeout(fallbackShowTimeout);
+  });
 
   win.once("ready-to-show", () => {
     // Log startup performance
@@ -1699,19 +1732,32 @@ function createWindow(opts: { makePrimary?: boolean } = {}): BrowserWindow {
 
     if (!win.isVisible()) win.show();
 
-    // Ensure webContents has focus for keyboard input
-    // This fixes issues where inputs don't work after window shows
-    try {
-      if (
-        !win.isDestroyed() &&
-        win.webContents &&
-        !win.webContents.isDestroyed()
-      ) {
-        win.webContents.focus();
-      }
-    } catch {
-      // Ignore focus errors
-    }
+    // Robust focus: ensure both the OS window and webContents receive keyboard focus.
+    // Multiple delayed attempts handle race conditions with the OS window manager.
+    const focusAfterShow = (delay: number) => {
+      setTimeout(() => {
+        try {
+          if (
+            !win.isDestroyed() &&
+            win.webContents &&
+            !win.webContents.isDestroyed()
+          ) {
+            win.focus();
+            win.webContents.focus();
+            try {
+              win.webContents.send("window:focus");
+            } catch {
+              // Ignore send errors
+            }
+          }
+        } catch {
+          // Ignore focus errors
+        }
+      }, delay);
+    };
+    focusAfterShow(0);
+    focusAfterShow(100);
+    focusAfterShow(300);
 
     // macOS: Dock-Icon setzen
     if (process.platform === "darwin") {

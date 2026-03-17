@@ -1990,17 +1990,37 @@ export default function App(): JSX.Element {
     try {
       if (window.api?.onWindowFocus) {
         const off = window.api.onWindowFocus(() => {
-          // When window receives focus, ensure the document body can receive input
-          // This fixes issues where inputs don't work after switching between multiple windows
+          // When window receives focus, force the browser to re-establish input interactivity.
+          // This fixes the Electron issue where webContents has focus but the DOM doesn't
+          // properly accept keyboard input until the user Alt-Tabs away and back.
           try {
-            // If no element is focused, or focus is on body, don't force focus change
-            // This allows the focused input to stay focused
+            const active = document.activeElement;
             if (
-              document.activeElement === document.body ||
-              !document.activeElement
+              active &&
+              active !== document.body &&
+              active instanceof HTMLElement
             ) {
-              // Trigger a focus event on the document to ensure inputs are interactive
-              document.body.focus();
+              // An element (e.g. an input) was focused – blur and re-focus it
+              // to force the browser to re-establish keyboard input
+              active.blur();
+              requestAnimationFrame(() => {
+                try {
+                  active.focus();
+                } catch {
+                  /* ignore */
+                }
+              });
+            } else {
+              // No specific element focused – trigger a focus cycle on body
+              // to ensure the document is ready to accept input
+              document.body.blur();
+              requestAnimationFrame(() => {
+                try {
+                  document.body.focus();
+                } catch {
+                  /* ignore */
+                }
+              });
             }
           } catch {
             // Ignore focus errors
