@@ -571,9 +571,9 @@ export function registerIpcHandlers(
         }
 
         const win = BrowserWindow.fromWebContents(event.sender);
-        const canFn = global.__getWindowCanTcpControl;
-        const allowed =
-          win && typeof canFn === "function" ? !!canFn(win.id) : true;
+        const allowed = win
+          ? !!sharedApi.getWindowCanTcpControl?.(win.id)
+          : true;
         if (!allowed) {
           if (win) sharedApi.setTcpOwnerWindowId?.(win.id);
           event.reply("tcp:status", {
@@ -596,7 +596,7 @@ export function registerIpcHandlers(
           }
           // Eigentümer auf dieses Fenster setzen (ephemeral, nicht persistiert)
           try {
-            global.__setTcpOwnerWindowId?.(win.id);
+            sharedApi.setTcpOwnerWindowId?.(win.id);
           } catch {
             // Intentionally empty - ignore errors
           }
@@ -624,9 +624,9 @@ export function registerIpcHandlers(
     (async () => {
       try {
         const win = BrowserWindow.fromWebContents(event.sender);
-        const canFn = global.__getWindowCanTcpControl;
-        const allowed =
-          win && typeof canFn === "function" ? !!canFn(win.id) : true;
+        const allowed = win
+          ? !!sharedApi.getWindowCanTcpControl?.(win.id)
+          : true;
         if (!allowed) {
           event.reply("tcp:status", {
             ok: false,
@@ -638,7 +638,7 @@ export function registerIpcHandlers(
         event.reply("tcp:status", status);
         if (status.ok) {
           try {
-            global.__setTcpOwnerWindowId?.(null);
+            sharedApi.setTcpOwnerWindowId?.(null);
           } catch {
             // Intentionally empty - ignore errors
           }

@@ -7,13 +7,7 @@ export default defineConfig({
     // Vitest 4.0.18+: Thread-Pool für schnellere parallele Tests
     pool: "threads",
     include: ["src/**/*.test.ts", "src/**/*.spec.ts"],
-    exclude: [
-      "node_modules",
-      "release",
-      "dist-main",
-      "scripts",
-      "**/scripts/**",
-    ],
+    exclude: ["node_modules", "release", "dist-main", "scripts", "scripts/**"],
     passWithNoTests: false,
     server: {
       deps: {
@@ -61,6 +55,30 @@ export default defineConfig({
           functions: 90,
           branches: 80,
           statements: 90,
+        },
+        "src/services/ShutdownCoordinator.ts": {
+          lines: 80,
+          functions: 80,
+          branches: 70,
+          statements: 80,
+        },
+        "src/services/LoggingStrategy.ts": {
+          lines: 90,
+          functions: 90,
+          branches: 80,
+          statements: 90,
+        },
+        "src/services/PerformanceService.ts": {
+          lines: 80,
+          functions: 80,
+          branches: 70,
+          statements: 80,
+        },
+        "src/utils/msgFilter.ts": {
+          lines: 80,
+          functions: 80,
+          branches: 70,
+          statements: 80,
         },
       },
     },
