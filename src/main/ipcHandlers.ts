@@ -774,7 +774,7 @@ export function registerIpcHandlers(
           size: pageSize,
           auth: opts.auth ?? derivedAuth,
           // defaults for PIT/retries
-          keepAlive: opts.keepAlive || "1m",
+          keepAlive: opts.keepAlive || "5m",
           trackTotalHits: opts.trackTotalHits ?? false,
           timeoutMs: opts.timeoutMs ?? 45000,
           maxRetries: opts.maxRetries ?? 4,

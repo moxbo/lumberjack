@@ -430,22 +430,25 @@ export function SettingsModal({
                         {t("settings.elastic.size")}
                       </label>
                       <p className="settings-field-hint">
-                        Anzahl Ergebnisse pro Abfrage
+                        Anzahl Ergebnisse pro Abfrage (max. 500.000)
                       </p>
                       <input
                         id="es-size"
                         type="number"
                         min="1"
-                        max="10000"
+                        max="500000"
                         value={form.elasticSize}
                         disabled={!elasticEnabled}
                         className="settings-input"
                         onInput={(e) =>
                           onFormChange({
                             ...form,
-                            elasticSize: Math.max(
-                              1,
-                              Number(e.currentTarget.value || 1000),
+                            elasticSize: Math.min(
+                              500000,
+                              Math.max(
+                                1,
+                                Number(e.currentTarget.value || 10000),
+                              ),
                             ),
                           })
                         }

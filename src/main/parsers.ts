@@ -1021,7 +1021,7 @@ function getOrCreateSessionSyncState(
     throw new Error("Elasticsearch URL (opts.url) ist erforderlich");
   const indexRaw = String(opts.index ?? "").trim();
   const index = indexRaw ? indexRaw : "_all";
-  const keepAlive = String(opts.keepAlive || "1m");
+  const keepAlive = String(opts.keepAlive || "5m");
   const timeoutMs = Math.max(1000, Number(opts.timeoutMs ?? 45000));
   const maxRetries = Math.max(0, Number(opts.maxRetries ?? 4));
   const backoffBaseMs = Math.max(50, Number(opts.backoffBaseMs ?? 300));
@@ -1312,18 +1312,30 @@ export async function fetchElasticPitPage(
       entries = first.entries;
       total = first.total;
     } else {
-      const next = await scrollNext(
-        sess.baseUrl,
-        sess.keepAlive,
-        sess.pitId,
-        sess.headers,
-        sess.allowInsecureTLS,
-        sess.timeoutMs,
-        sess.maxRetries,
-        sess.backoffBaseMs,
-      );
-      sess.pitId = next.scrollId;
-      entries = next.entries;
+      try {
+        const next = await scrollNext(
+          sess.baseUrl,
+          sess.keepAlive,
+          sess.pitId,
+          sess.headers,
+          sess.allowInsecureTLS,
+          sess.timeoutMs,
+          sess.maxRetries,
+          sess.backoffBaseMs,
+        );
+        sess.pitId = next.scrollId;
+        entries = next.entries;
+      } catch (scrollErr) {
+        // Scroll-Kontext vermutlich abgelaufen – Session aufräumen
+        log.warn(
+          "scrollNext failed (scroll context likely expired), cleaning up session:",
+          scrollErr instanceof Error ? scrollErr.message : String(scrollErr),
+        );
+        pitSessions.delete(sess.sessionId);
+        throw new Error(
+          `Scroll-Kontext abgelaufen oder ungültig. Bitte Suche erneut starten. (${scrollErr instanceof Error ? scrollErr.message : String(scrollErr)})`,
+        );
+      }
     }
     const hasMore = entries.length > 0;
     sess.lastUsed = Date.now();

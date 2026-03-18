@@ -142,7 +142,7 @@ export function useElasticSearch({
           message: formVals.message,
           environmentCase: formVals.environmentCase || "original",
           allowInsecureTLS: !!formVals.allowInsecureTLS,
-          keepAlive: "1m",
+          keepAlive: "5m",
           trackTotalHits: false,
         } as any;
 
@@ -257,15 +257,12 @@ export function useElasticSearch({
     try {
       const f = lastEsForm || {};
       const mode = (f?.mode || "relative") as "relative" | "absolute";
-      let available = Math.max(0, (elasticSize || 0) - esElasticCountAll);
+      const batchSize = elasticSize || 10000;
+      const maxPerClick = Math.max(batchSize, 50000);
 
-      if (available <= 0) {
-        return;
-      }
-
-      const opts: ElasticSearchOptions = {
+      const baseOpts: ElasticSearchOptions = {
         url: elasticUrl || undefined,
-        size: Math.min(elasticSize || 1000, available),
+        size: batchSize,
         index: f?.index || undefined,
         sort: f?.sort || undefined,
         duration: mode === "relative" ? (f?.duration as any) : undefined,
@@ -278,35 +275,63 @@ export function useElasticSearch({
         message: f?.message,
         environmentCase: f?.environmentCase || "original",
         allowInsecureTLS: !!f?.allowInsecureTLS,
-        ...(token && Array.isArray(token) && token.length > 0
-          ? { searchAfter: token as any }
-          : {}),
-        pitSessionId: esPitSessionId || undefined,
+        keepAlive: "5m",
       } as any;
 
       const messageFilter = f?.message || "";
-      const res = await window.api.elasticSearch(opts);
+      let curToken = token;
+      let curPit = esPitSessionId;
+      let hasMore = true;
+      let totalLoaded = 0;
 
-      if (res?.ok) {
-        if (Array.isArray(res.entries) && res.entries.length) {
-          const used = appendElasticCapped(res.entries as any[], available, {
-            messageFilter,
-          });
-          available = Math.max(0, available - used);
+      while (hasMore && totalLoaded < maxPerClick) {
+        const opts: ElasticSearchOptions = {
+          ...baseOpts,
+          ...(curToken && Array.isArray(curToken) && curToken.length > 0
+            ? { searchAfter: curToken as any }
+            : {}),
+          pitSessionId: curPit || undefined,
+        } as any;
+
+        const res = await window.api.elasticSearch(opts);
+        if (!res?.ok) {
+          // Fehler (z.B. Scroll abgelaufen) – Session aufräumen
+          setEsPitSessionId(null);
+          setEsHasMore(false);
+          alert(
+            "Elastic-Fehler: " +
+              ((res as any)?.error || "Unbekannt") +
+              "\nBitte Suche erneut starten.",
+          );
+          return;
         }
-        setEsHasMore(!!res.hasMore && available > 0);
-        setEsNextSearchAfter((res.nextSearchAfter as any) || null);
-        setEsPitSessionId(
-          ((res as any)?.pitSessionId as string) || esPitSessionId || null,
-        );
+
+        if (Array.isArray(res.entries) && res.entries.length) {
+          const used = appendElasticCapped(
+            res.entries as any[],
+            res.entries.length,
+            {
+              messageFilter,
+            },
+          );
+          totalLoaded += used;
+        }
+
+        hasMore = !!res.hasMore;
+        curToken = (res.nextSearchAfter as any) || null;
+        curPit = ((res as any)?.pitSessionId as string) || curPit;
+
+        setEsHasMore(hasMore);
+        setEsNextSearchAfter(curToken);
+        setEsPitSessionId(curPit);
         if (typeof (res as any)?.total === "number") {
           setEsTotal(Number((res as any).total));
         }
-        if (!res.hasMore || available <= 0) {
+
+        if (!hasMore) {
           setEsPitSessionId(null);
+          break;
         }
-      } else {
-        alert("Elastic-Fehler: " + ((res as any)?.error || "Unbekannt"));
       }
     } finally {
       setEsBusy(false);
@@ -318,7 +343,6 @@ export function useElasticSearch({
     esPitSessionId,
     elasticUrl,
     elasticSize,
-    esElasticCountAll,
     lastEsForm,
     appendElasticCapped,
     setBusy,

@@ -2725,7 +2725,7 @@ export default function App(): JSX.Element {
                       environmentCase: formVals.environmentCase || "original",
                       allowInsecureTLS: !!formVals.allowInsecureTLS,
                       // optionale PIT-Optimierungen
-                      keepAlive: "1m",
+                      keepAlive: "5m",
                       trackTotalHits: false,
                     } as any;
                     logger.info("[Elastic] Search started", {
@@ -3824,9 +3824,9 @@ export default function App(): JSX.Element {
                     const mode = (f?.mode || "relative") as
                       | "relative"
                       | "absolute";
-                    // Lade eine weitere Batch von elasticSize Einträgen (kein Limit mehr)
-                    const batchSize = elasticSize || 1000;
-                    const opts: ElasticSearchOptions = {
+                    // Lade alle verbleibenden Einträge in einer Auto-Paging-Schleife
+                    const batchSize = elasticSize || 10000;
+                    const baseOpts: ElasticSearchOptions = {
                       url: elasticUrl || undefined,
                       size: batchSize,
                       index: f?.index || undefined,
@@ -3841,43 +3841,64 @@ export default function App(): JSX.Element {
                       message: f?.message,
                       environmentCase: f?.environmentCase || "original",
                       allowInsecureTLS: !!f?.allowInsecureTLS,
-                      ...(token && Array.isArray(token) && token.length > 0
-                        ? { searchAfter: token as Array<string | number> }
-                        : {}),
-                      pitSessionId: esPitSessionId || undefined,
+                      keepAlive: "5m",
                     };
                     const messageFilter = f?.message || "";
-                    const res = await window.api.elasticSearch(opts);
-                    if (res?.ok) {
+
+                    let curToken = token;
+                    let curPit = esPitSessionId;
+                    let hasMore = true;
+                    let totalLoaded = 0;
+                    const maxPerClick = Math.max(batchSize, 50000); // Maximal pro Klick
+
+                    while (hasMore && totalLoaded < maxPerClick) {
+                      const opts: ElasticSearchOptions = {
+                        ...baseOpts,
+                        ...(curToken &&
+                        Array.isArray(curToken) &&
+                        curToken.length > 0
+                          ? { searchAfter: curToken as Array<string | number> }
+                          : {}),
+                        pitSessionId: curPit || undefined,
+                      };
+                      const res = await window.api.elasticSearch(opts);
+                      if (!res?.ok) {
+                        // Fehler (z.B. Scroll abgelaufen) – Session aufräumen
+                        const errorMsg =
+                          (res as any)?.error || t("status.errorUnknown");
+                        // PIT/Scroll-Session zurücksetzen, damit neue Suche möglich ist
+                        setEsPitSessionId(null);
+                        setEsHasMore(false);
+                        if (!handleFeatureError(errorMsg)) {
+                          showAlert(
+                            t("status.elasticError", { message: errorMsg }),
+                          );
+                        }
+                        return;
+                      }
+
                       if (Array.isArray(res.entries) && res.entries.length) {
-                        // Keine Kapazitätsbeschränkung mehr - alle geladenen Einträge hinzufügen
                         appendElasticCapped(
                           res.entries as any[],
-                          res.entries.length, // Alle Einträge verwenden
+                          res.entries.length,
                           { messageFilter },
                         );
+                        totalLoaded += res.entries.length;
                       }
-                      setEsHasMore(!!res.hasMore);
-                      setEsNextSearchAfter(
-                        (res.nextSearchAfter as any) || null,
-                      );
-                      setEsPitSessionId(
-                        ((res as any)?.pitSessionId as string) ||
-                          esPitSessionId ||
-                          null,
-                      );
+
+                      hasMore = !!res.hasMore;
+                      curToken = (res.nextSearchAfter as any) || null;
+                      curPit = ((res as any)?.pitSessionId as string) || curPit;
+
+                      setEsHasMore(hasMore);
+                      setEsNextSearchAfter(curToken);
+                      setEsPitSessionId(curPit);
                       if (typeof (res as any)?.total === "number")
                         setEsTotal(Number((res as any).total));
-                      // PIT-Session nur beenden, wenn keine weiteren Ergebnisse vorhanden
-                      if (!res.hasMore) setEsPitSessionId(null);
-                    } else {
-                      // Check if this is a feature-disabled error
-                      const errorMsg =
-                        (res as any)?.error || t("status.errorUnknown");
-                      if (!handleFeatureError(errorMsg)) {
-                        showAlert(
-                          t("status.elasticError", { message: errorMsg }),
-                        );
+
+                      if (!hasMore) {
+                        setEsPitSessionId(null);
+                        break;
                       }
                     }
                   } finally {

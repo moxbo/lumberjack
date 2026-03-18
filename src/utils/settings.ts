@@ -162,9 +162,9 @@ export const SETTINGS_SCHEMA = {
   },
   elasticSize: {
     type: "number",
-    default: 1000,
+    default: 10000,
     validate: (val: number) =>
-      Number.isInteger(val) && val >= 1 && val <= 10000,
+      Number.isInteger(val) && val >= 1 && val <= 500000,
   },
   elasticUser: {
     type: "string",

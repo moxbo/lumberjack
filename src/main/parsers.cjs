@@ -360,43 +360,28 @@ async function httpJsonRequest(method, urlStr, body, headers, allowInsecureTLS, 
         }
       }, timeoutMs) : null;
       const req = mod.request(opts, (res) => {
-        const encoding = (res.headers["content-encoding"] || "").toLowerCase();
-        let stream = res;
-        try {
-          if (encoding === "gzip") {
-            stream = res.pipe(import_zlib.default.createGunzip());
-          } else if (encoding === "deflate") {
-            stream = res.pipe(import_zlib.default.createInflate());
-          } else if (encoding === "br") {
-            stream = res.pipe(import_zlib.default.createBrotliDecompress());
-          }
-        } catch (e) {
-          import_main.default.warn(
-            "httpJsonRequest: decompression stream creation failed, using raw stream:",
-            e
-          );
-          stream = res;
-        }
         const chunks = [];
-        stream.on("data", (c) => chunks.push(c));
-        stream.on("end", () => {
+        res.on("data", (c) => chunks.push(c));
+        res.on("end", () => {
           if (timer) clearTimeout(timer);
-          const enc = String(
-            res.headers["content-encoding"] || ""
-          ).toLowerCase();
+          const encoding = (res.headers["content-encoding"] || "").toLowerCase();
           const raw = Buffer.concat(chunks);
           let buf = raw;
           try {
-            if (enc.includes("gzip")) {
+            if (encoding === "gzip" || encoding === "x-gzip") {
               buf = import_zlib.default.gunzipSync(raw);
-            } else if (enc.includes("deflate")) {
-              buf = import_zlib.default.inflateSync(raw);
-            } else if (enc.includes("br") && typeof import_zlib.default.brotliDecompressSync === "function") {
+            } else if (encoding === "deflate") {
+              try {
+                buf = import_zlib.default.inflateSync(raw);
+              } catch {
+                buf = import_zlib.default.inflateRawSync(raw);
+              }
+            } else if (encoding === "br" && typeof import_zlib.default.brotliDecompressSync === "function") {
               buf = import_zlib.default.brotliDecompressSync(raw);
             }
           } catch (e) {
             import_main.default.warn(
-              "httpJsonRequest: Dekomprimierung fehlgeschlagen:",
+              "httpJsonRequest: Dekomprimierung fehlgeschlagen, verwende Rohdaten:",
               e instanceof Error ? e.message : String(e)
             );
             buf = raw;
@@ -411,7 +396,7 @@ async function httpJsonRequest(method, urlStr, body, headers, allowInsecureTLS, 
           }
           resolve({ status, text, json });
         });
-        stream.on("error", (err) => {
+        res.on("error", (err) => {
           if (timer) clearTimeout(timer);
           reject(err);
         });
@@ -777,7 +762,7 @@ function getOrCreateSessionSyncState(opts) {
     throw new Error("Elasticsearch URL (opts.url) ist erforderlich");
   const indexRaw = String(opts.index ?? "").trim();
   const index = indexRaw ? indexRaw : "_all";
-  const keepAlive = String(opts.keepAlive || "1m");
+  const keepAlive = String(opts.keepAlive || "5m");
   const timeoutMs = Math.max(1e3, Number(opts.timeoutMs ?? 45e3));
   const maxRetries = Math.max(0, Number(opts.maxRetries ?? 4));
   const backoffBaseMs = Math.max(50, Number(opts.backoffBaseMs ?? 300));
@@ -993,18 +978,29 @@ async function fetchElasticPitPage(opts) {
       entries2 = first.entries;
       total2 = first.total;
     } else {
-      const next = await scrollNext(
-        sess.baseUrl,
-        sess.keepAlive,
-        sess.pitId,
-        sess.headers,
-        sess.allowInsecureTLS,
-        sess.timeoutMs,
-        sess.maxRetries,
-        sess.backoffBaseMs
-      );
-      sess.pitId = next.scrollId;
-      entries2 = next.entries;
+      try {
+        const next = await scrollNext(
+          sess.baseUrl,
+          sess.keepAlive,
+          sess.pitId,
+          sess.headers,
+          sess.allowInsecureTLS,
+          sess.timeoutMs,
+          sess.maxRetries,
+          sess.backoffBaseMs
+        );
+        sess.pitId = next.scrollId;
+        entries2 = next.entries;
+      } catch (scrollErr) {
+        import_main.default.warn(
+          "scrollNext failed (scroll context likely expired), cleaning up session:",
+          scrollErr instanceof Error ? scrollErr.message : String(scrollErr)
+        );
+        pitSessions.delete(sess.sessionId);
+        throw new Error(
+          `Scroll-Kontext abgelaufen oder ungültig. Bitte Suche erneut starten. (${scrollErr instanceof Error ? scrollErr.message : String(scrollErr)})`
+        );
+      }
     }
     const hasMore2 = entries2.length > 0;
     sess.lastUsed = Date.now();

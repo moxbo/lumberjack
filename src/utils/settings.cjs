@@ -149,8 +149,8 @@ const SETTINGS_SCHEMA = {
   },
   elasticSize: {
     type: "number",
-    default: 1e3,
-    validate: (val) => Number.isInteger(val) && val >= 1 && val <= 1e4
+    default: 1e4,
+    validate: (val) => Number.isInteger(val) && val >= 1 && val <= 5e5
   },
   elasticUser: {
     type: "string",
