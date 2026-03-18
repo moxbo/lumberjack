@@ -72,12 +72,21 @@ if (process.env.LUMBERJACK_DISABLE_GPU === "1") {
 
 // V8 Optimizations for faster JavaScript execution
 // --turbo-fast-api-calls: Faster native API calls
-// --expose-gc: Allow manual GC control for memory optimization
+// --expose-gc: Only in development for diagnostics (security risk in production)
+// --max-old-space-size: Configurable heap size for large datasets (Windows only)
+// NOTE: All js-flags are consolidated into a single appendSwitch call
+// because multiple calls would overwrite previous flags.
 if (!process.env.LUMBERJACK_DISABLE_V8_OPTS) {
-  app.commandLine.appendSwitch(
-    "js-flags",
-    "--turbo-fast-api-calls --expose-gc",
-  );
+  const flagParts: string[] = ["--turbo-fast-api-calls"];
+  if (isDevEnv) {
+    flagParts.push("--expose-gc");
+  }
+  if (process.platform === "win32") {
+    const heapSizeMB = loadHeapSizeSync();
+    console.warn(`[startup] Heap size configured: ${heapSizeMB}MB`);
+    flagParts.push(`--max-old-space-size=${heapSizeMB}`);
+  }
+  app.commandLine.appendSwitch("js-flags", flagParts.join(" "));
 }
 
 // Windows: Optimizations for faster startup
@@ -93,12 +102,6 @@ if (process.platform === "win32") {
 
   // Skip unnecessary Chromium startup tasks
   app.commandLine.appendSwitch("no-pings");
-
-  // Reduce IPC startup overhead
-  app.commandLine.appendSwitch("disable-ipc-flooding-protection");
-
-  // Helps the app appear faster in Task Manager as an "App"
-  app.commandLine.appendSwitch("disable-site-isolation-trials");
 
   // Disable background timer throttling for consistent performance
   app.commandLine.appendSwitch("disable-background-timer-throttling");
@@ -120,18 +123,6 @@ if (process.platform === "win32") {
   // Disable Domain Reliability to skip networking setup
   app.commandLine.appendSwitch("disable-domain-reliability");
 
-  // Load heap size from settings using centralized loader
-  const heapSizeMB = loadHeapSizeSync();
-
-  // Log the heap size being used (console.warn is allowed by ESLint)
-  console.warn(`[startup] Heap size configured: ${heapSizeMB}MB`);
-
-  // Increase memory allocation for renderer process to prevent OOM crashes
-  // with large Elasticsearch result sets (configurable via settings.heapSizeMB)
-  app.commandLine.appendSwitch(
-    "js-flags",
-    `--max-old-space-size=${heapSizeMB}`,
-  );
   // Disable speech synthesis initialization (not used)
   app.commandLine.appendSwitch("disable-speech-api");
   // Skip print preview initialization
@@ -568,9 +559,7 @@ function applyWindowTitles(): void {
   }
 }
 
-// Expose for ipcHandlers
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-(global as any).__applyWindowTitles = applyWindowTitles;
+// applyWindowTitles is already exposed via sharedMainApi (see above)
 
 // Buffers with adaptive memory limits
 let MAX_PENDING_APPENDS = DEFAULT_MAX_PENDING_APPENDS;
@@ -1390,8 +1379,7 @@ function updateMenu(): void {
   buildMenu();
   applyWindowTitles();
 }
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-(global as any).__updateAppMenu = updateMenu;
+// updateMenu is already exposed via sharedMainApi (see sharedApi.updateAppMenu above)
 
 // Cache preload path to avoid repeated fs.existsSync calls (improves window creation speed)
 let cachedPreloadPath: string | null = null;

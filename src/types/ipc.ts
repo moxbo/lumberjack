@@ -438,6 +438,5 @@ export interface FilterStats {
 declare global {
   interface Window {
     api: ElectronAPI;
-    electronAPI?: ElectronAPI;
   }
 }

@@ -25,13 +25,7 @@ import type { SettingsService } from "../services/SettingsService";
 import type { NetworkService } from "../services/NetworkService";
 import type { FeatureFlags } from "../services/FeatureFlags";
 
-// Type declarations for global namespace functions
-declare global {
-  var __applyWindowTitles: (() => void) | undefined;
-  var __updateAppMenu: (() => void) | undefined;
-  var __getWindowCanTcpControl: ((windowId: number) => boolean) | undefined;
-  var __setTcpOwnerWindowId: ((windowId: number | null) => void) | undefined;
-}
+// Functions are accessed via sharedMainApi (no global namespace needed)
 
 // Type for parser functions from parsers.cjs
 interface ParsersModule {
@@ -71,8 +65,6 @@ export function registerIpcHandlers(
   function updateWindowTitles(): void {
     try {
       sharedApi.applyWindowTitles?.();
-      const fn = global.__applyWindowTitles;
-      if (typeof fn === "function") fn();
     } catch (e) {
       log.warn(
         "updateWindowTitles helper failed:",
@@ -84,8 +76,6 @@ export function registerIpcHandlers(
   function updateAppMenu(): void {
     try {
       sharedApi.updateAppMenu?.();
-      const upd = global.__updateAppMenu;
-      if (typeof upd === "function") upd();
     } catch (e) {
       log.warn(
         "updateAppMenu helper failed:",

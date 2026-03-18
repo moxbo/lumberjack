@@ -319,4 +319,3 @@ const api: ElectronAPI = {
 
 // Expose the API to the renderer process in a secure way
 contextBridge.exposeInMainWorld("api", api);
-contextBridge.exposeInMainWorld("electronAPI", api); // Also expose as electronAPI for consistency

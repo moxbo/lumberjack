@@ -14,7 +14,7 @@ export default defineConfig({
       "scripts",
       "**/scripts/**",
     ],
-    passWithNoTests: true,
+    passWithNoTests: false,
     server: {
       deps: {
         external: [/scripts\/.*/],
@@ -31,8 +31,38 @@ export default defineConfig({
         "src/types/**",
         "node_modules/**",
       ],
-      // Threshold für Coverage-Qualität (optional aktivieren)
-      // thresholds: { lines: 80, functions: 80, branches: 80, statements: 80 },
+      // Coverage thresholds – global is kept low for now; gradually increase as more tests are added.
+      // Per-file thresholds enforce high quality for already-tested modules.
+      thresholds: {
+        lines: 1,
+        functions: 1,
+        branches: 1,
+        statements: 1,
+        "src/services/CircuitBreaker.ts": {
+          lines: 90,
+          functions: 90,
+          branches: 80,
+          statements: 90,
+        },
+        "src/services/RateLimiter.ts": {
+          lines: 90,
+          functions: 90,
+          branches: 80,
+          statements: 90,
+        },
+        "src/services/FeatureFlags.ts": {
+          lines: 90,
+          functions: 90,
+          branches: 80,
+          statements: 90,
+        },
+        "src/services/AdaptiveBatchService.ts": {
+          lines: 90,
+          functions: 90,
+          branches: 80,
+          statements: 90,
+        },
+      },
     },
     testTimeout: 30000,
   },

@@ -62,11 +62,11 @@ export class ErrorBoundary extends Component<
     try {
       if (typeof window !== "undefined") {
         const win = window as unknown as Record<string, unknown>;
-        const electronAPI = win.electronAPI as
+        const api = win.api as
           | Record<string, (...args: unknown[]) => void>
           | undefined;
-        if (electronAPI?.logError) {
-          void (electronAPI.logError as (...args: unknown[]) => void)({
+        if (api?.logError) {
+          void (api.logError as (...args: unknown[]) => void)({
             error: {
               name: error.name,
               message: error.message,

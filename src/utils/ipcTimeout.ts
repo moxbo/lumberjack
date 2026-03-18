@@ -12,14 +12,14 @@ export async function ipcInvokeWithTimeout<T>(
   timeoutMs: number = 30000,
 ): Promise<T> {
   const win = typeof window !== "undefined" ? window : null;
-  const electronAPI = (win as Record<string, unknown> | null)?.electronAPI as
+  const api = (win as Record<string, unknown> | null)?.api as
     | Record<string, unknown>
     | undefined;
-  if (!electronAPI || typeof electronAPI.invoke !== "function") {
+  if (!api || typeof api.invoke !== "function") {
     throw new Error("Electron API not available");
   }
 
-  const invoke = electronAPI.invoke as (...args: unknown[]) => Promise<T>;
+  const invoke = api.invoke as (...args: unknown[]) => Promise<T>;
   return Promise.race([
     invoke(channel, data),
     new Promise<T>((_, reject) =>
