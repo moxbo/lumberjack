@@ -303,6 +303,7 @@ export class LogEntryPool {
     for (let i = 0; i < dataArray.length; i++) {
       const data = dataArray[i];
       const entry = entries[i];
+      if (!data || !entry) continue;
 
       if (data.timestamp !== undefined) entry.timestamp = data.timestamp;
       if (data.level !== undefined) entry.level = data.level;

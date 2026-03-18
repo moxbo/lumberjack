@@ -1,20 +1,18 @@
 /**
  * Re-export all components from renderer/components
+ *
+ * NOTE: Components that are lazy-loaded in App.tsx (HelpDialog, TitleDialog,
+ * HttpDialogs, SettingsModal, CommandPalette, TraceTimeline) are intentionally
+ * NOT re-exported here to enable effective code-splitting.
  */
 
 export { ContextMenu } from "./ContextMenu";
-export { HelpDialog } from "./HelpDialog";
-export { TitleDialog } from "./TitleDialog";
-export { HttpLoadDialog, HttpPollDialog } from "./HttpDialogs";
 export { SearchModeDropdown } from "./SearchModeDropdown";
 export { FilterChips } from "./FilterChips";
-export { SettingsModal } from "./SettingsModal";
 export { FilterSection } from "./FilterSection";
 export { DetailPanel } from "./DetailPanel";
 export { FeatureFlagsPanel } from "./FeatureFlagsPanel";
 export { AlertDialog } from "./AlertDialog";
 export { UpdateNotification } from "./UpdateNotification";
-export { CommandPalette } from "./CommandPalette";
 export type { Command } from "./CommandPalette";
 export { FilterProfilesDropdown } from "./FilterProfilesDropdown";
-export { TraceTimeline } from "./TraceTimeline";

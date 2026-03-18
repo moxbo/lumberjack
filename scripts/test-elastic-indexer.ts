@@ -67,7 +67,7 @@ async function testBulkPartialConflictsAndRetries(): Promise<void> {
         if (!metaLine || !docLine) continue;
         const meta = JSON.parse(metaLine);
 
-        const _doc = JSON.parse(docLine);
+        JSON.parse(docLine); // validate doc JSON
         const id = meta.create?._id || meta.index?._id;
         if (!id) {
           items.push({ create: { status: 500 } });

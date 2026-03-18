@@ -156,6 +156,7 @@ async function testTcpSocketCleanup(): Promise<void> {
   // Test 6: Stop server with active connections
   console.log("Test 6: Stopping server with active connections...");
 
+  // @ts-expect-error TS6133 - connection used for side-effect (keeping it open)
   const _client3 = net.createConnection({ port });
   await sleep(100);
 

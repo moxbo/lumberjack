@@ -12,6 +12,7 @@ import * as http from "http";
 import { NetworkService } from "../src/services/NetworkService";
 import type { LogEntry } from "../src/types/ipc";
 
+// @ts-expect-error TS6133 - helper kept for debugging
 function _sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
