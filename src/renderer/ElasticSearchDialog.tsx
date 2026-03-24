@@ -582,7 +582,7 @@ export default function ElasticSearchDialog(props: any) {
                   onInput={(e) =>
                     setForm({ ...form, message: e.currentTarget.value })
                   }
-                  placeholder="z.B. error, timeout, xml&(CB24|CB27)"
+                  placeholder='z.B. error, timeout, "Connection refused", xml&(CB24|CB27)'
                   style={{ width: "100%" }}
                 />
                 <span
@@ -599,6 +599,17 @@ export default function ElasticSearchDialog(props: any) {
                       background: "var(--color-bg-hover)",
                       padding: "1px 4px",
                       borderRadius: "3px",
+                    }}
+                  >
+                    "…"
+                  </code>{" "}
+                  = Phrase,
+                  <code
+                    style={{
+                      background: "var(--color-bg-hover)",
+                      padding: "1px 4px",
+                      borderRadius: "3px",
+                      marginLeft: "4px",
                     }}
                   >
                     &
@@ -636,7 +647,8 @@ export default function ElasticSearchDialog(props: any) {
                   >
                     ()
                   </code>
-                  ) wird nach dem Laden angewendet.
+                  ) wird nach dem Laden angewendet. Mehrere Wörter ohne Operator
+                  = implizites UND.
                 </span>
               </div>
             </div>

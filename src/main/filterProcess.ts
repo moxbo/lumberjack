@@ -115,6 +115,24 @@ function msgMatches(message: unknown, pattern: string): boolean {
         i++;
         continue;
       }
+      // Quoted string: "..." wird als einzelnes WORD behandelt (Phrasensuche)
+      if (ch === '"') {
+        let j = i + 1;
+        let word = "";
+        while (j < N && s[j] !== '"') {
+          if (s[j] === "\\" && j + 1 < N) {
+            word += s[j + 1]!;
+            j += 2;
+            continue;
+          }
+          word += s[j]!;
+          j++;
+        }
+        if (j < N) j++; // schließendes " überspringen
+        if (word) toks.push({ t: "WORD", v: word });
+        i = j;
+        continue;
+      }
       // Escape handling
       if (ch === "\\" && i + 1 < N) {
         let j = i;
@@ -222,9 +240,17 @@ function msgMatches(message: unknown, pattern: string): boolean {
 
   function skipAnd(): void {
     skipNotExpr();
-    while (peek()?.t === "AND") {
-      take();
-      skipNotExpr();
+    while (true) {
+      const tk = peek();
+      if (!tk) break;
+      if (tk.t === "AND") {
+        take();
+        skipNotExpr();
+      } else if (tk.t === "WORD" || tk.t === "LPAREN" || tk.t === "NOT") {
+        skipNotExpr();
+      } else {
+        break;
+      }
     }
   }
 
@@ -238,12 +264,24 @@ function msgMatches(message: unknown, pattern: string): boolean {
 
   function evalAnd(): boolean {
     let left = evalNot();
-    while (peek()?.t === "AND") {
-      take();
-      if (!left) {
-        skipNotExpr();
+    while (true) {
+      const tk = peek();
+      if (!tk) break;
+      if (tk.t === "AND") {
+        take();
+        if (!left) {
+          skipNotExpr();
+        } else {
+          left = evalNot();
+        }
+      } else if (tk.t === "WORD" || tk.t === "LPAREN" || tk.t === "NOT") {
+        if (!left) {
+          skipNotExpr();
+        } else {
+          left = evalNot();
+        }
       } else {
-        left = evalNot();
+        break;
       }
     }
     return left;

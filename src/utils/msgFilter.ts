@@ -2,15 +2,19 @@
 // Syntax:
 //  - OR mit '|'
 //  - AND mit '&'
+//  - Implizites AND: aufeinanderfolgende Wörter ohne Operator (z.B. "foo bar" = foo & bar)
 //  - Negation mit '!' als Präfix (mehrfach erlaubt: '!!foo' == 'foo')
 //  - Klammern '(' und ')' zur Gruppierung
+//  - Anführungszeichen "..." für exakte Phrasensuche (z.B. "hello world")
 //  - Escape mit '\' für literale Sonderzeichen: \& \| \! \( \)
 //  - Optional: Case-sensitive oder Regex-Modus
 // Beispiele:
 //  - foo&bar: message enthält foo UND bar
+//  - foo bar: message enthält foo UND bar (implizites AND)
 //  - foo|bar: message enthält foo ODER bar
 //  - !bar: message enthält NICHT bar
 //  - xml&(CB|AGV): message enthält xml UND (CB ODER AGV)
+//  - "hello world": message enthält exakt "hello world" als zusammenhängende Phrase
 //  - Tom\&Jerry: message enthält wörtlich "Tom&Jerry"
 
 export type SearchMode = "insensitive" | "sensitive" | "regex";
@@ -89,6 +93,24 @@ export function msgMatches(
       const ch = s[i]!;
       if (ch <= " ") {
         i++;
+        continue;
+      }
+      // Quoted string: "..." wird als einzelnes WORD behandelt (Phrasensuche)
+      if (ch === '"') {
+        let j = i + 1;
+        let word = "";
+        while (j < N && s[j] !== '"') {
+          if (s[j] === "\\" && j + 1 < N) {
+            word += s[j + 1]!;
+            j += 2;
+            continue;
+          }
+          word += s[j]!;
+          j++;
+        }
+        if (j < N) j++; // schließendes " überspringen
+        if (word) toks.push({ t: "WORD", v: word });
+        i = j;
         continue;
       }
       // Escape-Handling: \x behandelt x als literales Zeichen
@@ -193,17 +215,29 @@ export function msgMatches(
     return neg ? !v : v;
   }
 
-  // and := not ('AND' not)*
+  // and := not (('AND' | implicit) not)*
+  // Implizites AND: aufeinanderfolgende Terme ohne Operator werden als AND behandelt
   function evalAnd(): boolean {
     let left = evalNot();
-    while (peek()?.t === "AND") {
-      take();
-      // Echte Kurzschluss-Logik: wenn left=false, überspringen wir die Evaluation
-      if (!left) {
-        // Konsumiere Tokens aber werte nicht aus (schneller Pfad)
-        skipNotExpr();
+    while (true) {
+      const tk = peek();
+      if (!tk) break;
+      if (tk.t === "AND") {
+        take();
+        if (!left) {
+          skipNotExpr();
+        } else {
+          left = evalNot();
+        }
+      } else if (tk.t === "WORD" || tk.t === "LPAREN" || tk.t === "NOT") {
+        // Implizites AND für aufeinanderfolgende Terme
+        if (!left) {
+          skipNotExpr();
+        } else {
+          left = evalNot();
+        }
       } else {
-        left = evalNot();
+        break;
       }
     }
     return left;
@@ -236,9 +270,18 @@ export function msgMatches(
   // Hilfsfunktion: Überspringt eine and-Expression ohne sie auszuwerten
   function skipAnd(): void {
     skipNotExpr();
-    while (peek()?.t === "AND") {
-      take();
-      skipNotExpr();
+    while (true) {
+      const tk = peek();
+      if (!tk) break;
+      if (tk.t === "AND") {
+        take();
+        skipNotExpr();
+      } else if (tk.t === "WORD" || tk.t === "LPAREN" || tk.t === "NOT") {
+        // Implizites AND
+        skipNotExpr();
+      } else {
+        break;
+      }
     }
   }
 

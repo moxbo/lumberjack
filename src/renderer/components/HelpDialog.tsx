@@ -77,6 +77,23 @@ export function HelpDialog({ open, onClose }: HelpDialogProps) {
               <tbody>
                 <tr>
                   <td style={codeCell}>
+                    <code>"hello world"</code>
+                  </td>
+                  <td style={descCell}>
+                    Phrasensuche - exakte Zeichenkette mit Leerzeichen
+                  </td>
+                </tr>
+                <tr>
+                  <td style={codeCell}>
+                    <code>foo bar</code>
+                  </td>
+                  <td style={descCell}>
+                    Implizites UND - enthält 'foo' und 'bar' (beliebige
+                    Position)
+                  </td>
+                </tr>
+                <tr>
+                  <td style={codeCell}>
                     <code>foo|bar</code>
                   </td>
                   <td style={descCell}>ODER - enthält 'foo' oder 'bar'</td>
@@ -99,9 +116,33 @@ export function HelpDialog({ open, onClose }: HelpDialogProps) {
                   </td>
                   <td style={descCell}>Kombination - 'foo' aber nicht 'bar'</td>
                 </tr>
+                <tr>
+                  <td style={codeCell}>
+                    <code>xml&(CB|AGV)</code>
+                  </td>
+                  <td style={descCell}>
+                    Klammern - 'xml' und ('CB' oder 'AGV')
+                  </td>
+                </tr>
+                <tr>
+                  <td style={codeCell}>
+                    <code>{"Tom\\&Jerry"}</code>
+                  </td>
+                  <td style={descCell}>
+                    Escape - sucht wörtlich nach 'Tom&Jerry'
+                  </td>
+                </tr>
               </tbody>
             </table>
             <p style={hintStyle}>
+              {"💡 Anführungszeichen für exakte Phrasen: "}
+              <code>"Connection refused"</code>
+              {" findet nur die zusammenhängende Zeichenkette."}
+              <br />
+              {"Escape mit \\ für literale Sonderzeichen: "}
+              <code>{"\\&"}</code> <code>{"\\|"}</code> <code>{"\\!"}</code>{" "}
+              <code>{"\\("}</code> <code>{"\\)"}</code>
+              <br />
               Suchmodus wählbar: Case-insensitiv (Standard), Case-sensitiv,
               Regex
             </p>
@@ -121,6 +162,13 @@ export function HelpDialog({ open, onClose }: HelpDialogProps) {
               </li>
               <li>
                 <strong>DC-Filter:</strong> MDC-Keys wie TraceID, SpanID
+              </li>
+              <li>
+                <strong>Nur Markierte:</strong> Zeigt nur markierte Einträge an
+              </li>
+              <li>
+                <strong>Filterprofile:</strong> Aktuelle Filtereinstellungen
+                speichern und wiederverwenden
               </li>
             </ul>
           </section>
@@ -162,9 +210,17 @@ export function HelpDialog({ open, onClose }: HelpDialogProps) {
                 </tr>
                 <tr>
                   <td style={codeCell}>
-                    <code>xml&CB24</code>
+                    <code>"Connection refused"</code>
                   </td>
-                  <td style={descCell}>UND - enthält 'xml' und 'CB24'</td>
+                  <td style={descCell}>Phrasensuche - exakte Zeichenkette</td>
+                </tr>
+                <tr>
+                  <td style={codeCell}>
+                    <code>xml CB24</code>
+                  </td>
+                  <td style={descCell}>
+                    Implizites UND - enthält 'xml' und 'CB24'
+                  </td>
                 </tr>
                 <tr>
                   <td style={codeCell}>
@@ -213,6 +269,24 @@ export function HelpDialog({ open, onClose }: HelpDialogProps) {
                 </tr>
                 <tr>
                   <td style={codeCell}>
+                    <kbd>⌘/Ctrl + K</kbd>
+                  </td>
+                  <td style={descCell}>Command Palette öffnen</td>
+                </tr>
+                <tr>
+                  <td style={codeCell}>
+                    <kbd>F1</kbd>
+                  </td>
+                  <td style={descCell}>Hilfe öffnen</td>
+                </tr>
+                <tr>
+                  <td style={codeCell}>
+                    <kbd>Enter</kbd>
+                  </td>
+                  <td style={descCell}>Nächster Treffer (im Suchfeld)</td>
+                </tr>
+                <tr>
+                  <td style={codeCell}>
                     <kbd>j / k</kbd>
                   </td>
                   <td style={descCell}>Navigation (Vim-Style)</td>
@@ -220,6 +294,12 @@ export function HelpDialog({ open, onClose }: HelpDialogProps) {
                 <tr>
                   <td style={codeCell}>
                     <kbd>g / G</kbd>
+                  </td>
+                  <td style={descCell}>Zum Anfang / Ende</td>
+                </tr>
+                <tr>
+                  <td style={codeCell}>
+                    <kbd>Home / End</kbd>
                   </td>
                   <td style={descCell}>Zum Anfang / Ende</td>
                 </tr>
@@ -237,6 +317,12 @@ export function HelpDialog({ open, onClose }: HelpDialogProps) {
                 </tr>
                 <tr>
                   <td style={codeCell}>
+                    <kbd>⇧ + ↑/↓/j/k</kbd>
+                  </td>
+                  <td style={descCell}>Mehrfachauswahl (Bereich erweitern)</td>
+                </tr>
+                <tr>
+                  <td style={codeCell}>
                     <kbd>Escape</kbd>
                   </td>
                   <td style={descCell}>Auswahl aufheben / Dialog schließen</td>
@@ -249,7 +335,28 @@ export function HelpDialog({ open, onClose }: HelpDialogProps) {
             <h4 style={sectionHeaderStyle}>💡 Tipps</h4>
             <ul style={{ margin: "0", paddingLeft: "20px" }}>
               <li>
-                Rechtsklick auf Zeilen für Kontextmenü (Markieren, Färben)
+                <strong>Command Palette:</strong> <kbd>⌘/Ctrl + K</kbd> für
+                schnellen Zugriff auf alle Aktionen
+              </li>
+              <li>
+                <strong>Kontextmenü:</strong> Rechtsklick auf Zeilen zum
+                Markieren, Färben und Kopieren
+              </li>
+              <li>
+                <strong>Follow-Modus:</strong> Scrollt automatisch zu neuen
+                Log-Einträgen (über Toolbar oder Command Palette)
+              </li>
+              <li>
+                <strong>Trace-Timeline:</strong> Visualisiert
+                Trace-Zusammenhänge über die TraceID im Detail-Panel
+              </li>
+              <li>
+                <strong>Suchhistorie:</strong> Pfeil ↓ im Suchfeld zeigt
+                vorherige Suchbegriffe
+              </li>
+              <li>
+                <strong>Export:</strong> Sichtbare Logs als JSON/CSV exportieren
+                (⌘/Ctrl + S)
               </li>
               <li>Detail-Panel-Höhe per Drag anpassbar</li>
               <li>Spaltenbreiten durch Ziehen der Trenner anpassbar</li>

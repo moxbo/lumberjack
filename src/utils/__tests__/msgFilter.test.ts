@@ -178,6 +178,57 @@ describe("msgFilter – msgMatches", () => {
     it("should trim expression", () => {
       expect(msgMatches("hello", "  hello  ")).toBe(true);
     });
+
+    it("should treat unquoted words as implicit AND", () => {
+      expect(msgMatches("hello world", "hello world")).toBe(true);
+      expect(msgMatches("hello world", "hello foo")).toBe(false);
+      expect(msgMatches("foo bar baz", "foo baz")).toBe(true);
+      expect(msgMatches("foo bar baz", "foo baz qux")).toBe(false);
+    });
+  });
+
+  describe("quoted string (phrase search)", () => {
+    it("should match exact phrase in quotes", () => {
+      expect(msgMatches("hello world foo", '"hello world"')).toBe(true);
+      expect(msgMatches("hello foo world", '"hello world"')).toBe(false);
+    });
+
+    it("should be case-insensitive for quoted strings", () => {
+      expect(msgMatches("Hello World", '"hello world"')).toBe(true);
+    });
+
+    it("should support quoted phrase combined with AND operator", () => {
+      expect(msgMatches("hello world foo", '"hello world"&foo')).toBe(true);
+      expect(msgMatches("hello world foo", '"hello world"&bar')).toBe(false);
+    });
+
+    it("should support quoted phrase combined with OR operator", () => {
+      expect(msgMatches("hello world", '"hello world"|bar')).toBe(true);
+      expect(msgMatches("bar baz", '"hello world"|bar')).toBe(true);
+      expect(msgMatches("foo baz", '"hello world"|bar')).toBe(false);
+    });
+
+    it("should support negated quoted phrase", () => {
+      expect(msgMatches("hello world", '!"hello world"')).toBe(false);
+      expect(msgMatches("hello foo", '!"hello world"')).toBe(true);
+    });
+
+    it("should handle unclosed quote gracefully", () => {
+      expect(msgMatches("hello world", '"hello world')).toBe(true);
+    });
+
+    it("should handle empty quotes", () => {
+      expect(msgMatches("hello", '""')).toBe(true);
+    });
+
+    it("should support quoted phrase with implicit AND", () => {
+      expect(
+        msgMatches("error: hello world happened", '"hello world" error'),
+      ).toBe(true);
+      expect(
+        msgMatches("error: hello foo happened", '"hello world" error'),
+      ).toBe(false);
+    });
   });
 
   describe("edge cases", () => {
