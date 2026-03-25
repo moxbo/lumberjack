@@ -1,5 +1,6 @@
 /* eslint-disable */
 import { useEffect, useState } from "preact/hooks";
+import { useI18n } from "../utils/i18n";
 
 export default function ElasticSearchDialog(props: any) {
   const {
@@ -15,6 +16,8 @@ export default function ElasticSearchDialog(props: any) {
     // NEW: Index history from settings
     histIndex = [],
   } = props as any;
+
+  const { t } = useI18n();
 
   const [form, setForm] = useState(
     initial || {
@@ -171,7 +174,7 @@ export default function ElasticSearchDialog(props: any) {
           <div
             style={{ padding: "6px 8px", color: "var(--color-text-secondary)" }}
           >
-            Keine Einträge
+            {t("elasticDialog.noEntries")}
           </div>
         )}
         {items.map((v: any, i: number) => (
@@ -212,7 +215,7 @@ export default function ElasticSearchDialog(props: any) {
         onClick={(e) => e.stopPropagation()}
         style={{ maxWidth: "600px" }}
       >
-        <h3>🔍 Elasticsearch-Suche</h3>
+        <h3>{t("elasticDialog.title")}</h3>
 
         {/* Quick Options - immer sichtbar */}
         <div
@@ -235,7 +238,7 @@ export default function ElasticSearchDialog(props: any) {
                 })
               }
             />
-            <span>An bestehende Logs anhängen</span>
+            <span>{t("elasticDialog.appendToLogs")}</span>
           </label>
         </div>
 
@@ -248,9 +251,11 @@ export default function ElasticSearchDialog(props: any) {
             onClick={() => toggleSection("time")}
           >
             <h4>
-              ⏱️ Zeitraum
+              {t("elasticDialog.timeSection")}
               {(form.duration || form.from || form.to) && (
-                <span className="section-filled-badge">Konfiguriert</span>
+                <span className="section-filled-badge">
+                  {t("elasticDialog.timeSectionConfigured")}
+                </span>
               )}
             </h4>
             <span className="expand-icon">▼</span>
@@ -258,7 +263,7 @@ export default function ElasticSearchDialog(props: any) {
           <div className="es-dialog-section-content">
             {/* Modus-Auswahl */}
             <div className="kv">
-              <span>Modus</span>
+              <span>{t("elasticDialog.mode")}</span>
               <div
                 style={{ display: "flex", gap: "12px", alignItems: "center" }}
               >
@@ -276,7 +281,7 @@ export default function ElasticSearchDialog(props: any) {
                     checked={isRel}
                     onChange={() => setForm({ ...form, mode: "relative" })}
                   />
-                  <span>Relativ</span>
+                  <span>{t("elasticDialog.modeRelative")}</span>
                 </label>
                 <label
                   style={{
@@ -292,7 +297,7 @@ export default function ElasticSearchDialog(props: any) {
                     checked={isAbs}
                     onChange={() => setForm({ ...form, mode: "absolute" })}
                   />
-                  <span>Absolut</span>
+                  <span>{t("elasticDialog.modeAbsolute")}</span>
                 </label>
               </div>
             </div>
@@ -300,7 +305,7 @@ export default function ElasticSearchDialog(props: any) {
             {/* Dauer (relativ) */}
             {isRel && (
               <div className="kv">
-                <span>Dauer</span>
+                <span>{t("elasticDialog.duration")}</span>
                 <div style={{ display: "flex", gap: "6px", flexWrap: "wrap" }}>
                   {["5m", "15m", "1h", "6h", "24h"].map((d) => (
                     <button
@@ -337,7 +342,7 @@ export default function ElasticSearchDialog(props: any) {
             {isAbs && (
               <>
                 <div className="kv">
-                  <span>Von</span>
+                  <span>{t("elasticDialog.from")}</span>
                   <input
                     type="datetime-local"
                     value={form.from}
@@ -347,7 +352,7 @@ export default function ElasticSearchDialog(props: any) {
                   />
                 </div>
                 <div className="kv">
-                  <span>Bis</span>
+                  <span>{t("elasticDialog.to")}</span>
                   <input
                     type="datetime-local"
                     value={form.to}
@@ -358,21 +363,21 @@ export default function ElasticSearchDialog(props: any) {
                 </div>
                 {(firstTs || lastTs) && (
                   <div className="kv">
-                    <span>Schnellauswahl</span>
+                    <span>{t("elasticDialog.quickSelect")}</span>
                     <div style={{ display: "flex", gap: "8px" }}>
                       <button
                         type="button"
                         onClick={setOlderRange}
                         disabled={!firstTs}
                       >
-                        ◀ Ältere (bis {fmtHm(firstTs)})
+                        {t("elasticDialog.olderThan", { time: fmtHm(firstTs) })}
                       </button>
                       <button
                         type="button"
                         onClick={setNewerRange}
                         disabled={!lastTs}
                       >
-                        Neuere (ab {fmtHm(lastTs)}) ▶
+                        {t("elasticDialog.newerThan", { time: fmtHm(lastTs) })}
                       </button>
                     </div>
                   </div>
@@ -391,13 +396,15 @@ export default function ElasticSearchDialog(props: any) {
             onClick={() => toggleSection("search")}
           >
             <h4>
-              🎯 Suchkriterien
+              {t("elasticDialog.searchSection")}
               {(form.application_name ||
                 form.logger ||
                 form.level ||
                 form.environment ||
                 form.message) && (
-                <span className="section-filled-badge">Aktiv</span>
+                <span className="section-filled-badge">
+                  {t("elasticDialog.searchSectionActive")}
+                </span>
               )}
             </h4>
             <span className="expand-icon">▼</span>
@@ -405,7 +412,7 @@ export default function ElasticSearchDialog(props: any) {
           <div className="es-dialog-section-content">
             {/* Application Name */}
             <div className="kv">
-              <span>Application</span>
+              <span>{t("elasticDialog.application")}</span>
               <div style={{ position: "relative" }}>
                 <div
                   style={{
@@ -423,7 +430,7 @@ export default function ElasticSearchDialog(props: any) {
                         application_name: e.currentTarget.value,
                       })
                     }
-                    placeholder="z.B. my-service"
+                    placeholder={t("elasticDialog.applicationPlaceholder")}
                     onClick={(e) => e.stopPropagation()}
                   />
                   <button
@@ -477,7 +484,7 @@ export default function ElasticSearchDialog(props: any) {
                       : {}
                   }
                 >
-                  Alle
+                  {t("elasticDialog.levelAll")}
                 </button>
                 {["ERROR", "WARN", "INFO", "DEBUG"].map((l) => (
                   <button
@@ -502,7 +509,7 @@ export default function ElasticSearchDialog(props: any) {
 
             {/* Environment */}
             <div className="kv">
-              <span>Environment</span>
+              <span>{t("elasticDialog.environment")}</span>
               <div style={{ position: "relative" }}>
                 <div
                   style={{
@@ -517,7 +524,7 @@ export default function ElasticSearchDialog(props: any) {
                     onInput={(e) =>
                       setForm({ ...form, environment: e.currentTarget.value })
                     }
-                    placeholder="z.B. prod, stage"
+                    placeholder={t("elasticDialog.environmentPlaceholder")}
                     onClick={(e) => e.stopPropagation()}
                   />
                   <button
@@ -559,20 +566,20 @@ export default function ElasticSearchDialog(props: any) {
 
             {/* Logger */}
             <div className="kv">
-              <span>Logger</span>
+              <span>{t("elasticDialog.logger")}</span>
               <input
                 type="text"
                 value={form.logger}
                 onInput={(e) =>
                   setForm({ ...form, logger: e.currentTarget.value })
                 }
-                placeholder="Logger enthält…"
+                placeholder={t("elasticDialog.loggerPlaceholder")}
               />
             </div>
 
             {/* Message Filter */}
             <div className="kv">
-              <span>Message</span>
+              <span>{t("elasticDialog.message")}</span>
               <div
                 style={{ display: "flex", flexDirection: "column", gap: "4px" }}
               >
@@ -582,7 +589,7 @@ export default function ElasticSearchDialog(props: any) {
                   onInput={(e) =>
                     setForm({ ...form, message: e.currentTarget.value })
                   }
-                  placeholder='z.B. error, timeout, "Connection refused", xml&(CB24|CB27)'
+                  placeholder={t("elasticDialog.messagePlaceholder")}
                   style={{ width: "100%" }}
                 />
                 <span
@@ -592,8 +599,7 @@ export default function ElasticSearchDialog(props: any) {
                     lineHeight: "1.3",
                   }}
                 >
-                  Einfache Begriffe werden serverseitig gefiltert. Erweiterte
-                  Syntax (
+                  {t("elasticDialog.messageHint")}
                   <code
                     style={{
                       background: "var(--color-bg-hover)",
@@ -603,7 +609,7 @@ export default function ElasticSearchDialog(props: any) {
                   >
                     "…"
                   </code>{" "}
-                  = Phrase,
+                  {t("elasticDialog.messageHintPhrase")}
                   <code
                     style={{
                       background: "var(--color-bg-hover)",
@@ -614,7 +620,7 @@ export default function ElasticSearchDialog(props: any) {
                   >
                     &
                   </code>{" "}
-                  = UND,
+                  {t("elasticDialog.messageHintAnd")}
                   <code
                     style={{
                       background: "var(--color-bg-hover)",
@@ -625,7 +631,7 @@ export default function ElasticSearchDialog(props: any) {
                   >
                     |
                   </code>{" "}
-                  = ODER,
+                  {t("elasticDialog.messageHintOr")}
                   <code
                     style={{
                       background: "var(--color-bg-hover)",
@@ -636,7 +642,7 @@ export default function ElasticSearchDialog(props: any) {
                   >
                     !
                   </code>{" "}
-                  = NICHT,
+                  {t("elasticDialog.messageHintNot")}
                   <code
                     style={{
                       background: "var(--color-bg-hover)",
@@ -647,8 +653,7 @@ export default function ElasticSearchDialog(props: any) {
                   >
                     ()
                   </code>
-                  ) wird nach dem Laden angewendet. Mehrere Wörter ohne Operator
-                  = implizites UND.
+                  {t("elasticDialog.messageHintSuffix")}
                 </span>
               </div>
             </div>
@@ -664,11 +669,13 @@ export default function ElasticSearchDialog(props: any) {
             onClick={() => toggleSection("advanced")}
           >
             <h4>
-              ⚙️ Erweiterte Optionen
+              {t("elasticDialog.advancedSection")}
               {(form.index ||
                 form.allowInsecureTLS ||
                 form.environmentCase !== "original") && (
-                <span className="section-filled-badge">Angepasst</span>
+                <span className="section-filled-badge">
+                  {t("elasticDialog.advancedCustomized")}
+                </span>
               )}
             </h4>
             <span className="expand-icon">▼</span>

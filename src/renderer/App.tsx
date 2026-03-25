@@ -3170,7 +3170,7 @@ export default function App(): JSX.Element {
                 setSearchHistHighlightIdx(-1);
               }}
               onBlur={(e) => addFilterHistory("search", e.currentTarget.value)}
-              placeholder='Suchen… (foo&bar, foo|bar, !foo, "exakte Phrase")'
+              placeholder={t("toolbar.searchPlaceholder")}
               autocomplete="off"
             />
           </div>
