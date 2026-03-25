@@ -831,7 +831,7 @@ export default function App(): JSX.Element {
         active: e.active,
       }),
     );
-    const dcFilterEnabled = dcState.enabled === true;
+    const dcFilterEnabled = dcState.enabled;
 
     // Build time filter state from TimeFilter
     const timeState = (TimeFilter as any).getState?.() || {};
@@ -1408,18 +1408,18 @@ export default function App(): JSX.Element {
       // Standard Arrow Keys
       if (e.key === "ArrowDown") {
         e.preventDefault();
-        moveSelectionBy(1, !!e.shiftKey);
+        moveSelectionBy(1, e.shiftKey);
       } else if (e.key === "ArrowUp") {
         e.preventDefault();
-        moveSelectionBy(-1, !!e.shiftKey);
+        moveSelectionBy(-1, e.shiftKey);
       }
       // Vim-Style Navigation
       else if (e.key === "j" && !e.ctrlKey && !e.metaKey && !e.altKey) {
         e.preventDefault();
-        moveSelectionBy(1, !!e.shiftKey);
+        moveSelectionBy(1, e.shiftKey);
       } else if (e.key === "k" && !e.ctrlKey && !e.metaKey && !e.altKey) {
         e.preventDefault();
-        moveSelectionBy(-1, !!e.shiftKey);
+        moveSelectionBy(-1, e.shiftKey);
       }
       // gg = go to start (double g)
       else if (e.key === "g" && !e.ctrlKey && !e.metaKey) {
