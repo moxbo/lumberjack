@@ -4,6 +4,7 @@
 import { useState, useEffect } from "preact/hooks";
 import logger from "../../utils/logger";
 import { useI18n } from "../../utils/i18n";
+import { nativeAlert } from "../../utils/nativeDialog";
 
 interface TitleDialogProps {
   open: boolean;
@@ -35,7 +36,7 @@ export function TitleDialog({ open, onClose }: TitleDialogProps) {
   const handleApply = (): void => {
     const title = String(titleInput || "").trim();
     if (!title) {
-      alert(t("titleDialog.emptyError"));
+      nativeAlert(t("titleDialog.emptyError"));
       return;
     }
     void (async () => {
@@ -45,7 +46,7 @@ export function TitleDialog({ open, onClose }: TitleDialogProps) {
       } catch (e) {
         logger.error("Failed to set window title:", e);
         const message = (e as Error)?.message || String(e);
-        alert(t("titleDialog.saveFailed", { message }));
+        nativeAlert(t("titleDialog.saveFailed", { message }));
       }
     })();
   };

@@ -5,6 +5,7 @@ import { useState, useCallback, useEffect } from "preact/hooks";
 import logger from "../utils/logger";
 import { rendererPerf } from "../utils/rendererPerf";
 import { MAX_ELASTIC_HISTORY } from "../constants";
+import { nativeAlert, nativeConfirm } from "../utils/nativeDialog";
 
 export type ThemeMode = "system" | "light" | "dark";
 export type SettingsTab =
@@ -392,7 +393,7 @@ export function useSettings() {
   const saveSettingsModal = useCallback(async () => {
     const port = Number(form.tcpPort || 0);
     if (!(port >= 1 && port <= 65535)) {
-      alert("Ungültiger TCP-Port");
+      nativeAlert("Ungültiger TCP-Port");
       return false;
     }
 
@@ -433,7 +434,7 @@ export function useSettings() {
     try {
       const res = await window.api.settingsSet(patch);
       if (!res || !res.ok) {
-        alert(
+        nativeAlert(
           "Speichern fehlgeschlagen: " +
             ((res as any)?.error || "Unbekannter Fehler"),
         );
@@ -473,7 +474,7 @@ export function useSettings() {
       if (newHeapSize !== originalHeapSizeMB) {
         // Use setTimeout to allow the modal to close first
         setTimeout(() => {
-          const shouldRestart = window.confirm(
+          const shouldRestart = nativeConfirm(
             "Das Speicherlimit wurde geändert. Die Änderung wird erst nach einem Neustart wirksam.\n\nMöchten Sie die Anwendung jetzt neu starten?",
           );
           if (shouldRestart && window.api?.appRelaunch) {
@@ -485,7 +486,9 @@ export function useSettings() {
       return true;
     } catch (e) {
       logger.error("Failed to save settings:", e);
-      alert("Speichern fehlgeschlagen: " + ((e as any)?.message || String(e)));
+      nativeAlert(
+        "Speichern fehlgeschlagen: " + ((e as any)?.message || String(e)),
+      );
       return false;
     }
   }, [form, originalHeapSizeMB]);

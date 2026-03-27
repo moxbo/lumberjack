@@ -1,5 +1,5 @@
 /* eslint-disable */
-import { useEffect, useState } from "preact/hooks";
+import { useEffect, useRef, useState } from "preact/hooks";
 import { useI18n } from "../utils/i18n";
 
 export default function ElasticSearchDialog(props: any) {
@@ -92,6 +92,33 @@ export default function ElasticSearchDialog(props: any) {
       });
     }
   }, [open, initial]);
+
+  // When the dialog opens, force the modal to receive keyboard focus.
+  // This is necessary because a preceding native dialog (e.g. window.confirm
+  // in clearLogs) can leave the webContents in a state where the DOM no longer
+  // receives keyboard events.  Focusing the modal container re-establishes
+  // the input routing.
+  const modalRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!open) return;
+    // Delayed focus to ensure the DOM has rendered the dialog
+    const id = setTimeout(() => {
+      try {
+        // Try to focus the first input inside the modal
+        const firstInput = modalRef.current?.querySelector<HTMLElement>(
+          "input, select, textarea, button",
+        );
+        if (firstInput) {
+          firstInput.focus();
+        } else {
+          modalRef.current?.focus();
+        }
+      } catch {
+        // ignore
+      }
+    }, 50);
+    return () => clearTimeout(id);
+  }, [open]);
 
   if (!open) return null;
 
@@ -211,9 +238,11 @@ export default function ElasticSearchDialog(props: any) {
   return (
     <div className="modal-backdrop" onClick={onClose}>
       <div
+        ref={modalRef}
         className="modal"
         onClick={(e) => e.stopPropagation()}
         style={{ maxWidth: "600px" }}
+        tabIndex={-1}
       >
         <h3>{t("elasticDialog.title")}</h3>
 

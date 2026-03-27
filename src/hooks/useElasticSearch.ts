@@ -3,6 +3,7 @@
  */
 import { useState, useMemo, useCallback } from "preact/hooks";
 import logger from "../utils/logger";
+import { nativeAlert } from "../utils/nativeDialog";
 import type { ElasticSearchOptions } from "../types/ipc";
 
 interface UseElasticSearchOptions {
@@ -298,7 +299,7 @@ export function useElasticSearch({
           // Fehler (z.B. Scroll abgelaufen) – Session aufräumen
           setEsPitSessionId(null);
           setEsHasMore(false);
-          alert(
+          nativeAlert(
             "Elastic-Fehler: " +
               ((res as any)?.error || "Unbekannt") +
               "\nBitte Suche erneut starten.",

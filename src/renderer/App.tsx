@@ -45,6 +45,7 @@ import { BASE_MARK_COLORS } from "../constants";
 
 // Import refactored utilities
 import { entrySignature } from "../utils/entryUtils";
+import { nativeConfirm } from "../utils/nativeDialog";
 
 // Import refactored hooks
 import {
@@ -1816,7 +1817,7 @@ export default function App(): JSX.Element {
       if (newHeapSize !== originalHeapSizeMB) {
         // Use setTimeout to allow the modal to close first
         setTimeout(() => {
-          const shouldRestart = window.confirm(
+          const shouldRestart = nativeConfirm(
             t("settings.performance.restartRequired"),
           );
           if (shouldRestart && window.api?.appRelaunch) {
@@ -2121,7 +2122,7 @@ export default function App(): JSX.Element {
   function clearLogs() {
     // Sicherheitsabfrage, nur wenn etwas zu löschen ist
     if (entries && entries.length > 0) {
-      const confirmed = window.confirm(t("list.clearConfirmation"));
+      const confirmed = nativeConfirm(t("list.clearConfirmation"));
       if (!confirmed) return;
     }
     setEntries([]);

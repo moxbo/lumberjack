@@ -3,6 +3,7 @@
  */
 import { useState, useEffect } from "preact/hooks";
 import { useI18n } from "../../utils/i18n";
+import { nativeAlert } from "../../utils/nativeDialog";
 
 interface HttpLoadDialogProps {
   open: boolean;
@@ -34,7 +35,7 @@ export function HttpLoadDialog({
   const handleLoad = async () => {
     const trimmedUrl = String(url || "").trim();
     if (!trimmedUrl) {
-      alert(t("dialogs.httpLoad.invalidUrl"));
+      nativeAlert(t("dialogs.httpLoad.invalidUrl"));
       return;
     }
     // Apply insecure SSL setting before loading
@@ -117,7 +118,7 @@ export function HttpPollDialog({
     const sec = Math.max(1, Number(form.interval || 5));
 
     if (!url) {
-      alert(t("dialogs.httpPoll.invalidUrl"));
+      nativeAlert(t("dialogs.httpPoll.invalidUrl"));
       return;
     }
     if (isPollActive) return;
