@@ -581,6 +581,12 @@ body {
   background: rgba(255, 255, 255, 0.22);
 }
 
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .divider::before {
+    background: rgba(255, 255, 255, 0.22);
+  }
+}
+
 /* Details panel - solider Hintergrund für klare Trennung von der Liste */
 .details {
   flex: 1 1 auto;
@@ -863,12 +869,6 @@ body {
   text-overflow: ellipsis; /* Ellipsis rechts bei Platzmangel */
 }
 
-.col.msg {
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
 /* Level coloring */
 .lev-trace {
   color: var(--color-level-trace);
@@ -1015,10 +1015,8 @@ body {
   width: min(720px, 95vw);
   max-height: 85vh;
   overflow: auto;
-  background: var(--glass-bg);
-  backdrop-filter: var(--glass-blur);
-  -webkit-backdrop-filter: var(--glass-blur);
-  border: 1px solid var(--glass-border);
+  background: var(--color-bg-paper);
+  border: 1px solid var(--color-border);
   border-radius: 12px;
   box-shadow: var(--shadow-xl);
   padding: 16px 20px;
@@ -1708,15 +1706,12 @@ button:hover {
 
 button:active {
   transform: scale(0.98);
+  background: var(--color-bg-default);
 }
 
 button:focus-visible {
   outline: 2px solid var(--color-primary);
   outline-offset: 2px;
-}
-
-button:active {
-  background: var(--color-bg-default);
 }
 
 button:disabled {
@@ -1735,6 +1730,26 @@ select {
   padding: 6px 10px;
   font-size: var(--font-size-sm);
   transition: border-color var(--transition-fast);
+}
+
+/* Custom dropdown arrow for selects (appearance:none entfernt die native Pfeilmarkierung) */
+select {
+  padding-right: 30px;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath fill='%236e6e73' d='M2.5 4.5L6 8l3.5-3.5'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 10px center;
+  background-size: 12px;
+  cursor: pointer;
+}
+
+:root[data-theme="dark"] select {
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath fill='%23cbd5df' d='M2.5 4.5L6 8l3.5-3.5'/%3E%3C/svg%3E");
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) select {
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath fill='%23cbd5df' d='M2.5 4.5L6 8l3.5-3.5'/%3E%3C/svg%3E");
+  }
 }
 
 input:not([type="checkbox"]):not([type="radio"]):focus,
@@ -2623,7 +2638,17 @@ button.filter-chip.trace-timeline-chip .chip-label {
 }
 
 .es-dialog-section-header:hover {
-  background: var(--color-bg-default);
+  background: rgba(0, 0, 0, 0.08);
+}
+
+:root[data-theme="dark"] .es-dialog-section-header:hover {
+  background: rgba(255, 255, 255, 0.1);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .es-dialog-section-header:hover {
+    background: rgba(255, 255, 255, 0.1);
+  }
 }
 
 .es-dialog-section-header h4 {
@@ -2986,13 +3011,11 @@ button.filter-chip.trace-timeline-chip .chip-label {
   z-index: 10000;
   max-width: 420px;
   width: calc(100vw - 40px);
-  background: var(--glass-bg);
-  backdrop-filter: var(--glass-blur);
-  -webkit-backdrop-filter: var(--glass-blur);
-  border: 1px solid var(--glass-border);
+  background: var(--color-bg-paper);
+  border: 1px solid var(--color-border);
   border-radius: var(--radius-lg);
   box-shadow:
-    var(--glass-shadow),
+    var(--shadow-xl),
     0 4px 12px rgba(0, 0, 0, 0.15);
   animation: slideInUp 0.3s ease-out;
 }
