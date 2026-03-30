@@ -1372,32 +1372,19 @@ export default function App(): JSX.Element {
 
   // Entry management functions (appendEntries, processIpcQueue) are now in useEntryManagement2 hook
 
-  // Prüft, ob ein Message-Filter erweiterte Syntax enthält (& | ! ())
-  function hasAdvancedSyntax(filter: string): boolean {
-    const trimmed = (filter || "").trim();
-    return /[&|!()]/.test(trimmed);
-  }
-
   // Hilfsfunktion: Anhängen mit Kappung auf verfügbare Slots
+  // WICHTIG: Alle ES-Einträge werden in den State geladen (kein Filtern vor dem Speichern).
+  // Die Anzeige-Filterung (Filter-Worker) steuert, welche Einträge sichtbar sind.
   function appendElasticCapped(
     batch: any[],
     available: number,
     options?: { ignoreExistingForElastic?: boolean; messageFilter?: string },
   ): number {
-    let filtered = Array.isArray(batch) ? batch : [];
+    const entries = Array.isArray(batch) ? batch : [];
 
-    // Client-seitige Message-Filterung für erweiterte Syntax
-    const msgFilter = options?.messageFilter?.trim();
-    if (msgFilter && hasAdvancedSyntax(msgFilter)) {
-      filtered = filtered.filter((entry) => {
-        const msg = entry?.message || "";
-        return msgMatches(msg, msgFilter);
-      });
-    }
-
-    const take = Math.max(0, Math.min(available, filtered.length));
+    const take = Math.max(0, Math.min(available, entries.length));
     if (take <= 0) return 0;
-    appendEntries(filtered.slice(0, take), options);
+    appendEntries(entries.slice(0, take), options);
     return take;
   }
 
@@ -2735,12 +2722,9 @@ export default function App(): JSX.Element {
                     setEsBaseline(
                       loadMode === "replace" ? 0 : esElasticCountAll,
                     );
-                    // Verfügbare Slots anhand aktuellem Stand bestimmen (nur Elastic-Einträge zählen)
-                    let available = Math.max(
-                      0,
-                      (elasticSize || 0) -
-                        (loadMode === "replace" ? 0 : esElasticCountAll),
-                    );
+                    // Jede neue Suche bekommt immer die vollen elasticSize Slots,
+                    // damit Einträge auch bei aktivem Filter vollständig geladen werden.
+                    let available = Math.max(0, elasticSize || 0);
                     let carriedPit: string | null = null;
                     let nextToken: Array<string | number> | null = null;
                     let hasMore = false;

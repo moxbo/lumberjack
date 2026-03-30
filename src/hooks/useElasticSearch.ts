@@ -91,32 +91,22 @@ export function useElasticSearch({
   }, []);
 
   // Append with capping
+  // IMPORTANT: All ES entries are stored in state (no filtering before storing).
+  // The display filter (filter worker) controls which entries are visible.
   const appendElasticCapped = useCallback(
     (
       batch: any[],
       available: number,
       options?: { ignoreExistingForElastic?: boolean; messageFilter?: string },
     ): number => {
-      // Import msgMatches dynamically to avoid circular deps
-      const { msgMatches } = require("../utils/msgFilter");
+      const entries = Array.isArray(batch) ? batch : [];
 
-      let filtered = Array.isArray(batch) ? batch : [];
-
-      // Client-side message filtering for advanced syntax
-      const msgFilter = options?.messageFilter?.trim();
-      if (msgFilter && hasAdvancedSyntax(msgFilter)) {
-        filtered = filtered.filter((entry) => {
-          const msg = entry?.message || "";
-          return msgMatches(msg, msgFilter);
-        });
-      }
-
-      const take = Math.max(0, Math.min(available, filtered.length));
+      const take = Math.max(0, Math.min(available, entries.length));
       if (take <= 0) return 0;
-      appendEntries(filtered.slice(0, take), options);
+      appendEntries(entries.slice(0, take), options);
       return take;
     },
-    [appendEntries, hasAdvancedSyntax],
+    [appendEntries],
   );
 
   // Perform search
@@ -150,10 +140,9 @@ export function useElasticSearch({
         logger.info("[Elastic] Search started", { hasResponse: false });
         setEsBaseline(loadMode === "replace" ? 0 : esElasticCountAll);
 
-        let available = Math.max(
-          0,
-          (elasticSize || 0) - (loadMode === "replace" ? 0 : esElasticCountAll),
-        );
+        // Each new search gets the full elasticSize budget,
+        // so entries are always fully loaded even if previous entries exist (possibly hidden by filters).
+        let available = Math.max(0, elasticSize || 0);
         let carriedPit: string | null = null;
         let nextToken: Array<string | number> | null = null;
         let hasMore = false;
