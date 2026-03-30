@@ -9,6 +9,9 @@ import { compareByTimestampId } from "./sort";
 const signatureCache = new WeakMap<object, string>();
 const mergeSignatureCache = new WeakMap<object, string>();
 
+// Max message length for signatures to avoid memory issues with very large messages
+const MAX_SIG_MSG_LENGTH = 10 * 1024; // 10 KB
+
 /**
  * Entry signature for deduplication (without _id, since that's assigned later)
  * Uses _fullMessage if available (for truncated entries) to ensure unique signatures
@@ -33,7 +36,6 @@ export function entrySignatureForMerge(e: any): string {
         : "";
 
   // For very large messages, use prefix + length to create unique but memory-efficient signature
-  const MAX_SIG_MSG_LENGTH = 10 * 1024; // 10 KB max for signature
   if (msg.length > MAX_SIG_MSG_LENGTH) {
     msg = msg.substring(0, MAX_SIG_MSG_LENGTH) + `[len:${msg.length}]`;
   }
@@ -42,7 +44,7 @@ export function entrySignatureForMerge(e: any): string {
   const result = `${ts}|${lg}|${msg}|${src}`;
 
   // Cache the result
-  if (typeof e === "object" && e !== null) {
+  if (typeof e === "object") {
     mergeSignatureCache.set(e, result);
   }
 
@@ -75,7 +77,6 @@ export function entrySignature(e: any): string {
         : "";
 
   // For very large messages, use prefix + length to create unique but memory-efficient signature
-  const MAX_SIG_MSG_LENGTH = 10 * 1024; // 10 KB max for signature
   if (msg.length > MAX_SIG_MSG_LENGTH) {
     msg = msg.substring(0, MAX_SIG_MSG_LENGTH) + `[len:${msg.length}]`;
   }
@@ -90,7 +91,7 @@ export function entrySignature(e: any): string {
   }
 
   // Cache the result
-  if (typeof e === "object" && e !== null) {
+  if (typeof e === "object") {
     signatureCache.set(e, result);
   }
 

@@ -91,7 +91,7 @@ export function computeTint(
   const hex = String(hexRaw);
   let result = c;
 
-  if (hex.length === 3 && hex.length >= 3) {
+  if (hex.length === 3) {
     const r = parseInt(hex[0]! + hex[0]!, 16);
     const g = parseInt(hex[1]! + hex[1]!, 16);
     const b = parseInt(hex[2]! + hex[2]!, 16);

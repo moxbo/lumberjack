@@ -47,8 +47,6 @@ export class PerformanceMonitor {
   private monitoringInterval: NodeJS.Timeout | null = null;
   private isMonitoring = false;
   private lastCpuUsage = process.cpuUsage();
-  // @ts-expect-error - Reserved for future use
-  private _lastEventLoopCheck = Date.now();
 
   /**
    * Take a performance snapshot

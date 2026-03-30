@@ -31,21 +31,22 @@ function entryKey(key: string, val: string): string {
 } // UNIT SEPARATOR-like delimiter
 
 // Mappe diverse Trace-Key-Varianten auf den kanonischen Anzeigenamen
+const TRACE_KEY_VARIANTS = new Set([
+  "traceid",
+  "trace_id",
+  "trace.id",
+  "trace-id",
+  "x-trace-id",
+  "x_trace_id",
+  "x.trace.id",
+  "trace",
+]);
+
 function normalizeTraceKeyName(k: string): string | null {
   const lk = String(k || "")
     .trim()
     .toLowerCase();
-  const variants = new Set([
-    "traceid",
-    "trace_id",
-    "trace.id",
-    "trace-id",
-    "x-trace-id",
-    "x_trace_id",
-    "x.trace.id",
-    "trace",
-  ]);
-  return variants.has(lk) ? "TraceID" : null;
+  return TRACE_KEY_VARIANTS.has(lk) ? "TraceID" : null;
 }
 
 // Liefert alle Event-Key-Varianten zu einem kanonischen Key
@@ -86,9 +87,8 @@ class DiagnosticContextFilterImpl {
     return this._enabled;
   }
   setEnabled(v: boolean): void {
-    const nv = v;
-    if (nv !== this._enabled) {
-      this._enabled = nv;
+    if (v !== this._enabled) {
+      this._enabled = v;
       this._em.emit();
     }
   }

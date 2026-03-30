@@ -73,6 +73,19 @@ function findTraceId(raw: Record<string, unknown>): string | null {
 }
 export { findTraceId };
 
+// Trace-Key-Varianten als Modul-Konstante (Hot Path: wird pro Log-Event aufgerufen)
+const TRACE_VARIANTS = new Set([
+  "TraceID",
+  "traceId",
+  "trace_id",
+  "trace.id",
+  "trace-id",
+  "x-trace-id",
+  "x_trace_id",
+  "x.trace.id",
+  "trace",
+]);
+
 export function computeMdcFromRaw(
   raw: { [s: string]: unknown } | ArrayLike<unknown>,
 ): Record<string, string> {
@@ -81,17 +94,6 @@ export function computeMdcFromRaw(
   // Zuerst TraceID extrahieren
   const tid = findTraceId(raw as Record<string, unknown>);
   // Übernahme aller string-basierten Felder außer reservierten und Trace-Varianten
-  const TRACE_VARIANTS = new Set([
-    "TraceID",
-    "traceId",
-    "trace_id",
-    "trace.id",
-    "trace-id",
-    "x-trace-id",
-    "x_trace_id",
-    "x.trace.id",
-    "trace",
-  ]);
   for (const [k, v] of Object.entries(raw as Record<string, unknown>)) {
     if (RESERVED_STD_FIELDS.has(k)) continue;
     if (TRACE_VARIANTS.has(k)) continue;

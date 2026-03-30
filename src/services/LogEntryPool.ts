@@ -268,12 +268,12 @@ export class LogEntryPool {
   }
 
   /**
-   * Erstellt einen neuen Eintrag mit Daten (Convenience-Methode)
+   * Kopiert Daten auf einen Pool-Eintrag
    */
-  create(data: Partial<PoolableLogEntry>): PoolableLogEntry {
-    const entry = this.acquire();
-
-    // Daten kopieren
+  private applyData(
+    entry: PoolableLogEntry,
+    data: Partial<PoolableLogEntry>,
+  ): void {
     if (data.timestamp !== undefined) entry.timestamp = data.timestamp;
     if (data.level !== undefined) entry.level = data.level;
     if (data.logger !== undefined) entry.logger = data.logger;
@@ -290,7 +290,14 @@ export class LogEntryPool {
     if (data._truncated !== undefined) entry._truncated = data._truncated;
     if (data._messageSize !== undefined) entry._messageSize = data._messageSize;
     if (data._id !== undefined) entry._id = data._id;
+  }
 
+  /**
+   * Erstellt einen neuen Eintrag mit Daten (Convenience-Methode)
+   */
+  create(data: Partial<PoolableLogEntry>): PoolableLogEntry {
+    const entry = this.acquire();
+    this.applyData(entry, data);
     return entry;
   }
 
@@ -304,25 +311,7 @@ export class LogEntryPool {
       const data = dataArray[i];
       const entry = entries[i];
       if (!data || !entry) continue;
-
-      if (data.timestamp !== undefined) entry.timestamp = data.timestamp;
-      if (data.level !== undefined) entry.level = data.level;
-      if (data.logger !== undefined) entry.logger = data.logger;
-      if (data.thread !== undefined) entry.thread = data.thread;
-      if (data.message !== undefined) entry.message = data.message;
-      if (data.traceId !== undefined) entry.traceId = data.traceId;
-      if (data.stackTrace !== undefined) entry.stackTrace = data.stackTrace;
-      if (data.raw !== undefined) entry.raw = data.raw;
-      if (data.source !== undefined) entry.source = data.source;
-      if (data._mark !== undefined) entry._mark = data._mark;
-      if (data.mdc !== undefined) entry.mdc = data.mdc;
-      if (data.service !== undefined) entry.service = data.service;
-      if (data._fullMessage !== undefined)
-        entry._fullMessage = data._fullMessage;
-      if (data._truncated !== undefined) entry._truncated = data._truncated;
-      if (data._messageSize !== undefined)
-        entry._messageSize = data._messageSize;
-      if (data._id !== undefined) entry._id = data._id;
+      this.applyData(entry, data);
     }
 
     return entries;
