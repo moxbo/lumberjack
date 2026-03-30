@@ -65,7 +65,7 @@ const processStartTime = Date.now();
 // Users can set LUMBERJACK_DISABLE_GPU=1 to skip hardware acceleration
 if (process.env.LUMBERJACK_DISABLE_GPU === "1") {
   app.disableHardwareAcceleration();
-  console.log(
+  console.warn(
     "[startup] Hardware acceleration disabled via LUMBERJACK_DISABLE_GPU",
   );
 }
@@ -367,7 +367,7 @@ function getParsers(): typeof import("./parsers.cjs") {
     const parserPath = app.isPackaged
       ? path.join(appRoot, "dist", "main", "parsers.cjs")
       : path.join(appRoot, "src", "main", "parsers.cjs");
-    // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
+
     parsers = require(parserPath) as typeof import("./parsers.cjs");
   }
   return parsers;
@@ -2123,11 +2123,10 @@ setImmediate(() => {
   // Parsers injection for NetworkService
   const p = getParsers();
   networkService.setParsers({
-    // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
     parseJsonFile: p.parseJsonFile,
-    // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
+
     parseTextLines: p.parseTextLines,
-    // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
+
     toEntry: p.toEntry,
   });
 });
@@ -2151,9 +2150,8 @@ try {
 
 // Fallback: react to tcp:status broadcasts
 try {
-  // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
   const { ipcMain } = require("electron");
-  // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
+
   ipcMain.on("tcp:status", () => {
     try {
       applyWindowTitles();

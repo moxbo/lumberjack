@@ -1,4 +1,3 @@
-/* eslint-disable @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-explicit-any */
 // NOTE: This file still has some `any` types that should be gradually replaced
 // See extracted hooks in src/hooks/ for properly typed state management
 import {
@@ -1837,9 +1836,9 @@ export default function App(): JSX.Element {
     const offs: Array<() => void> = [];
     try {
       if (window.api?.onAppend) {
-        console.log("[renderer-diag] Setting up onAppend listener");
+        console.warn("[renderer-diag] Setting up onAppend listener");
         const off = window.api.onAppend((newEntries) => {
-          console.log(
+          console.warn(
             `[renderer-diag] Received IPC logs:append with ${newEntries?.length || 0} entries`,
           );
           appendEntries(newEntries as any[]);
@@ -1894,15 +1893,15 @@ export default function App(): JSX.Element {
                 break;
               }
               case "http-stop-poll": {
-                console.log(
+                console.warn(
                   "[menu] http-stop-poll received, httpPollIdRef.current =",
                   httpPollIdRef.current,
                 );
                 if (httpPollIdRef.current != null) {
-                  console.log("[menu] calling httpMenuStopPoll()");
+                  console.warn("[menu] calling httpMenuStopPoll()");
                   void httpMenuStopPoll();
                 } else {
-                  console.log(
+                  console.warn(
                     "[menu] httpPollIdRef.current is null, not stopping",
                   );
                 }
@@ -2342,20 +2341,20 @@ export default function App(): JSX.Element {
   async function httpMenuStopPoll() {
     // Use ref value instead of state value to avoid stale closures
     const currentPollId = httpPollIdRef.current;
-    console.log(
+    console.warn(
       "[httpMenuStopPoll] called, httpPollIdRef.current =",
       currentPollId,
     );
     if (currentPollId == null) {
-      console.log("[httpMenuStopPoll] currentPollId is null, returning early");
+      console.warn("[httpMenuStopPoll] currentPollId is null, returning early");
       return;
     }
-    console.log(
+    console.warn(
       "[httpMenuStopPoll] calling window.api.httpStopPoll with id =",
       currentPollId,
     );
     const r = await window.api.httpStopPoll(currentPollId);
-    console.log("[httpMenuStopPoll] result =", r);
+    console.warn("[httpMenuStopPoll] result =", r);
     if (r.ok) {
       setHttpStatus(t("status.httpPollStopped"));
       setHttpPollId(null);

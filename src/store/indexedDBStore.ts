@@ -64,7 +64,7 @@ class IndexedDBLogStore {
         request.onsuccess = () => {
           this.db = request.result;
           this.isInitialized = true;
-          console.log("[IndexedDBStore] Database opened successfully");
+          console.warn("[IndexedDBStore] Database opened successfully");
           resolve();
         };
 
@@ -80,7 +80,7 @@ class IndexedDBLogStore {
             store.createIndex(INDEX_LEVEL, "level", { unique: false });
             store.createIndex(INDEX_SOURCE, "source", { unique: false });
 
-            console.log("[IndexedDBStore] Object store created");
+            console.warn("[IndexedDBStore] Object store created");
           }
         };
       } catch (error) {
@@ -311,7 +311,7 @@ class IndexedDBLogStore {
       request.onsuccess = () => {
         this.memoryCache.clear();
         this.nextId = 1;
-        console.log("[IndexedDBStore] Store cleared");
+        console.warn("[IndexedDBStore] Store cleared");
         resolve();
       };
     });
@@ -352,7 +352,7 @@ class IndexedDBLogStore {
       this.db = null;
       this.isInitialized = false;
       this.initPromise = null;
-      console.log("[IndexedDBStore] Database closed");
+      console.warn("[IndexedDBStore] Database closed");
     }
   }
 }

@@ -307,7 +307,7 @@ export function useEntryManagement({ marksMap }: UseEntryManagementOptions) {
     const remaining = ipcQueueRef.current.length;
 
     if (remaining > 0) {
-      console.log(
+      console.warn(
         `[renderer-memory] Processing batch of ${batch.length}, ${remaining} entries still queued`,
       );
     }

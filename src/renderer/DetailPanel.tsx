@@ -83,7 +83,6 @@ export function DetailPanel({
     <div
       data-tinted={markColor ? "1" : "0"}
       style={{
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
         ["--details-tint" as any]: computeTint(markColor, 0.22),
       }}
     >

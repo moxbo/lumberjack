@@ -123,7 +123,6 @@ window.onunhandledrejection = (event) => {
 // Only attempt registration when not in dev and not loaded from file: protocol.
 if (
   "serviceWorker" in navigator &&
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-member-access
   !(import.meta as any).env?.DEV &&
   window?.location?.protocol !== "file:"
 ) {

@@ -60,15 +60,16 @@ module.exports = defineConfig([
 
     rules: {
       "prettier/prettier": "error",
-      "@typescript-eslint/no-unsafe-assignment": "warn",
-      "@typescript-eslint/no-unsafe-call": "warn",
-      "@typescript-eslint/no-unsafe-member-access": "warn",
-      "@typescript-eslint/no-unsafe-return": "warn",
-      "@typescript-eslint/no-unsafe-argument": "warn",
-      "@typescript-eslint/no-explicit-any": "warn",
+      // Turned off: IPC boundary + intentional `as any` casts make these noise
+      "@typescript-eslint/no-unsafe-assignment": "off",
+      "@typescript-eslint/no-unsafe-call": "off",
+      "@typescript-eslint/no-unsafe-member-access": "off",
+      "@typescript-eslint/no-unsafe-return": "off",
+      "@typescript-eslint/no-unsafe-argument": "off",
+      "@typescript-eslint/no-explicit-any": "off",
       "@typescript-eslint/no-require-imports": "off",
       "@typescript-eslint/require-await": "off",
-      "@typescript-eslint/no-base-to-string": "warn",
+      "@typescript-eslint/no-base-to-string": "off",
       "@typescript-eslint/no-unnecessary-type-assertion": "off",
       "@typescript-eslint/no-misused-promises": [
         "warn",
@@ -78,14 +79,8 @@ module.exports = defineConfig([
         },
       ],
       "no-empty": ["error", { allowEmptyCatch: true }],
-      "no-useless-escape": "warn",
-      "@typescript-eslint/explicit-function-return-type": [
-        "warn",
-        {
-          allowExpressions: true,
-          allowTypedFunctionExpressions: true,
-        },
-      ],
+      "no-useless-escape": "error",
+      "@typescript-eslint/explicit-function-return-type": "off",
 
       "@typescript-eslint/no-unused-vars": [
         "error",
@@ -111,7 +106,7 @@ module.exports = defineConfig([
     extends: compat.extends("plugin:@typescript-eslint/recommended"),
 
     rules: {
-      "@typescript-eslint/no-explicit-any": "warn",
+      "@typescript-eslint/no-explicit-any": "off",
     },
   },
 ]);

@@ -1,4 +1,3 @@
-/* eslint-disable */
 import { useEffect, useRef, useState } from "preact/hooks";
 import { useI18n } from "../utils/i18n";
 

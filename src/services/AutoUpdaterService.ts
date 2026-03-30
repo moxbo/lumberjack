@@ -61,7 +61,7 @@ export class AutoUpdaterService {
 
   // Bound event handlers for proper cleanup
   // Using 'any' for handler type to allow different event signatures
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+
   private readonly boundHandlers = new Map<string, (...args: any[]) => void>();
 
   // Registered IPC handlers for cleanup

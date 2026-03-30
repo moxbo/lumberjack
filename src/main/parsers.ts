@@ -869,7 +869,7 @@ function buildElasticSearchBody(opts: ElasticsearchOptions): AnyMap {
   const app = String(opts.application_name || "").trim();
   if (app) {
     const q =
-      app.includes(" ") || /[\["*?:/()\]{}]/.test(app)
+      app.includes(" ") || /[["*?:/()\]{}]/.test(app)
         ? `"${app.replace(/"/g, '\\"')}"`
         : app;
     must.push({
