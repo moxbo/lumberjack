@@ -26,12 +26,46 @@ interface Listener {
   (): void;
 }
 
+const BROADCAST_CHANNEL_NAME = "lumberjack-filter-profiles-sync";
+
 class FilterProfilesStore {
   private profiles: Map<string, FilterProfile> = new Map();
   private listeners = new Set<Listener>();
+  private broadcastChannel: BroadcastChannel | null = null;
 
   constructor() {
     this.load();
+    this.initCrossWindowSync();
+  }
+
+  /**
+   * Set up cross-window synchronization using BroadcastChannel.
+   * BroadcastChannel is a Web API that reliably delivers messages across
+   * all same-origin browsing contexts (Electron BrowserWindows).
+   * Unlike the 'storage' event, it works across separate renderer processes.
+   */
+  private initCrossWindowSync(): void {
+    if (typeof BroadcastChannel === "undefined") return;
+    try {
+      this.broadcastChannel = new BroadcastChannel(BROADCAST_CHANNEL_NAME);
+      this.broadcastChannel.onmessage = (event: MessageEvent) => {
+        if (event.data?.type === "profiles-changed") {
+          this.load();
+          this.emit();
+        }
+      };
+    } catch (e) {
+      console.warn("[FilterProfilesStore] BroadcastChannel init failed:", e);
+    }
+  }
+
+  /** Notify other windows that profiles have been modified. */
+  private notifyOtherWindows(): void {
+    try {
+      this.broadcastChannel?.postMessage({ type: "profiles-changed" });
+    } catch {
+      // Channel may be closed – ignore silently
+    }
   }
 
   private load(): void {
@@ -54,6 +88,7 @@ class FilterProfilesStore {
     try {
       const data = Array.from(this.profiles.values());
       localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
+      this.notifyOtherWindows();
     } catch (e) {
       console.error("[FilterProfilesStore] Failed to save profiles:", e);
       throw e;
