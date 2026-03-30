@@ -109,4 +109,15 @@ module.exports = defineConfig([
       "@typescript-eslint/no-explicit-any": "off",
     },
   },
+  {
+    // Debug & logging utilities intentionally use console.*
+    files: [
+      "src/utils/debugFunctions.ts",
+      "src/utils/rendererPerf.ts",
+      "src/utils/logger.ts",
+    ],
+    rules: {
+      "no-console": "off",
+    },
+  },
 ]);

@@ -882,8 +882,7 @@ export default function App(): JSX.Element {
         (workerFilterStats.total % 5000 === 0 ||
           (workerFilterStats.passed === 0 && workerFilterStats.total > 0))
       ) {
-        // eslint-disable-next-line no-console
-        console.log("[filter-diag] Filter stats:", workerFilterStats);
+        logger.debug("[filter-diag] Filter stats:", workerFilterStats);
         if (workerFilterStats.passed === 0 && workerFilterStats.total > 0) {
           console.warn("[filter-diag] WARNING: All entries filtered out!", {
             total: workerFilterStats.total,

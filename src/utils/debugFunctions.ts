@@ -38,7 +38,6 @@ export function setupDebugFunctions(): void {
       const isFilterActive = filteredIdx.length < entries.length;
       const searchScope = searchAll ? entries.length : filteredIdx.length;
 
-      // eslint-disable-next-line no-console
       console.log(
         "[ljDebug] Searching for '" +
           term +
@@ -80,7 +79,6 @@ export function setupDebugFunctions(): void {
         }
       }
 
-      // eslint-disable-next-line no-console
       console.log(
         "[ljDebug] Found " +
           found.length +
@@ -95,7 +93,6 @@ export function setupDebugFunctions(): void {
       );
 
       if (found.length === 0 && !searchAll && isFilterActive) {
-        // eslint-disable-next-line no-console
         console.log(
           "[ljDebug] Tip: No matches in filtered entries. Try findInEntries('" +
             term +
@@ -123,9 +120,7 @@ export function setupDebugFunctions(): void {
       }));
       sized.sort((a, b) => b.size - a.size);
       const top = sized.slice(0, count);
-      // eslint-disable-next-line no-console
       console.log("[ljDebug] Top " + count + " largest messages:");
-      // eslint-disable-next-line no-console
       console.table(top);
       return top;
     },
@@ -150,13 +145,11 @@ export function setupDebugFunctions(): void {
         totalMessageSize: (totalSize / 1024 / 1024).toFixed(2) + " MB",
         levelCounts: levels,
       };
-      // eslint-disable-next-line no-console
       console.log("[ljDebug] Entry statistics:", stats);
       return stats;
     },
 
     getFilterState: () => {
-      // eslint-disable-next-line no-console
       console.log(
         "[ljDebug] Use window.ljDebug.findInEntries('searchterm') to search",
       );
@@ -166,19 +159,12 @@ export function setupDebugFunctions(): void {
     poolStats: () => {
       const pool = getRendererLogEntryPool();
       const stats = pool.getStats();
-      // eslint-disable-next-line no-console
       console.log("[ljDebug] LogEntry Pool Statistics:");
-      // eslint-disable-next-line no-console
       console.log("  Available in pool: " + stats.available);
-      // eslint-disable-next-line no-console
       console.log("  Total created: " + stats.totalCreated);
-      // eslint-disable-next-line no-console
       console.log("  Reused: " + stats.reused);
-      // eslint-disable-next-line no-console
       console.log("  Returned: " + stats.returned);
-      // eslint-disable-next-line no-console
       console.log("  Hit rate: " + (stats.hitRate * 100).toFixed(1) + "%");
-      // eslint-disable-next-line no-console
       console.log("  Max size: " + stats.maxSize);
       return stats;
     },
@@ -227,7 +213,6 @@ export function setupDebugFunctions(): void {
         },
       };
 
-      // eslint-disable-next-line no-console
       console.log("[ljDebug] Memory Usage Estimate:", report);
       return report;
     },
@@ -274,7 +259,6 @@ export function setupDebugFunctions(): void {
         _testId: `test-${Date.now()}-${i}`,
       }));
       (LoggingStore as any).addEvents(logEvents);
-      // eslint-disable-next-line no-console
       console.log(`[ljDebug] Added ${logEvents.length} test entries`);
       return logEvents.length;
     },
@@ -284,7 +268,6 @@ export function setupDebugFunctions(): void {
      */
     clearEntries: () => {
       (LoggingStore as any).reset();
-      // eslint-disable-next-line no-console
       console.log("[ljDebug] Cleared all entries");
     },
 

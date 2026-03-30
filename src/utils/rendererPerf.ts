@@ -21,7 +21,6 @@ class RendererPerformanceTracker {
     this.marks.set(name, now);
 
     // Log to console for debugging
-    // eslint-disable-next-line no-console
     console.log(`[RENDERER-PERF] ${name}: ${Math.round(duration)}ms`);
   }
 
@@ -45,7 +44,6 @@ class RendererPerformanceTracker {
     }
 
     const duration = end - start;
-    // eslint-disable-next-line no-console
     console.log(
       `[RENDERER-PERF] ${name}: ${Math.round(duration)}ms (${startMark} → ${endMark ?? "now"})`,
     );

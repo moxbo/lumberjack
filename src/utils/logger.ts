@@ -8,11 +8,9 @@ interface LogBackend {
 }
 
 let _backend: LogBackend = {
-  // eslint-disable-next-line no-console
   info: (...args: unknown[]) => console.info("[lj]", ...args),
   warn: (...args: unknown[]) => console.warn("[lj]", ...args),
   error: (...args: unknown[]) => console.error("[lj]", ...args),
-  // eslint-disable-next-line no-console
   debug: (...args: unknown[]) => console.debug("[lj]", ...args),
 };
 
