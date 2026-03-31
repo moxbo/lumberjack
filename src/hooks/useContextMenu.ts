@@ -10,7 +10,7 @@ import {
 } from "preact/hooks";
 import { BASE_MARK_COLORS } from "../constants";
 import { entrySignature } from "../utils/entryUtils";
-import logger from "../utils/logger";
+import { patchSettingsQuiet } from "../utils/typedApi";
 
 interface ContextMenuState {
   open: boolean;
@@ -116,11 +116,7 @@ export function useContextMenu({
     if (!color) return;
     setCustomColors((prev) => {
       const list = prev.includes(color) ? prev : [...prev, color];
-      try {
-        void window.api.settingsSet({ customMarkColors: list });
-      } catch (e) {
-        logger.error("Failed to save customMarkColors settings:", e);
-      }
+      patchSettingsQuiet({ customMarkColors: list });
       return list;
     });
   }, []);
@@ -148,9 +144,7 @@ export function useContextMenu({
         }
 
         setMarksMap(newMap);
-        try {
-          void window.api.settingsSet({ marksMap: newMap });
-        } catch {}
+        patchSettingsQuiet({ marksMap: newMap });
 
         return next;
       });

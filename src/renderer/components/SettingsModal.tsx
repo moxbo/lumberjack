@@ -8,6 +8,11 @@ import type { SettingsForm, SettingsTab } from "../../hooks";
 import { useFeatureFlags } from "../../hooks";
 import { FeatureFlagsPanel } from "./FeatureFlagsPanel";
 import type { JSX } from "preact";
+import {
+  getDefaultLogPath as typedGetDefaultLogPath,
+  windowPermsSet,
+  chooseLogFile,
+} from "../../utils/typedApi";
 
 // SVG Icons for tabs
 const TabIcons: Record<SettingsTab, JSX.Element> = {
@@ -148,8 +153,7 @@ export function SettingsModal({
   // Load default log path when modal opens
   useEffect(() => {
     if (open && !defaultLogPath) {
-      window.api
-        .getDefaultLogPath()
+      typedGetDefaultLogPath()
         .then(setDefaultLogPath)
         .catch(() => {
           // Fallback if API call fails
@@ -298,11 +302,9 @@ export function SettingsModal({
                           const v = e.currentTarget.checked;
                           onCanTcpControlWindowChange(v);
                           try {
-                            await window.api?.windowPermsSet?.({
-                              canTcpControl: v,
-                            });
+                            await windowPermsSet({ canTcpControl: v });
                           } catch (err) {
-                            logger.warn("windowPermsSet failed:", err as any);
+                            logger.warn("windowPermsSet failed:", err);
                           }
                         }}
                       />
@@ -621,10 +623,10 @@ export function SettingsModal({
                         className="settings-btn-secondary"
                         onClick={async () => {
                           try {
-                            const p = await window.api.chooseLogFile();
+                            const p = await chooseLogFile();
                             if (p) onFormChange({ ...form, logFilePath: p });
                           } catch (e) {
-                            logger.warn("chooseLogFile failed:", e as any);
+                            logger.warn("chooseLogFile failed:", e);
                           }
                         }}
                         disabled={!fileLoggingEnabled || !form.logToFile}

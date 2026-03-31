@@ -4,6 +4,10 @@
 import { useState, useEffect } from "preact/hooks";
 import { useI18n } from "../../utils/i18n";
 import { nativeAlert } from "../../utils/nativeDialog";
+import {
+  httpGetAllowInsecureSSL,
+  httpSetAllowInsecureSSL,
+} from "../../utils/typedApi";
 
 interface HttpLoadDialogProps {
   open: boolean;
@@ -26,7 +30,7 @@ export function HttpLoadDialog({
     if (open) {
       setUrl(initialUrl);
       // Load current insecure SSL setting
-      void window.api?.httpGetAllowInsecureSSL?.().then((val) => {
+      void httpGetAllowInsecureSSL().then((val) => {
         setAllowInsecureSSL(val);
       });
     }
@@ -39,7 +43,7 @@ export function HttpLoadDialog({
       return;
     }
     // Apply insecure SSL setting before loading
-    await window.api?.httpSetAllowInsecureSSL?.(allowInsecureSSL);
+    await httpSetAllowInsecureSSL(allowInsecureSSL);
     onClose();
     await onLoad(trimmedUrl);
   };

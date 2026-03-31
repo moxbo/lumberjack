@@ -6,6 +6,7 @@
 import { useRef, useEffect, useCallback, useState } from "preact/hooks";
 import type { ColumnResizeState, DividerResizeState } from "../types/renderer";
 import logger from "../utils/logger";
+import { patchSettingsQuiet } from "../utils/typedApi";
 
 export interface UseResizeHandlersOptions {
   layoutRef: React.RefObject<HTMLDivElement | null>;
@@ -90,7 +91,7 @@ export function useResizeHandlers(
         const cs = getComputedStyle(document.documentElement);
         const h = cs.getPropertyValue("--detail-height").trim();
         const num = Number(h.replace("px", "")) || 300;
-        await window.api.settingsSet({ detailHeight: Math.round(num) });
+        patchSettingsQuiet({ detailHeight: Math.round(num) });
       } catch (e) {
         logger.warn("Setting detailHeight via API failed:", e);
       }
@@ -154,7 +155,10 @@ export function useResizeHandlers(
         "--col-logger": "colLogger",
       };
       const k = keyMap[st.active];
-      if (k) await window.api.settingsSet({ [k]: Math.round(num) } as any);
+      if (k)
+        patchSettingsQuiet({ [k]: Math.round(num) } as Partial<
+          import("../types/ipc").Settings
+        >);
     } catch (e) {
       logger.warn("Column resize setting failed:", e);
     }

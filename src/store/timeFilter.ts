@@ -88,9 +88,8 @@ class TimeFilterImpl {
     return this._state.enabled;
   }
   setEnabled(v: boolean): void {
-    const nv = v;
-    if (nv !== this._state.enabled) {
-      this._state.enabled = nv;
+    if (v !== this._state.enabled) {
+      this._state.enabled = v;
       this._em.emit();
     }
   }
@@ -162,6 +161,19 @@ class TimeFilterImpl {
   }
 }
 
+/** Public interface for typed access (avoids `as any` casts in consumers) */
+export interface ITimeFilter {
+  onChange(fn: () => void): () => void;
+  getState(): TimeFilterState;
+  isEnabled(): boolean;
+  setEnabled(v: boolean): void;
+  reset(): void;
+  setRelative(duration: string): void;
+  setAbsolute(from?: string | Date | null, to?: string | Date | null): void;
+  refreshAnchor(): void;
+  matchesTs(ts: string | number): boolean;
+}
+
 // Lazy singleton
 import { lazyInstance } from "./_lazy";
-export const TimeFilter = lazyInstance(() => new TimeFilterImpl());
+export const TimeFilter: ITimeFilter = lazyInstance(() => new TimeFilterImpl());

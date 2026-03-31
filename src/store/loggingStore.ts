@@ -181,6 +181,16 @@ class LoggingStoreImpl {
 
 import { lazyInstance } from "./_lazy";
 
+/** Public interface for typed access (avoids `as any` casts in consumers) */
+export interface ILoggingStore {
+  addLoggingStoreListener(listener: Listener): () => void;
+  getAllEvents(): LogEvent[];
+  addEvents(events: LogEvent[]): void;
+  reset(): void;
+}
+
 // Export the singleton lazily to avoid temporal-dead-zone issues when modules
 // import each other during initialization (bundlers can reorder/rename symbols).
-export const LoggingStore = lazyInstance(() => new LoggingStoreImpl());
+export const LoggingStore: ILoggingStore = lazyInstance(
+  () => new LoggingStoreImpl(),
+);

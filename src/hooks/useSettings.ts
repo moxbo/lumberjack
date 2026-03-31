@@ -6,6 +6,15 @@ import logger from "../utils/logger";
 import { rendererPerf } from "../utils/rendererPerf";
 import { MAX_ELASTIC_HISTORY } from "../constants";
 import { nativeAlert, nativeConfirm } from "../utils/nativeDialog";
+import {
+  getSettings,
+  patchSettings,
+  patchSettingsQuiet,
+  windowPermsGet,
+  appRelaunch,
+  autoUpdaterSetAllowPrerelease,
+} from "../utils/typedApi";
+import type { Settings } from "../types/ipc";
 
 export type ThemeMode = "system" | "light" | "dark";
 export type SettingsTab =
@@ -119,11 +128,7 @@ export function useSettings() {
             0,
             MAX_ELASTIC_HISTORY,
           );
-          try {
-            void window.api.settingsSet({ histAppName: list } as any);
-          } catch (e) {
-            logger.error("Failed to save histAppName settings:", e);
-          }
+          patchSettingsQuiet({ histAppName: list });
           return list;
         });
       } else if (kind === "env") {
@@ -132,11 +137,7 @@ export function useSettings() {
             0,
             MAX_ELASTIC_HISTORY,
           );
-          try {
-            void window.api.settingsSet({ histEnvironment: list } as any);
-          } catch (e) {
-            logger.error("Failed to save histEnvironment settings:", e);
-          }
+          patchSettingsQuiet({ histEnvironment: list });
           return list;
         });
       } else if (kind === "index") {
@@ -145,11 +146,7 @@ export function useSettings() {
             0,
             MAX_ELASTIC_HISTORY,
           );
-          try {
-            void window.api.settingsSet({ histIndex: list } as any);
-          } catch (e) {
-            logger.error("Failed to save histIndex settings:", e);
-          }
+          patchSettingsQuiet({ histIndex: list });
           return list;
         });
       }
@@ -162,24 +159,18 @@ export function useSettings() {
     const loadSettings = async () => {
       rendererPerf.mark("settings-load-start");
       try {
-        if (!window.api?.settingsGet) {
-          logger.error("window.api.settingsGet is not available.");
+        const r = await getSettings();
+        if (!r) {
+          logger.warn("Failed to load settings or settingsGet unavailable.");
           return;
         }
-        const result = await window.api.settingsGet();
-        if (!result || !result.ok) {
-          logger.warn("Failed to load settings:", (result as any)?.error);
-          return;
-        }
-        const r = result.settings as any;
-        if (!r) return;
 
         // TCP
         if (r.tcpPort != null) setTcpPort(Number(r.tcpPort) || 5000);
 
         // HTTP
         if (typeof r.httpUrl === "string") setHttpUrl(r.httpUrl);
-        const interval = r.httpPollInterval ?? r.httpInterval;
+        const interval = r.httpPollInterval;
         if (interval != null) setHttpInterval(Number(interval) || 5);
 
         // Elastic History
@@ -198,7 +189,7 @@ export function useSettings() {
         }
 
         // Follow
-        if (typeof r.follow === "boolean") setFollow(!!r.follow);
+        if (typeof r.follow === "boolean") setFollow(r.follow);
 
         // Layout (CSS variables)
         const root = document.documentElement;
@@ -240,10 +231,10 @@ export function useSettings() {
 
       // Per-Window permissions
       try {
-        const perms = await window.api?.windowPermsGet?.();
+        const perms = await windowPermsGet();
         if (perms?.ok) setCanTcpControlWindow(perms.canTcpControl !== false);
       } catch (e) {
-        logger.warn("windowPermsGet failed:", e as any);
+        logger.warn("windowPermsGet failed:", e);
       }
     };
 
@@ -270,77 +261,74 @@ export function useSettings() {
       let curHeapSizeMB = 2048; // Default 2GB
 
       try {
-        if (window.api?.settingsGet) {
-          const result = await window.api.settingsGet();
-          const r = result?.ok ? (result.settings as any) : null;
-          if (r) {
-            if (typeof r.themeMode === "string") {
-              const mode = ["light", "dark", "system"].includes(r.themeMode)
-                ? r.themeMode
-                : "system";
-              curMode = mode as ThemeMode;
-              setThemeMode(mode as ThemeMode);
-              applyThemeMode(mode);
-            }
-            if (typeof r.follow === "boolean") setFollow(!!r.follow);
-            if (r.tcpPort != null) {
-              curTcpPort = Number(r.tcpPort) || 5000;
-              setTcpPort(curTcpPort);
-            }
-            if (typeof r.httpUrl === "string") {
-              curHttpUrl = r.httpUrl;
-              setHttpUrl(curHttpUrl);
-            }
-            const interval = r.httpPollInterval ?? r.httpInterval;
-            if (interval != null) {
-              curHttpInterval = Number(interval) || 5;
-              setHttpInterval(curHttpInterval);
-            }
-            if (typeof r.logToFile === "boolean") {
-              curLogToFile = r.logToFile;
-              setLogToFile(curLogToFile);
-            }
-            if (typeof r.logFilePath === "string") {
-              curLogFilePath = r.logFilePath;
-              setLogFilePath(curLogFilePath);
-            }
-            if (r.logMaxBytes != null) {
-              curLogMaxBytes = Number(r.logMaxBytes) || 5 * 1024 * 1024;
-              setLogMaxBytes(curLogMaxBytes);
-            }
-            if (r.logMaxBackups != null) {
-              curLogMaxBackups = Number(r.logMaxBackups) || 3;
-              setLogMaxBackups(curLogMaxBackups);
-            }
-            if (typeof r.elasticUrl === "string") {
-              curElasticUrl = r.elasticUrl;
-              setElasticUrl(curElasticUrl);
-            }
-            if (r.elasticSize != null) {
-              curElasticSize = Number(r.elasticSize) || 1000;
-              setElasticSize(curElasticSize);
-            }
-            if (typeof r.elasticUser === "string") {
-              curElasticUser = r.elasticUser;
-              setElasticUser(curElasticUser);
-            }
-            if (r.elasticMaxParallel != null) {
-              curElasticMaxParallel = Math.max(
-                1,
-                Number(r.elasticMaxParallel) || 1,
-              );
-              setElasticMaxParallel(curElasticMaxParallel);
-            }
-            if (typeof r.elasticPassEnc === "string") {
-              setElasticHasPass(!!r.elasticPassEnc.trim());
-            }
-            if (typeof r.allowPrerelease === "boolean") {
-              curAllowPrerelease = r.allowPrerelease;
-              setAllowPrerelease(curAllowPrerelease);
-            }
-            if (typeof r.heapSizeMB === "number") {
-              curHeapSizeMB = r.heapSizeMB;
-            }
+        const r = await getSettings();
+        if (r) {
+          if (typeof r.themeMode === "string") {
+            const mode = ["light", "dark", "system"].includes(r.themeMode)
+              ? r.themeMode
+              : "system";
+            curMode = mode as ThemeMode;
+            setThemeMode(mode as ThemeMode);
+            applyThemeMode(mode);
+          }
+          if (typeof r.follow === "boolean") setFollow(!!r.follow);
+          if (r.tcpPort != null) {
+            curTcpPort = Number(r.tcpPort) || 5000;
+            setTcpPort(curTcpPort);
+          }
+          if (typeof r.httpUrl === "string") {
+            curHttpUrl = r.httpUrl;
+            setHttpUrl(curHttpUrl);
+          }
+          const interval = r.httpPollInterval;
+          if (interval != null) {
+            curHttpInterval = Number(interval) || 5;
+            setHttpInterval(curHttpInterval);
+          }
+          if (typeof r.logToFile === "boolean") {
+            curLogToFile = r.logToFile;
+            setLogToFile(curLogToFile);
+          }
+          if (typeof r.logFilePath === "string") {
+            curLogFilePath = r.logFilePath;
+            setLogFilePath(curLogFilePath);
+          }
+          if (r.logMaxBytes != null) {
+            curLogMaxBytes = Number(r.logMaxBytes) || 5 * 1024 * 1024;
+            setLogMaxBytes(curLogMaxBytes);
+          }
+          if (r.logMaxBackups != null) {
+            curLogMaxBackups = Number(r.logMaxBackups) || 3;
+            setLogMaxBackups(curLogMaxBackups);
+          }
+          if (typeof r.elasticUrl === "string") {
+            curElasticUrl = r.elasticUrl;
+            setElasticUrl(curElasticUrl);
+          }
+          if (r.elasticSize != null) {
+            curElasticSize = Number(r.elasticSize) || 1000;
+            setElasticSize(curElasticSize);
+          }
+          if (typeof r.elasticUser === "string") {
+            curElasticUser = r.elasticUser;
+            setElasticUser(curElasticUser);
+          }
+          if (r.elasticMaxParallel != null) {
+            curElasticMaxParallel = Math.max(
+              1,
+              Number(r.elasticMaxParallel) || 1,
+            );
+            setElasticMaxParallel(curElasticMaxParallel);
+          }
+          if (typeof r.elasticPassEnc === "string") {
+            setElasticHasPass(!!r.elasticPassEnc.trim());
+          }
+          if (typeof r.allowPrerelease === "boolean") {
+            curAllowPrerelease = r.allowPrerelease;
+            setAllowPrerelease(curAllowPrerelease);
+          }
+          if (typeof r.heapSizeMB === "number") {
+            curHeapSizeMB = r.heapSizeMB;
           }
         }
       } catch (e) {
@@ -407,7 +395,7 @@ export function useSettings() {
       ? form.themeMode
       : "system";
 
-    const patch: any = {
+    const patch: Partial<Settings> = {
       tcpPort: port,
       httpUrl: String(form.httpUrl || "").trim(),
       httpPollInterval: interval,
@@ -415,7 +403,7 @@ export function useSettings() {
       logFilePath: path,
       logMaxBytes: maxBytes,
       logMaxBackups: backups,
-      themeMode: mode,
+      themeMode: mode as Settings["themeMode"],
       elasticUrl: String(form.elasticUrl || "").trim(),
       elasticSize: Math.max(1, Number(form.elasticSize || 1000)),
       elasticUser: String(form.elasticUser || "").trim(),
@@ -428,15 +416,14 @@ export function useSettings() {
     };
 
     const newPass = String(form.elasticPassNew || "").trim();
-    if (form.elasticPassClear) patch["elasticPassClear"] = true;
-    else if (newPass) patch["elasticPassPlain"] = newPass;
+    if (form.elasticPassClear) patch.elasticPassClear = true;
+    else if (newPass) patch.elasticPassPlain = newPass;
 
     try {
-      const res = await window.api.settingsSet(patch);
-      if (!res || !res.ok) {
+      const res = await patchSettings(patch);
+      if (!res.ok) {
         nativeAlert(
-          "Speichern fehlgeschlagen: " +
-            ((res as any)?.error || "Unbekannter Fehler"),
+          "Speichern fehlgeschlagen: " + (res.error || "Unbekannter Fehler"),
         );
         return false;
       }
@@ -459,7 +446,7 @@ export function useSettings() {
       // Update allowPrerelease state and notify auto-updater
       setAllowPrerelease(form.allowPrerelease);
       try {
-        await window.api?.autoUpdaterSetAllowPrerelease?.(form.allowPrerelease);
+        await autoUpdaterSetAllowPrerelease(form.allowPrerelease);
       } catch (e) {
         logger.warn("Failed to update auto-updater allowPrerelease:", e);
       }
@@ -477,8 +464,8 @@ export function useSettings() {
           const shouldRestart = nativeConfirm(
             "Das Speicherlimit wurde geändert. Die Änderung wird erst nach einem Neustart wirksam.\n\nMöchten Sie die Anwendung jetzt neu starten?",
           );
-          if (shouldRestart && window.api?.appRelaunch) {
-            void window.api.appRelaunch();
+          if (shouldRestart) {
+            void appRelaunch();
           }
         }, 100);
       }

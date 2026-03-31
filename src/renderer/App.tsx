@@ -1,5 +1,5 @@
-// NOTE: This file still has some `any` types that should be gradually replaced
-// See extracted hooks in src/hooks/ for properly typed state management
+// NOTE: IPC calls now use the typed wrapper from ../utils/typedApi
+// See extracted hooks in src/hooks/ and components in src/renderer/components/
 import {
   useCallback,
   useEffect,
@@ -17,8 +17,32 @@ import { LoggingStore } from "../store/loggingStore";
 import { canonicalDcKey, DiagnosticContextFilter } from "../store/dcFilter";
 import { DragAndDropManager } from "../utils/dnd";
 import { TimeFilter } from "../store/timeFilter";
-import { createPortal, lazy, Suspense } from "preact/compat";
-import type { ElasticSearchOptions } from "../types/ipc";
+import { lazy, Suspense } from "preact/compat";
+import type { ElasticSearchOptions, Settings } from "../types/ipc";
+import {
+  getSettings,
+  patchSettings,
+  patchSettingsQuiet,
+  windowPermsGet,
+  openFiles as typedOpenFiles,
+  parsePaths as typedParsePaths,
+  parseRawDrops as typedParseRawDrops,
+  tcpStart as typedTcpStart,
+  tcpStop as typedTcpStop,
+  httpLoadOnce as typedHttpLoadOnce,
+  httpStartPoll as typedHttpStartPoll,
+  httpStopPoll as typedHttpStopPoll,
+  elasticSearch as typedElasticSearch,
+  elasticClosePit as typedElasticClosePit,
+  chooseExportPath as typedChooseExportPath,
+  saveExportFile as typedSaveExportFile,
+  autoUpdaterSetAllowPrerelease as typedAutoUpdaterSetAllowPrerelease,
+  appRelaunch as typedAppRelaunch,
+  onAppend as typedOnAppend,
+  onMenu as typedOnMenu,
+  onTcpStatus as typedOnTcpStatus,
+  onWindowFocus as typedOnWindowFocus,
+} from "../utils/typedApi";
 import type {
   RendererLogEntry,
   ElasticFormState,
@@ -67,6 +91,10 @@ import {
   UpdateNotification,
 } from "./components";
 import { SkeletonLoader } from "./components/SkeletonLoader";
+import { ElasticStatusBar } from "./components/ElasticStatusBar";
+import { SearchBar } from "./components/SearchBar";
+import { ActiveFilterChips } from "./components/ActiveFilterChips";
+import { StatusSection } from "./components/StatusSection";
 import { JSX } from "preact/jsx-runtime";
 
 // Lazy-load dialogs that are not shown on initial render for faster startup
@@ -222,7 +250,7 @@ export default function App(): JSX.Element {
   // re-render trigger for MDC filter changes
   const [dcVersion, setDcVersion] = useState<number>(0);
   useEffect(() => {
-    const off = (DiagnosticContextFilter as any).onChange?.(() =>
+    const off = DiagnosticContextFilter.onChange(() =>
       setDcVersion((v) => v + 1),
     );
     return () => {
@@ -234,9 +262,7 @@ export default function App(): JSX.Element {
   // re-render trigger for Time filter changes
   const [timeVersion, setTimeVersion] = useState<number>(0);
   useEffect(() => {
-    const off = (TimeFilter as any).onChange?.(() =>
-      setTimeVersion((v) => v + 1),
-    );
+    const off = TimeFilter.onChange(() => setTimeVersion((v) => v + 1));
     return () => {
       try {
         if (typeof off === "function") off();
@@ -284,31 +310,28 @@ export default function App(): JSX.Element {
       let lastIndex =
         (histIndex && histIndex.length > 0 ? String(histIndex[0]) : "") || "";
       let lastEnvCase: string | undefined;
-      if (window.api?.settingsGet) {
-        try {
-          const res = await window.api.settingsGet();
-          const r = res?.ok ? (res.settings as any) : null;
-          if (!lastApp && Array.isArray(r?.histAppName) && r.histAppName.length)
-            lastApp = String(r.histAppName[0] || "");
-          if (
-            !lastEnv &&
-            Array.isArray(r?.histEnvironment) &&
-            r.histEnvironment.length
-          )
-            lastEnv = String(r.histEnvironment[0] || "");
-          if (!lastIndex && Array.isArray(r?.histIndex) && r.histIndex.length)
-            lastIndex = String(r.histIndex[0] || "");
-          if (r && typeof r.lastEnvironmentCase === "string")
-            lastEnvCase = r.lastEnvironmentCase;
-        } catch {
-          // ignore
-        }
+      try {
+        const r = await getSettings();
+        if (!lastApp && Array.isArray(r?.histAppName) && r.histAppName.length)
+          lastApp = String(r.histAppName[0] || "");
+        if (
+          !lastEnv &&
+          Array.isArray(r?.histEnvironment) &&
+          r.histEnvironment.length
+        )
+          lastEnv = String(r.histEnvironment[0] || "");
+        if (!lastIndex && Array.isArray(r?.histIndex) && r.histIndex.length)
+          lastIndex = String(r.histIndex[0] || "");
+        if (r && typeof r.lastEnvironmentCase === "string")
+          lastEnvCase = r.lastEnvironmentCase;
+      } catch {
+        // ignore
       }
       return { lastApp, lastEnv, lastIndex, lastEnvCase };
     };
 
     try {
-      const s = (TimeFilter as any).getState?.();
+      const s = TimeFilter.getState();
       const toLocal = (iso: unknown): string => {
         const t = String(iso || "").trim();
         if (!t) return "";
@@ -406,7 +429,7 @@ export default function App(): JSX.Element {
       setHistAppName((prev) => {
         const list = [v, ...prev.filter((x) => x !== v)].slice(0, 10);
         try {
-          void window.api.settingsSet({ histAppName: list });
+          patchSettingsQuiet({ histAppName: list });
         } catch (e) {
           logger.error("Failed to save histAppName settings:", e);
           showAlert(t("errors.histAppNameSaveFailed"));
@@ -417,7 +440,7 @@ export default function App(): JSX.Element {
       setHistEnvironment((prev) => {
         const list = [v, ...prev.filter((x) => x !== v)].slice(0, 10);
         try {
-          void window.api.settingsSet({ histEnvironment: list });
+          patchSettingsQuiet({ histEnvironment: list });
         } catch (e) {
           logger.error("Failed to save histEnvironment settings:", e);
           showAlert(t("errors.histEnvironmentSaveFailed"));
@@ -428,7 +451,7 @@ export default function App(): JSX.Element {
       setHistIndex((prev) => {
         const list = [v, ...prev.filter((x) => x !== v)].slice(0, 10);
         try {
-          void window.api.settingsSet({ histIndex: list });
+          patchSettingsQuiet({ histIndex: list });
         } catch (e) {
           logger.error("Failed to save histIndex settings:", e);
           showAlert(t("errors.histIndexSaveFailed"));
@@ -485,15 +508,10 @@ export default function App(): JSX.Element {
     let url = httpUrl;
     try {
       // Load fresh settings to ensure we have current httpUrl
-      if (window.api?.settingsGet) {
-        const result = await window.api.settingsGet();
-        if (result?.ok) {
-          const r = result.settings as any;
-          if (typeof r?.httpUrl === "string") {
-            url = r.httpUrl;
-            setHttpUrl(url);
-          }
-        }
+      const r = await getSettings();
+      if (r && typeof r.httpUrl === "string") {
+        url = r.httpUrl;
+        setHttpUrl(url);
       }
     } catch (e) {
       logger.warn("Failed to load settings for HTTP load dialog:", e);
@@ -506,19 +524,16 @@ export default function App(): JSX.Element {
     let interval = httpInterval;
     try {
       // Load fresh settings to ensure we have current values
-      if (window.api?.settingsGet) {
-        const result = await window.api.settingsGet();
-        if (result?.ok) {
-          const r = result.settings as any;
-          if (typeof r?.httpUrl === "string") {
-            url = r.httpUrl;
-            setHttpUrl(url);
-          }
-          const int = r?.httpPollInterval ?? r?.httpInterval;
-          if (int != null) {
-            interval = Number(int) || 5;
-            setHttpInterval(interval);
-          }
+      const r = await getSettings();
+      if (r) {
+        if (typeof r.httpUrl === "string") {
+          url = r.httpUrl;
+          setHttpUrl(url);
+        }
+        const int = r.httpPollInterval ?? httpInterval;
+        if (int != null) {
+          interval = Number(int) || 5;
+          setHttpInterval(interval);
         }
       }
     } catch (e) {
@@ -563,7 +578,7 @@ export default function App(): JSX.Element {
     setCustomColors((prev) => {
       const list = prev.includes(color) ? prev : [...prev, color];
       try {
-        void window.api.settingsSet({ customMarkColors: list });
+        patchSettingsQuiet({ customMarkColors: list });
       } catch (e) {
         logger.error("Failed to save customMarkColors settings:", e);
       }
@@ -608,7 +623,7 @@ export default function App(): JSX.Element {
             parentRef.current &&
             !parentRef.current.contains(document.activeElement || null)
           ) {
-            (parentRef.current as any)?.focus?.({ preventScroll: true });
+            parentRef.current?.focus({ preventScroll: true });
           }
         }, 0);
       } catch (err) {
@@ -642,7 +657,7 @@ export default function App(): JSX.Element {
       }
       setMarksMap(newMap);
       try {
-        void window.api.settingsSet({ marksMap: newMap });
+        patchSettingsQuiet({ marksMap: newMap });
       } catch {}
       return next;
     });
@@ -688,15 +703,15 @@ export default function App(): JSX.Element {
           if (Object.prototype.hasOwnProperty.call(m, k)) {
             const v = String(m[k] ?? "");
             if (v && !added.has(v)) {
-              (DiagnosticContextFilter as any).addMdcEntry("TraceID", v);
+              DiagnosticContextFilter.addMdcEntry("TraceID", v);
               added.add(v);
             }
           }
         }
       }
-      if (added.size) (DiagnosticContextFilter as any).setEnabled(true);
+      if (added.size) DiagnosticContextFilter.setEnabled(true);
     } catch (e) {
-      logger.warn("adoptTraceIds failed:", e as any);
+      logger.warn("adoptTraceIds failed:", e);
     }
     closeContextMenu();
   }
@@ -820,10 +835,7 @@ export default function App(): JSX.Element {
   // Trigger filtering when dependencies change
   useEffect(() => {
     // Build DC filter entries from DiagnosticContextFilter state
-    const dcState = (DiagnosticContextFilter as any).getState?.() || {
-      entries: [],
-      enabled: false,
-    };
+    const dcState = DiagnosticContextFilter.getState();
     const dcFilterEntries = (dcState.entries || []).map(
       (e: { key: string; value: string; active: boolean }) => ({
         key: e.key,
@@ -834,7 +846,7 @@ export default function App(): JSX.Element {
     const dcFilterEnabled = dcState.enabled;
 
     // Build time filter state from TimeFilter
-    const timeState = (TimeFilter as any).getState?.() || {};
+    const timeState = TimeFilter.getState();
     const timeFilterEnabled = timeState.enabled === true;
     const timeFilterFrom = timeState.from || undefined;
     const timeFilterTo = timeState.to || undefined;
@@ -889,7 +901,7 @@ export default function App(): JSX.Element {
             onlyMarked,
             stdFiltersEnabled,
             debouncedFilter,
-            dcFilterEnabled: (DiagnosticContextFilter as any).isEnabled?.(),
+            dcFilterEnabled: DiagnosticContextFilter.isEnabled(),
           });
         }
       }
@@ -943,7 +955,7 @@ export default function App(): JSX.Element {
       if (distanceFromBottom > 100) {
         setFollow(false);
         try {
-          void window.api.settingsSet({ follow: false });
+          patchSettingsQuiet({ follow: false });
         } catch (err) {
           logger.warn("Persisting follow flag failed:", err);
         }
@@ -1092,7 +1104,7 @@ export default function App(): JSX.Element {
       try {
         toggleSelectIndex(idx, shift, meta);
         try {
-          (parentRef.current as any)?.focus?.();
+          parentRef.current?.focus();
         } catch {}
       } catch (err) {
         logger.error("onClick handler error:", err);
@@ -1127,7 +1139,7 @@ export default function App(): JSX.Element {
     // In den sichtbaren Bereich scrollen
     scrollToIndexCenter(targetVi);
     try {
-      (parentRef.current as any)?.focus?.();
+      parentRef.current?.focus();
     } catch {}
   }
   function gotoListEnd(): void {
@@ -1139,7 +1151,7 @@ export default function App(): JSX.Element {
     // In den sichtbaren Bereich scrollen
     scrollToIndexCenter(targetVi);
     try {
-      (parentRef.current as any)?.focus?.();
+      parentRef.current?.focus();
     } catch {}
   }
 
@@ -1456,8 +1468,8 @@ export default function App(): JSX.Element {
 
   function addMdcToFilter(k: string, v: string) {
     try {
-      (DiagnosticContextFilter as any).addMdcEntry(k, v ?? "");
-      (DiagnosticContextFilter as any).setEnabled(true);
+      DiagnosticContextFilter.addMdcEntry(k, v ?? "");
+      DiagnosticContextFilter.setEnabled(true);
     } catch (e) {
       logger.error("Failed to add MDC entry to filter:", e);
       showAlert(t("errors.mdcFilterAddFailed"));
@@ -1498,27 +1510,16 @@ export default function App(): JSX.Element {
     const loadSettings = async () => {
       rendererPerf.mark("settings-load-start");
       try {
-        if (!window.api?.settingsGet) {
-          logger.error("window.api.settingsGet is not available.");
-          setSettingsLoaded(true);
-          return;
-        }
-        // This is now instant because settings are cached in preload
-        const result = await window.api.settingsGet();
-        if (!result || !result.ok) {
-          logger.warn("Failed to load settings:", (result as any)?.error);
-          setSettingsLoaded(true);
-          return;
-        }
-        const r = result.settings as any;
+        const r = await getSettings();
         if (!r) {
+          logger.warn("Failed to load settings: no settings returned");
           setSettingsLoaded(true);
           return;
         }
         if (r.tcpPort != null) setTcpPort(Number(r.tcpPort) || 5000);
         if (typeof r.httpUrl === "string") setHttpUrl(r.httpUrl);
         // Support both httpPollInterval (persisted) and httpInterval (legacy)
-        const interval = r.httpPollInterval ?? r.httpInterval;
+        const interval = r.httpPollInterval;
         if (interval != null) setHttpInterval(Number(interval) || 5);
         // Entfernt: Laden einer persistierten Logger-Historie, damit Verlauf nur temporär ist
         // if (Array.isArray(r.histLogger)) setHistLogger(r.histLogger);
@@ -1528,7 +1529,7 @@ export default function App(): JSX.Element {
         // NEW: load histIndex
         if (Array.isArray(r.histIndex)) setHistIndex(r.histIndex);
         // Merke zuletzt verwendeten Environment-Case für Fallback im Dialog
-        const lastEnvCase = (r.lastEnvironmentCase as any) || "original";
+        const lastEnvCase = r.lastEnvironmentCase || "original";
         setTimeForm((prev) => ({
           ...prev,
           environmentCase: String(lastEnvCase || "original"),
@@ -1583,10 +1584,10 @@ export default function App(): JSX.Element {
       }
       // Per-Window Berechtigungen laden
       try {
-        const perms = await window.api?.windowPermsGet?.();
+        const perms = await windowPermsGet();
         if (perms?.ok) setCanTcpControlWindow(perms.canTcpControl !== false);
       } catch (e) {
-        logger.warn("windowPermsGet failed:", e as any);
+        logger.warn("windowPermsGet failed:", e);
       }
     };
 
@@ -1614,80 +1615,77 @@ export default function App(): JSX.Element {
     let curHeapSizeMB = 2048;
 
     try {
-      if (window.api?.settingsGet) {
-        const result = await window.api.settingsGet();
-        const r = result?.ok ? (result.settings as any) : null;
-        if (r) {
-          // Update local state AND form values from fresh settings
-          if (typeof r.themeMode === "string") {
-            const mode = ["light", "dark", "system"].includes(r.themeMode)
-              ? r.themeMode
-              : "system";
-            curMode = mode;
-            setThemeMode(mode);
-            applyThemeMode(mode);
-          }
-          if (typeof r.follow === "boolean") setFollow(!!r.follow);
-          // followSmooth ist immer true, wird nicht aus Settings geladen
+      const r = await getSettings();
+      if (r) {
+        // Update local state AND form values from fresh settings
+        if (typeof r.themeMode === "string") {
+          const mode = ["light", "dark", "system"].includes(r.themeMode)
+            ? r.themeMode
+            : "system";
+          curMode = mode;
+          setThemeMode(mode);
+          applyThemeMode(mode);
+        }
+        if (typeof r.follow === "boolean") setFollow(!!r.follow);
+        // followSmooth ist immer true, wird nicht aus Settings geladen
 
-          // Load all form values from settings
-          if (r.tcpPort != null) {
-            curTcpPort = Number(r.tcpPort) || 5000;
-            setTcpPort(curTcpPort);
-          }
-          if (typeof r.httpUrl === "string") {
-            curHttpUrl = r.httpUrl;
-            setHttpUrl(curHttpUrl);
-          }
-          const interval = r.httpPollInterval ?? r.httpInterval;
-          if (interval != null) {
-            curHttpInterval = Number(interval) || 5;
-            setHttpInterval(curHttpInterval);
-          }
-          if (typeof r.logToFile === "boolean") {
-            curLogToFile = r.logToFile;
-            setLogToFile(curLogToFile);
-          }
-          if (typeof r.logFilePath === "string") {
-            curLogFilePath = r.logFilePath;
-            setLogFilePath(curLogFilePath);
-          }
-          if (r.logMaxBytes != null) {
-            curLogMaxBytes = Number(r.logMaxBytes) || 5 * 1024 * 1024;
-            setLogMaxBytes(curLogMaxBytes);
-          }
-          if (r.logMaxBackups != null) {
-            curLogMaxBackups = Number(r.logMaxBackups) || 3;
-            setLogMaxBackups(curLogMaxBackups);
-          }
-          if (typeof r.elasticUrl === "string") {
-            curElasticUrl = r.elasticUrl;
-            setElasticUrl(curElasticUrl);
-          }
-          if (r.elasticSize != null) {
-            curElasticSize = Number(r.elasticSize) || 1000;
-            setElasticSize(curElasticSize);
-          }
-          if (typeof r.elasticUser === "string") {
-            curElasticUser = r.elasticUser;
-            setElasticUser(curElasticUser);
-          }
-          if (r.elasticMaxParallel != null) {
-            curElasticMaxParallel = Math.max(
-              1,
-              Number(r.elasticMaxParallel) || 1,
-            );
-            setElasticMaxParallel(curElasticMaxParallel);
-          }
-          if (typeof r.elasticPassEnc === "string") {
-            setElasticHasPass(!!r.elasticPassEnc.trim());
-          }
-          if (typeof r.allowPrerelease === "boolean") {
-            curAllowPrerelease = r.allowPrerelease;
-          }
-          if (typeof r.heapSizeMB === "number") {
-            curHeapSizeMB = r.heapSizeMB;
-          }
+        // Load all form values from settings
+        if (r.tcpPort != null) {
+          curTcpPort = Number(r.tcpPort) || 5000;
+          setTcpPort(curTcpPort);
+        }
+        if (typeof r.httpUrl === "string") {
+          curHttpUrl = r.httpUrl;
+          setHttpUrl(curHttpUrl);
+        }
+        const interval = r.httpPollInterval;
+        if (interval != null) {
+          curHttpInterval = Number(interval) || 5;
+          setHttpInterval(curHttpInterval);
+        }
+        if (typeof r.logToFile === "boolean") {
+          curLogToFile = r.logToFile;
+          setLogToFile(curLogToFile);
+        }
+        if (typeof r.logFilePath === "string") {
+          curLogFilePath = r.logFilePath;
+          setLogFilePath(curLogFilePath);
+        }
+        if (r.logMaxBytes != null) {
+          curLogMaxBytes = Number(r.logMaxBytes) || 5 * 1024 * 1024;
+          setLogMaxBytes(curLogMaxBytes);
+        }
+        if (r.logMaxBackups != null) {
+          curLogMaxBackups = Number(r.logMaxBackups) || 3;
+          setLogMaxBackups(curLogMaxBackups);
+        }
+        if (typeof r.elasticUrl === "string") {
+          curElasticUrl = r.elasticUrl;
+          setElasticUrl(curElasticUrl);
+        }
+        if (r.elasticSize != null) {
+          curElasticSize = Number(r.elasticSize) || 1000;
+          setElasticSize(curElasticSize);
+        }
+        if (typeof r.elasticUser === "string") {
+          curElasticUser = r.elasticUser;
+          setElasticUser(curElasticUser);
+        }
+        if (r.elasticMaxParallel != null) {
+          curElasticMaxParallel = Math.max(
+            1,
+            Number(r.elasticMaxParallel) || 1,
+          );
+          setElasticMaxParallel(curElasticMaxParallel);
+        }
+        if (typeof r.elasticPassEnc === "string") {
+          setElasticHasPass(!!r.elasticPassEnc.trim());
+        }
+        if (typeof r.allowPrerelease === "boolean") {
+          curAllowPrerelease = r.allowPrerelease;
+        }
+        if (typeof r.heapSizeMB === "number") {
+          curHeapSizeMB = r.heapSizeMB;
         }
       }
     } catch (e) {
@@ -1730,10 +1728,10 @@ export default function App(): JSX.Element {
     const maxMB = Math.max(1, Number(form.logMaxMB || 5));
     const maxBytes = Math.round(maxMB * 1024 * 1024);
     const backups = Math.max(0, Number(form.logMaxBackups || 0));
-    const mode = ["light", "dark", "system"].includes(form.themeMode)
-      ? (form.themeMode as any)
+    const mode: ThemeMode = ["light", "dark", "system"].includes(form.themeMode)
+      ? (form.themeMode as ThemeMode)
       : "system";
-    const patch: any = {
+    const patch: Partial<Settings> = {
       tcpPort: port,
       httpUrl: String(form.httpUrl || "").trim(),
       httpPollInterval: interval,
@@ -1747,23 +1745,23 @@ export default function App(): JSX.Element {
       elasticUser: String(form.elasticUser || "").trim(),
       elasticMaxParallel: Math.max(
         1,
-        Number((form as any).elasticMaxParallel || elasticMaxParallel || 1),
+        Number(form.elasticMaxParallel || elasticMaxParallel || 1),
       ),
-      allowPrerelease: !!(form as any).allowPrerelease,
+      allowPrerelease: !!form.allowPrerelease,
       heapSizeMB: Math.max(
         512,
-        Math.min(8192, Number((form as any).heapSizeMB || 2048)),
+        Math.min(8192, Number(form.heapSizeMB || 2048)),
       ),
     };
     const newPass = String(form.elasticPassNew || "").trim();
     if (form.elasticPassClear) patch["elasticPassClear"] = true;
     else if (newPass) patch["elasticPassPlain"] = newPass;
     try {
-      const res = await window.api.settingsSet(patch);
+      const res = await patchSettings(patch);
       if (!res || !res.ok) {
         showAlert(
           t("errors.saveFailed", {
-            message: (res as any)?.error || t("status.errorUnknown"),
+            message: res?.error || t("status.errorUnknown"),
           }),
         );
         return;
@@ -1785,9 +1783,7 @@ export default function App(): JSX.Element {
 
       // Update auto-updater with new allowPrerelease setting
       try {
-        await window.api?.autoUpdaterSetAllowPrerelease?.(
-          !!(form as any).allowPrerelease,
-        );
+        await typedAutoUpdaterSetAllowPrerelease(!!form.allowPrerelease);
       } catch (e) {
         logger.warn("Failed to update auto-updater allowPrerelease:", e);
       }
@@ -1797,7 +1793,7 @@ export default function App(): JSX.Element {
       // Check if heap size changed and ask for restart
       const newHeapSize = Math.max(
         512,
-        Math.min(8192, Number((form as any).heapSizeMB || 2048)),
+        Math.min(8192, Number(form.heapSizeMB || 2048)),
       );
       if (newHeapSize !== originalHeapSizeMB) {
         // Use setTimeout to allow the modal to close first
@@ -1805,15 +1801,17 @@ export default function App(): JSX.Element {
           const shouldRestart = nativeConfirm(
             t("settings.performance.restartRequired"),
           );
-          if (shouldRestart && window.api?.appRelaunch) {
-            void window.api.appRelaunch();
+          if (shouldRestart) {
+            void typedAppRelaunch();
           }
         }, 100);
       }
     } catch (e) {
       logger.error("Failed to save settings:", e);
       showAlert(
-        t("errors.saveFailed", { message: (e as any)?.message || String(e) }),
+        t("errors.saveFailed", {
+          message: e instanceof Error ? e.message : String(e),
+        }),
       );
     }
   }
@@ -1834,31 +1832,29 @@ export default function App(): JSX.Element {
     rendererPerf.mark("ipc-setup-start");
     const offs: Array<() => void> = [];
     try {
-      if (window.api?.onAppend) {
+      {
         console.warn("[renderer-diag] Setting up onAppend listener");
-        const off = window.api.onAppend((newEntries) => {
+        const off = typedOnAppend((newEntries) => {
           console.warn(
             `[renderer-diag] Received IPC logs:append with ${newEntries?.length || 0} entries`,
           );
           appendEntries(newEntries as any[]);
         });
         offs.push(off);
-      } else {
-        console.warn("[renderer-diag] window.api.onAppend not available!");
       }
     } catch (err) {
       console.error("[renderer-diag] Error setting up onAppend:", err);
     }
     try {
-      if (window.api?.onMenu) {
-        const off = window.api.onMenu(async (cmd) => {
+      {
+        const off = typedOnMenu(async (cmd) => {
           try {
             const { type, tab } = (cmd as any) || ({} as any);
             switch (type) {
               case "open-files": {
-                const paths = await window.api.openFiles();
+                const paths = await typedOpenFiles();
                 if (paths && paths.length) {
-                  const res = await window.api.parsePaths(paths);
+                  const res = await typedParsePaths(paths);
                   if (res?.ok) appendEntries(res.entries as any);
                 }
                 break;
@@ -1869,7 +1865,7 @@ export default function App(): JSX.Element {
               }
               case "tcp-start": {
                 try {
-                  window.api.tcpStart(tcpPortRef.current);
+                  typedTcpStart(tcpPortRef.current);
                 } catch (e) {
                   logger.error("Fehler beim Starten des TCP-Servers:", e);
                 }
@@ -1877,7 +1873,7 @@ export default function App(): JSX.Element {
               }
               case "tcp-stop": {
                 try {
-                  window.api.tcpStop();
+                  typedTcpStop();
                 } catch (e) {
                   logger.error("Fehler beim Stoppen des TCP-Servers:", e);
                 }
@@ -1926,7 +1922,7 @@ export default function App(): JSX.Element {
                 setFollow((prev) => {
                   const newVal = !prev;
                   try {
-                    void window.api.settingsSet({ follow: newVal } as any);
+                    patchSettingsQuiet({ follow: newVal });
                   } catch (err) {
                     logger.warn("Persisting follow flag failed:", err);
                   }
@@ -1947,8 +1943,8 @@ export default function App(): JSX.Element {
       logger.error("onMenu setup failed:", e);
     }
     try {
-      if (window.api?.onTcpStatus) {
-        const off = window.api.onTcpStatus((st) => {
+      {
+        const off = typedOnTcpStatus((st) => {
           const status = st as any;
           if (status?.ok) {
             setTcpStatus(
@@ -1974,8 +1970,8 @@ export default function App(): JSX.Element {
     }
     // Handle window focus events to fix input issues when switching between windows
     try {
-      if (window.api?.onWindowFocus) {
-        const off = window.api.onWindowFocus(() => {
+      {
+        const off = typedOnWindowFocus(() => {
           // When window receives focus, force the browser to re-establish input interactivity.
           // This fixes the Electron issue where webContents has focus but the DOM doesn't
           // properly accept keyboard input until the user Alt-Tabs away and back.
@@ -2034,17 +2030,12 @@ export default function App(): JSX.Element {
     const mgr = new DragAndDropManager({
       onFiles: async (paths) => {
         await withBusy(async () => {
-          if (!window.api?.parsePaths) {
-            showAlertRef.current(tRef.current("errors.apiNotAvailable"));
-            return;
-          }
-          const res = await window.api.parsePaths(paths);
+          const res = await typedParsePaths(paths);
           if (res?.ok) appendEntries(res.entries as any);
           else
             showAlertRef.current(
               tRef.current("errors.dropLoadError", {
-                message:
-                  (res as any)?.error || tRef.current("status.errorUnknown"),
+                message: res?.error || tRef.current("status.errorUnknown"),
               }),
             );
         });
@@ -2053,24 +2044,19 @@ export default function App(): JSX.Element {
       onRawFiles: async (files) => {
         await withBusy(async () => {
           try {
-            if (!window.api?.parseRawDrops) {
-              showAlertRef.current(tRef.current("errors.apiNotAvailable"));
-              return;
-            }
-            const res = await window.api.parseRawDrops(files);
+            const res = await typedParseRawDrops(files);
             if (res?.ok) appendEntries(res.entries as any);
             else
               showAlertRef.current(
                 tRef.current("errors.dropLoadError", {
-                  message:
-                    (res as any)?.error || tRef.current("status.errorUnknown"),
+                  message: res?.error || tRef.current("status.errorUnknown"),
                 }),
               );
           } catch (e) {
             logger.error("Error reading files (drop raw data):", e);
             showAlertRef.current(
               tRef.current("errors.fileReadError", {
-                message: (e as any)?.message || String(e),
+                message: e instanceof Error ? e.message : String(e),
               }),
             );
           }
@@ -2104,6 +2090,72 @@ export default function App(): JSX.Element {
       ? Math.min(100, Math.round((esLoaded / esTarget) * 100))
       : Math.round((esLoaded / esTarget) * 100) || 0;
 
+  /** Load next page of Elasticsearch results (invoked by ElasticStatusBar "load more" button) */
+  async function esLoadMore(): Promise<void> {
+    if (!esHasMore || !lastEsForm || !esNextSearchAfter) return;
+    setEsBusy(true);
+    try {
+      let available = Math.max(0, elasticSize || 0);
+      let hasMore: boolean = esHasMore;
+      let nextToken = esNextSearchAfter;
+      let carriedPit = esPitSessionId;
+
+      while (available > 0 && hasMore) {
+        const opts: ElasticSearchOptions = {
+          url: elasticUrl || undefined,
+          size: elasticSize || undefined,
+          index: lastEsForm.index,
+          sort: lastEsForm.sort,
+          duration:
+            lastEsForm.mode === "relative" ? lastEsForm.duration : undefined,
+          from: lastEsForm.mode === "absolute" ? lastEsForm.from : undefined,
+          to: lastEsForm.mode === "absolute" ? lastEsForm.to : undefined,
+          application_name: lastEsForm.application_name,
+          logger: lastEsForm.logger,
+          level: lastEsForm.level,
+          environment: lastEsForm.environment,
+          message: lastEsForm.message,
+          environmentCase: lastEsForm.environmentCase || "original",
+          allowInsecureTLS: !!lastEsForm.allowInsecureTLS,
+          keepAlive: "5m",
+          trackTotalHits: false,
+          ...(nextToken && Array.isArray(nextToken) && nextToken.length > 0
+            ? { searchAfter: nextToken as any }
+            : {}),
+          pitSessionId: carriedPit || undefined,
+        } as any;
+
+        const r = await typedElasticSearch(opts);
+        if (!r?.ok) break;
+        hasMore = !!r.hasMore;
+        nextToken = (r.nextSearchAfter as any) || null;
+        carriedPit = r.pitSessionId || carriedPit;
+        setEsHasMore(hasMore);
+        setEsNextSearchAfter(nextToken);
+        setEsPitSessionId(carriedPit);
+
+        if (Array.isArray(r.entries) && r.entries.length) {
+          const used = appendElasticCapped(r.entries as any[], available, {
+            messageFilter: lastEsForm.message || "",
+          });
+          available = Math.max(0, available - used);
+        }
+        if (!hasMore) break;
+      }
+      if (!hasMore) {
+        setEsPitSessionId(null);
+      }
+    } catch (e) {
+      logger.error("[Elastic] Load more failed:", e);
+      const errorMsg = e instanceof Error ? e.message : String(e);
+      if (!handleFeatureError(errorMsg)) {
+        showAlert(t("status.elasticError", { message: errorMsg }));
+      }
+    } finally {
+      setEsBusy(false);
+    }
+  }
+
   function clearLogs() {
     // Sicherheitsabfrage, nur wenn etwas zu löschen ist
     if (entries && entries.length > 0) {
@@ -2130,12 +2182,12 @@ export default function App(): JSX.Element {
     // PIT-Session schließen (best effort)
     (async () => {
       try {
-        if (esPitSessionId) await window.api.elasticClosePit(esPitSessionId);
+        if (esPitSessionId) await typedElasticClosePit(esPitSessionId);
       } catch {}
       setEsPitSessionId(null);
     })().catch(() => {});
     try {
-      (LoggingStore as any).reset();
+      LoggingStore.reset();
     } catch (e) {
       logger.error("LoggingStore.reset error:", e);
       showAlert(t("errors.resetLoggingStoreFailed"));
@@ -2158,7 +2210,7 @@ export default function App(): JSX.Element {
 
     try {
       // First, show save dialog to let user choose format and path
-      const pathResult = await window.api.chooseExportPath();
+      const pathResult = await typedChooseExportPath();
       if (!pathResult.ok || !pathResult.filePath) {
         // User canceled or error
         if (pathResult.error && pathResult.error !== "canceled") {
@@ -2320,10 +2372,7 @@ export default function App(): JSX.Element {
       }
 
       // Save the file
-      const result = await window.api.saveExportFile(
-        pathResult.filePath,
-        content,
-      );
+      const result = await typedSaveExportFile(pathResult.filePath, content);
       if (!result.ok) {
         showAlert(t("errors.exportFailed", { message: result.error || "" }));
       }
@@ -2352,7 +2401,7 @@ export default function App(): JSX.Element {
       "[httpMenuStopPoll] calling window.api.httpStopPoll with id =",
       currentPollId,
     );
-    const r = await window.api.httpStopPoll(currentPollId);
+    const r = await typedHttpStopPoll(currentPollId);
     console.warn("[httpMenuStopPoll] result =", r);
     if (r.ok) {
       setHttpStatus(t("status.httpPollStopped"));
@@ -2370,7 +2419,7 @@ export default function App(): JSX.Element {
     try {
       MDCListener.startListening();
     } catch (e) {
-      logger.warn("MDCListener.startListening failed:", e as any);
+      logger.warn("MDCListener.startListening failed:", e);
     }
   }, []);
 
@@ -2406,7 +2455,7 @@ export default function App(): JSX.Element {
           setSearch("");
         } else {
           try {
-            (parentRef.current as any)?.focus?.();
+            parentRef.current?.focus();
           } catch {}
         }
       }
@@ -2481,9 +2530,9 @@ export default function App(): JSX.Element {
     // File
     onOpenFile: async () => {
       try {
-        const result = await window.api.openFiles();
+        const result = await typedOpenFiles();
         if (result && result.length > 0) {
-          const parsed = await window.api.parsePaths(result);
+          const parsed = await typedParsePaths(result);
           if (parsed?.ok && parsed.entries && parsed.entries.length > 0) {
             appendEntries(parsed.entries);
           }
@@ -2504,14 +2553,14 @@ export default function App(): JSX.Element {
     // TCP
     onStartTcp: () => {
       try {
-        window.api?.tcpStart?.(tcpPort);
+        typedTcpStart(tcpPort);
       } catch (err) {
         logger.error("TCP start failed:", err);
       }
     },
     onStopTcp: () => {
       try {
-        window.api?.tcpStop?.();
+        typedTcpStop();
       } catch (err) {
         logger.error("TCP stop failed:", err);
       }
@@ -2524,7 +2573,7 @@ export default function App(): JSX.Element {
       setThemeMode(newTheme);
       applyThemeMode(newTheme);
       try {
-        void window.api.settingsSet({ themeMode: newTheme });
+        patchSettingsQuiet({ themeMode: newTheme });
       } catch {}
     },
     currentTheme: themeMode,
@@ -2599,11 +2648,14 @@ export default function App(): JSX.Element {
                 addToHistory("index", formVals?.index || ""); // NEW: save index to history
                 setLastEsForm(formVals);
                 try {
-                  await window.api.settingsSet({
-                    lastEnvironmentCase: String(
-                      formVals?.environmentCase || "original",
-                    ),
-                  } as any);
+                  const envCase = (formVals?.environmentCase || "original") as
+                    | "original"
+                    | "lower"
+                    | "upper"
+                    | "case-sensitive";
+                  await patchSettings({
+                    lastEnvironmentCase: envCase,
+                  });
                 } catch (e) {
                   logger.warn(
                     "Persisting lastEnvironmentCase failed:",
@@ -2617,7 +2669,7 @@ export default function App(): JSX.Element {
                 // Falls wir ersetzen: offene PIT-Session vorher schließen
                 if (loadMode === "replace" && esPitSessionId) {
                   try {
-                    await window.api.elasticClosePit(esPitSessionId);
+                    await typedElasticClosePit(esPitSessionId);
                   } catch (e) {
                     logger.warn(
                       "elasticClosePit before new search failed:",
@@ -2640,7 +2692,7 @@ export default function App(): JSX.Element {
                       TimeFilter.setEnabled(true);
                     }
                   } else {
-                    const state = (TimeFilter as any).getState?.();
+                    const state = TimeFilter.getState();
                     const wasEnabled = !!(state && state.enabled);
                     if (formVals.mode === "absolute" && wasEnabled) {
                       const curFrom: string | null = state.from ?? null;
@@ -2681,7 +2733,7 @@ export default function App(): JSX.Element {
                     }
                   }
                 } catch (e) {
-                  logger.warn("TimeFilter update (Elastic) failed:", e as any);
+                  logger.warn("TimeFilter update (Elastic) failed:", e);
                 }
 
                 await withBusy(async () => {
@@ -2728,7 +2780,7 @@ export default function App(): JSX.Element {
                     let hasMore = false;
 
                     // Erste Seite holen
-                    const res = await window.api.elasticSearch(opts);
+                    const res = await typedElasticSearch(opts);
                     const total = Array.isArray(res?.entries)
                       ? res.entries.length
                       : 0;
@@ -2740,13 +2792,13 @@ export default function App(): JSX.Element {
                     if (res?.ok) {
                       hasMore = !!res.hasMore;
                       nextToken = (res.nextSearchAfter as any) || null;
-                      carriedPit = (res as any).pitSessionId || null;
+                      carriedPit = res.pitSessionId || null;
                       setEsHasMore(hasMore);
                       setEsNextSearchAfter(nextToken);
                       setEsPitSessionId(carriedPit);
                       setEsTotal(
-                        typeof (res as any)?.total === "number"
-                          ? Number((res as any).total)
+                        typeof res?.total === "number"
+                          ? Number(res.total)
                           : null,
                       );
 
@@ -2761,7 +2813,7 @@ export default function App(): JSX.Element {
                         httpSigCacheRef.current = new Map();
                         // LoggingStore zurücksetzen (MDC etc.)
                         try {
-                          (LoggingStore as any).reset();
+                          LoggingStore.reset();
                         } catch (e) {
                           logger.error(
                             "LoggingStore.reset error (Elastic replace)",
@@ -2796,11 +2848,11 @@ export default function App(): JSX.Element {
                             : {}),
                           pitSessionId: carriedPit || undefined,
                         } as any;
-                        const r2 = await window.api.elasticSearch(moreOpts);
+                        const r2 = await typedElasticSearch(moreOpts);
                         if (!r2?.ok) break;
                         hasMore = !!r2.hasMore;
                         nextToken = (r2.nextSearchAfter as any) || null;
-                        carriedPit = (r2 as any).pitSessionId || carriedPit;
+                        carriedPit = r2.pitSessionId || carriedPit;
                         setEsHasMore(hasMore);
                         setEsNextSearchAfter(nextToken);
                         setEsPitSessionId(carriedPit);
@@ -2822,8 +2874,7 @@ export default function App(): JSX.Element {
                       // esHasMore bleibt true, wenn noch Ergebnisse existieren (auch bei Cap erreicht)
                     } else {
                       // Check if this is a feature-disabled error
-                      const errorMsg =
-                        (res as any)?.error || t("status.errorUnknown");
+                      const errorMsg = res?.error || t("status.errorUnknown");
                       if (!handleFeatureError(errorMsg)) {
                         showAlert(
                           t("status.elasticError", { message: errorMsg }),
@@ -2835,8 +2886,8 @@ export default function App(): JSX.Element {
                   }
                 });
               } catch (e) {
-                logger.error("[Elastic] Search failed", e as any);
-                const errorMsg = (e as any)?.message || String(e);
+                logger.error("[Elastic] Search failed", e);
+                const errorMsg = e instanceof Error ? e.message : String(e);
                 if (!handleFeatureError(errorMsg)) {
                   showAlert(t("status.elasticError", { message: errorMsg }));
                 }
@@ -2861,8 +2912,8 @@ export default function App(): JSX.Element {
             await withBusy(async () => {
               try {
                 setHttpUrl(url);
-                await window.api.settingsSet({ httpUrl: url } as any);
-                const res = await window.api.httpLoadOnce(url);
+                await patchSettings({ httpUrl: url });
+                const res = await typedHttpLoadOnce(url);
                 if (res.ok) {
                   appendEntries((res.entries || []) as any[]);
                   setHttpStatus(""); // Clear error status on success
@@ -2879,7 +2930,7 @@ export default function App(): JSX.Element {
               } catch (e) {
                 setHttpStatus(
                   t("status.error", {
-                    message: (e as any)?.message || String(e),
+                    message: e instanceof Error ? e.message : String(e),
                   }),
                 );
               }
@@ -2900,11 +2951,11 @@ export default function App(): JSX.Element {
             try {
               setHttpUrl(url);
               setHttpInterval(sec);
-              await window.api.settingsSet({
+              await patchSettings({
                 httpUrl: url,
                 httpPollInterval: sec,
-              } as any);
-              const r = await window.api.httpStartPoll({
+              });
+              const r = await typedHttpStartPoll({
                 url,
                 intervalSec: sec,
               });
@@ -2927,7 +2978,7 @@ export default function App(): JSX.Element {
             } catch (e) {
               setHttpStatus(
                 t("status.error", {
-                  message: (e as any)?.message || String(e),
+                  message: e instanceof Error ? e.message : String(e),
                 }),
               );
             }
@@ -3061,381 +3112,39 @@ export default function App(): JSX.Element {
             )}
           </div>
         </div>
-        <div className="section">
-          <div className="search-wrapper">
-            <input
-              id="searchText"
-              ref={searchInputRef as any}
-              type="search"
-              value={search}
-              onInput={(e) => setSearch(e.currentTarget.value)}
-              onKeyDown={(e) => {
-                const key = (e as any).key;
-                // Handle Enter: select highlighted item or go to next match
-                if (key === "Enter") {
-                  if (
-                    showSearchHist &&
-                    searchHistHighlightIdx >= 0 &&
-                    searchHistHighlightIdx < fltHistSearch.length
-                  ) {
-                    e.preventDefault();
-                    const selectedItem = fltHistSearch[searchHistHighlightIdx];
-                    if (selectedItem !== undefined) {
-                      setSearch(selectedItem);
-                      addFilterHistory("search", selectedItem);
-                      setShowSearchHist(false);
-                      setSearchHistHighlightIdx(-1);
-                    }
-                  } else {
-                    addFilterHistory(
-                      "search",
-                      (e.currentTarget as any).value as string,
-                    );
-                    gotoSearchMatch(1);
-                  }
-                  return;
-                }
-                // Arrow navigation when dropdown is open
-                if (key === "ArrowDown") {
-                  if (showSearchHist && fltHistSearch.length > 0) {
-                    e.preventDefault();
-                    setSearchHistHighlightIdx(
-                      Math.min(
-                        searchHistHighlightIdx + 1,
-                        fltHistSearch.length - 1,
-                      ),
-                    );
-                  } else {
-                    setShowSearchHist(true);
-                    setSearchHistHighlightIdx(-1);
-                  }
-                  return;
-                }
-                if (key === "ArrowUp" && showSearchHist) {
-                  e.preventDefault();
-                  setSearchHistHighlightIdx(
-                    Math.max(searchHistHighlightIdx - 1, 0),
-                  );
-                  return;
-                }
-                if (key === "Escape" && showSearchHist) {
-                  e.preventDefault();
-                  setShowSearchHist(false);
-                  setSearchHistHighlightIdx(-1);
-                  return;
-                }
-                if (key === "Home" && showSearchHist) {
-                  e.preventDefault();
-                  setSearchHistHighlightIdx(0);
-                  return;
-                }
-                if (key === "End" && showSearchHist) {
-                  e.preventDefault();
-                  setSearchHistHighlightIdx(fltHistSearch.length - 1);
-                  return;
-                }
-                const keyLower = key?.toLowerCase?.() || "";
-                if (
-                  keyLower === "a" &&
-                  ((e as any).ctrlKey || (e as any).metaKey)
-                ) {
-                  e.preventDefault();
-                  try {
-                    (e.currentTarget as HTMLInputElement).select();
-                  } catch {}
-                }
-              }}
-              onFocus={() => {
-                setShowLoggerHist(false);
-                setShowThreadHist(false);
-                setShowMessageHist(false);
-                setShowSearchHist(true);
-                setSearchHistHighlightIdx(-1);
-              }}
-              onBlur={(e) => addFilterHistory("search", e.currentTarget.value)}
-              placeholder={t("toolbar.searchPlaceholder")}
-              autocomplete="off"
-            />
-          </div>
-          {/* Such-Optionen Button mit Dropdown */}
-          <div style={{ position: "relative" }} id="searchModeBtn">
-            <button
-              onClick={(_) => {
-                setShowSearchOptions(!showSearchOptions);
-              }}
-              title="Suchmodus"
-              style={{
-                padding: "6px 10px",
-                minWidth: "unset",
-                background:
-                  searchMode !== "insensitive"
-                    ? "var(--accent-gradient)"
-                    : undefined,
-                color: searchMode !== "insensitive" ? "white" : undefined,
-                borderColor:
-                  searchMode !== "insensitive" ? "transparent" : undefined,
-              }}
-            >
-              {searchMode === "insensitive" && "Aa ▾"}
-              {searchMode === "sensitive" && "Aa ▾"}
-              {searchMode === "regex" && ".* ▾"}
-            </button>
-            {showSearchOptions &&
-              createPortal(
-                <div
-                  style={{
-                    position: "fixed",
-                    top: (() => {
-                      const btn = document.getElementById("searchModeBtn");
-                      if (btn) {
-                        const rect = btn.getBoundingClientRect();
-                        return rect.bottom + 4 + "px";
-                      }
-                      return "60px";
-                    })(),
-                    left: (() => {
-                      const btn = document.getElementById("searchModeBtn");
-                      if (btn) {
-                        const rect = btn.getBoundingClientRect();
-                        return Math.max(0, rect.right - 180) + "px";
-                      }
-                      return "auto";
-                    })(),
-                    background: "var(--color-bg-paper)",
-                    border: "1px solid var(--color-border)",
-                    borderRadius: "8px",
-                    boxShadow: "0 8px 32px rgba(0,0,0,0.25)",
-                    zIndex: 999999,
-                    minWidth: "180px",
-                    overflow: "hidden",
-                  }}
-                  onClick={(e) => e.stopPropagation()}
-                >
-                  <div
-                    style={{
-                      padding: "8px 12px",
-                      cursor: "pointer",
-                      background:
-                        searchMode === "insensitive"
-                          ? "var(--color-bg-hover)"
-                          : undefined,
-                      display: "flex",
-                      alignItems: "center",
-                      gap: "8px",
-                    }}
-                    onClick={() => {
-                      setSearchMode("insensitive");
-                      setShowSearchOptions(false);
-                    }}
-                  >
-                    <span style={{ width: "20px" }}>
-                      {searchMode === "insensitive" ? "✓" : ""}
-                    </span>
-                    <div>
-                      <div style={{ fontWeight: "500" }}>Aa ignorieren</div>
-                      <div
-                        style={{
-                          fontSize: "11px",
-                          color: "var(--color-text-secondary)",
-                        }}
-                      >
-                        Case-insensitiv
-                      </div>
-                    </div>
-                  </div>
-                  <div
-                    style={{
-                      padding: "8px 12px",
-                      cursor: "pointer",
-                      background:
-                        searchMode === "sensitive"
-                          ? "var(--color-bg-hover)"
-                          : undefined,
-                      display: "flex",
-                      alignItems: "center",
-                      gap: "8px",
-                    }}
-                    onClick={() => {
-                      setSearchMode("sensitive");
-                      setShowSearchOptions(false);
-                    }}
-                  >
-                    <span style={{ width: "20px" }}>
-                      {searchMode === "sensitive" ? "✓" : ""}
-                    </span>
-                    <div>
-                      <div style={{ fontWeight: "500" }}>Aa beachten</div>
-                      <div
-                        style={{
-                          fontSize: "11px",
-                          color: "var(--color-text-secondary)",
-                        }}
-                      >
-                        Case-sensitiv
-                      </div>
-                    </div>
-                  </div>
-                  <div
-                    style={{
-                      padding: "8px 12px",
-                      cursor: "pointer",
-                      background:
-                        searchMode === "regex"
-                          ? "var(--color-bg-hover)"
-                          : undefined,
-                      display: "flex",
-                      alignItems: "center",
-                      gap: "8px",
-                    }}
-                    onClick={() => {
-                      setSearchMode("regex");
-                      setShowSearchOptions(false);
-                    }}
-                  >
-                    <span style={{ width: "20px" }}>
-                      {searchMode === "regex" ? "✓" : ""}
-                    </span>
-                    <div>
-                      <div style={{ fontWeight: "500" }}>Regex</div>
-                      <div
-                        style={{
-                          fontSize: "11px",
-                          color: "var(--color-text-secondary)",
-                        }}
-                      >
-                        Regulärer Ausdruck
-                      </div>
-                    </div>
-                  </div>
-                </div>,
-                document.body,
-              )}
-          </div>
-          <div
-            ref={searchHistRef as any}
-            style={{
-              display: "none", // Versteckt, da wir die Ref noch für Positionierung brauchen
-              position: "relative",
-            }}
-          />
-          {showSearchHist &&
-            fltHistSearch.length > 0 &&
-            searchPos &&
-            createPortal(
-              <div
-                ref={searchPopRef as any}
-                role="listbox"
-                className="autocomplete-dropdown"
-                style={{
-                  position: "fixed",
-                  left: searchPos.left + "px",
-                  top: searchPos.top + "px",
-                  width: Math.max(searchPos.width, 300) + "px",
-                }}
-              >
-                {fltHistSearch.map((v, i) => (
-                  <div
-                    key={i}
-                    className={`autocomplete-item ${searchHistHighlightIdx === i ? "highlighted" : ""}`}
-                    onClick={() => {
-                      setSearch(v);
-                      addFilterHistory("search", v);
-                      setShowSearchHist(false);
-                      setSearchHistHighlightIdx(-1);
-                    }}
-                    onMouseDown={(e) => e.preventDefault()}
-                    onMouseEnter={() => setSearchHistHighlightIdx(i)}
-                    title={v}
-                    role="option"
-                    aria-selected={searchHistHighlightIdx === i}
-                  >
-                    <span>🕐</span>
-                    {v}
-                  </div>
-                ))}
-                <div className="autocomplete-hint">
-                  <span>
-                    <kbd>↑↓</kbd> Navigation
-                  </span>
-                  <span>
-                    <kbd>Enter</kbd> Auswählen
-                  </span>
-                  <span>
-                    <kbd>Esc</kbd> Schließen
-                  </span>
-                </div>
-              </div>,
-              document.body,
-            )}
-          <button
-            id="btnPrevMatch"
-            title={`${t("toolbar.prevMatch")} (Shift+N)`}
-            disabled={!search.trim() || searchMatchIdx.length === 0}
-            onClick={() => gotoSearchMatch(-1)}
-          >
-            ▲
-          </button>
-          <span
-            style={{
-              fontSize: "11px",
-              color: "var(--color-text-secondary)",
-              minWidth: "50px",
-              textAlign: "center",
-            }}
-          >
-            {search.trim() && searchMatchIdx.length > 0
-              ? (() => {
-                  // Berechne aktuellen Treffer-Index
-                  const curVi =
-                    selectedOneIdx != null
-                      ? filteredIdx.indexOf(selectedOneIdx)
-                      : -1;
-                  const currentMatchPos =
-                    curVi >= 0 ? searchMatchIdx.indexOf(curVi) : -1;
-                  if (currentMatchPos >= 0) {
-                    return `${currentMatchPos + 1}/${searchMatchIdx.length}`;
-                  }
-                  return `–/${searchMatchIdx.length}`;
-                })()
-              : ""}
-          </span>
-          <button
-            id="btnNextMatch"
-            title={`${t("toolbar.nextMatch")} (N)`}
-            disabled={!search.trim() || searchMatchIdx.length === 0}
-            onClick={() => gotoSearchMatch(1)}
-          >
-            ▼
-          </button>
-        </div>
-        <div className="section">
-          {busy && (
-            <span className="busy">
-              <span className="spinner"></span>
-              {t("toolbar.busy")}
-            </span>
-          )}
-          {/* TCP Status - nur anzeigen wenn aktiv */}
-          {tcpStatus && !tcpStatus.includes("geschlossen") && (
-            <span id="tcpStatus" className="status status-active">
-              🟢 {tcpStatus}
-            </span>
-          )}
-          {/* HTTP Status - nur anzeigen wenn aktiv */}
-          {httpStatus && !httpStatus.includes("inaktiv") && (
-            <span
-              id="httpStatus"
-              className={`status ${httpStatus.startsWith("Fehler:") ? "status-error" : "status-active"}`}
-            >
-              {httpStatus.startsWith("Fehler:") ? "🔴" : "🟢"} {httpStatus}
-            </span>
-          )}
-          {nextPollIn && (
-            <span className="status" title="Nächster Poll in">
-              {nextPollIn}
-            </span>
-          )}
-        </div>
+        <SearchBar
+          search={search}
+          setSearch={setSearch}
+          searchMode={searchMode}
+          setSearchMode={setSearchMode}
+          showSearchOptions={showSearchOptions}
+          setShowSearchOptions={setShowSearchOptions}
+          fltHistSearch={fltHistSearch}
+          showSearchHist={showSearchHist}
+          setShowSearchHist={setShowSearchHist}
+          searchHistHighlightIdx={searchHistHighlightIdx}
+          setSearchHistHighlightIdx={setSearchHistHighlightIdx}
+          searchPos={searchPos}
+          searchHistRef={searchHistRef}
+          searchPopRef={searchPopRef}
+          searchInputRef={searchInputRef}
+          setShowLoggerHist={setShowLoggerHist}
+          setShowThreadHist={setShowThreadHist}
+          setShowMessageHist={setShowMessageHist}
+          addFilterHistory={addFilterHistory}
+          searchMatchIdx={searchMatchIdx}
+          selectedOneIdx={selectedOneIdx}
+          filteredIdx={filteredIdx}
+          gotoSearchMatch={gotoSearchMatch}
+          t={t}
+        />
+        <StatusSection
+          busy={busy}
+          tcpStatus={tcpStatus}
+          httpStatus={httpStatus}
+          nextPollIn={nextPollIn}
+          t={t}
+        />
         <div className="section" style={{ flex: 1, flexWrap: "wrap" }}>
           {/* Filter Toggle Button */}
           <button
@@ -3447,183 +3156,18 @@ export default function App(): JSX.Element {
             <span className="chevron">▼</span>
           </button>
           {/* Aktive Filter-Chips inline */}
-          {(() => {
-            const activeFilters: Array<{
-              type: string;
-              label: string;
-              value: string;
-              onRemove: () => void;
-              colorClass?: string;
-            }> = [];
-
-            if (filter.level && stdFiltersEnabled) {
-              activeFilters.push({
-                type: "level",
-                label: "",
-                value: filter.level,
-                colorClass: `level-${filter.level.toLowerCase()}`,
-                onRemove: () => setFilter({ ...filter, level: "" }),
-              });
-            }
-            if (filter.logger && stdFiltersEnabled) {
-              activeFilters.push({
-                type: "logger",
-                label: "Logger",
-                value: filter.logger,
-                onRemove: () => setFilter({ ...filter, logger: "" }),
-              });
-            }
-            if (filter.thread && stdFiltersEnabled) {
-              activeFilters.push({
-                type: "thread",
-                label: "Thread",
-                value: filter.thread,
-                onRemove: () => setFilter({ ...filter, thread: "" }),
-              });
-            }
-            if (filter.message && stdFiltersEnabled) {
-              activeFilters.push({
-                type: "message",
-                label: "Msg",
-                value:
-                  filter.message.length > 20
-                    ? filter.message.substring(0, 20) + "…"
-                    : filter.message,
-                onRemove: () => setFilter({ ...filter, message: "" }),
-              });
-            }
-            if (onlyMarked) {
-              activeFilters.push({
-                type: "marked",
-                label: "",
-                value: "Markierte",
-                onRemove: () => {
-                  setOnlyMarked(false);
-                  try {
-                    void window.api.settingsSet({ onlyMarked: false });
-                  } catch {}
-                },
-              });
-            }
-            const dcEntries = DiagnosticContextFilter.getDcEntries().filter(
-              (e) => e.active,
-            );
-            // Check if TraceID is in active DC filters
-            const activeTraceId = dcEntries.find(
-              (e) =>
-                e.key === "TraceID" || e.key.toLowerCase().includes("trace"),
-            );
-            if (DiagnosticContextFilter.isEnabled() && dcEntries.length > 0) {
-              // Add Timeline button if TraceID is active
-              if (activeTraceId) {
-                activeFilters.push({
-                  type: "trace-timeline",
-                  label: "📊",
-                  value: t("traceTimeline.openTimeline"),
-                  colorClass: "trace-timeline-chip",
-                  onRemove: () => {
-                    setTraceTimelineId(activeTraceId.val);
-                    setShowTraceTimeline(true);
-                  },
-                });
-              }
-              dcEntries.slice(0, 3).forEach((entry) => {
-                activeFilters.push({
-                  type: "dc",
-                  label: entry.key,
-                  value: entry.val || "*",
-                  colorClass: "dc-filter",
-                  onRemove: () =>
-                    DiagnosticContextFilter.deactivateMdcEntry(
-                      entry.key,
-                      entry.val,
-                    ),
-                });
-              });
-              if (dcEntries.length > 3) {
-                activeFilters.push({
-                  type: "dc-more",
-                  label: "",
-                  value: `+${dcEntries.length - 3}`,
-                  colorClass: "dc-filter",
-                  onRemove: () => {},
-                });
-              }
-            }
-
-            if (activeFilters.length === 0) return null;
-
-            return (
-              <>
-                {activeFilters.map((f, i) =>
-                  f.type === "trace-timeline" ? (
-                    <button
-                      key={`${f.type}-${i}`}
-                      className="filter-chip trace-timeline-chip"
-                      onClick={f.onRemove}
-                      title={t("traceTimeline.openTimelineTooltip")}
-                    >
-                      <span className="chip-label">{f.label}</span>
-                      <span className="chip-value">{f.value}</span>
-                    </button>
-                  ) : (
-                    <span
-                      key={`${f.type}-${i}`}
-                      className={`filter-chip ${f.colorClass || ""}`}
-                    >
-                      {f.label && (
-                        <span className="chip-label">{f.label}:</span>
-                      )}
-                      <span className="chip-value" title={f.value}>
-                        {f.value}
-                      </span>
-                      {f.type !== "dc-more" && (
-                        <button
-                          className="chip-remove"
-                          onClick={f.onRemove}
-                          title="Filter entfernen"
-                        >
-                          ×
-                        </button>
-                      )}
-                    </span>
-                  ),
-                )}
-                {activeFilters.length > 0 && (
-                  <button
-                    style={{
-                      fontSize: "11px",
-                      padding: "2px 6px",
-                      marginLeft: "4px",
-                    }}
-                    onClick={() => {
-                      setSearch("");
-                      setFilter({
-                        level: "",
-                        logger: "",
-                        thread: "",
-                        service: "",
-                        message: "",
-                      });
-                      setOnlyMarked(false);
-                      try {
-                        void window.api.settingsSet({ onlyMarked: false });
-                      } catch {}
-                      try {
-                        (TimeFilter as any).reset?.();
-                      } catch {}
-                      try {
-                        DiagnosticContextFilter.reset();
-                      } catch {}
-                    }}
-                    title="Alle Filter löschen"
-                  >
-                    ✕ Alle
-                  </button>
-                )}
-              </>
-            );
-          })()}
+          <ActiveFilterChips
+            filter={filter}
+            stdFiltersEnabled={stdFiltersEnabled}
+            onlyMarked={onlyMarked}
+            setFilter={setFilter}
+            setOnlyMarked={setOnlyMarked}
+            setSearch={setSearch}
+            setTraceTimelineId={setTraceTimelineId}
+            setShowTraceTimeline={setShowTraceTimeline}
+            dcVersion={dcVersion}
+            t={t}
+          />
         </div>
         {/* Ausklappbare Filter-Sektion */}
         <FilterSection
@@ -3652,7 +3196,7 @@ export default function App(): JSX.Element {
           onOnlyMarkedChange={(nv) => {
             setOnlyMarked(nv);
             try {
-              void window.api.settingsSet({ onlyMarked: nv });
+              patchSettingsQuiet({ onlyMarked: nv });
             } catch (err) {
               logger.error("Persisting onlyMarked setting failed:", err);
             }
@@ -3683,10 +3227,10 @@ export default function App(): JSX.Element {
             });
             setOnlyMarked(false);
             try {
-              void window.api.settingsSet({ onlyMarked: false });
+              patchSettingsQuiet({ onlyMarked: false });
             } catch {}
             try {
-              (TimeFilter as any).reset?.();
+              TimeFilter.reset();
             } catch (e) {
               logger.error("Resetting TimeFilter failed:", e);
             }
@@ -3709,18 +3253,15 @@ export default function App(): JSX.Element {
             ) {
               try {
                 for (const mdc of profile.filters.mdcFilters) {
-                  (DiagnosticContextFilter as any).addMdcEntry(
-                    mdc.key,
-                    mdc.value,
-                  );
+                  DiagnosticContextFilter.addMdcEntry(mdc.key, mdc.value);
                   if (mdc.active) {
-                    (DiagnosticContextFilter as any).activateMdcEntry(
+                    DiagnosticContextFilter.activateMdcEntry(
                       mdc.key,
                       mdc.value,
                     );
                   }
                 }
-                (DiagnosticContextFilter as any).setEnabled(true);
+                DiagnosticContextFilter.setEnabled(true);
               } catch (e) {
                 logger.error("Applying MDC filters from profile failed:", e);
               }
@@ -3739,180 +3280,18 @@ export default function App(): JSX.Element {
           }}
           esBusy={esBusy}
         />
-        <div className="section">
-          {(() => {
-            const entries = DiagnosticContextFilter.getDcEntries();
-            const total = entries.length;
-            const active = entries.filter((e) => e.active).length;
-            const enabled = DiagnosticContextFilter.isEnabled() && active > 0;
-            if (total === 0) return null;
-            return (
-              <span
-                className="status"
-                title={
-                  enabled
-                    ? t("toolbar.dcFilterActive", { count: String(active) })
-                    : t("toolbar.dcFilterInactive", { count: String(total) })
-                }
-              >
-                {enabled
-                  ? t("toolbar.dcFilterActive", { count: String(active) })
-                  : t("toolbar.dcFilterInactive", { count: String(total) })}
-              </span>
-            );
-          })()}
-          {(() => {
-            try {
-              const s = TimeFilter.getState();
-              const show = !!(
-                s &&
-                s.enabled &&
-                (esBusy || esElasticCountAll > 0 || esPitSessionId)
-              );
-              if (!show) return null;
-              return (
-                <span className="status" title={t("toolbar.elasticActive")}>
-                  {t("toolbar.elasticActive")}
-                </span>
-              );
-            } catch {
-              return null;
-            }
-          })()}
-          {esBusy && (
-            <span className="status" title="Ladefortschritt Elasticsearch">
-              {t("toolbar.elasticLoading", {
-                loaded: String(esLoaded),
-                target: String(esTarget),
-                percent: String(Math.max(0, Math.min(100, esPct))),
-              })}
-            </span>
-          )}
-          {!esBusy && esHasMore && (
-            <button
-              style={{ marginLeft: "8px" }}
-              title={t("toolbar.elasticLoadMoreTooltip")}
-              onClick={async () => {
-                if (esBusy) return;
-                const token = esNextSearchAfter;
-                if (
-                  !esPitSessionId &&
-                  (!token || !Array.isArray(token) || token.length === 0)
-                )
-                  return;
-                await withBusy(async () => {
-                  setEsBusy(true);
-                  try {
-                    const f: Partial<ElasticFormState> = lastEsForm || {};
-                    const mode = (f?.mode || "relative") as
-                      | "relative"
-                      | "absolute";
-                    // Lade alle verbleibenden Einträge in einer Auto-Paging-Schleife
-                    const batchSize = elasticSize || 10000;
-                    const baseOpts: ElasticSearchOptions = {
-                      url: elasticUrl || undefined,
-                      size: batchSize,
-                      index: f?.index || undefined,
-                      sort: f?.sort || undefined,
-                      duration: mode === "relative" ? f?.duration : undefined,
-                      from: mode === "absolute" ? f?.from : undefined,
-                      to: mode === "absolute" ? f?.to : undefined,
-                      application_name: f?.application_name,
-                      logger: f?.logger,
-                      level: f?.level,
-                      environment: f?.environment,
-                      message: f?.message,
-                      environmentCase: f?.environmentCase || "original",
-                      allowInsecureTLS: !!f?.allowInsecureTLS,
-                      keepAlive: "5m",
-                    };
-                    const messageFilter = f?.message || "";
-
-                    let curToken = token;
-                    let curPit = esPitSessionId;
-                    let hasMore = true;
-                    let totalLoaded = 0;
-                    const maxPerClick = Math.max(batchSize, 50000); // Maximal pro Klick
-
-                    while (hasMore && totalLoaded < maxPerClick) {
-                      const opts: ElasticSearchOptions = {
-                        ...baseOpts,
-                        ...(curToken &&
-                        Array.isArray(curToken) &&
-                        curToken.length > 0
-                          ? { searchAfter: curToken as Array<string | number> }
-                          : {}),
-                        pitSessionId: curPit || undefined,
-                      };
-                      const res = await window.api.elasticSearch(opts);
-                      if (!res?.ok) {
-                        // Fehler (z.B. Scroll abgelaufen) – Session aufräumen
-                        const errorMsg =
-                          (res as any)?.error || t("status.errorUnknown");
-                        // PIT/Scroll-Session zurücksetzen, damit neue Suche möglich ist
-                        setEsPitSessionId(null);
-                        setEsHasMore(false);
-                        if (!handleFeatureError(errorMsg)) {
-                          showAlert(
-                            t("status.elasticError", { message: errorMsg }),
-                          );
-                        }
-                        return;
-                      }
-
-                      if (Array.isArray(res.entries) && res.entries.length) {
-                        appendElasticCapped(
-                          res.entries as any[],
-                          res.entries.length,
-                          { messageFilter },
-                        );
-                        totalLoaded += res.entries.length;
-                      }
-
-                      hasMore = !!res.hasMore;
-                      curToken = (res.nextSearchAfter as any) || null;
-                      curPit = ((res as any)?.pitSessionId as string) || curPit;
-
-                      setEsHasMore(hasMore);
-                      setEsNextSearchAfter(curToken);
-                      setEsPitSessionId(curPit);
-                      if (typeof (res as any)?.total === "number")
-                        setEsTotal(Number((res as any).total));
-
-                      if (!hasMore) {
-                        setEsPitSessionId(null);
-                        break;
-                      }
-                    }
-                  } finally {
-                    setEsBusy(false);
-                  }
-                });
-              }}
-            >
-              {t("toolbar.elasticLoadMore")}{" "}
-              {esTotal != null && esTotal > esLoaded
-                ? `(${esTotal - esLoaded})`
-                : ""}
-            </button>
-          )}
-          {esTotal != null && (
-            <span
-              className="status"
-              title={
-                t("toolbar.elasticLoadedTooltip", {
-                  loaded: String(esLoaded),
-                  total: String(esTotal),
-                }) + (esHasMore ? t("toolbar.elasticMoreAvailable") : "")
-              }
-            >
-              {t("toolbar.elasticLoaded", {
-                loaded: String(esLoaded),
-                total: String(esTotal),
-              })}
-            </span>
-          )}
-        </div>
+        <ElasticStatusBar
+          esBusy={esBusy}
+          esHasMore={esHasMore}
+          esLoaded={esLoaded}
+          esTarget={esTarget}
+          esPct={esPct}
+          esTotal={esTotal}
+          esPitSessionId={esPitSessionId}
+          esElasticCountAll={esElasticCountAll}
+          onLoadMore={esLoadMore}
+          t={t}
+        />
       </header>
 
       {/* Resize-Indikator für Detail-Panel */}
@@ -3939,8 +3318,8 @@ export default function App(): JSX.Element {
           onMouseDown={(ev) => {
             try {
               // Stelle sicher, dass die Liste fokussiert ist wenn sie geklickt wird
-              if ((parentRef.current as any)?.focus && !ev.defaultPrevented) {
-                (parentRef.current as any).focus({ preventScroll: true });
+              if (parentRef.current && !ev.defaultPrevented) {
+                parentRef.current?.focus({ preventScroll: true });
               }
             } catch (err) {
               logger.warn("onMouseDown focus set failed:", err);

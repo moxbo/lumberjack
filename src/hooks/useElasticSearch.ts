@@ -5,6 +5,7 @@ import { useState, useMemo, useCallback } from "preact/hooks";
 import logger from "../utils/logger";
 import { nativeAlert } from "../utils/nativeDialog";
 import type { ElasticSearchOptions } from "../types/ipc";
+import { elasticSearch, elasticClosePit } from "../utils/typedApi";
 
 interface UseElasticSearchOptions {
   entries: any[];
@@ -148,26 +149,22 @@ export function useElasticSearch({
         let hasMore = false;
 
         // First page
-        const res = await window.api.elasticSearch(opts);
+        const res = await elasticSearch(opts);
         const total = Array.isArray(res?.entries) ? res.entries.length : 0;
         logger.info("[Elastic] Search finished", {
-          ok: !!res?.ok,
+          ok: res?.ok,
           total,
           hasResponse: true,
         });
 
         if (res?.ok) {
           hasMore = !!res.hasMore;
-          nextToken = (res.nextSearchAfter as any) || null;
-          carriedPit = (res as any).pitSessionId || null;
+          nextToken = res.nextSearchAfter || null;
+          carriedPit = res.pitSessionId || null;
           setEsHasMore(hasMore);
           setEsNextSearchAfter(nextToken);
           setEsPitSessionId(carriedPit);
-          setEsTotal(
-            typeof (res as any)?.total === "number"
-              ? Number((res as any).total)
-              : null,
-          );
+          setEsTotal(typeof res?.total === "number" ? Number(res.total) : null);
 
           const messageFilter = formVals.message || "";
           if (Array.isArray(res.entries) && res.entries.length) {
@@ -183,17 +180,17 @@ export function useElasticSearch({
             const moreOpts: ElasticSearchOptions = {
               ...opts,
               ...(nextToken && Array.isArray(nextToken) && nextToken.length > 0
-                ? { searchAfter: nextToken as any }
+                ? { searchAfter: nextToken }
                 : {}),
               pitSessionId: carriedPit || undefined,
-            } as any;
+            };
 
-            const r2 = await window.api.elasticSearch(moreOpts);
+            const r2 = await elasticSearch(moreOpts);
             if (!r2?.ok) break;
 
             hasMore = !!r2.hasMore;
-            nextToken = (r2.nextSearchAfter as any) || null;
-            carriedPit = (r2 as any).pitSessionId || carriedPit;
+            nextToken = r2.nextSearchAfter || null;
+            carriedPit = r2.pitSessionId || carriedPit;
             setEsHasMore(hasMore);
             setEsNextSearchAfter(nextToken);
             setEsPitSessionId(carriedPit);
@@ -278,19 +275,19 @@ export function useElasticSearch({
         const opts: ElasticSearchOptions = {
           ...baseOpts,
           ...(curToken && Array.isArray(curToken) && curToken.length > 0
-            ? { searchAfter: curToken as any }
+            ? { searchAfter: curToken }
             : {}),
           pitSessionId: curPit || undefined,
-        } as any;
+        };
 
-        const res = await window.api.elasticSearch(opts);
+        const res = await elasticSearch(opts);
         if (!res?.ok) {
           // Fehler (z.B. Scroll abgelaufen) – Session aufräumen
           setEsPitSessionId(null);
           setEsHasMore(false);
           nativeAlert(
             "Elastic-Fehler: " +
-              ((res as any)?.error || "Unbekannt") +
+              (res?.error || "Unbekannt") +
               "\nBitte Suche erneut starten.",
           );
           return;
@@ -342,7 +339,7 @@ export function useElasticSearch({
   const closePitSession = useCallback(async () => {
     if (esPitSessionId) {
       try {
-        await window.api.elasticClosePit(esPitSessionId);
+        await elasticClosePit(esPitSessionId);
       } catch {}
       setEsPitSessionId(null);
     }

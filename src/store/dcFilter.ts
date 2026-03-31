@@ -25,6 +25,7 @@ class SimpleEmitter {
 }
 
 type DcEntry = { key: string; val: string; active: boolean };
+export type { DcEntry };
 
 function entryKey(key: string, val: string): string {
   return `${key}\u241F${val}`;
@@ -275,9 +276,27 @@ class DiagnosticContextFilterImpl {
 
 import { lazyInstance } from "./_lazy";
 
+/** Public interface for typed access (avoids `as any` casts in consumers) */
+export interface IDiagnosticContextFilter {
+  onChange(fn: () => void): () => void;
+  isEnabled(): boolean;
+  setEnabled(v: boolean): void;
+  addMdcEntry(key: string, val: string): void;
+  removeMdcEntry(key: string, val: string): void;
+  activateMdcEntry(key: string, val: string): void;
+  deactivateMdcEntry(key: string, val: string): void;
+  reset(): void;
+  getDcEntries(): DcEntry[];
+  getState(): {
+    entries: Array<{ key: string; value: string; active: boolean }>;
+    enabled: boolean;
+  };
+  matches(mdc: unknown): boolean;
+}
+
 // Export the singleton lazily to avoid temporal-dead-zone issues when modules
 // import each other during initialization (bundlers can reorder/rename symbols).
-export const DiagnosticContextFilter = lazyInstance(
+export const DiagnosticContextFilter: IDiagnosticContextFilter = lazyInstance(
   () => new DiagnosticContextFilterImpl(),
 );
 export function dcEntryId(e: DcEntry): string {

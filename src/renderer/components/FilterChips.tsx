@@ -4,6 +4,7 @@
 import { useMemo } from "preact/hooks";
 import { DiagnosticContextFilter } from "../../store/dcFilter";
 import type { FilterState } from "../../hooks";
+import { patchSettingsQuiet } from "../../utils/typedApi";
 
 interface ActiveFilter {
   type: string;
@@ -80,9 +81,7 @@ export function FilterChips({
         value: "Markierte",
         onRemove: () => {
           onOnlyMarkedChange(false);
-          try {
-            void window.api.settingsSet({ onlyMarked: false });
-          } catch {}
+          patchSettingsQuiet({ onlyMarked: false });
         },
       });
     }

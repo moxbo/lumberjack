@@ -3,6 +3,13 @@
  */
 import { useState, useEffect, useCallback, useRef } from "preact/hooks";
 import logger from "../utils/logger";
+import {
+  getSettings,
+  patchSettingsQuiet,
+  httpLoadOnce as typedHttpLoadOnce,
+  httpStartPoll as typedHttpStartPoll,
+  httpStopPoll as typedHttpStopPoll,
+} from "../utils/typedApi";
 
 interface UseHttpPollingOptions {
   httpUrl: string;
@@ -77,15 +84,10 @@ export function useHttpPolling({
   const openHttpLoadDialog = useCallback(async () => {
     let url = httpUrl;
     try {
-      if (window.api?.settingsGet) {
-        const result = await window.api.settingsGet();
-        if (result?.ok) {
-          const r = result.settings as any;
-          if (typeof r?.httpUrl === "string") {
-            url = r.httpUrl;
-            setHttpUrl(url);
-          }
-        }
+      const r = await getSettings();
+      if (r && typeof r.httpUrl === "string") {
+        url = r.httpUrl;
+        setHttpUrl(url);
       }
     } catch (e) {
       logger.warn("Failed to load settings for HTTP load dialog:", e);
@@ -99,19 +101,16 @@ export function useHttpPolling({
     let url = httpUrl;
     let interval = httpInterval;
     try {
-      if (window.api?.settingsGet) {
-        const result = await window.api.settingsGet();
-        if (result?.ok) {
-          const r = result.settings as any;
-          if (typeof r?.httpUrl === "string") {
-            url = r.httpUrl;
-            setHttpUrl(url);
-          }
-          const int = r?.httpPollInterval ?? r?.httpInterval;
-          if (int != null) {
-            interval = Number(int) || 5;
-            setHttpInterval(interval);
-          }
+      const r = await getSettings();
+      if (r) {
+        if (typeof r.httpUrl === "string") {
+          url = r.httpUrl;
+          setHttpUrl(url);
+        }
+        const int = r.httpPollInterval;
+        if (int != null) {
+          interval = Number(int) || 5;
+          setHttpInterval(interval);
         }
       }
     } catch (e) {
@@ -132,8 +131,8 @@ export function useHttpPolling({
 
       try {
         setHttpUrl(trimmedUrl);
-        await window.api.settingsSet({ httpUrl: trimmedUrl } as any);
-        const res = await window.api.httpLoadOnce(trimmedUrl);
+        patchSettingsQuiet({ httpUrl: trimmedUrl });
+        const res = await typedHttpLoadOnce(trimmedUrl);
         if (res.ok) {
           appendEntries((res.entries || []) as any[]);
           setHttpStatus("");
@@ -157,12 +156,12 @@ export function useHttpPolling({
       try {
         setHttpUrl(trimmedUrl);
         setHttpInterval(sec);
-        await window.api.settingsSet({
+        patchSettingsQuiet({
           httpUrl: trimmedUrl,
           httpPollInterval: sec,
-        } as any);
+        });
 
-        const r = await window.api.httpStartPoll({
+        const r = await typedHttpStartPoll({
           url: trimmedUrl,
           intervalSec: sec,
         });
@@ -186,7 +185,7 @@ export function useHttpPolling({
   const stopHttpPoll = useCallback(async () => {
     if (httpPollId == null) return;
 
-    const r = await window.api.httpStopPoll(httpPollId);
+    const r = await typedHttpStopPoll(httpPollId);
     if (r.ok) {
       setHttpStatus("Poll gestoppt");
       setHttpPollId(null);

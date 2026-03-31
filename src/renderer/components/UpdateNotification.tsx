@@ -8,6 +8,12 @@ import { useCallback, useEffect, useState } from "preact/hooks";
 import type { VNode } from "preact";
 import { useI18n } from "../../utils/i18n";
 import logger from "../../utils/logger";
+import {
+  onAutoUpdaterStatus,
+  autoUpdaterDownload,
+  autoUpdaterInstall,
+  autoUpdaterCheck,
+} from "../../utils/typedApi";
 
 interface UpdateInfo {
   version: string;
@@ -44,27 +50,21 @@ export function UpdateNotification(): VNode | null {
 
   // Listen for update status changes from main process
   useEffect(() => {
-    if (!window.api?.onAutoUpdaterStatus) {
-      return;
-    }
+    const unsubscribe = onAutoUpdaterStatus((status: UpdateStatus) => {
+      logger.info("[UpdateNotification] Received status:", status);
+      setUpdateStatus(status);
 
-    const unsubscribe = window.api.onAutoUpdaterStatus(
-      (status: UpdateStatus) => {
-        logger.info("[UpdateNotification] Received status:", status);
-        setUpdateStatus(status);
+      // Reset isStartingDownload when download actually starts or on error
+      if (status.status === "downloading" || status.status === "error") {
+        setIsStartingDownload(false);
+      }
 
-        // Reset isStartingDownload when download actually starts or on error
-        if (status.status === "downloading" || status.status === "error") {
-          setIsStartingDownload(false);
-        }
-
-        // Reset dismissed state when a new update becomes available
-        if (status.status === "available") {
-          setDismissed(false);
-          setIsStartingDownload(false);
-        }
-      },
-    );
+      // Reset dismissed state when a new update becomes available
+      if (status.status === "available") {
+        setDismissed(false);
+        setIsStartingDownload(false);
+      }
+    });
 
     return () => {
       unsubscribe?.();
@@ -75,7 +75,7 @@ export function UpdateNotification(): VNode | null {
     try {
       setIsStartingDownload(true);
       logger.info("[UpdateNotification] Starting download...");
-      await window.api?.autoUpdaterDownload?.();
+      await autoUpdaterDownload();
     } catch (error) {
       logger.error("[UpdateNotification] Download failed:", error);
       setIsStartingDownload(false);
@@ -85,7 +85,7 @@ export function UpdateNotification(): VNode | null {
   const handleInstall = useCallback(async () => {
     try {
       logger.info("[UpdateNotification] Installing update...");
-      await window.api?.autoUpdaterInstall?.();
+      await autoUpdaterInstall();
     } catch (error) {
       logger.error("[UpdateNotification] Install failed:", error);
     }
@@ -98,7 +98,7 @@ export function UpdateNotification(): VNode | null {
   const handleCheckForUpdates = useCallback(async () => {
     try {
       logger.info("[UpdateNotification] Manual update check...");
-      await window.api?.autoUpdaterCheck?.();
+      await autoUpdaterCheck();
     } catch (error) {
       logger.error("[UpdateNotification] Update check failed:", error);
     }

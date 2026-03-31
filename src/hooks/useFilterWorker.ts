@@ -12,6 +12,10 @@
  */
 import { useState, useEffect, useRef, useCallback } from "preact/hooks";
 import { msgMatches } from "../utils/msgFilter";
+import {
+  filterIsAvailable,
+  filterEntries as typedFilterEntries,
+} from "../utils/typedApi";
 
 interface FilterOptions {
   stdFiltersEnabled: boolean;
@@ -442,15 +446,13 @@ export function useFilterWorker(): UseFilterWorkerResult {
   useEffect(() => {
     const checkUtilityProcess = async (): Promise<void> => {
       try {
-        if (window.api?.filterIsAvailable) {
-          const result = await window.api.filterIsAvailable();
-          utilityProcessAvailableRef.current = result.ok && result.available;
-          setUseUtilityProcess(result.ok && result.available);
-          if (result.ok && result.available) {
-            console.warn(
-              "[FilterWorker] UtilityProcess available, using for large datasets",
-            );
-          }
+        const available = await filterIsAvailable();
+        utilityProcessAvailableRef.current = available;
+        setUseUtilityProcess(available);
+        if (available) {
+          console.warn(
+            "[FilterWorker] UtilityProcess available, using for large datasets",
+          );
         }
       } catch {
         utilityProcessAvailableRef.current = false;
@@ -635,7 +637,7 @@ export function useFilterWorker(): UseFilterWorkerResult {
       }
 
       // For large datasets, prefer UtilityProcess (Electron 40+)
-      if (utilityProcessAvailableRef.current && window.api?.filterEntries) {
+      if (utilityProcessAvailableRef.current) {
         setIsFiltering(true);
 
         try {
@@ -654,9 +656,8 @@ export function useFilterWorker(): UseFilterWorkerResult {
           // Project to slim entries to prevent DataCloneError (out of memory)
           const slimEntries = projectToSlimEntries(entries);
 
-          window.api
-            .filterEntries(slimEntries, options)
-            .then((result) => {
+          typedFilterEntries(slimEntries, options)
+            .then((result: import("../types/ipc").FilterResult) => {
               // Only apply if this is still the current request
               if (pendingRequestRef.current === requestId) {
                 if (result.ok) {
@@ -675,7 +676,7 @@ export function useFilterWorker(): UseFilterWorkerResult {
                 setIsFiltering(false);
               }
             })
-            .catch((error) => {
+            .catch((error: unknown) => {
               console.warn("[FilterWorker] UtilityProcess error:", error);
               // Fall back to sync on error
               if (pendingRequestRef.current === requestId) {

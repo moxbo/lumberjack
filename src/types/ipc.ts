@@ -92,6 +92,12 @@ export interface Settings {
   // Elasticsearch Performance
   elasticMaxParallel?: number; // maximale parallele Seiten (1 = sequentiell)
 
+  // Elasticsearch password operations (write-only, used during settingsSet)
+  /** Set to true to clear the stored encrypted password */
+  elasticPassClear?: boolean;
+  /** Plaintext password to encrypt and store (never returned by settingsGet) */
+  elasticPassPlain?: string;
+
   // Feature Flags (persisted disabled features)
   disabledFeatures?: Record<string, string | true>; // feature -> reason or true
 

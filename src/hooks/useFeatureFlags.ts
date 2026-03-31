@@ -5,6 +5,12 @@
 
 import { useState, useEffect, useCallback } from "preact/hooks";
 import type { FeatureFlagsResult } from "../types/ipc";
+import {
+  featureFlagsGetAll,
+  featureFlagsDisable,
+  featureFlagsEnable,
+  featureFlagsResetAll,
+} from "../utils/typedApi";
 
 export type FeatureName =
   | "TCP_SERVER"
@@ -61,7 +67,8 @@ export function useFeatureFlags(): UseFeatureFlagsReturn {
     try {
       setLoading(true);
       setError(null);
-      const result = await window.api.featureFlagsGetAll();
+      const result = await featureFlagsGetAll();
+      if (!result) throw new Error("featureFlagsGetAll unavailable");
       setFeatures(result.features);
       setStats(result.stats);
     } catch (err) {
@@ -92,7 +99,7 @@ export function useFeatureFlags(): UseFeatureFlagsReturn {
   const disable = useCallback(
     async (feature: FeatureName, reason?: string): Promise<void> => {
       try {
-        await window.api.featureFlagsDisable(feature, reason);
+        await featureFlagsDisable(feature, reason);
         await refresh();
         // Notify all other hook instances to refresh
         notifyFeatureFlagChange();
@@ -106,7 +113,7 @@ export function useFeatureFlags(): UseFeatureFlagsReturn {
   const enable = useCallback(
     async (feature: FeatureName): Promise<void> => {
       try {
-        await window.api.featureFlagsEnable(feature);
+        await featureFlagsEnable(feature);
         await refresh();
         // Notify all other hook instances to refresh
         notifyFeatureFlagChange();
@@ -119,7 +126,7 @@ export function useFeatureFlags(): UseFeatureFlagsReturn {
 
   const resetAll = useCallback(async (): Promise<void> => {
     try {
-      await window.api.featureFlagsResetAll();
+      await featureFlagsResetAll();
       await refresh();
       // Notify all other hook instances to refresh
       notifyFeatureFlagChange();

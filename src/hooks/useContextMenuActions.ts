@@ -13,6 +13,7 @@ import {
 import type { ContextMenuState, RendererLogEntry } from "../types/renderer";
 import { BASE_MARK_COLORS } from "../constants";
 import { entrySignature } from "../utils/entryUtils";
+import { patchSettingsQuiet } from "../utils/typedApi";
 import { fmtTimestamp } from "../utils/format";
 import { DiagnosticContextFilter } from "../store/dcFilter";
 import logger from "../utils/logger";
@@ -99,11 +100,7 @@ export function useContextMenuActions(
     if (!color) return;
     setCustomColors((prev) => {
       const list = prev.includes(color) ? prev : [...prev, color];
-      try {
-        void window.api.settingsSet({ customMarkColors: list });
-      } catch (e) {
-        logger.error("Failed to save customMarkColors settings:", e);
-      }
+      patchSettingsQuiet({ customMarkColors: list });
       return list;
     });
   }, []);
@@ -183,9 +180,7 @@ export function useContextMenuActions(
           }
         }
         setMarksMap(newMap);
-        try {
-          void window.api.settingsSet({ marksMap: newMap });
-        } catch {}
+        patchSettingsQuiet({ marksMap: newMap });
         return next;
       });
       closeContextMenu();

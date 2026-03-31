@@ -60,7 +60,8 @@ module.exports = defineConfig([
 
     rules: {
       "prettier/prettier": "error",
-      // Turned off: IPC boundary + intentional `as any` casts make these noise
+      // Relaxed: typedApi wrapper handles most IPC boundary types;
+      // remaining `as any` casts are in legacy code and third-party lib interop
       "@typescript-eslint/no-unsafe-assignment": "off",
       "@typescript-eslint/no-unsafe-call": "off",
       "@typescript-eslint/no-unsafe-member-access": "off",

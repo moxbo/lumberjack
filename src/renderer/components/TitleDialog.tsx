@@ -5,6 +5,7 @@ import { useState, useEffect } from "preact/hooks";
 import logger from "../../utils/logger";
 import { useI18n } from "../../utils/i18n";
 import { nativeAlert } from "../../utils/nativeDialog";
+import { windowTitleGet, windowTitleSet } from "../../utils/typedApi";
 
 interface TitleDialogProps {
   open: boolean;
@@ -21,7 +22,7 @@ export function TitleDialog({ open, onClose }: TitleDialogProps) {
 
     void (async () => {
       try {
-        const res = await window.api?.windowTitleGet?.();
+        const res = await windowTitleGet();
         const title =
           res?.ok && typeof res.title === "string" && res.title.trim()
             ? String(res.title)
@@ -41,7 +42,7 @@ export function TitleDialog({ open, onClose }: TitleDialogProps) {
     }
     void (async () => {
       try {
-        await window.api?.windowTitleSet?.(title);
+        await windowTitleSet(title);
         onClose();
       } catch (e) {
         logger.error("Failed to set window title:", e);
