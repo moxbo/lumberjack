@@ -215,6 +215,8 @@ const api: ElectronAPI = {
     updateDownloaded: boolean;
     isChecking: boolean;
     allowPrerelease: boolean;
+    autoUpdatesAvailable: boolean;
+    isPortable: boolean;
   }> => ipcRenderer.invoke("auto-updater:status"),
 
   autoUpdaterGetAllowPrerelease: (): Promise<boolean> =>
@@ -222,6 +224,9 @@ const api: ElectronAPI = {
 
   autoUpdaterSetAllowPrerelease: (allow: boolean): Promise<{ ok: boolean }> =>
     ipcRenderer.invoke("auto-updater:setAllowPrerelease", allow),
+
+  autoUpdaterOpenReleasePage: (): Promise<void> =>
+    ipcRenderer.invoke("auto-updater:open-release-page"),
 
   onAutoUpdaterStatus: (
     callback: (status: AutoUpdaterStatus) => void,

@@ -192,6 +192,9 @@
   "update": {
     "available": "Update verfügbar: Version {{version}}",
     "availableHint": "Eine neue Version ist zum Download bereit.",
+    "portableAvailable": "Neue Version verfügbar: {{version}}",
+    "portableHint": "Sie verwenden die portable Version. Bitte laden Sie die neue Version manuell von GitHub herunter.",
+    "openDownloadPage": "Download-Seite öffnen",
     "downloading": "Update wird heruntergeladen…",
     "downloaded": "Update {{version}} heruntergeladen",
     "downloadedHint": "Bereit zur Installation. Die App wird neu gestartet.",

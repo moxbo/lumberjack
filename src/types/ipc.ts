@@ -295,11 +295,13 @@ export interface AutoUpdaterStatus {
     | "not-available"
     | "downloading"
     | "downloaded"
-    | "error";
+    | "error"
+    | "available-portable";
   info?: {
     version: string;
     releaseDate?: string;
     releaseNotes?: string;
+    releaseUrl?: string;
   };
   progress?: {
     percent: number;
@@ -308,6 +310,7 @@ export interface AutoUpdaterStatus {
     total: number;
   };
   error?: string;
+  isPortable?: boolean;
 }
 
 /**
@@ -317,6 +320,8 @@ export interface AutoUpdaterStatusResult {
   updateDownloaded: boolean;
   isChecking: boolean;
   allowPrerelease: boolean;
+  autoUpdatesAvailable: boolean;
+  isPortable: boolean;
 }
 
 /**
@@ -375,6 +380,7 @@ export type ElectronAPI = {
   autoUpdaterStatus: () => Promise<AutoUpdaterStatusResult>;
   autoUpdaterGetAllowPrerelease: () => Promise<boolean>;
   autoUpdaterSetAllowPrerelease: (allow: boolean) => Promise<Result<void>>;
+  autoUpdaterOpenReleasePage: () => Promise<void>;
   onAutoUpdaterStatus: (
     callback: (status: AutoUpdaterStatus) => void,
   ) => () => void;

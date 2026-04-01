@@ -19,10 +19,17 @@
  * - Cached update info to avoid redundant checks
  */
 
-import { app, BrowserWindow, ipcMain, type IpcMainInvokeEvent } from "electron";
+import {
+  app,
+  BrowserWindow,
+  ipcMain,
+  shell,
+  type IpcMainInvokeEvent,
+} from "electron";
 import log from "electron-log/main";
 import * as fs from "fs";
 import * as path from "path";
+import * as https from "https";
 
 // Lazy-loaded types - actual import deferred until needed
 type AutoUpdater = typeof import("electron-updater").autoUpdater;
@@ -36,10 +43,12 @@ export interface UpdateStatus {
     | "not-available"
     | "downloading"
     | "downloaded"
-    | "error";
-  info?: UpdateInfo;
+    | "error"
+    | "available-portable";
+  info?: UpdateInfo & { releaseUrl?: string };
   progress?: ProgressInfo;
   error?: string;
+  isPortable?: boolean;
 }
 
 // IPC handler signatures for type safety
@@ -48,12 +57,18 @@ type IpcHandler = (event: IpcMainInvokeEvent, ...args: unknown[]) => unknown;
 // Constants for progress throttling
 const PROGRESS_THROTTLE_MS = 100;
 
+// GitHub repository info for portable update checks
+const GITHUB_OWNER = "moxbo";
+const GITHUB_REPO = "lumberjack";
+const GITHUB_RELEASES_URL = `https://github.com/${GITHUB_OWNER}/${GITHUB_REPO}/releases/latest`;
+
 export class AutoUpdaterService {
   // Use WeakRef to prevent memory leaks if window is destroyed elsewhere
   private mainWindowRef: WeakRef<BrowserWindow> | null = null;
   private isCheckingForUpdates = false;
   private updateDownloaded = false;
   private autoUpdatesAvailable: boolean | null = null;
+  private readonly isPortable: boolean;
 
   // Lazy-loaded autoUpdater instance
   private _autoUpdater: AutoUpdater | null = null;
@@ -81,11 +96,25 @@ export class AutoUpdaterService {
   private startupCheckTimer: ReturnType<typeof setTimeout> | null = null;
 
   constructor() {
+    // Detect portable mode (set by electron-builder for portable targets)
+    this.isPortable = !!(
+      process.env.PORTABLE_EXECUTABLE_DIR &&
+      process.env.PORTABLE_EXECUTABLE_DIR.length > 0
+    );
+
     // Check if auto-updates are available for this installation
     this.autoUpdatesAvailable = this.checkAutoUpdatesAvailable();
 
     // Always setup IPC handlers so renderer can query status
     this.setupIpcHandlers();
+
+    if (this.isPortable) {
+      log.info(
+        "[auto-updater] Portable mode detected – auto-update disabled, " +
+          "will check for new versions via GitHub API instead",
+      );
+      return;
+    }
 
     if (!this.autoUpdatesAvailable) {
       log.info(
@@ -430,7 +459,13 @@ export class AutoUpdaterService {
             ? (this._autoUpdater?.allowPrerelease ?? false)
             : false,
         autoUpdatesAvailable: this.autoUpdatesAvailable,
+        isPortable: this.isPortable,
       };
+    });
+
+    // Open GitHub releases page (for portable mode)
+    registerHandler("auto-updater:open-release-page", () => {
+      this.openReleasePage();
     });
 
     // Get/Set pre-release setting
@@ -451,8 +486,14 @@ export class AutoUpdaterService {
   /**
    * Check for available updates
    * Uses caching to avoid redundant network calls
+   * In portable mode, uses GitHub API instead of electron-updater
    */
   async checkForUpdates(): Promise<UpdateInfo | null> {
+    // Portable mode: check via GitHub API
+    if (this.isPortable) {
+      return this.checkForUpdatesPortable();
+    }
+
     // Early return if auto-updates are not available
     if (!this.autoUpdatesAvailable) {
       log.debug("[auto-updater] Auto-updates not available, skipping check");
@@ -504,6 +545,216 @@ export class AutoUpdaterService {
     } finally {
       this.isCheckingForUpdates = false;
     }
+  }
+
+  /**
+   * Check for updates in portable mode using the GitHub Releases API.
+   * Compares the latest release tag with the current app version.
+   * Sends "available-portable" status if a newer version is found.
+   */
+  private async checkForUpdatesPortable(): Promise<UpdateInfo | null> {
+    if (this.isCheckingForUpdates) {
+      log.warn("[auto-updater] Already checking for updates (portable)");
+      return null;
+    }
+
+    // Return cached result if still valid
+    if (
+      this.cachedUpdateInfo &&
+      Date.now() - this.lastUpdateCheck < this.updateCheckCacheMs
+    ) {
+      log.debug("[auto-updater] Returning cached portable update info");
+      return this.cachedUpdateInfo;
+    }
+
+    try {
+      this.isCheckingForUpdates = true;
+      this.sendStatusToRenderer({ status: "checking", isPortable: true });
+
+      const releaseInfo = await this.fetchLatestGitHubRelease();
+      if (!releaseInfo) {
+        this.sendStatusToRenderer({
+          status: "not-available",
+          isPortable: true,
+        });
+        return null;
+      }
+
+      const currentVersion = app.getVersion();
+      const latestVersion = releaseInfo.version;
+
+      log.info(
+        `[auto-updater] Portable version check: current=${currentVersion}, latest=${latestVersion}`,
+      );
+
+      if (this.isNewerVersion(latestVersion, currentVersion)) {
+        log.info(
+          `[auto-updater] Newer version available for portable: ${latestVersion}`,
+        );
+        const info: UpdateInfo = {
+          version: latestVersion,
+          releaseDate: releaseInfo.publishedAt,
+          releaseNotes: releaseInfo.body,
+        } as UpdateInfo;
+
+        this.cachedUpdateInfo = info;
+        this.lastUpdateCheck = Date.now();
+
+        this.sendStatusToRenderer({
+          status: "available-portable",
+          info: {
+            ...info,
+            releaseUrl: releaseInfo.htmlUrl,
+          },
+          isPortable: true,
+        });
+        return info;
+      } else {
+        log.info("[auto-updater] Portable is up to date");
+        this.lastUpdateCheck = Date.now();
+        this.sendStatusToRenderer({
+          status: "not-available",
+          isPortable: true,
+        });
+        return null;
+      }
+    } catch (error) {
+      const errorMsg = error instanceof Error ? error.message : String(error);
+      log.error("[auto-updater] Portable update check failed:", errorMsg);
+      this.sendStatusToRenderer({
+        status: "error",
+        error: errorMsg,
+        isPortable: true,
+      });
+      return null;
+    } finally {
+      this.isCheckingForUpdates = false;
+    }
+  }
+
+  /**
+   * Fetch latest release information from GitHub Releases API
+   */
+  private fetchLatestGitHubRelease(): Promise<{
+    version: string;
+    htmlUrl: string;
+    publishedAt: string;
+    body: string;
+  } | null> {
+    return new Promise((resolve) => {
+      const options = {
+        hostname: "api.github.com",
+        path: `/repos/${GITHUB_OWNER}/${GITHUB_REPO}/releases/latest`,
+        method: "GET",
+        headers: {
+          "User-Agent": `Lumberjack/${app.getVersion()}`,
+          Accept: "application/vnd.github.v3+json",
+        },
+        timeout: 10000,
+      };
+
+      // Add GitHub token if available (for private repos)
+      const token = process.env.GH_TOKEN || process.env.GITHUB_TOKEN;
+      if (token) {
+        options.headers = {
+          ...options.headers,
+          Authorization: `token ${token}`,
+        } as typeof options.headers;
+      }
+
+      const req = https.get(options, (res) => {
+        let data = "";
+
+        // Handle redirects
+        if (
+          res.statusCode &&
+          res.statusCode >= 300 &&
+          res.statusCode < 400 &&
+          res.headers.location
+        ) {
+          log.debug("[auto-updater] GitHub API redirect, following...");
+          resolve(null);
+          return;
+        }
+
+        if (res.statusCode !== 200) {
+          log.warn(
+            `[auto-updater] GitHub API returned status ${res.statusCode}`,
+          );
+          resolve(null);
+          return;
+        }
+
+        res.on("data", (chunk: string) => {
+          data += chunk;
+        });
+
+        res.on("end", () => {
+          try {
+            const release = JSON.parse(data) as {
+              tag_name: string;
+              html_url: string;
+              published_at: string;
+              body: string;
+            };
+            const version = release.tag_name.replace(/^v/, "");
+            resolve({
+              version,
+              htmlUrl: release.html_url,
+              publishedAt: release.published_at,
+              body: release.body || "",
+            });
+          } catch (e) {
+            log.error("[auto-updater] Failed to parse GitHub release:", e);
+            resolve(null);
+          }
+        });
+      });
+
+      req.on("error", (err) => {
+        log.error("[auto-updater] GitHub API request failed:", err.message);
+        resolve(null);
+      });
+
+      req.on("timeout", () => {
+        log.warn("[auto-updater] GitHub API request timed out");
+        req.destroy();
+        resolve(null);
+      });
+    });
+  }
+
+  /**
+   * Compare semantic versions: returns true if latest > current
+   */
+  private isNewerVersion(latest: string, current: string): boolean {
+    try {
+      const latestParts = latest.split(".").map(Number);
+      const currentParts = current.split(".").map(Number);
+
+      for (
+        let i = 0;
+        i < Math.max(latestParts.length, currentParts.length);
+        i++
+      ) {
+        const l = latestParts[i] || 0;
+        const c = currentParts[i] || 0;
+        if (l > c) return true;
+        if (l < c) return false;
+      }
+      return false;
+    } catch {
+      log.warn("[auto-updater] Version comparison failed:", latest, current);
+      return false;
+    }
+  }
+
+  /**
+   * Open the GitHub releases page in the default browser
+   */
+  openReleasePage(): void {
+    log.info("[auto-updater] Opening release page:", GITHUB_RELEASES_URL);
+    void shell.openExternal(GITHUB_RELEASES_URL);
   }
 
   /**
@@ -569,7 +820,7 @@ export class AutoUpdaterService {
     // Log token status for debugging
     const hasToken = !!process.env.GH_TOKEN || !!process.env.GITHUB_TOKEN;
     log.info(
-      `[auto-updater] Will check for updates in ${delayMs / 1000}s (hasToken: ${hasToken})`,
+      `[auto-updater] Will check for updates in ${delayMs / 1000}s (hasToken: ${hasToken}, isPortable: ${this.isPortable})`,
     );
 
     // Store timer reference for cleanup

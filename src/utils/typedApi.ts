@@ -472,6 +472,18 @@ export async function autoUpdaterSetAllowPrerelease(
   }
 }
 
+/**
+ * Open the GitHub releases page in the default browser (for portable mode).
+ */
+export async function autoUpdaterOpenReleasePage(): Promise<void> {
+  if (!window.api?.autoUpdaterOpenReleasePage) return;
+  try {
+    await window.api.autoUpdaterOpenReleasePage();
+  } catch {
+    // swallow
+  }
+}
+
 // ─────────────────────────── Event Listeners ───────────────────────────
 
 /** No-op cleanup function returned when the API is unavailable. */

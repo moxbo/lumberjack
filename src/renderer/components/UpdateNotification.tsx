@@ -13,6 +13,7 @@ import {
   autoUpdaterDownload,
   autoUpdaterInstall,
   autoUpdaterCheck,
+  autoUpdaterOpenReleasePage,
 } from "../../utils/typedApi";
 
 interface UpdateInfo {
@@ -35,10 +36,12 @@ interface UpdateStatus {
     | "not-available"
     | "downloading"
     | "downloaded"
-    | "error";
+    | "error"
+    | "available-portable";
   info?: UpdateInfo;
   progress?: ProgressInfo;
   error?: string;
+  isPortable?: boolean;
 }
 
 export function UpdateNotification(): VNode | null {
@@ -60,7 +63,10 @@ export function UpdateNotification(): VNode | null {
       }
 
       // Reset dismissed state when a new update becomes available
-      if (status.status === "available") {
+      if (
+        status.status === "available" ||
+        status.status === "available-portable"
+      ) {
         setDismissed(false);
         setIsStartingDownload(false);
       }
@@ -104,13 +110,28 @@ export function UpdateNotification(): VNode | null {
     }
   }, []);
 
+  const handleOpenReleasePage = useCallback(async () => {
+    try {
+      logger.info("[UpdateNotification] Opening release page...");
+      await autoUpdaterOpenReleasePage();
+    } catch (error) {
+      logger.error("[UpdateNotification] Failed to open release page:", error);
+    }
+  }, []);
+
   // Don't show if dismissed or no relevant status
   if (dismissed || !updateStatus) {
     return null;
   }
 
   // Only show for these statuses
-  const showableStatuses = ["available", "downloading", "downloaded", "error"];
+  const showableStatuses = [
+    "available",
+    "available-portable",
+    "downloading",
+    "downloaded",
+    "error",
+  ];
   if (!showableStatuses.includes(updateStatus.status)) {
     return null;
   }
@@ -142,6 +163,15 @@ export function UpdateNotification(): VNode | null {
               <strong>{t("update.available", { version })}</strong>
               <span className="update-notification-hint">
                 {t("update.availableHint")}
+              </span>
+            </>
+          )}
+
+          {updateStatus.status === "available-portable" && (
+            <>
+              <strong>{t("update.portableAvailable", { version })}</strong>
+              <span className="update-notification-hint">
+                {t("update.portableHint")}
               </span>
             </>
           )}
@@ -185,14 +215,18 @@ export function UpdateNotification(): VNode | null {
           )}
 
           {/* Release notes toggle */}
-          {notesText && updateStatus.status === "available" && (
-            <button
-              className="update-details-toggle"
-              onClick={() => setShowDetails(!showDetails)}
-            >
-              {showDetails ? t("update.hideDetails") : t("update.showDetails")}
-            </button>
-          )}
+          {notesText &&
+            (updateStatus.status === "available" ||
+              updateStatus.status === "available-portable") && (
+              <button
+                className="update-details-toggle"
+                onClick={() => setShowDetails(!showDetails)}
+              >
+                {showDetails
+                  ? t("update.hideDetails")
+                  : t("update.showDetails")}
+              </button>
+            )}
 
           {/* Release notes content */}
           {showDetails && notesText && (
@@ -220,6 +254,23 @@ export function UpdateNotification(): VNode | null {
                 className="update-btn update-btn-secondary"
                 onClick={handleDismiss}
                 disabled={isStartingDownload}
+              >
+                {t("update.later")}
+              </button>
+            </>
+          )}
+
+          {updateStatus.status === "available-portable" && (
+            <>
+              <button
+                className="update-btn update-btn-primary"
+                onClick={handleOpenReleasePage}
+              >
+                {t("update.openDownloadPage")}
+              </button>
+              <button
+                className="update-btn update-btn-secondary"
+                onClick={handleDismiss}
               >
                 {t("update.later")}
               </button>
