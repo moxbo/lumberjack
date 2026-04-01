@@ -89,12 +89,12 @@ import {
   DetailPanel,
   FilterSection,
   UpdateNotification,
+  SearchBar,
+  ActiveFilterChips,
+  StatusSection,
 } from "./components";
 import { SkeletonLoader } from "./components/SkeletonLoader";
 import { ElasticStatusBar } from "./components/ElasticStatusBar";
-import { SearchBar } from "./components/SearchBar";
-import { ActiveFilterChips } from "./components/ActiveFilterChips";
-import { StatusSection } from "./components/StatusSection";
 import { JSX } from "preact/jsx-runtime";
 
 // Lazy-load dialogs that are not shown on initial render for faster startup
@@ -847,7 +847,7 @@ export default function App(): JSX.Element {
 
     // Build time filter state from TimeFilter
     const timeState = TimeFilter.getState();
-    const timeFilterEnabled = timeState.enabled === true;
+    const timeFilterEnabled = timeState.enabled;
     const timeFilterFrom = timeState.from || undefined;
     const timeFilterTo = timeState.to || undefined;
 
@@ -1541,7 +1541,7 @@ export default function App(): JSX.Element {
           setThemeMode(mode);
           applyThemeMode(mode);
         }
-        if (typeof r.follow === "boolean") setFollow(!!r.follow);
+        if (typeof r.follow === "boolean") setFollow(r.follow);
         // followSmooth ist immer true, wird nicht aus Settings geladen
         const root = document.documentElement;
         const detail = Number(r.detailHeight || 0);
@@ -1568,7 +1568,7 @@ export default function App(): JSX.Element {
           setMarksMap(r.marksMap as Record<string, string>);
         if (Array.isArray(r.customMarkColors))
           setCustomColors(r.customMarkColors as string[]);
-        if (typeof r.onlyMarked === "boolean") setOnlyMarked(!!r.onlyMarked);
+        if (typeof r.onlyMarked === "boolean") setOnlyMarked(r.onlyMarked);
         rendererPerf.mark("settings-loaded");
       } catch (e) {
         logger.error("Error loading settings:", e);
@@ -1626,7 +1626,7 @@ export default function App(): JSX.Element {
           setThemeMode(mode);
           applyThemeMode(mode);
         }
-        if (typeof r.follow === "boolean") setFollow(!!r.follow);
+        if (typeof r.follow === "boolean") setFollow(r.follow);
         // followSmooth ist immer true, wird nicht aus Settings geladen
 
         // Load all form values from settings
@@ -1747,7 +1747,7 @@ export default function App(): JSX.Element {
         1,
         Number(form.elasticMaxParallel || elasticMaxParallel || 1),
       ),
-      allowPrerelease: !!form.allowPrerelease,
+      allowPrerelease: form.allowPrerelease,
       heapSizeMB: Math.max(
         512,
         Math.min(8192, Number(form.heapSizeMB || 2048)),
@@ -1783,7 +1783,7 @@ export default function App(): JSX.Element {
 
       // Update auto-updater with new allowPrerelease setting
       try {
-        await typedAutoUpdaterSetAllowPrerelease(!!form.allowPrerelease);
+        await typedAutoUpdaterSetAllowPrerelease(form.allowPrerelease);
       } catch (e) {
         logger.warn("Failed to update auto-updater allowPrerelease:", e);
       }
@@ -2693,7 +2693,7 @@ export default function App(): JSX.Element {
                     }
                   } else {
                     const state = TimeFilter.getState();
-                    const wasEnabled = !!(state && state.enabled);
+                    const wasEnabled = state && state.enabled;
                     if (formVals.mode === "absolute" && wasEnabled) {
                       const curFrom: string | null = state.from ?? null;
                       const curTo: string | null = state.to ?? null;
@@ -2785,7 +2785,7 @@ export default function App(): JSX.Element {
                       ? res.entries.length
                       : 0;
                     logger.info("[Elastic] Search finished", {
-                      ok: !!res?.ok,
+                      ok: res?.ok,
                       total,
                       hasResponse: true,
                     });

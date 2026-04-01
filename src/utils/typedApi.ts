@@ -7,12 +7,10 @@
 
 import type {
   AutoUpdaterStatus,
-  AutoUpdaterStatusResult,
   DroppedFile,
   ElasticSearchOptions,
   ExportPathResult,
   ExportResult,
-  ExportViewOptions,
   FeatureFlagsResult,
   FilterOptions,
   FilterResult,
@@ -195,22 +193,6 @@ export async function saveExportFile(
   }
 }
 
-/**
- * Export current view with options.
- */
-export async function exportView(
-  content: string,
-  options: ExportViewOptions,
-): Promise<ExportResult> {
-  if (!window.api?.exportView)
-    return { ok: false, error: "exportView unavailable" };
-  try {
-    return await window.api.exportView(content, options);
-  } catch (e) {
-    return { ok: false, error: e instanceof Error ? e.message : String(e) };
-  }
-}
-
 // ─────────────────────────── Log Parsing ───────────────────────────
 
 /**
@@ -326,7 +308,7 @@ export async function httpSetAllowInsecureSSL(
   if (!window.api?.httpSetAllowInsecureSSL) return false;
   try {
     const r = await window.api.httpSetAllowInsecureSSL(allow);
-    return !!r?.ok;
+    return r?.ok;
   } catch {
     return false;
   }
@@ -375,18 +357,6 @@ export async function featureFlagsGetAll(): Promise<FeatureFlagsResult | null> {
     return await window.api.featureFlagsGetAll();
   } catch {
     return null;
-  }
-}
-
-/**
- * Check if a specific feature is enabled.
- */
-export async function featureFlagsIsEnabled(feature: string): Promise<boolean> {
-  if (!window.api?.featureFlagsIsEnabled) return true;
-  try {
-    return await window.api.featureFlagsIsEnabled(feature);
-  } catch {
-    return true;
   }
 }
 
@@ -449,19 +419,6 @@ export async function appRelaunch(): Promise<Result<void>> {
   }
 }
 
-/**
- * Log an error from renderer to main process.
- */
-export async function logError(errorData: unknown): Promise<Result<void>> {
-  if (!window.api?.logError)
-    return { ok: false, error: "logError unavailable" };
-  try {
-    return await window.api.logError(errorData);
-  } catch (e) {
-    return { ok: false, error: e instanceof Error ? e.message : String(e) };
-  }
-}
-
 // ─────────────────────────── Auto-Updater ───────────────────────────
 
 /**
@@ -501,30 +458,6 @@ export async function autoUpdaterInstall(): Promise<void> {
 }
 
 /**
- * Get current auto-updater status.
- */
-export async function autoUpdaterStatus(): Promise<AutoUpdaterStatusResult | null> {
-  if (!window.api?.autoUpdaterStatus) return null;
-  try {
-    return await window.api.autoUpdaterStatus();
-  } catch {
-    return null;
-  }
-}
-
-/**
- * Get allowPrerelease flag.
- */
-export async function autoUpdaterGetAllowPrerelease(): Promise<boolean> {
-  if (!window.api?.autoUpdaterGetAllowPrerelease) return false;
-  try {
-    return await window.api.autoUpdaterGetAllowPrerelease();
-  } catch {
-    return false;
-  }
-}
-
-/**
  * Set allowPrerelease flag.
  */
 export async function autoUpdaterSetAllowPrerelease(
@@ -533,7 +466,7 @@ export async function autoUpdaterSetAllowPrerelease(
   if (!window.api?.autoUpdaterSetAllowPrerelease) return false;
   try {
     const r = await window.api.autoUpdaterSetAllowPrerelease(allow);
-    return !!r?.ok;
+    return r?.ok;
   } catch {
     return false;
   }
@@ -590,24 +523,6 @@ export function onAutoUpdaterStatus(
   if (!window.api?.onAutoUpdaterStatus) return noop;
   try {
     return window.api.onAutoUpdaterStatus(callback);
-  } catch {
-    return noop;
-  }
-}
-
-/**
- * Subscribe to memory critical warnings.
- */
-export function onMemoryCritical(
-  callback: (data: {
-    heapUsedMB: number;
-    heapTotalMB: number;
-    heapPercent: number;
-  }) => void,
-): () => void {
-  if (!window.api?.onMemoryCritical) return noop;
-  try {
-    return window.api.onMemoryCritical(callback);
   } catch {
     return noop;
   }
@@ -680,7 +595,7 @@ export async function filterIsAvailable(): Promise<boolean> {
   if (!window.api?.filterIsAvailable) return false;
   try {
     const r = await window.api.filterIsAvailable();
-    return !!r?.available;
+    return r?.available;
   } catch {
     return false;
   }
