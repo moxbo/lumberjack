@@ -19,6 +19,9 @@ export interface UseFilterProfilesReturn {
   ) => FilterProfile | null;
   loadProfile: (id: string) => FilterProfile | null;
   deleteProfile: (id: string) => boolean;
+  renameProfile: (id: string, newName: string) => FilterProfile | null;
+  exportProfiles: () => string;
+  importProfiles: (json: string, overwrite?: boolean) => number;
   nameExists: (name: string) => boolean;
   getByName: (name: string) => FilterProfile | undefined;
 }
@@ -76,11 +79,42 @@ export function useFilterProfiles(): UseFilterProfilesReturn {
     [],
   );
 
+  const renameProfile = useCallback(
+    (id: string, newName: string): FilterProfile | null => {
+      try {
+        return filterProfilesStore.renameProfile(id, newName);
+      } catch (e) {
+        console.error("[useFilterProfiles] Rename failed:", e);
+        return null;
+      }
+    },
+    [],
+  );
+
+  const exportProfiles = useCallback((): string => {
+    return filterProfilesStore.exportProfiles();
+  }, []);
+
+  const importProfiles = useCallback(
+    (json: string, overwrite = false): number => {
+      try {
+        return filterProfilesStore.importProfiles(json, overwrite);
+      } catch (e) {
+        console.error("[useFilterProfiles] Import failed:", e);
+        return 0;
+      }
+    },
+    [],
+  );
+
   return {
     profiles,
     saveProfile,
     loadProfile,
     deleteProfile,
+    renameProfile,
+    exportProfiles,
+    importProfiles,
     nameExists,
     getByName,
   };

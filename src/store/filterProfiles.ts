@@ -1,10 +1,15 @@
 /**
  * Filter Profiles Store - Persistente Speicherung von Filterkonfigurationen
+ *
+ * Uses IPC to persist profiles in a shared file on disk (via main process).
+ * This ensures profiles are available across ALL windows, including those
+ * running in separate Electron processes (multi-instance mode).
+ *
+ * Previous versions used localStorage + BroadcastChannel which only worked
+ * within the same Electron process.
  */
 
 import type { FilterState } from "../hooks";
-
-const STORAGE_KEY = "lumberjack-filter-profiles";
 
 export interface FilterProfile {
   id: string;
@@ -26,51 +31,85 @@ interface Listener {
   (): void;
 }
 
-const BROADCAST_CHANNEL_NAME = "lumberjack-filter-profiles-sync";
-
 class FilterProfilesStore {
   private profiles: Map<string, FilterProfile> = new Map();
   private listeners = new Set<Listener>();
-  private broadcastChannel: BroadcastChannel | null = null;
 
   constructor() {
-    this.load();
-    this.initCrossWindowSync();
+    // Start async initialization immediately
+    void this.initFromIpc();
+    this.listenForCrossProcessChanges();
   }
 
   /**
-   * Set up cross-window synchronization using BroadcastChannel.
-   * BroadcastChannel is a Web API that reliably delivers messages across
-   * all same-origin browsing contexts (Electron BrowserWindows).
-   * Unlike the 'storage' event, it works across separate renderer processes.
+   * Load profiles from the main process (file-based, shared across processes).
+   * Falls back to localStorage for migration from older versions.
    */
-  private initCrossWindowSync(): void {
-    if (typeof BroadcastChannel === "undefined") return;
+  private async initFromIpc(): Promise<void> {
     try {
-      this.broadcastChannel = new BroadcastChannel(BROADCAST_CHANNEL_NAME);
-      this.broadcastChannel.onmessage = (event: MessageEvent) => {
-        if (event.data?.type === "profiles-changed") {
-          this.load();
+      if (window.api?.filterProfilesGetAll) {
+        const result = await window.api.filterProfilesGetAll();
+        if (result.ok && Array.isArray(result.profiles)) {
+          this.profiles.clear();
+          for (const profile of result.profiles as FilterProfile[]) {
+            if (profile.id && profile.name) {
+              this.profiles.set(profile.id, profile);
+            }
+          }
+
+          // If file was empty, try migrating from localStorage
+          if (this.profiles.size === 0) {
+            this.migrateFromLocalStorage();
+          }
+
           this.emit();
+          return;
         }
-      };
+      }
     } catch (e) {
-      console.warn("[FilterProfilesStore] BroadcastChannel init failed:", e);
+      console.warn(
+        "[FilterProfilesStore] IPC load failed, falling back to localStorage:",
+        e,
+      );
+    }
+
+    // Fallback: load from localStorage (old behavior / IPC unavailable)
+    this.loadFromLocalStorage();
+    this.emit();
+  }
+
+  /**
+   * Migrate profiles from localStorage to file-based storage.
+   * This runs once when the file doesn't exist yet but localStorage has profiles.
+   */
+  private migrateFromLocalStorage(): void {
+    try {
+      const stored = localStorage.getItem("lumberjack-filter-profiles");
+      if (stored) {
+        const data = JSON.parse(stored) as FilterProfile[];
+        if (Array.isArray(data) && data.length > 0) {
+          for (const profile of data) {
+            if (profile.id && profile.name) {
+              this.profiles.set(profile.id, profile);
+            }
+          }
+          // Persist migrated profiles to file
+          void this.saveViaIpc();
+          // Clean up localStorage after successful migration
+          localStorage.removeItem("lumberjack-filter-profiles");
+          console.warn(
+            `[FilterProfilesStore] Migrated ${data.length} profiles from localStorage to file`,
+          );
+        }
+      }
+    } catch (e) {
+      console.warn("[FilterProfilesStore] localStorage migration failed:", e);
     }
   }
 
-  /** Notify other windows that profiles have been modified. */
-  private notifyOtherWindows(): void {
+  private loadFromLocalStorage(): void {
     try {
-      this.broadcastChannel?.postMessage({ type: "profiles-changed" });
-    } catch {
-      // Channel may be closed – ignore silently
-    }
-  }
-
-  private load(): void {
-    try {
-      const stored = localStorage.getItem(STORAGE_KEY);
+      const stored = localStorage.getItem("lumberjack-filter-profiles");
       if (stored) {
         const data = JSON.parse(stored) as FilterProfile[];
         this.profiles.clear();
@@ -79,19 +118,83 @@ class FilterProfilesStore {
         }
       }
     } catch (e) {
-      console.warn("[FilterProfilesStore] Failed to load profiles:", e);
+      console.warn(
+        "[FilterProfilesStore] Failed to load profiles from localStorage:",
+        e,
+      );
       this.profiles.clear();
     }
   }
 
-  private save(): void {
+  /**
+   * Listen for cross-process profile changes via IPC event.
+   * When another window saves profiles, the main process notifies us.
+   */
+  private listenForCrossProcessChanges(): void {
+    try {
+      if (window.api?.onFilterProfilesChanged) {
+        window.api.onFilterProfilesChanged(() => {
+          void this.reloadFromIpc();
+        });
+      }
+    } catch (e) {
+      console.warn(
+        "[FilterProfilesStore] Failed to listen for cross-process changes:",
+        e,
+      );
+    }
+  }
+
+  /**
+   * Reload profiles from file (triggered by cross-process notification).
+   */
+  private async reloadFromIpc(): Promise<void> {
+    try {
+      if (!window.api?.filterProfilesGetAll) return;
+      const result = await window.api.filterProfilesGetAll();
+      if (result.ok && Array.isArray(result.profiles)) {
+        this.profiles.clear();
+        for (const profile of result.profiles as FilterProfile[]) {
+          if (profile.id && profile.name) {
+            this.profiles.set(profile.id, profile);
+          }
+        }
+        this.emit();
+      }
+    } catch (e) {
+      console.warn("[FilterProfilesStore] Reload from IPC failed:", e);
+    }
+  }
+
+  /**
+   * Save profiles to file via IPC.
+   */
+  private async saveViaIpc(): Promise<void> {
+    try {
+      if (window.api?.filterProfilesSave) {
+        const data = Array.from(this.profiles.values());
+        const result = await window.api.filterProfilesSave(data);
+        if (!result.ok) {
+          console.error("[FilterProfilesStore] IPC save failed:", result.error);
+          // Fallback: save to localStorage
+          this.saveToLocalStorage();
+        }
+      } else {
+        // Fallback: save to localStorage
+        this.saveToLocalStorage();
+      }
+    } catch (e) {
+      console.error("[FilterProfilesStore] Save failed:", e);
+      this.saveToLocalStorage();
+    }
+  }
+
+  private saveToLocalStorage(): void {
     try {
       const data = Array.from(this.profiles.values());
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
-      this.notifyOtherWindows();
+      localStorage.setItem("lumberjack-filter-profiles", JSON.stringify(data));
     } catch (e) {
-      console.error("[FilterProfilesStore] Failed to save profiles:", e);
-      throw e;
+      console.error("[FilterProfilesStore] localStorage save failed:", e);
     }
   }
 
@@ -189,7 +292,7 @@ class FilterProfilesStore {
     };
 
     this.profiles.set(profile.id, profile);
-    this.save();
+    void this.saveViaIpc();
     this.emit();
 
     return profile;
@@ -201,21 +304,10 @@ class FilterProfilesStore {
   deleteProfile(id: string): boolean {
     const deleted = this.profiles.delete(id);
     if (deleted) {
-      this.save();
+      void this.saveViaIpc();
       this.emit();
     }
     return deleted;
-  }
-
-  /**
-   * Delete a profile by name
-   */
-  deleteProfileByName(name: string): boolean {
-    const profile = this.getByName(name);
-    if (profile) {
-      return this.deleteProfile(profile.id);
-    }
-    return false;
   }
 
   /**
@@ -230,7 +322,6 @@ class FilterProfilesStore {
       throw new Error("Profile name is required");
     }
 
-    // Check if new name already exists (excluding current profile)
     const existing = this.getByName(trimmedName);
     if (existing && existing.id !== id) {
       throw new Error("Profile name already exists");
@@ -238,61 +329,57 @@ class FilterProfilesStore {
 
     profile.name = trimmedName;
     profile.updatedAt = Date.now();
-    this.save();
+    void this.saveViaIpc();
     this.emit();
 
     return profile;
   }
 
   /**
-   * Clear all profiles
-   */
-  clearAll(): void {
-    this.profiles.clear();
-    this.save();
-    this.emit();
-  }
-
-  /**
-   * Export all profiles as JSON
+   * Export all profiles as a JSON string (for sharing / backup).
    */
   exportProfiles(): string {
     return JSON.stringify(Array.from(this.profiles.values()), null, 2);
   }
 
   /**
-   * Import profiles from JSON
+   * Import profiles from a JSON string.
+   * @param json - JSON array of FilterProfile objects
+   * @param overwrite - if true, overwrite existing profiles with the same name
+   * @returns number of imported profiles
    */
   importProfiles(json: string, overwrite = false): number {
     const data = JSON.parse(json) as FilterProfile[];
+    if (!Array.isArray(data)) throw new Error("Invalid JSON: expected array");
     let imported = 0;
 
     for (const profile of data) {
       if (!profile.name || !profile.filters) continue;
 
-      if (overwrite || !this.nameExists(profile.name)) {
-        const newProfile: FilterProfile = {
-          id: this.generateId(),
-          name: profile.name,
-          createdAt: profile.createdAt ?? Date.now(),
-          updatedAt: Date.now(),
-          filters: {
-            level: profile.filters.level ?? "",
-            logger: profile.filters.logger ?? "",
-            thread: profile.filters.thread ?? "",
-            message: profile.filters.message ?? "",
-            search: profile.filters.search ?? "",
-            stdFiltersEnabled: profile.filters.stdFiltersEnabled ?? true,
-            mdcFilters: profile.filters.mdcFilters ?? [],
-          },
-        };
-        this.profiles.set(newProfile.id, newProfile);
-        imported++;
-      }
+      const existing = this.getByName(profile.name);
+      if (existing && !overwrite) continue;
+
+      const newProfile: FilterProfile = {
+        id: existing?.id ?? this.generateId(),
+        name: profile.name.trim(),
+        createdAt: existing?.createdAt ?? profile.createdAt ?? Date.now(),
+        updatedAt: Date.now(),
+        filters: {
+          level: profile.filters.level ?? "",
+          logger: profile.filters.logger ?? "",
+          thread: profile.filters.thread ?? "",
+          message: profile.filters.message ?? "",
+          search: profile.filters.search ?? "",
+          stdFiltersEnabled: profile.filters.stdFiltersEnabled ?? true,
+          mdcFilters: profile.filters.mdcFilters ?? [],
+        },
+      };
+      this.profiles.set(newProfile.id, newProfile);
+      imported++;
     }
 
     if (imported > 0) {
-      this.save();
+      void this.saveViaIpc();
       this.emit();
     }
 

@@ -394,6 +394,16 @@ export type ElectronAPI = {
     options: FilterOptions,
   ) => Promise<FilterResult>;
   filterIsAvailable: () => Promise<{ ok: boolean; available: boolean }>;
+  // Filter Profiles – file-based persistence (shared across all processes)
+  filterProfilesGetAll: () => Promise<{
+    ok: boolean;
+    profiles: unknown[];
+    error?: string;
+  }>;
+  filterProfilesSave: (
+    profiles: unknown[],
+  ) => Promise<{ ok: boolean; error?: string }>;
+  onFilterProfilesChanged: (callback: () => void) => () => void;
 };
 
 /**

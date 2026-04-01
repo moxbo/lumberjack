@@ -387,7 +387,20 @@
     "includesMdc": "MDC filters: {{count}}",
     "includesSearch": "Search: {{search}}",
     "manage": "Manage Profiles",
-    "button": "Profiles"
+    "button": "Profiles",
+    "rename": "Rename",
+    "renamePrompt": "New name for profile \"{{name}}\":",
+    "renameSuccess": "Profile renamed to \"{{name}}\"",
+    "renameFailed": "Rename failed: {{message}}",
+    "export": "Export",
+    "exportSuccess": "{{count}} profiles copied to clipboard",
+    "exportEmpty": "No profiles to export",
+    "import": "Import",
+    "importPrompt": "Paste profile JSON data from clipboard:",
+    "importSuccess": "{{count}} profiles imported",
+    "importFailed": "Import failed: {{message}}",
+    "importNone": "No new profiles found to import",
+    "importOverwrite": "Overwrite existing"
   },
   "traceTimeline": {
     "title": "Trace Timeline",

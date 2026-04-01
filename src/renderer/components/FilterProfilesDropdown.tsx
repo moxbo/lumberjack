@@ -28,18 +28,31 @@ export function FilterProfilesDropdown({
   disabled = false,
 }: FilterProfilesDropdownProps): JSX.Element {
   const { t } = useI18n();
-  const { profiles, saveProfile, loadProfile, deleteProfile } =
-    useFilterProfiles();
+  const {
+    profiles,
+    saveProfile,
+    loadProfile,
+    deleteProfile,
+    renameProfile,
+    exportProfiles,
+    importProfiles,
+  } = useFilterProfiles();
 
   const [isOpen, setIsOpen] = useState(false);
   const [newProfileName, setNewProfileName] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
+  const [renamingId, setRenamingId] = useState<string | null>(null);
+  const [renameValue, setRenameValue] = useState("");
+  const [showImport, setShowImport] = useState(false);
+  const [importText, setImportText] = useState("");
+  const [importOverwrite, setImportOverwrite] = useState(false);
 
   const buttonRef = useRef<HTMLButtonElement>(null);
   const dropdownRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+  const renameInputRef = useRef<HTMLInputElement>(null);
 
   // Position state for dropdown
   const [position, setPosition] = useState<{
@@ -187,6 +200,70 @@ export function FilterProfilesDropdown({
     [confirmDelete, deleteProfile, t],
   );
 
+  const handleStartRename = useCallback((id: string, currentName: string) => {
+    setRenamingId(id);
+    setRenameValue(currentName);
+    setConfirmDelete(null);
+    setError(null);
+    setTimeout(() => renameInputRef.current?.focus(), 50);
+  }, []);
+
+  const handleConfirmRename = useCallback(() => {
+    if (!renamingId) return;
+    const trimmed = renameValue.trim();
+    if (!trimmed) {
+      setError(t("filterProfiles.nameRequired"));
+      return;
+    }
+    const result = renameProfile(renamingId, trimmed);
+    if (result) {
+      setSuccessMessage(t("filterProfiles.renameSuccess", { name: trimmed }));
+      setRenamingId(null);
+      setRenameValue("");
+      setError(null);
+    } else {
+      setError(
+        t("filterProfiles.renameFailed", { message: "Name already exists" }),
+      );
+    }
+  }, [renamingId, renameValue, renameProfile, t]);
+
+  const handleExport = useCallback(() => {
+    if (profiles.length === 0) {
+      setError(t("filterProfiles.exportEmpty"));
+      return;
+    }
+    const json = exportProfiles();
+    void navigator.clipboard.writeText(json).then(() => {
+      setSuccessMessage(
+        t("filterProfiles.exportSuccess", { count: profiles.length }),
+      );
+    });
+  }, [profiles, exportProfiles, t]);
+
+  const handleImport = useCallback(() => {
+    const trimmed = importText.trim();
+    if (!trimmed) return;
+    try {
+      const count = importProfiles(trimmed, importOverwrite);
+      if (count > 0) {
+        setSuccessMessage(t("filterProfiles.importSuccess", { count }));
+        setShowImport(false);
+        setImportText("");
+        setImportOverwrite(false);
+        setError(null);
+      } else {
+        setError(t("filterProfiles.importNone"));
+      }
+    } catch (e) {
+      setError(
+        t("filterProfiles.importFailed", {
+          message: e instanceof Error ? e.message : "Invalid JSON",
+        }),
+      );
+    }
+  }, [importText, importOverwrite, importProfiles, t]);
+
   const hasActiveFilters =
     filter.level ||
     filter.logger ||
@@ -257,7 +334,83 @@ export function FilterProfilesDropdown({
           >
             <div className="filter-profiles-header">
               <h4>{t("filterProfiles.title")}</h4>
+              <div className="filter-profiles-toolbar">
+                <button
+                  type="button"
+                  className="btn-icon"
+                  onClick={handleExport}
+                  title={t("filterProfiles.export")}
+                >
+                  <svg
+                    width="13"
+                    height="13"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2"
+                  >
+                    <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                    <polyline points="7 10 12 15 17 10" />
+                    <line x1="12" y1="15" x2="12" y2="3" />
+                  </svg>
+                </button>
+                <button
+                  type="button"
+                  className="btn-icon"
+                  onClick={() => {
+                    setShowImport(!showImport);
+                    setError(null);
+                  }}
+                  title={t("filterProfiles.import")}
+                >
+                  <svg
+                    width="13"
+                    height="13"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2"
+                  >
+                    <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                    <polyline points="17 8 12 3 7 8" />
+                    <line x1="12" y1="3" x2="12" y2="15" />
+                  </svg>
+                </button>
+              </div>
             </div>
+
+            {/* Import area */}
+            {showImport && (
+              <div className="filter-profiles-import">
+                <textarea
+                  value={importText}
+                  onInput={(e) => setImportText(e.currentTarget.value)}
+                  placeholder={t("filterProfiles.importPrompt")}
+                  rows={4}
+                  className="import-textarea"
+                />
+                <div className="import-controls">
+                  <label className="import-overwrite-label">
+                    <input
+                      type="checkbox"
+                      checked={importOverwrite}
+                      onChange={(e) =>
+                        setImportOverwrite(e.currentTarget.checked)
+                      }
+                    />
+                    <span>{t("filterProfiles.importOverwrite")}</span>
+                  </label>
+                  <button
+                    type="button"
+                    className="btn-small btn-primary"
+                    onClick={handleImport}
+                    disabled={!importText.trim()}
+                  >
+                    {t("filterProfiles.import")}
+                  </button>
+                </div>
+              </div>
+            )}
 
             {/* Save new profile */}
             <div className="filter-profiles-save">
@@ -339,61 +492,125 @@ export function FilterProfilesDropdown({
                       confirmDelete === profile.id ? "confirm-delete" : ""
                     }`}
                   >
-                    <div
-                      className="profile-info"
-                      onClick={() => handleLoad(profile.id)}
-                      title={getFilterSummary(profile)}
-                    >
-                      <span className="profile-name">{profile.name}</span>
-                      <small className="profile-summary">
-                        {getFilterSummary(profile)}
-                      </small>
-                    </div>
-                    <div className="profile-actions">
-                      <button
-                        type="button"
-                        className="btn-icon btn-load"
-                        onClick={() => handleLoad(profile.id)}
-                        title={t("filterProfiles.load")}
-                      >
-                        <svg
-                          width="12"
-                          height="12"
-                          viewBox="0 0 24 24"
-                          fill="none"
-                          stroke="currentColor"
-                          strokeWidth="2"
+                    {renamingId === profile.id ? (
+                      <div className="profile-rename">
+                        <input
+                          ref={renameInputRef}
+                          type="text"
+                          value={renameValue}
+                          onInput={(e) => setRenameValue(e.currentTarget.value)}
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter") {
+                              e.preventDefault();
+                              handleConfirmRename();
+                            }
+                            if (e.key === "Escape") {
+                              setRenamingId(null);
+                              setRenameValue("");
+                            }
+                          }}
+                          className="profile-name-input"
+                        />
+                        <button
+                          type="button"
+                          className="btn-small btn-primary"
+                          onClick={handleConfirmRename}
+                          disabled={!renameValue.trim()}
                         >
-                          <polyline points="9 18 15 12 9 6" />
-                        </svg>
-                      </button>
-                      <button
-                        type="button"
-                        className={`btn-icon btn-delete ${
-                          confirmDelete === profile.id ? "confirm" : ""
-                        }`}
-                        onClick={() => handleDelete(profile.id, profile.name)}
-                        title={
-                          confirmDelete === profile.id
-                            ? t("filterProfiles.deleteConfirm", {
-                                name: profile.name,
-                              })
-                            : t("filterProfiles.delete")
-                        }
-                      >
-                        <svg
-                          width="12"
-                          height="12"
-                          viewBox="0 0 24 24"
-                          fill="none"
-                          stroke="currentColor"
-                          strokeWidth="2"
+                          OK
+                        </button>
+                        <button
+                          type="button"
+                          className="btn-small"
+                          onClick={() => {
+                            setRenamingId(null);
+                            setRenameValue("");
+                          }}
                         >
-                          <polyline points="3 6 5 6 21 6" />
-                          <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
-                        </svg>
-                      </button>
-                    </div>
+                          ✕
+                        </button>
+                      </div>
+                    ) : (
+                      <>
+                        <div
+                          className="profile-info"
+                          onClick={() => handleLoad(profile.id)}
+                          title={getFilterSummary(profile)}
+                        >
+                          <span className="profile-name">{profile.name}</span>
+                          <small className="profile-summary">
+                            {getFilterSummary(profile)}
+                          </small>
+                        </div>
+                        <div className="profile-actions">
+                          <button
+                            type="button"
+                            className="btn-icon btn-load"
+                            onClick={() => handleLoad(profile.id)}
+                            title={t("filterProfiles.load")}
+                          >
+                            <svg
+                              width="12"
+                              height="12"
+                              viewBox="0 0 24 24"
+                              fill="none"
+                              stroke="currentColor"
+                              strokeWidth="2"
+                            >
+                              <polyline points="9 18 15 12 9 6" />
+                            </svg>
+                          </button>
+                          <button
+                            type="button"
+                            className="btn-icon btn-rename"
+                            onClick={() =>
+                              handleStartRename(profile.id, profile.name)
+                            }
+                            title={t("filterProfiles.rename")}
+                          >
+                            <svg
+                              width="12"
+                              height="12"
+                              viewBox="0 0 24 24"
+                              fill="none"
+                              stroke="currentColor"
+                              strokeWidth="2"
+                            >
+                              <path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z" />
+                              <path d="m15 5 4 4" />
+                            </svg>
+                          </button>
+                          <button
+                            type="button"
+                            className={`btn-icon btn-delete ${
+                              confirmDelete === profile.id ? "confirm" : ""
+                            }`}
+                            onClick={() =>
+                              handleDelete(profile.id, profile.name)
+                            }
+                            title={
+                              confirmDelete === profile.id
+                                ? t("filterProfiles.deleteConfirm", {
+                                    name: profile.name,
+                                  })
+                                : t("filterProfiles.delete")
+                            }
+                          >
+                            <svg
+                              width="12"
+                              height="12"
+                              viewBox="0 0 24 24"
+                              fill="none"
+                              stroke="currentColor"
+                              strokeWidth="2"
+                            >
+                              <polyline points="3 6 5 6 21 6" />
+                              <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
+                            </svg>
+                          </button>
+                        </div>
+                      </>
+                    )}
                   </div>
                 ))
               )}

@@ -3515,6 +3515,9 @@ button.filter-chip.trace-timeline-chip .chip-label {
 .filter-profiles-header {
   padding: 10px 12px 8px;
   border-bottom: 1px solid var(--color-divider);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
 }
 
 .filter-profiles-header h4 {
@@ -3522,6 +3525,145 @@ button.filter-chip.trace-timeline-chip .chip-label {
   font-size: 13px;
   font-weight: 600;
   color: var(--color-text-primary);
+}
+
+.filter-profiles-toolbar {
+  display: flex;
+  gap: 2px;
+}
+
+.filter-profiles-toolbar .btn-icon {
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  color: var(--color-text-secondary);
+  transition: all var(--transition-fast);
+}
+
+.filter-profiles-toolbar .btn-icon:hover {
+  background: var(--color-bg-hover);
+  border-color: var(--color-border);
+  color: var(--color-text-primary);
+}
+
+/* Import area */
+.filter-profiles-import {
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--color-divider);
+  background: var(--color-bg-default);
+}
+
+.filter-profiles-import .import-textarea {
+  width: 100%;
+  min-height: 60px;
+  padding: 6px 8px;
+  font-size: 11px;
+  font-family: monospace;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-bg-paper);
+  color: var(--color-text-primary);
+  resize: vertical;
+  box-sizing: border-box;
+}
+
+.filter-profiles-import .import-textarea:focus {
+  border-color: var(--color-primary);
+  outline: none;
+  box-shadow: 0 0 0 2px rgba(10, 132, 255, 0.1);
+}
+
+.filter-profiles-import .import-controls {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-top: 6px;
+}
+
+.filter-profiles-import .import-overwrite-label {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  color: var(--color-text-secondary);
+  cursor: pointer;
+}
+
+.filter-profiles-import .import-overwrite-label input[type="checkbox"] {
+  margin: 0;
+}
+
+.filter-profiles-import .btn-primary {
+  padding: 4px 10px;
+  font-size: 11px;
+  font-weight: 500;
+  background: var(--accent-gradient);
+  color: white;
+  border: none;
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  transition: all var(--transition-fast);
+  white-space: nowrap;
+}
+
+.filter-profiles-import .btn-primary:hover:not(:disabled) {
+  filter: brightness(1.1);
+}
+
+.filter-profiles-import .btn-primary:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* Inline rename */
+.filter-profiles-list .profile-rename {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex: 1;
+  min-width: 0;
+}
+
+.filter-profiles-list .profile-rename .profile-name-input {
+  flex: 1;
+  min-width: 0;
+  padding: 4px 6px;
+  font-size: 12px;
+  border: 1px solid var(--color-primary);
+  border-radius: var(--radius-sm);
+  background: var(--color-bg-paper);
+  color: var(--color-text-primary);
+  outline: none;
+  box-shadow: 0 0 0 2px rgba(10, 132, 255, 0.1);
+}
+
+.filter-profiles-list .profile-rename .btn-small {
+  padding: 3px 8px;
+  font-size: 11px;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  border: 1px solid var(--color-border);
+  background: var(--color-bg-hover);
+  color: var(--color-text-primary);
+  transition: all var(--transition-fast);
+}
+
+.filter-profiles-list .profile-rename .btn-primary {
+  background: var(--accent-gradient);
+  color: white;
+  border: none;
+}
+
+.filter-profiles-list .btn-rename:hover {
+  color: var(--color-warning, #ff9f0a);
 }
 
 .filter-profiles-save {

@@ -1040,4 +1040,70 @@ export function registerIpcHandlers(
       return { ok: true, available: false };
     }
   });
+
+  // ============================================================================
+  // Filter Profiles – file-based persistence (shared across all processes)
+  // ============================================================================
+
+  const resolveProfilesPath = (): string => {
+    const portableDir = process.env.PORTABLE_EXECUTABLE_DIR;
+    if (portableDir && portableDir.length) {
+      return path.join(portableDir, "data", "filter-profiles.json");
+    }
+    return path.join(app.getPath("userData"), "filter-profiles.json");
+  };
+
+  ipcMain.handle("filterProfiles:getAll", () => {
+    try {
+      const filePath = resolveProfilesPath();
+      if (!fs.existsSync(filePath)) {
+        return { ok: true, profiles: [] };
+      }
+      const raw = fs.readFileSync(filePath, "utf8");
+      const profiles = JSON.parse(raw);
+      return { ok: true, profiles: Array.isArray(profiles) ? profiles : [] };
+    } catch (e) {
+      log.warn(
+        "[filterProfiles] Failed to load profiles:",
+        e instanceof Error ? e.message : String(e),
+      );
+      return { ok: false, profiles: [], error: String(e) };
+    }
+  });
+
+  ipcMain.handle("filterProfiles:save", (_event, profiles: unknown[]) => {
+    try {
+      const filePath = resolveProfilesPath();
+      const dir = path.dirname(filePath);
+      if (!fs.existsSync(dir)) {
+        fs.mkdirSync(dir, { recursive: true });
+      }
+      fs.writeFileSync(filePath, JSON.stringify(profiles, null, 2), "utf8");
+
+      // Notify all OTHER windows that profiles changed
+      const senderWc = _event.sender;
+      for (const win of BrowserWindow.getAllWindows()) {
+        try {
+          if (
+            !win.isDestroyed() &&
+            win.webContents &&
+            !win.webContents.isDestroyed() &&
+            win.webContents.id !== senderWc.id
+          ) {
+            win.webContents.send("filterProfiles:changed");
+          }
+        } catch {
+          // ignore
+        }
+      }
+
+      return { ok: true };
+    } catch (e) {
+      log.error(
+        "[filterProfiles] Failed to save profiles:",
+        e instanceof Error ? e.message : String(e),
+      );
+      return { ok: false, error: String(e) };
+    }
+  });
 }

@@ -315,6 +315,31 @@ const api: ElectronAPI = {
    */
   filterIsAvailable: (): Promise<{ ok: boolean; available: boolean }> =>
     ipcRenderer.invoke("filter:isAvailable"),
+
+  // ============================================================================
+  // Filter Profiles – file-based persistence (shared across all processes)
+  // ============================================================================
+
+  filterProfilesGetAll: (): Promise<{
+    ok: boolean;
+    profiles: unknown[];
+    error?: string;
+  }> => ipcRenderer.invoke("filterProfiles:getAll"),
+
+  filterProfilesSave: (
+    profiles: unknown[],
+  ): Promise<{ ok: boolean; error?: string }> =>
+    ipcRenderer.invoke("filterProfiles:save", profiles),
+
+  onFilterProfilesChanged: (callback: () => void): (() => void) => {
+    const listener = (): void => {
+      callback();
+    };
+    ipcRenderer.on("filterProfiles:changed", listener);
+    return (): void => {
+      ipcRenderer.removeListener("filterProfiles:changed", listener);
+    };
+  },
 };
 
 // Expose the API to the renderer process in a secure way
