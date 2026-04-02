@@ -170,7 +170,7 @@ export function FilterSection({
             onBlur={(e) => addFilterHistory("logger", e.currentTarget.value)}
             placeholder={t("toolbar.loggerPlaceholder")}
             disabled={!stdFiltersEnabled}
-            style={{ minWidth: "150px" }}
+            style={{ minWidth: "80px", width: "150px", flex: "1 1 80px" }}
             autocomplete="off"
           />
         </div>
@@ -227,7 +227,7 @@ export function FilterSection({
             onBlur={(e) => addFilterHistory("thread", e.currentTarget.value)}
             placeholder={t("toolbar.threadPlaceholder")}
             disabled={!stdFiltersEnabled}
-            style={{ minWidth: "130px" }}
+            style={{ minWidth: "80px", width: "130px", flex: "1 1 80px" }}
             autocomplete="off"
           />
         </div>
@@ -284,7 +284,7 @@ export function FilterSection({
             onBlur={(e) => addFilterHistory("message", e.currentTarget.value)}
             placeholder={t("toolbar.messagePlaceholder")}
             disabled={!stdFiltersEnabled}
-            style={{ minWidth: "200px" }}
+            style={{ minWidth: "80px", width: "200px", flex: "1 1 80px" }}
             autocomplete="off"
           />
         </div>

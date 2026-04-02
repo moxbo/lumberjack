@@ -2240,12 +2240,13 @@ input[type="checkbox"] {
   padding-top: 8px;
   border-top: 1px solid var(--color-divider);
   margin-top: 6px;
+  overflow: visible;
 }
 
 /* Kompaktere Filter-Inputs in der Sektion */
 .filter-section .section {
-  flex-wrap: nowrap;
-  gap: 6px;
+  flex-wrap: wrap;
+  gap: 6px 10px;
 }
 
 .filter-section label {
@@ -2254,8 +2255,8 @@ input[type="checkbox"] {
 }
 
 .filter-section input[type="text"] {
-  min-width: 100px;
-  max-width: 150px;
+  min-width: 80px;
+  max-width: 200px;
   padding: 4px 8px;
   font-size: 12px;
 }
