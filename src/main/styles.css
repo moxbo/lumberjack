@@ -524,6 +524,16 @@ body {
   -webkit-overflow-scrolling: touch;
 }
 
+/* Fokus-Outline der Liste entfernen – Auswahl wird bereits durch
+   Zeilen-Highlighting (.row.sel) visuell angezeigt */
+.list:focus {
+  outline: none;
+}
+
+.list:focus-visible {
+  outline: none;
+}
+
 /* Sichtbare Scrollbar (WebKit/Chrome/Edge) */
 .list::-webkit-scrollbar {
   width: 10px;
@@ -1540,9 +1550,9 @@ body {
 }
 
 @media (prefers-color-scheme: dark) {
-  :root:not([data-theme="light"])
-    .modal-settings-modern
-    .feature-disabled-warning {
+  :root:not([data-theme="light"]),
+  .modal-settings-modern,
+  .feature-disabled-warning {
     background: rgba(239, 68, 68, 0.15);
     color: #f87171;
   }
@@ -2180,8 +2190,8 @@ input[type="checkbox"] {
 }
 
 @media (prefers-color-scheme: dark) {
-  :root:not([data-theme="light"])
-    .stack-trace-virtual::-webkit-scrollbar-thumb {
+  :root:not([data-theme="light"]),
+  .stack-trace-virtual::-webkit-scrollbar-thumb {
     background-color: rgba(255, 255, 255, 0.2);
   }
 }
