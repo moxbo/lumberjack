@@ -348,31 +348,120 @@ class FilterProfilesStore {
    * @param overwrite - if true, overwrite existing profiles with the same name
    * @returns number of imported profiles
    */
+  /**
+   * Normalize parsed JSON into an array of profile-like objects.
+   * Accepts: plain array, single object, or wrapper like {profiles: [...]}.
+   */
+  private static normalizeImportData(raw: unknown): unknown[] {
+    if (Array.isArray(raw)) return raw;
+    if (raw && typeof raw === "object") {
+      // Support wrapper objects like { profiles: [...] } or { ok: true, profiles: [...] }
+      const wrapped = (raw as Record<string, unknown>).profiles;
+      if (Array.isArray(wrapped)) return wrapped;
+      // Single profile object
+      return [raw];
+    }
+    throw new Error("Invalid JSON: expected array or object");
+  }
+
+  /**
+   * Extract a filters object from a profile, tolerating flat structures
+   * where filter fields (level, logger, …) sit directly on the profile object
+   * instead of being nested under a `filters` key.
+   */
+  private static extractFilters(
+    profile: Record<string, unknown>,
+  ): FilterProfile["filters"] | null {
+    const f = profile.filters as Record<string, unknown> | undefined;
+    if (f && typeof f === "object") {
+      return {
+        level: typeof f.level === "string" ? f.level : "",
+        logger: typeof f.logger === "string" ? f.logger : "",
+        thread: typeof f.thread === "string" ? f.thread : "",
+        message: typeof f.message === "string" ? f.message : "",
+        search: typeof f.search === "string" ? f.search : "",
+        stdFiltersEnabled:
+          typeof f.stdFiltersEnabled === "boolean" ? f.stdFiltersEnabled : true,
+        mdcFilters: Array.isArray(f.mdcFilters) ? f.mdcFilters : [],
+      };
+    }
+    // Fallback: try flat structure (filter fields directly on the profile)
+    const hasAnyFilterField = [
+      "level",
+      "logger",
+      "thread",
+      "message",
+      "search",
+    ].some((k) => typeof profile[k] === "string" && profile[k] !== "");
+    if (hasAnyFilterField) {
+      return {
+        level: typeof profile.level === "string" ? profile.level : "",
+        logger: typeof profile.logger === "string" ? profile.logger : "",
+        thread: typeof profile.thread === "string" ? profile.thread : "",
+        message: typeof profile.message === "string" ? profile.message : "",
+        search: typeof profile.search === "string" ? profile.search : "",
+        stdFiltersEnabled:
+          typeof profile.stdFiltersEnabled === "boolean"
+            ? profile.stdFiltersEnabled
+            : true,
+        mdcFilters: Array.isArray(profile.mdcFilters) ? profile.mdcFilters : [],
+      };
+    }
+    return null;
+  }
+
   importProfiles(json: string, overwrite = false): number {
-    const data = JSON.parse(json) as FilterProfile[];
-    if (!Array.isArray(data)) throw new Error("Invalid JSON: expected array");
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(json);
+    } catch {
+      throw new Error("Invalid JSON");
+    }
+
+    const data = FilterProfilesStore.normalizeImportData(parsed);
+    if (data.length === 0) throw new Error("Empty data");
+
     let imported = 0;
+    let skippedExisting = 0;
+    let skippedInvalid = 0;
 
-    for (const profile of data) {
-      if (!profile.name || !profile.filters) continue;
+    for (const item of data) {
+      const profile = item as Record<string, unknown>;
+      if (!profile || typeof profile !== "object") {
+        skippedInvalid++;
+        continue;
+      }
 
-      const existing = this.getByName(profile.name);
-      if (existing && !overwrite) continue;
+      const name = typeof profile.name === "string" ? profile.name.trim() : "";
+      if (!name) {
+        skippedInvalid++;
+        continue;
+      }
+
+      const filters = FilterProfilesStore.extractFilters(profile);
+      if (!filters) {
+        skippedInvalid++;
+        continue;
+      }
+
+      const existing = this.getByName(name);
+      if (existing && !overwrite) {
+        skippedExisting++;
+        continue;
+      }
 
       const newProfile: FilterProfile = {
-        id: existing?.id ?? this.generateId(),
-        name: profile.name.trim(),
-        createdAt: existing?.createdAt ?? profile.createdAt ?? Date.now(),
+        id:
+          existing?.id ??
+          (typeof profile.id === "string" ? profile.id : this.generateId()),
+        name,
+        createdAt:
+          existing?.createdAt ??
+          (typeof profile.createdAt === "number"
+            ? profile.createdAt
+            : Date.now()),
         updatedAt: Date.now(),
-        filters: {
-          level: profile.filters.level ?? "",
-          logger: profile.filters.logger ?? "",
-          thread: profile.filters.thread ?? "",
-          message: profile.filters.message ?? "",
-          search: profile.filters.search ?? "",
-          stdFiltersEnabled: profile.filters.stdFiltersEnabled ?? true,
-          mdcFilters: profile.filters.mdcFilters ?? [],
-        },
+        filters,
       };
       this.profiles.set(newProfile.id, newProfile);
       imported++;
@@ -381,6 +470,20 @@ class FilterProfilesStore {
     if (imported > 0) {
       void this.saveViaIpc();
       this.emit();
+    }
+
+    // Provide a helpful diagnostic when nothing was imported
+    if (imported === 0) {
+      if (skippedExisting > 0 && skippedInvalid === 0) {
+        throw new Error(
+          `All ${skippedExisting} profile(s) already exist. Enable "overwrite" to update them.`,
+        );
+      }
+      if (skippedInvalid > 0) {
+        throw new Error(
+          `${skippedInvalid} profile(s) skipped: missing name or filter data.`,
+        );
+      }
     }
 
     return imported;

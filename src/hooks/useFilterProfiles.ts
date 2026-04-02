@@ -97,12 +97,7 @@ export function useFilterProfiles(): UseFilterProfilesReturn {
 
   const importProfiles = useCallback(
     (json: string, overwrite = false): number => {
-      try {
-        return filterProfilesStore.importProfiles(json, overwrite);
-      } catch (e) {
-        console.error("[useFilterProfiles] Import failed:", e);
-        return 0;
-      }
+      return filterProfilesStore.importProfiles(json, overwrite);
     },
     [],
   );
