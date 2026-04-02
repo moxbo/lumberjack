@@ -3732,6 +3732,20 @@ button.filter-chip.trace-timeline-chip .chip-label {
   color: var(--color-warning, #ff9f0a);
 }
 
+.filter-profiles-list .btn-update:hover {
+  color: var(--color-primary, #0a84ff);
+}
+
+.filter-profiles-list .btn-update.confirm {
+  background: var(--color-primary, #0a84ff);
+  border-color: var(--color-primary, #0a84ff);
+  color: white;
+}
+
+.filter-profiles-list .btn-update.confirm:hover {
+  filter: brightness(1.1);
+}
+
 .filter-profiles-save {
   display: flex;
   gap: 6px;

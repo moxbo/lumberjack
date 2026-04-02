@@ -45,6 +45,7 @@ export function FilterProfilesDropdown({
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
   const [renamingId, setRenamingId] = useState<string | null>(null);
   const [renameValue, setRenameValue] = useState("");
+  const [confirmUpdate, setConfirmUpdate] = useState<string | null>(null);
   const [showImport, setShowImport] = useState(false);
   const [importText, setImportText] = useState("");
   const [importOverwrite, setImportOverwrite] = useState(false);
@@ -90,6 +91,7 @@ export function FilterProfilesDropdown({
         setError(null);
         setSuccessMessage(null);
         setConfirmDelete(null);
+        setConfirmUpdate(null);
       }
     };
 
@@ -107,6 +109,7 @@ export function FilterProfilesDropdown({
         setError(null);
         setSuccessMessage(null);
         setConfirmDelete(null);
+        setConfirmUpdate(null);
       }
     };
 
@@ -227,6 +230,46 @@ export function FilterProfilesDropdown({
       );
     }
   }, [renamingId, renameValue, renameProfile, t]);
+
+  const handleUpdate = useCallback(
+    (id: string, name: string) => {
+      if (confirmUpdate === id) {
+        try {
+          const mdcFilters = getMdcFilters?.() ?? [];
+          const saved = saveProfile(
+            name,
+            filter,
+            search,
+            stdFiltersEnabled,
+            mdcFilters,
+          );
+          if (saved) {
+            setSuccessMessage(t("filterProfiles.updateSuccess", { name }));
+            setConfirmUpdate(null);
+            setError(null);
+          }
+        } catch (e) {
+          setError(
+            t("filterProfiles.saveFailed", {
+              message: e instanceof Error ? e.message : "Unknown error",
+            }),
+          );
+        }
+      } else {
+        setConfirmUpdate(id);
+        setConfirmDelete(null);
+      }
+    },
+    [
+      confirmUpdate,
+      filter,
+      search,
+      stdFiltersEnabled,
+      getMdcFilters,
+      saveProfile,
+      t,
+    ],
+  );
 
   const handleExport = useCallback(() => {
     if (profiles.length === 0) {
@@ -558,6 +601,35 @@ export function FilterProfilesDropdown({
                               strokeWidth="2"
                             >
                               <polyline points="9 18 15 12 9 6" />
+                            </svg>
+                          </button>
+                          <button
+                            type="button"
+                            className={`btn-icon btn-update ${
+                              confirmUpdate === profile.id ? "confirm" : ""
+                            }`}
+                            onClick={() =>
+                              handleUpdate(profile.id, profile.name)
+                            }
+                            title={
+                              confirmUpdate === profile.id
+                                ? t("filterProfiles.updateConfirm", {
+                                    name: profile.name,
+                                  })
+                                : t("filterProfiles.update")
+                            }
+                          >
+                            <svg
+                              width="12"
+                              height="12"
+                              viewBox="0 0 24 24"
+                              fill="none"
+                              stroke="currentColor"
+                              strokeWidth="2"
+                            >
+                              <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z" />
+                              <polyline points="17 21 17 13 7 13 7 21" />
+                              <polyline points="7 3 7 8 15 8" />
                             </svg>
                           </button>
                           <button
