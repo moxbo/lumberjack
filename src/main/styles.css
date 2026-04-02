@@ -166,37 +166,47 @@
 /* Explicit theme overrides (user choice) */
 :root[data-theme="dark"] {
   color-scheme: dark;
-  /* lighten dark theme and increase transparency */
-  --color-bg-default: #15181c;
-  --color-bg-paper: #1c2127;
-  --color-bg-elevated: rgba(36, 40, 46, 0.5);
-  --color-bg-hover: rgba(255, 255, 255, 0.08);
+  /* Dark theme – higher opacity for better readability & contrast */
+  --color-bg-default: #13161a;
+  --color-bg-paper: #1a1f26;
+  --color-bg-elevated: rgba(30, 35, 42, 0.88);
+  --color-bg-hover: rgba(255, 255, 255, 0.1);
 
-  --color-text-primary: #eef2f6;
-  --color-text-secondary: #cbd5df;
-  --color-text-disabled: #8f97a1;
+  --color-text-primary: #e8ecf1;
+  --color-text-secondary: #9ba4b0;
+  --color-text-disabled: #5c6370;
 
-  --color-divider: rgba(255, 255, 255, 0.1);
-  --color-border: rgba(255, 255, 255, 0.16);
+  --color-divider: rgba(255, 255, 255, 0.09);
+  --color-border: rgba(255, 255, 255, 0.13);
 
-  --color-primary: #76b0ff;
+  --color-primary: #6ea8ff;
   --color-primary-light: #a3c9ff;
   --color-primary-dark: #4f96ff;
   --color-primary-contrast: #0a0f14;
 
-  --glass-bg: rgba(28, 32, 38, 0.45);
-  --glass-border: rgba(255, 255, 255, 0.1);
-  --glass-shadow: 0 10px 28px rgba(0, 0, 0, 0.5);
+  --glass-bg: rgba(22, 27, 34, 0.92);
+  --glass-border: rgba(255, 255, 255, 0.09);
+  --glass-shadow: 0 10px 28px rgba(0, 0, 0, 0.55);
 
-  --level-bg-trace: rgba(139, 92, 246, 0.2);
-  --level-bg-debug: rgba(6, 182, 212, 0.22);
-  --level-bg-info: rgba(16, 185, 129, 0.22);
-  --level-bg-warn: rgba(245, 158, 11, 0.26);
-  --level-bg-error: rgba(239, 68, 68, 0.26);
-  --level-bg-fatal: rgba(220, 38, 38, 0.3);
-  --level-bright-text: #f5f7fa;
+  --level-bg-trace: rgba(139, 92, 246, 0.18);
+  --level-bg-debug: rgba(6, 182, 212, 0.18);
+  --level-bg-info: rgba(16, 185, 129, 0.18);
+  --level-bg-warn: rgba(245, 158, 11, 0.2);
+  --level-bg-error: rgba(239, 68, 68, 0.2);
+  --level-bg-fatal: rgba(220, 38, 38, 0.24);
+  --level-bright-text: #f0f2f5;
 
-  --details-glass-bg: rgba(28, 32, 38, 0.35);
+  --details-glass-bg: rgba(22, 27, 34, 0.85);
+
+  /* Overlay-Glow anpassen */
+  --overlay-glow-color: rgba(0, 0, 0, 0.45);
+
+  /* Shadows für Dark Mode stärker */
+  --shadow-sm: 0 1px 2px 0 rgba(0, 0, 0, 0.2);
+  --shadow-base: 0 1px 4px rgba(0, 0, 0, 0.25);
+  --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.3);
+  --shadow-lg: 0 10px 24px rgba(0, 0, 0, 0.4);
+  --shadow-xl: 0 20px 40px rgba(0, 0, 0, 0.5);
 }
 
 :root[data-theme="light"] {
@@ -371,7 +381,7 @@ body {
   font-size: 12px;
   border: 1px solid var(--color-border);
   border-radius: var(--radius-md);
-  background: var(--color-bg-paper);
+  background-color: var(--color-bg-paper);
   min-width: 100px;
 }
 
@@ -381,11 +391,11 @@ body {
 }
 
 .toolbar select {
-  padding: 4px 8px;
+  padding: 4px 28px 4px 8px;
   font-size: 12px;
   border: 1px solid var(--color-border);
   border-radius: var(--radius-md);
-  background: var(--color-bg-paper);
+  background-color: var(--color-bg-paper);
 }
 
 /* Kompakte Toolbar-Buttons */
@@ -550,16 +560,9 @@ body {
   flex: 0 0 var(--divider-h);
   height: var(--divider-h);
   cursor: row-resize;
-  background: linear-gradient(
-    to bottom,
-    rgba(0, 0, 0, 0.06),
-    rgba(0, 0, 0, 0.02)
-  );
+  background: linear-gradient(to bottom, var(--color-divider), transparent);
   border-top: 1px solid var(--color-border);
   border-bottom: 1px solid var(--color-border);
-  box-shadow:
-    0 -1px 0 rgba(0, 0, 0, 0.04) inset,
-    0 1px 0 rgba(255, 255, 255, 0.04) inset;
   pointer-events: auto;
   position: relative;
 }
@@ -597,7 +600,7 @@ body {
     linear-gradient(var(--details-tint), var(--details-tint)), none;
   background-blend-mode: overlay;
   border-top: 1px solid var(--color-border);
-  box-shadow: 0 -4px 16px rgba(0, 0, 0, 0.1);
+  box-shadow: var(--glass-shadow);
   padding: 20px 24px;
   min-height: 0;
   pointer-events: auto;
@@ -1011,6 +1014,17 @@ body {
   padding: 24px;
 }
 
+:root[data-theme="dark"] .modal-backdrop,
+:root[data-theme="dark"] .modal-backdrop {
+  background: rgba(0, 0, 0, 0.6);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .modal-backdrop {
+    background: rgba(0, 0, 0, 0.6);
+  }
+}
+
 .modal {
   width: min(720px, 95vw);
   max-height: 85vh;
@@ -1192,6 +1206,19 @@ body {
   padding: 16px 20px;
 }
 
+/* Besserer Kontrast für Settings-Cards im Dark Mode */
+:root[data-theme="dark"] .settings-card {
+  background: #1e242c;
+  border-color: rgba(255, 255, 255, 0.08);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .settings-card {
+    background: #1e242c;
+    border-color: rgba(255, 255, 255, 0.08);
+  }
+}
+
 /* Settings Field */
 .settings-field {
   margin-bottom: 16px;
@@ -1248,11 +1275,11 @@ body {
 .settings-select {
   width: 100%;
   max-width: 200px;
-  padding: 10px 12px;
+  padding: 10px 32px 10px 12px;
   font-size: 14px;
   border: 1px solid var(--color-border);
   border-radius: 8px;
-  background: var(--color-bg-default);
+  background-color: var(--color-bg-default);
   color: var(--color-text-primary);
   cursor: pointer;
   transition: border-color var(--transition-fast);
@@ -1512,6 +1539,15 @@ body {
   color: #f87171;
 }
 
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"])
+    .modal-settings-modern
+    .feature-disabled-warning {
+    background: rgba(239, 68, 68, 0.15);
+    color: #f87171;
+  }
+}
+
 /* Responsive adjustments */
 @media (max-width: 640px) {
   .settings-layout {
@@ -1650,6 +1686,12 @@ pre.stack-trace {
   background: rgba(255, 255, 255, 0.06);
 }
 
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) pre.stack-trace {
+    background: rgba(255, 255, 255, 0.06);
+  }
+}
+
 /* Grafischer Trenner zwischen Abschnitten in Details */
 .section-sep {
   height: 1px;
@@ -1724,7 +1766,7 @@ input:not([type="checkbox"]):not([type="radio"]),
 select {
   appearance: none;
   border: 1px solid var(--color-border);
-  background: var(--color-bg-paper);
+  background-color: var(--color-bg-paper);
   color: var(--color-text-primary);
   border-radius: 8px;
   padding: 6px 10px;
@@ -1743,12 +1785,12 @@ select {
 }
 
 :root[data-theme="dark"] select {
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath fill='%23cbd5df' d='M2.5 4.5L6 8l3.5-3.5'/%3E%3C/svg%3E");
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath fill='%239ba4b0' d='M2.5 4.5L6 8l3.5-3.5'/%3E%3C/svg%3E");
 }
 
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) select {
-    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath fill='%23cbd5df' d='M2.5 4.5L6 8l3.5-3.5'/%3E%3C/svg%3E");
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath fill='%239ba4b0' d='M2.5 4.5L6 8l3.5-3.5'/%3E%3C/svg%3E");
   }
 }
 
@@ -1844,7 +1886,7 @@ input[type="checkbox"] {
 .details[data-tinted="1"] button,
 .details[data-tinted="1"] input:not([type="checkbox"]),
 .details[data-tinted="1"] select {
-  background: var(--glass-bg);
+  background-color: var(--glass-bg);
 }
 
 /* Klasse für sicher native Checkbox-Darstellung */
@@ -2088,6 +2130,12 @@ input[type="checkbox"] {
   background: rgba(255, 255, 255, 0.03);
 }
 
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .mdc-virtual-container {
+    background: rgba(255, 255, 255, 0.03);
+  }
+}
+
 .mdc-grid-row,
 .mdc-grid-row-inline {
   display: grid;
@@ -2129,6 +2177,13 @@ input[type="checkbox"] {
 
 :root[data-theme="dark"] .stack-trace-virtual::-webkit-scrollbar-thumb {
   background-color: rgba(255, 255, 255, 0.2);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"])
+    .stack-trace-virtual::-webkit-scrollbar-thumb {
+    background-color: rgba(255, 255, 255, 0.2);
+  }
 }
 
 /* --- Loading-Indikator für Lazy-Loading --- */
@@ -2206,7 +2261,7 @@ input[type="checkbox"] {
 }
 
 .filter-section select {
-  padding: 4px 6px;
+  padding: 4px 28px 4px 6px;
   font-size: 12px;
   min-width: 70px;
 }

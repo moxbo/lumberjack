@@ -1496,7 +1496,7 @@ function createWindow(opts: { makePrimary?: boolean } = {}): BrowserWindow {
     // BEFORE event handlers were registered, so webContents never received keyboard focus
     // and inputs were unresponsive until the user Alt-Tabbed away and back.
     show: false,
-    backgroundColor: "#0f1113",
+    backgroundColor: "#13161a",
   });
 
   // Abfangen des Schließens des letzten Fensters (Win/Linux) → Beenden bestätigen
