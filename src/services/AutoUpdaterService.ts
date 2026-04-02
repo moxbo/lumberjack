@@ -97,7 +97,8 @@ export class AutoUpdaterService {
 
   constructor() {
     // Detect portable mode (set by electron-builder for portable targets)
-    this.isPortable = !!(
+    // Also treat "dir" / zip installations (packaged but no app-update.yml) as portable
+    const isPortableExe = !!(
       process.env.PORTABLE_EXECUTABLE_DIR &&
       process.env.PORTABLE_EXECUTABLE_DIR.length > 0
     );
@@ -105,13 +106,19 @@ export class AutoUpdaterService {
     // Check if auto-updates are available for this installation
     this.autoUpdatesAvailable = this.checkAutoUpdatesAvailable();
 
+    // Treat as portable if: running from portable exe OR packaged without auto-update support
+    // This covers "dir" builds and zip-distributed releases that don't have app-update.yml
+    this.isPortable =
+      isPortableExe || (app.isPackaged && !this.autoUpdatesAvailable);
+
     // Always setup IPC handlers so renderer can query status
     this.setupIpcHandlers();
 
     if (this.isPortable) {
       log.info(
-        "[auto-updater] Portable mode detected – auto-update disabled, " +
-          "will check for new versions via GitHub API instead",
+        "[auto-updater] Portable/dir mode detected – auto-update disabled, " +
+          "will check for new versions via GitHub API instead" +
+          (isPortableExe ? " (portable exe)" : " (dir/zip installation)"),
       );
       return;
     }
@@ -495,12 +502,12 @@ export class AutoUpdaterService {
     }
 
     // Early return if auto-updates are not available
+    // This should not normally be reached since isPortable covers dir/zip builds,
+    // but handle it gracefully just in case
     if (!this.autoUpdatesAvailable) {
-      log.debug("[auto-updater] Auto-updates not available, skipping check");
-      this.sendStatusToRenderer({
-        status: "error",
-        error: "Auto-updates are not available for this installation.",
-      });
+      log.debug(
+        "[auto-updater] Auto-updates not available, skipping check silently",
+      );
       return null;
     }
 
