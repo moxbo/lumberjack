@@ -3,8 +3,6 @@
  * Simple modal alert for displaying messages to the user
  */
 
-import { useI18n } from "../../utils/i18n";
-
 interface AlertDialogProps {
   open: boolean;
   title?: string;
@@ -20,8 +18,6 @@ export function AlertDialog({
   type = "info",
   onClose,
 }: AlertDialogProps) {
-  const { t } = useI18n();
-
   if (!open) return null;
 
   const iconMap = {
@@ -47,7 +43,7 @@ export function AlertDialog({
         </div>
         <div className="modal-actions">
           <button onClick={onClose} autoFocus>
-            {t("settings.cancel") === "Abbrechen" ? "OK" : "OK"}
+            OK
           </button>
         </div>
       </div>

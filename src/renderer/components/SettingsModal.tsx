@@ -195,7 +195,7 @@ export function SettingsModal({
           <button
             className="settings-close-btn"
             onClick={handleClose}
-            aria-label="Schließen"
+            aria-label={t("settings.close")}
           >
             <svg
               width="20"
@@ -219,7 +219,7 @@ export function SettingsModal({
           <nav
             className="settings-sidebar"
             role="tablist"
-            aria-label="Einstellungen Navigation"
+            aria-label={t("settings.navAriaLabel")}
           >
             {(
               [
@@ -240,11 +240,7 @@ export function SettingsModal({
               >
                 <span className="settings-nav-icon">{TabIcons[tabKey]}</span>
                 <span className="settings-nav-label">
-                  {tabKey === "appearance"
-                    ? t("settings.tabs.appearance")
-                    : tabKey === "features"
-                      ? t("settings.tabs.features")
-                      : tabKey.toUpperCase()}
+                  {t("settings.tabs." + tabKey)}
                 </span>
               </button>
             ))}
@@ -256,10 +252,9 @@ export function SettingsModal({
             {tab === "tcp" && (
               <div className="settings-panel" role="tabpanel">
                 <div className="settings-panel-header">
-                  <h4>TCP Server</h4>
+                  <h4>{t("settings.tabs.tcp")}</h4>
                   <p className="settings-panel-description">
-                    Konfigurieren Sie den TCP-Server für eingehende
-                    Log-Nachrichten.
+                    {t("settings.descriptions.tcp")}
                   </p>
                 </div>
                 {!tcpEnabled && (
@@ -273,7 +268,7 @@ export function SettingsModal({
                       {t("settings.tcp.port")}
                     </label>
                     <p className="settings-field-hint">
-                      Port auf dem der TCP-Server lauscht (1-65535)
+                      {t("settings.descriptions.tcpPortHint")}
                     </p>
                     <input
                       id="tcp-port"
@@ -313,7 +308,7 @@ export function SettingsModal({
                           {t("settings.tcp.windowControl")}
                         </span>
                         <span className="settings-checkbox-hint">
-                          Erlaubt TCP-Clients, dieses Fenster zu steuern
+                          {t("settings.descriptions.tcpWindowControlHint")}
                         </span>
                       </span>
                     </label>
@@ -326,9 +321,9 @@ export function SettingsModal({
             {tab === "http" && (
               <div className="settings-panel" role="tabpanel">
                 <div className="settings-panel-header">
-                  <h4>HTTP Polling</h4>
+                  <h4>{t("settings.tabs.http")}</h4>
                   <p className="settings-panel-description">
-                    Konfigurieren Sie das HTTP-Polling für Log-Abfragen.
+                    {t("settings.descriptions.http")}
                   </p>
                 </div>
                 {!httpEnabled && (
@@ -342,7 +337,7 @@ export function SettingsModal({
                       {t("settings.http.url")}
                     </label>
                     <p className="settings-field-hint">
-                      URL des HTTP-Endpunkts für Log-Daten
+                      {t("settings.descriptions.httpUrlHint")}
                     </p>
                     <input
                       id="http-url"
@@ -365,7 +360,7 @@ export function SettingsModal({
                       {t("settings.http.interval")}
                     </label>
                     <p className="settings-field-hint">
-                      Abfrageintervall in Millisekunden
+                      {t("settings.descriptions.httpIntervalHint")}
                     </p>
                     <input
                       id="http-interval"
@@ -391,9 +386,9 @@ export function SettingsModal({
             {tab === "elastic" && (
               <div className="settings-panel" role="tabpanel">
                 <div className="settings-panel-header">
-                  <h4>Elasticsearch</h4>
+                  <h4>{t("settings.tabs.elastic")}</h4>
                   <p className="settings-panel-description">
-                    Verbindungseinstellungen für Elasticsearch-Abfragen.
+                    {t("settings.descriptions.elastic")}
                   </p>
                 </div>
                 {!elasticEnabled && (
@@ -407,7 +402,7 @@ export function SettingsModal({
                       {t("settings.elastic.url")}
                     </label>
                     <p className="settings-field-hint">
-                      URL des Elasticsearch-Clusters
+                      {t("settings.descriptions.elasticUrlHint")}
                     </p>
                     <input
                       id="es-url"
@@ -432,7 +427,7 @@ export function SettingsModal({
                         {t("settings.elastic.size")}
                       </label>
                       <p className="settings-field-hint">
-                        Anzahl Ergebnisse pro Abfrage (max. 500.000)
+                        {t("settings.descriptions.elasticSizeHint")}
                       </p>
                       <input
                         id="es-size"
@@ -461,7 +456,7 @@ export function SettingsModal({
                         {t("settings.elastic.maxParallel")}
                       </label>
                       <p className="settings-field-hint">
-                        Parallele Seitenabfragen
+                        {t("settings.descriptions.elasticParallelHint")}
                       </p>
                       <input
                         id="es-parallel"
@@ -561,9 +556,9 @@ export function SettingsModal({
             {tab === "logging" && (
               <div className="settings-panel" role="tabpanel">
                 <div className="settings-panel-header">
-                  <h4>Logging</h4>
+                  <h4>{t("settings.tabs.logging")}</h4>
                   <p className="settings-panel-description">
-                    Konfigurieren Sie das Datei-Logging der Anwendung.
+                    {t("settings.descriptions.logging")}
                   </p>
                 </div>
                 {!fileLoggingEnabled && (
@@ -591,7 +586,7 @@ export function SettingsModal({
                           {t("settings.logging.toFile")}
                         </span>
                         <span className="settings-checkbox-hint">
-                          Speichert Log-Ausgaben in einer Datei
+                          {t("settings.descriptions.loggingToFileHint")}
                         </span>
                       </span>
                     </label>
@@ -642,7 +637,7 @@ export function SettingsModal({
                         {t("settings.logging.maxSize")}
                       </label>
                       <p className="settings-field-hint">
-                        Maximale Dateigröße in MB
+                        {t("settings.descriptions.loggingMaxSizeHint")}
                       </p>
                       <input
                         id="log-max-size"
@@ -665,7 +660,7 @@ export function SettingsModal({
                         {t("settings.logging.maxBackups")}
                       </label>
                       <p className="settings-field-hint">
-                        Anzahl Backup-Dateien
+                        {t("settings.descriptions.loggingMaxBackupsHint")}
                       </p>
                       <input
                         id="log-backups"
@@ -694,7 +689,7 @@ export function SettingsModal({
                 <div className="settings-panel-header">
                   <h4>{t("settings.tabs.appearance")}</h4>
                   <p className="settings-panel-description">
-                    Passen Sie das Erscheinungsbild der Anwendung an.
+                    {t("settings.descriptions.appearance")}
                   </p>
                 </div>
                 <div className="settings-card">
@@ -703,13 +698,25 @@ export function SettingsModal({
                       {t("settings.appearance.theme")}
                     </label>
                     <p className="settings-field-hint">
-                      Wählen Sie ein Farbschema
+                      {t("settings.descriptions.appearanceThemeHint")}
                     </p>
                     <div className="settings-theme-selector">
                       {[
-                        { value: "system", label: "System", icon: "💻" },
-                        { value: "light", label: "Hell", icon: "☀️" },
-                        { value: "dark", label: "Dunkel", icon: "🌙" },
+                        {
+                          value: "system",
+                          label: t("settings.appearance.themeSystem"),
+                          icon: "💻",
+                        },
+                        {
+                          value: "light",
+                          label: t("settings.appearance.themeLight"),
+                          icon: "☀️",
+                        },
+                        {
+                          value: "dark",
+                          label: t("settings.appearance.themeDark"),
+                          icon: "🌙",
+                        },
                       ].map((theme) => (
                         <button
                           key={theme.value}
@@ -742,7 +749,7 @@ export function SettingsModal({
                       {t("settings.language.label")}
                     </label>
                     <p className="settings-field-hint">
-                      Sprache der Benutzeroberfläche
+                      {t("settings.descriptions.languageHint")}
                     </p>
                     <select
                       id="language"
@@ -846,7 +853,7 @@ export function SettingsModal({
                 <div className="settings-panel-header">
                   <h4>{t("settings.tabs.features")}</h4>
                   <p className="settings-panel-description">
-                    Aktivieren oder deaktivieren Sie einzelne Funktionen.
+                    {t("settings.descriptions.features")}
                   </p>
                 </div>
                 <div className="settings-card">

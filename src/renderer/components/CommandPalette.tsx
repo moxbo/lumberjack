@@ -33,103 +33,107 @@ interface CommandPaletteProps {
 }
 
 // Kategorie-Labels und Icons
-const categoryConfig: Record<string, { label: string; icon: JSX.Element }> = {
-  navigation: {
-    label: "Navigation",
-    icon: (
-      <svg
-        width="14"
-        height="14"
-        viewBox="0 0 24 24"
-        fill="none"
-        stroke="currentColor"
-        strokeWidth="2"
-      >
-        <path d="M3 12h18M12 3v18" />
-      </svg>
-    ),
-  },
-  filter: {
-    label: "Filter",
-    icon: (
-      <svg
-        width="14"
-        height="14"
-        viewBox="0 0 24 24"
-        fill="none"
-        stroke="currentColor"
-        strokeWidth="2"
-      >
-        <polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3" />
-      </svg>
-    ),
-  },
-  view: {
-    label: "Ansicht",
-    icon: (
-      <svg
-        width="14"
-        height="14"
-        viewBox="0 0 24 24"
-        fill="none"
-        stroke="currentColor"
-        strokeWidth="2"
-      >
-        <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" />
-        <circle cx="12" cy="12" r="3" />
-      </svg>
-    ),
-  },
-  file: {
-    label: "Datei",
-    icon: (
-      <svg
-        width="14"
-        height="14"
-        viewBox="0 0 24 24"
-        fill="none"
-        stroke="currentColor"
-        strokeWidth="2"
-      >
-        <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
-        <polyline points="14 2 14 8 20 8" />
-      </svg>
-    ),
-  },
-  settings: {
-    label: "Einstellungen",
-    icon: (
-      <svg
-        width="14"
-        height="14"
-        viewBox="0 0 24 24"
-        fill="none"
-        stroke="currentColor"
-        strokeWidth="2"
-      >
-        <circle cx="12" cy="12" r="3" />
-        <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z" />
-      </svg>
-    ),
-  },
-  help: {
-    label: "Hilfe",
-    icon: (
-      <svg
-        width="14"
-        height="14"
-        viewBox="0 0 24 24"
-        fill="none"
-        stroke="currentColor"
-        strokeWidth="2"
-      >
-        <circle cx="12" cy="12" r="10" />
-        <path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3" />
-        <line x1="12" y1="17" x2="12.01" y2="17" />
-      </svg>
-    ),
-  },
-};
+function getCategoryConfig(
+  t: (key: string) => string,
+): Record<string, { label: string; icon: JSX.Element }> {
+  return {
+    navigation: {
+      label: t("commandPalette.categories.navigation"),
+      icon: (
+        <svg
+          width="14"
+          height="14"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="2"
+        >
+          <path d="M3 12h18M12 3v18" />
+        </svg>
+      ),
+    },
+    filter: {
+      label: t("commandPalette.categories.filter"),
+      icon: (
+        <svg
+          width="14"
+          height="14"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="2"
+        >
+          <polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3" />
+        </svg>
+      ),
+    },
+    view: {
+      label: t("commandPalette.categories.view"),
+      icon: (
+        <svg
+          width="14"
+          height="14"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="2"
+        >
+          <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" />
+          <circle cx="12" cy="12" r="3" />
+        </svg>
+      ),
+    },
+    file: {
+      label: t("commandPalette.categories.file"),
+      icon: (
+        <svg
+          width="14"
+          height="14"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="2"
+        >
+          <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+          <polyline points="14 2 14 8 20 8" />
+        </svg>
+      ),
+    },
+    settings: {
+      label: t("commandPalette.categories.settings"),
+      icon: (
+        <svg
+          width="14"
+          height="14"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="2"
+        >
+          <circle cx="12" cy="12" r="3" />
+          <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z" />
+        </svg>
+      ),
+    },
+    help: {
+      label: t("commandPalette.categories.help"),
+      icon: (
+        <svg
+          width="14"
+          height="14"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="2"
+        >
+          <circle cx="12" cy="12" r="10" />
+          <path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3" />
+          <line x1="12" y1="17" x2="12.01" y2="17" />
+        </svg>
+      ),
+    },
+  };
+}
 
 // Fuzzy search scoring
 function fuzzyMatch(text: string, query: string): number {
@@ -167,7 +171,11 @@ function fuzzyMatch(text: string, query: string): number {
   return 0;
 }
 
-function scoreCommand(command: Command, query: string): number {
+function scoreCommand(
+  command: Command,
+  query: string,
+  catConfig: Record<string, { label: string }>,
+): number {
   if (!query) return 1;
 
   let maxScore = fuzzyMatch(command.label, query);
@@ -183,7 +191,7 @@ function scoreCommand(command: Command, query: string): number {
   }
 
   // Kategorie-Match
-  const catLabel = categoryConfig[command.category]?.label || "";
+  const catLabel = catConfig[command.category]?.label || "";
   maxScore = Math.max(maxScore, fuzzyMatch(catLabel, query) * 0.5);
 
   return maxScore;
@@ -200,6 +208,8 @@ export function CommandPalette({
   const inputRef = useRef<HTMLInputElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
 
+  const categoryConfig = useMemo(() => getCategoryConfig(t), [t]);
+
   // Filter und sortiere Commands basierend auf Query
   const filteredCommands = useMemo(() => {
     if (!query.trim()) {
@@ -208,11 +218,11 @@ export function CommandPalette({
     }
 
     return commands
-      .map((cmd) => ({ cmd, score: scoreCommand(cmd, query) }))
+      .map((cmd) => ({ cmd, score: scoreCommand(cmd, query, categoryConfig) }))
       .filter(({ score }) => score > 0)
       .sort((a, b) => b.score - a.score)
       .map(({ cmd }) => cmd);
-  }, [commands, query]);
+  }, [commands, query, categoryConfig]);
 
   // Reset state when opening
   useEffect(() => {
@@ -323,7 +333,7 @@ export function CommandPalette({
             ref={inputRef}
             type="text"
             className="command-palette-input"
-            placeholder={t("commandPalette.placeholder") || "Befehl suchen..."}
+            placeholder={t("commandPalette.placeholder")}
             value={query}
             onInput={(e) => {
               setQuery((e.target as HTMLInputElement).value);
@@ -337,7 +347,7 @@ export function CommandPalette({
         <div className="command-palette-list" ref={listRef}>
           {filteredCommands.length === 0 ? (
             <div className="command-palette-empty">
-              {t("commandPalette.noResults") || "Keine Befehle gefunden"}
+              {t("commandPalette.noResults")}
             </div>
           ) : groupedCommands ? (
             // Gruppierte Ansicht
@@ -360,6 +370,7 @@ export function CommandPalette({
                         onClose();
                       }}
                       onHover={() => setSelectedIndex(globalIndex)}
+                      categoryConfig={categoryConfig}
                     />
                   );
                 })}
@@ -378,6 +389,7 @@ export function CommandPalette({
                   onClose();
                 }}
                 onHover={() => setSelectedIndex(index)}
+                categoryConfig={categoryConfig}
               />
             ))
           )}
@@ -386,13 +398,13 @@ export function CommandPalette({
         {/* Footer */}
         <div className="command-palette-footer">
           <span>
-            <kbd>↑</kbd> <kbd>↓</kbd> navigieren
+            <kbd>↑</kbd> <kbd>↓</kbd> {t("commandPalette.footer.navigate")}
           </span>
           <span>
-            <kbd>Enter</kbd> ausführen
+            <kbd>Enter</kbd> {t("commandPalette.footer.execute")}
           </span>
           <span>
-            <kbd>ESC</kbd> schließen
+            <kbd>ESC</kbd> {t("commandPalette.footer.close")}
           </span>
         </div>
       </div>
@@ -407,6 +419,7 @@ interface CommandItemProps {
   index: number;
   onSelect: () => void;
   onHover: () => void;
+  categoryConfig: Record<string, { label: string; icon: JSX.Element }>;
 }
 
 function CommandItem({
@@ -415,6 +428,7 @@ function CommandItem({
   index,
   onSelect,
   onHover,
+  categoryConfig,
 }: CommandItemProps): JSX.Element {
   return (
     <div

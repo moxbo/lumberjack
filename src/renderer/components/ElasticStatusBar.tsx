@@ -71,7 +71,7 @@ export function ElasticStatusBar({
         </span>
       )}
       {esBusy && (
-        <span className="status" title="Ladefortschritt Elasticsearch">
+        <span className="status" title={t("toolbar.elasticLoadProgress")}>
           {t("toolbar.elasticLoading", {
             loaded: String(esLoaded),
             target: String(esTarget),

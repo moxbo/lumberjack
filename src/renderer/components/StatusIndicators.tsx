@@ -18,6 +18,15 @@ export function StatusIndicators({
   nextPollIn,
   t,
 }: StatusIndicatorsProps) {
+  const isTcpActive =
+    !!tcpStatus &&
+    tcpStatus !== t("status.tcpStopped") &&
+    tcpStatus !== t("status.tcpError");
+  const errorPrefix = t("status.error").split("{{")[0] || "Error";
+  const isHttpError = !!httpStatus && httpStatus.startsWith(errorPrefix);
+  const isHttpActive =
+    !!httpStatus && httpStatus !== t("status.httpPollStopped");
+
   return (
     <div className="section">
       {busy && (
@@ -26,21 +35,21 @@ export function StatusIndicators({
           {t("toolbar.busy")}
         </span>
       )}
-      {tcpStatus && !tcpStatus.includes("geschlossen") && (
+      {isTcpActive && (
         <span id="tcpStatus" className="status status-active">
           🟢 {tcpStatus}
         </span>
       )}
-      {httpStatus && !httpStatus.includes("inaktiv") && (
+      {isHttpActive && (
         <span
           id="httpStatus"
-          className={`status ${httpStatus.startsWith("Fehler:") ? "status-error" : "status-active"}`}
+          className={`status ${isHttpError ? "status-error" : "status-active"}`}
         >
-          {httpStatus.startsWith("Fehler:") ? "🔴" : "🟢"} {httpStatus}
+          {isHttpError ? "🔴" : "🟢"} {httpStatus}
         </span>
       )}
       {nextPollIn && (
-        <span className="status" title="Nächster Poll in">
+        <span className="status" title={t("toolbar.nextPollInTooltip")}>
           {nextPollIn}
         </span>
       )}

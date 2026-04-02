@@ -62,9 +62,7 @@ export function DetailPanel({
       <div className="details-empty">
         <div className="details-empty-icon">👆</div>
         <div className="details-empty-title">{t("details.noSelection")}</div>
-        <div className="details-empty-hint">
-          Wähle einen Eintrag aus der Liste, um Details anzuzeigen.
-        </div>
+        <div className="details-empty-hint">{t("details.emptyHint")}</div>
       </div>
     );
   }
@@ -125,7 +123,7 @@ export function DetailPanel({
               color: "var(--color-text-secondary)",
               fontWeight: "normal",
             }}
-            title="Nachrichtengröße"
+            title={t("details.messageSize")}
           >
             (
             {formatSize(new TextEncoder().encode(getFullMessage(entry)).length)}
@@ -146,11 +144,13 @@ export function DetailPanel({
               }}
               title={
                 messageExpanded
-                  ? "Nachricht kürzen"
-                  : "Vollständige Nachricht anzeigen"
+                  ? t("details.truncateTooltip")
+                  : t("details.fullViewTooltip")
               }
             >
-              {messageExpanded ? "▼ Gekürzt" : "▶ Vollständig"}
+              {messageExpanded
+                ? `▼ ${t("details.truncatedLabel")}`
+                : `▶ ${t("details.fullLabel")}`}
             </button>
           )}
         </span>
@@ -214,14 +214,14 @@ export function DetailPanel({
       {/* Display other relevant fields */}
       {getStr(entry, "traceId") && (
         <div className="kv full">
-          <span>{t("details.traceId") || "Trace ID"}</span>
+          <span>{t("details.traceId")}</span>
           <div>{getStr(entry, "traceId")}</div>
         </div>
       )}
 
       {getStr(entry, "service") && (
         <div className="kv full">
-          <span>{t("details.service") || "Service"}</span>
+          <span>{t("details.service")}</span>
           <div>{getStr(entry, "service")}</div>
         </div>
       )}

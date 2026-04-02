@@ -461,8 +461,10 @@ export default function App(): JSX.Element {
     }
   }
 
-  const [tcpStatus, setTcpStatus] = useState<string>("TCP Port geschlossen");
-  const [httpStatus, setHttpStatus] = useState<string>("HTTP Polling inaktiv");
+  const [tcpStatus, setTcpStatus] = useState<string>(t("status.tcpStopped"));
+  const [httpStatus, setHttpStatus] = useState<string>(
+    t("status.httpPollStopped"),
+  );
   const [httpPollId, setHttpPollId] = useState<number | null>(null);
   const [tcpPort, setTcpPort] = useState<number>(5000);
   const [canTcpControlWindow, setCanTcpControlWindow] = useState<boolean>(true);
@@ -2303,7 +2305,7 @@ export default function App(): JSX.Element {
         });
 
         content = `<!DOCTYPE html>
-<html lang="de">
+<html lang="${locale}">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -2351,8 +2353,8 @@ export default function App(): JSX.Element {
 <body>
   <h1>🪵 Lumberjack Log Export</h1>
   <div class="meta">
-    Exportiert: ${new Date().toLocaleString()}<br>
-    Einträge: ${exportEntries.length} (gefiltert aus ${currentEntries.length} gesamt)
+    ${t("export.exported")}: ${new Date().toLocaleString()}<br>
+    ${t("export.entries")}: ${exportEntries.length} (${t("export.filteredOf", { total: String(currentEntries.length) })})
   </div>
   <table>
     <thead>
@@ -2565,7 +2567,10 @@ export default function App(): JSX.Element {
         logger.error("TCP stop failed:", err);
       }
     },
-    isTcpActive: tcpStatus.includes("aktiv") || tcpStatus.includes("active"),
+    isTcpActive:
+      !!tcpStatus &&
+      tcpStatus !== t("status.tcpStopped") &&
+      tcpStatus !== t("status.tcpError"),
 
     // Theme
     onToggleTheme: () => {
@@ -2594,11 +2599,7 @@ export default function App(): JSX.Element {
       {/* Skeleton loader während Settings geladen werden */}
       {!settingsLoaded && <SkeletonLoader />}
 
-      {dragActive && (
-        <div className="drop-overlay">
-          Dateien hierher ziehen (.log, .json, .zip)
-        </div>
-      )}
+      {dragActive && <div className="drop-overlay">{t("dropOverlay")}</div>}
       {/* DC-Filter Dialog */}
       {showDcDialog && (
         <div className="modal-backdrop" onClick={() => setShowDcDialog(false)}>
@@ -2606,12 +2607,20 @@ export default function App(): JSX.Element {
             className="modal modal-wide"
             onClick={(e) => e.stopPropagation()}
           >
-            <h3>Diagnostic Context Filter</h3>
-            <Suspense fallback={<div style={{ padding: "20px" }}>Lädt...</div>}>
+            <h3>{t("dcFilterDialog.title")}</h3>
+            <Suspense
+              fallback={
+                <div style={{ padding: "20px" }}>
+                  {t("dcFilterDialog.loading")}
+                </div>
+              }
+            >
               <DCFilterDialog />
             </Suspense>
             <div className="modal-actions">
-              <button onClick={() => setShowDcDialog(false)}>Schließen</button>
+              <button onClick={() => setShowDcDialog(false)}>
+                {t("dcFilterDialog.close")}
+              </button>
             </div>
           </div>
         </div>
@@ -2622,7 +2631,7 @@ export default function App(): JSX.Element {
         <Suspense
           fallback={
             <div className="modal-backdrop">
-              <div className="modal">Lädt…</div>
+              <div className="modal">{t("dcFilterDialog.loading")}</div>
             </div>
           }
         >
@@ -3018,27 +3027,30 @@ export default function App(): JSX.Element {
               className="count"
               title={
                 lastFilterStats && countTotal > countFiltered
-                  ? `Gefiltert: ${countTotal - countFiltered} Einträge\n` +
+                  ? t("filterStats.filtered", {
+                      count: String(countTotal - countFiltered),
+                    }) +
+                    "\n" +
                     (lastFilterStats.rejectedByLevel > 0
-                      ? `• Level: ${lastFilterStats.rejectedByLevel}\n`
+                      ? `• ${t("filterStats.byLevel", { count: String(lastFilterStats.rejectedByLevel) })}\n`
                       : "") +
                     (lastFilterStats.rejectedByLogger > 0
-                      ? `• Logger: ${lastFilterStats.rejectedByLogger}\n`
+                      ? `• ${t("filterStats.byLogger", { count: String(lastFilterStats.rejectedByLogger) })}\n`
                       : "") +
                     (lastFilterStats.rejectedByThread > 0
-                      ? `• Thread: ${lastFilterStats.rejectedByThread}\n`
+                      ? `• ${t("filterStats.byThread", { count: String(lastFilterStats.rejectedByThread) })}\n`
                       : "") +
                     (lastFilterStats.rejectedByMessage > 0
-                      ? `• Message: ${lastFilterStats.rejectedByMessage}\n`
+                      ? `• ${t("filterStats.byMessage", { count: String(lastFilterStats.rejectedByMessage) })}\n`
                       : "") +
                     (lastFilterStats.rejectedByTime > 0
-                      ? `• Zeit: ${lastFilterStats.rejectedByTime}\n`
+                      ? `• ${t("filterStats.byTime", { count: String(lastFilterStats.rejectedByTime) })}\n`
                       : "") +
                     (lastFilterStats.rejectedByDC > 0
-                      ? `• DC-Filter: ${lastFilterStats.rejectedByDC}\n`
+                      ? `• ${t("filterStats.byDC", { count: String(lastFilterStats.rejectedByDC) })}\n`
                       : "") +
                     (lastFilterStats.rejectedByOnlyMarked > 0
-                      ? `• Nur Markierte: ${lastFilterStats.rejectedByOnlyMarked}\n`
+                      ? `• ${t("filterStats.byOnlyMarked", { count: String(lastFilterStats.rejectedByOnlyMarked) })}\n`
                       : "")
                   : undefined
               }
@@ -3067,7 +3079,7 @@ export default function App(): JSX.Element {
         </div>
         {/* Kompakte Navigation & Markierungen */}
         <div className="section" style={{ gap: "4px" }}>
-          <div className="btn-group" title="Navigation">
+          <div className="btn-group" title={t("toolbar.navigation")}>
             <button
               className="btn-icon"
               title={t("toolbar.gotoStartTooltip")}
@@ -3085,7 +3097,7 @@ export default function App(): JSX.Element {
               ⏬
             </button>
           </div>
-          <div className="btn-group" title="Markierungen">
+          <div className="btn-group" title={t("toolbar.marks")}>
             <button
               className="btn-icon"
               title={t("toolbar.prevMarkTooltip")}
@@ -3105,7 +3117,9 @@ export default function App(): JSX.Element {
             {markedIdx.length > 0 && (
               <span
                 className="badge-count"
-                title={`${markedIdx.length} Markierungen`}
+                title={t("toolbar.marksCount", {
+                  count: String(markedIdx.length),
+                })}
               >
                 {markedIdx.length}
               </span>
@@ -3150,9 +3164,9 @@ export default function App(): JSX.Element {
           <button
             className={`filter-toggle-btn ${filtersExpanded ? "expanded" : ""}`}
             onClick={() => setFiltersExpanded(!filtersExpanded)}
-            title="Filter ein-/ausblenden (⌘⇧F)"
+            title={t("toolbar.filterToggle")}
           >
-            <span>🎛️ Filter</span>
+            <span>🎛️ {t("toolbar.filterLabel")}</span>
             <span className="chevron">▼</span>
           </button>
           {/* Aktive Filter-Chips inline */}
@@ -3396,20 +3410,15 @@ export default function App(): JSX.Element {
             {countFiltered === 0 && entries.length === 0 && (
               <div className="list-empty">
                 <div className="list-empty-icon">📋</div>
-                <div className="list-empty-title">Bereit für Logs</div>
-                <div className="list-empty-hint">
-                  Ziehe Log-Dateien hierher, starte den TCP-Server oder verbinde
-                  dich mit Elasticsearch.
-                </div>
+                <div className="list-empty-title">{t("list.emptyTitle")}</div>
+                <div className="list-empty-hint">{t("list.emptyHint")}</div>
               </div>
             )}
             {countFiltered === 0 && entries.length > 0 && (
               <div className="list-empty">
                 <div className="list-empty-icon">🔍</div>
-                <div className="list-empty-title">Keine Treffer</div>
-                <div className="list-empty-hint">
-                  Die aktiven Filter zeigen keine Ergebnisse.
-                </div>
+                <div className="list-empty-title">{t("list.noMatchTitle")}</div>
+                <div className="list-empty-hint">{t("list.noMatchHint")}</div>
               </div>
             )}
           </div>

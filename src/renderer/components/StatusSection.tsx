@@ -21,6 +21,16 @@ export function StatusSection({
   nextPollIn,
   t,
 }: StatusSectionProps): JSX.Element {
+  // Use semantic flags by comparing against translated strings
+  const isTcpActive =
+    !!tcpStatus &&
+    tcpStatus !== t("status.tcpStopped") &&
+    tcpStatus !== t("status.tcpError");
+  const isHttpActive =
+    !!httpStatus && httpStatus !== t("status.httpPollStopped");
+  const errorPrefix = t("status.error").split("{{")[0] || "Error";
+  const isHttpError = !!httpStatus && httpStatus.startsWith(errorPrefix);
+
   return (
     <div className="section">
       {busy && (
@@ -29,23 +39,23 @@ export function StatusSection({
           {t("toolbar.busy")}
         </span>
       )}
-      {/* TCP Status - nur anzeigen wenn aktiv */}
-      {tcpStatus && !tcpStatus.includes("geschlossen") && (
+      {/* TCP Status - show when active */}
+      {isTcpActive && (
         <span id="tcpStatus" className="status status-active">
           🟢 {tcpStatus}
         </span>
       )}
-      {/* HTTP Status - nur anzeigen wenn aktiv */}
-      {httpStatus && !httpStatus.includes("inaktiv") && (
+      {/* HTTP Status - show when active */}
+      {isHttpActive && (
         <span
           id="httpStatus"
-          className={`status ${httpStatus.startsWith("Fehler:") ? "status-error" : "status-active"}`}
+          className={`status ${isHttpError ? "status-error" : "status-active"}`}
         >
-          {httpStatus.startsWith("Fehler:") ? "🔴" : "🟢"} {httpStatus}
+          {isHttpError ? "🔴" : "🟢"} {httpStatus}
         </span>
       )}
       {nextPollIn && (
-        <span className="status" title="Nächster Poll in">
+        <span className="status" title={t("toolbar.nextPollInTooltip")}>
           {nextPollIn}
         </span>
       )}

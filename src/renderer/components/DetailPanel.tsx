@@ -179,7 +179,7 @@ export function DetailPanel({
                   color: "var(--color-text-secondary, #666)",
                   fontWeight: "normal",
                 }}
-                title="Nachrichtengröße"
+                title={t("details.messageSize")}
               >
                 ({formatSize(messageSize)})
               </span>
@@ -201,11 +201,13 @@ export function DetailPanel({
                   }}
                   title={
                     showFullMessage
-                      ? "Gekürzte Ansicht"
-                      : "Vollständige Nachricht anzeigen (kann bei großen Nachrichten langsam sein)"
+                      ? t("details.truncatedView")
+                      : t("details.fullViewTooltip")
                   }
                 >
-                  {showFullMessage ? "▼ Gekürzt" : "▶ Vollständig"}
+                  {showFullMessage
+                    ? `▼ ${t("details.truncatedLabel")}`
+                    : `▶ ${t("details.fullLabel")}`}
                 </button>
               )}
               {isTruncated && !showFullMessage && (
@@ -215,7 +217,7 @@ export function DetailPanel({
                     color: "var(--color-warning, #f0ad4e)",
                   }}
                 >
-                  ⚠️ Nachricht gekürzt
+                  ⚠️ {t("details.messageTruncated")}
                 </span>
               )}
             </span>

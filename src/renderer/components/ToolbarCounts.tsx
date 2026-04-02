@@ -25,27 +25,28 @@ export function ToolbarCounts({
 }: ToolbarCountsProps) {
   const hasFiltered = lastFilterStats && countTotal > countFiltered;
   const filterTooltip = hasFiltered
-    ? `Gefiltert: ${countTotal - countFiltered} Einträge\n` +
+    ? t("filterStats.filtered", { count: String(countTotal - countFiltered) }) +
+      "\n" +
       (lastFilterStats.rejectedByLevel > 0
-        ? `• Level: ${lastFilterStats.rejectedByLevel}\n`
+        ? `• ${t("filterStats.byLevel", { count: String(lastFilterStats.rejectedByLevel) })}\n`
         : "") +
       (lastFilterStats.rejectedByLogger > 0
-        ? `• Logger: ${lastFilterStats.rejectedByLogger}\n`
+        ? `• ${t("filterStats.byLogger", { count: String(lastFilterStats.rejectedByLogger) })}\n`
         : "") +
       (lastFilterStats.rejectedByThread > 0
-        ? `• Thread: ${lastFilterStats.rejectedByThread}\n`
+        ? `• ${t("filterStats.byThread", { count: String(lastFilterStats.rejectedByThread) })}\n`
         : "") +
       (lastFilterStats.rejectedByMessage > 0
-        ? `• Message: ${lastFilterStats.rejectedByMessage}\n`
+        ? `• ${t("filterStats.byMessage", { count: String(lastFilterStats.rejectedByMessage) })}\n`
         : "") +
       (lastFilterStats.rejectedByTime > 0
-        ? `• Zeit: ${lastFilterStats.rejectedByTime}\n`
+        ? `• ${t("filterStats.byTime", { count: String(lastFilterStats.rejectedByTime) })}\n`
         : "") +
       (lastFilterStats.rejectedByDC > 0
-        ? `• DC-Filter: ${lastFilterStats.rejectedByDC}\n`
+        ? `• ${t("filterStats.byDC", { count: String(lastFilterStats.rejectedByDC) })}\n`
         : "") +
       (lastFilterStats.rejectedByOnlyMarked > 0
-        ? `• Nur Markierte: ${lastFilterStats.rejectedByOnlyMarked}\n`
+        ? `• ${t("filterStats.byOnlyMarked", { count: String(lastFilterStats.rejectedByOnlyMarked) })}\n`
         : "")
     : undefined;
 

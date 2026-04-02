@@ -5,6 +5,7 @@
 import { memo, useRef } from "preact/compat";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import type { JSX } from "preact/jsx-runtime";
+import { useI18n } from "../utils/i18n";
 
 interface MDCPair {
   key: string;
@@ -25,10 +26,12 @@ const MDCRowComponent = ({
   pair,
   onAddToFilter,
   style,
+  t,
 }: {
   pair: MDCPair;
   onAddToFilter: (key: string, value: string) => void;
   style: JSX.CSSProperties;
+  t: (key: string) => string;
 }): JSX.Element => {
   return (
     <div className="mdc-grid-row" style={style}>
@@ -36,16 +39,16 @@ const MDCRowComponent = ({
         {pair.key}
       </span>
       <span className="mdc-val">
-        <code title={pair.value}>{pair.value || "(leer)"}</code>
+        <code title={pair.value}>{pair.value || t("details.emptyValue")}</code>
       </span>
       <span className="mdc-act">
         <button
           type="button"
           onClick={() => onAddToFilter(pair.key, pair.value)}
-          title="Als Filter hinzufügen"
+          title={t("details.addToFilter")}
           style={{ padding: "2px 6px", fontSize: "11px" }}
         >
-          + Filter
+          {t("details.addFilterButton")}
         </button>
       </span>
     </div>
@@ -59,6 +62,7 @@ const VirtualizedMDCListComponent = ({
   onAddToFilter,
   maxHeight = 300,
 }: VirtualizedMDCListProps): JSX.Element => {
+  const { t } = useI18n();
   const parentRef = useRef<HTMLDivElement>(null);
 
   // Use virtualization only for large lists
@@ -84,16 +88,18 @@ const VirtualizedMDCListComponent = ({
               {pair.key}
             </span>
             <span className="mdc-val">
-              <code title={pair.value}>{pair.value || "(leer)"}</code>
+              <code title={pair.value}>
+                {pair.value || t("details.emptyValue")}
+              </code>
             </span>
             <span className="mdc-act">
               <button
                 type="button"
                 onClick={() => onAddToFilter(pair.key, pair.value)}
-                title="Als Filter hinzufügen"
+                title={t("details.addToFilter")}
                 style={{ padding: "2px 6px", fontSize: "11px" }}
               >
-                + Filter
+                {t("details.addFilterButton")}
               </button>
             </span>
           </div>
@@ -128,6 +134,7 @@ const VirtualizedMDCListComponent = ({
               key={virtualItem.key}
               pair={pair}
               onAddToFilter={onAddToFilter}
+              t={t}
               style={{
                 position: "absolute",
                 top: 0,

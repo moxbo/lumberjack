@@ -58,7 +58,7 @@ export function ActiveFilterChips({
   if (filter.logger && stdFiltersEnabled) {
     activeFilters.push({
       type: "logger",
-      label: "Logger",
+      label: t("toolbar.logger"),
       value: filter.logger,
       onRemove: () => setFilter((prev: any) => ({ ...prev, logger: "" })),
     });
@@ -66,7 +66,7 @@ export function ActiveFilterChips({
   if (filter.thread && stdFiltersEnabled) {
     activeFilters.push({
       type: "thread",
-      label: "Thread",
+      label: t("toolbar.thread"),
       value: filter.thread,
       onRemove: () => setFilter((prev: any) => ({ ...prev, thread: "" })),
     });
@@ -74,7 +74,7 @@ export function ActiveFilterChips({
   if (filter.message && stdFiltersEnabled) {
     activeFilters.push({
       type: "message",
-      label: "Msg",
+      label: t("toolbar.message"),
       value:
         filter.message.length > 20
           ? filter.message.substring(0, 20) + "…"
@@ -86,7 +86,7 @@ export function ActiveFilterChips({
     activeFilters.push({
       type: "marked",
       label: "",
-      value: "Markierte",
+      value: t("activeFilters.marked"),
       onRemove: () => {
         setOnlyMarked(false);
         try {
@@ -164,7 +164,7 @@ export function ActiveFilterChips({
               <button
                 className="chip-remove"
                 onClick={f.onRemove}
-                title="Filter entfernen"
+                title={t("activeFilters.removeFilter")}
               >
                 ×
               </button>
@@ -199,9 +199,9 @@ export function ActiveFilterChips({
               DiagnosticContextFilter.reset();
             } catch {}
           }}
-          title="Alle Filter löschen"
+          title={t("activeFilters.clearAllTooltip")}
         >
-          ✕ Alle
+          {t("activeFilters.clearAll")}
         </button>
       )}
     </>

@@ -21,6 +21,7 @@ interface FilterChipsProps {
   onFilterChange: (partial: Partial<FilterState>) => void;
   onOnlyMarkedChange: (value: boolean) => void;
   onClearAll: () => void;
+  t: (key: string, params?: Record<string, string>) => string;
 }
 
 export function FilterChips({
@@ -30,6 +31,7 @@ export function FilterChips({
   onFilterChange,
   onOnlyMarkedChange,
   onClearAll,
+  t,
 }: FilterChipsProps) {
   const activeFilters = useMemo(() => {
     const filters: ActiveFilter[] = [];
@@ -47,7 +49,7 @@ export function FilterChips({
     if (filter.logger && stdFiltersEnabled) {
       filters.push({
         type: "logger",
-        label: "Logger",
+        label: t("toolbar.logger"),
         value: filter.logger,
         onRemove: () => onFilterChange({ logger: "" }),
       });
@@ -56,7 +58,7 @@ export function FilterChips({
     if (filter.thread && stdFiltersEnabled) {
       filters.push({
         type: "thread",
-        label: "Thread",
+        label: t("toolbar.thread"),
         value: filter.thread,
         onRemove: () => onFilterChange({ thread: "" }),
       });
@@ -65,7 +67,7 @@ export function FilterChips({
     if (filter.message && stdFiltersEnabled) {
       filters.push({
         type: "message",
-        label: "Msg",
+        label: t("toolbar.message"),
         value:
           filter.message.length > 20
             ? filter.message.substring(0, 20) + "…"
@@ -78,7 +80,7 @@ export function FilterChips({
       filters.push({
         type: "marked",
         label: "",
-        value: "Markierte",
+        value: t("activeFilters.marked"),
         onRemove: () => {
           onOnlyMarkedChange(false);
           patchSettingsQuiet({ onlyMarked: false });
@@ -119,6 +121,7 @@ export function FilterChips({
     onlyMarked,
     onFilterChange,
     onOnlyMarkedChange,
+    t,
   ]);
 
   if (activeFilters.length === 0) return null;
@@ -138,7 +141,7 @@ export function FilterChips({
             <button
               className="chip-remove"
               onClick={f.onRemove}
-              title="Filter entfernen"
+              title={t("activeFilters.removeFilter")}
             >
               ×
             </button>
@@ -153,9 +156,9 @@ export function FilterChips({
             marginLeft: "4px",
           }}
           onClick={onClearAll}
-          title="Alle Filter löschen"
+          title={t("activeFilters.clearAllTooltip")}
         >
-          ✕ Alle
+          {t("activeFilters.clearAll")}
         </button>
       )}
     </>

@@ -2,8 +2,10 @@ import { useEffect, useRef, useState } from "preact/hooks";
 import { MDCListener } from "../store/mdcListener";
 import { DiagnosticContextFilter, dcEntryId } from "../store/dcFilter";
 import { LoggingStore } from "../store/loggingStore";
+import { useI18n } from "../utils/i18n";
 
 export default function DCFilterPanel(): preact.JSX.Element {
+  const { t } = useI18n();
   const [keys, setKeys] = useState<string[]>([]);
   const [selectedKey, setSelectedKey] = useState<string>("");
   const [val, setVal] = useState<string>("");
@@ -227,17 +229,20 @@ export default function DCFilterPanel(): preact.JSX.Element {
       <div style="display:flex; gap:12px; align-items:end; flex-wrap:wrap; justify-content:space-between;">
         <div style="display:flex; gap:12px; align-items:end; flex-wrap:wrap;">
           <div class="form-field">
-            <label>MDC Key</label>
+            <label>{t("dcFilterDialog.mdcKey")}</label>
             <div style="display:flex; gap:6px; align-items:center;">
               <input
                 class="bright-input"
                 list="dc-keys-panel"
                 value={selectedKey}
                 onInput={(e) => setSelectedKey(e.currentTarget.value)}
-                placeholder="Key wählen oder tippen…"
+                placeholder={t("dcFilterDialog.keyPlaceholder")}
               />
-              <button title="MDC-Keys anzeigen" onClick={openKeyPicker}>
-                Keys…
+              <button
+                title={t("dcFilterDialog.showKeysTooltip")}
+                onClick={openKeyPicker}
+              >
+                {t("dcFilterDialog.keysButton")}
               </button>
             </div>
             <datalist id="dc-keys-panel">
@@ -249,7 +254,7 @@ export default function DCFilterPanel(): preact.JSX.Element {
             </datalist>
           </div>
           <div class="form-field" style="min-width:260px;">
-            <label>MDC Value</label>
+            <label>{t("dcFilterDialog.mdcValue")}</label>
             <div style="display:flex; gap:6px; align-items:center;">
               <input
                 class="bright-input"
@@ -257,26 +262,26 @@ export default function DCFilterPanel(): preact.JSX.Element {
                 value={val}
                 onInput={(e) => setVal(e.currentTarget.value)}
                 onKeyDown={(e) => onValueKeyDown(e as unknown as KeyboardEvent)}
-                title="Mehrere Werte mit | trennen. F2 oder Button öffnet Vorschläge. Leer = alle Werte dieses Keys."
-                placeholder="Wert(e) oder leer für alle…"
+                title={t("dcFilterDialog.valueTooltip")}
+                placeholder={t("dcFilterDialog.valuePlaceholder")}
               />
               <button
-                title="Vorschläge anzeigen (F2)"
+                title={t("dcFilterDialog.showValuesTooltip")}
                 onClick={openValuePicker}
               >
-                Werte…
+                {t("dcFilterDialog.valuesButton")}
               </button>
             </div>
           </div>
           <div style="display:flex; gap:6px; align-items:center; padding-bottom:2px;">
             <button onClick={onAdd} disabled={addDisabled}>
-              Hinzufügen
+              {t("dcFilterDialog.add")}
             </button>
             <button onClick={onRemoveSelected} disabled={sel.length === 0}>
-              Entfernen
+              {t("dcFilterDialog.remove")}
             </button>
             <button onClick={onClear} disabled={rows.length === 0}>
-              Leeren
+              {t("dcFilterDialog.clear")}
             </button>
           </div>
         </div>
@@ -289,21 +294,23 @@ export default function DCFilterPanel(): preact.JSX.Element {
               DiagnosticContextFilter.setEnabled(e.currentTarget.checked)
             }
           />
-          <span style="font-size:12px; color:#333;">MDC-Filter aktiv</span>
+          <span style="font-size:12px; color:#333;">
+            {t("dcFilterDialog.filterActive")}
+          </span>
         </label>
       </div>
 
       <div style="margin-top:8px;">
         <div style="font-size:12px; color:#666; margin-bottom:4px;">
-          Diagnostic Context Filter
+          {t("dcFilterDialog.tableTitle")}
         </div>
         <div class="table-wrap">
           <table class="data-table">
             <thead>
               <tr>
-                <th>Key</th>
-                <th>Value</th>
-                <th class="col-active">Aktiv</th>
+                <th>{t("dcFilterDialog.thKey")}</th>
+                <th>{t("dcFilterDialog.thValue")}</th>
+                <th class="col-active">{t("dcFilterDialog.thActive")}</th>
               </tr>
             </thead>
             <tbody>
@@ -335,7 +342,13 @@ export default function DCFilterPanel(): preact.JSX.Element {
                     style="cursor: default;"
                   >
                     <td>{e.key}</td>
-                    <td>{e.val || <span style="color:#888">(alle)</span>}</td>
+                    <td>
+                      {e.val || (
+                        <span style="color:#888">
+                          {t("dcFilterDialog.allValues")}
+                        </span>
+                      )}
+                    </td>
                     <td>
                       <div style="display:flex; align-items:center; gap:8px;">
                         <input
@@ -348,11 +361,21 @@ export default function DCFilterPanel(): preact.JSX.Element {
                           onClick={(ev) => ev.stopPropagation()}
                           onMouseDown={(ev) => ev.stopPropagation()}
                           onContextMenu={(ev) => ev.stopPropagation()}
-                          aria-label={e.active ? "aktiv" : "aus"}
-                          title={e.active ? "aktiv" : "aus"}
+                          aria-label={
+                            e.active
+                              ? t("dcFilterDialog.active")
+                              : t("dcFilterDialog.inactive")
+                          }
+                          title={
+                            e.active
+                              ? t("dcFilterDialog.active")
+                              : t("dcFilterDialog.inactive")
+                          }
                         />
                         <span class={`badge ${e.active ? "on" : "off"}`}>
-                          {e.active ? "Aktiv" : "Aus"}
+                          {e.active
+                            ? t("dcFilterDialog.active")
+                            : t("dcFilterDialog.inactive")}
                         </span>
                       </div>
                     </td>
@@ -362,7 +385,7 @@ export default function DCFilterPanel(): preact.JSX.Element {
               {rows.length === 0 && (
                 <tr>
                   <td colSpan={3} style="padding:8px; color:#777;">
-                    Keine Einträge
+                    {t("dcFilterDialog.noEntries")}
                   </td>
                 </tr>
               )}
@@ -378,10 +401,10 @@ export default function DCFilterPanel(): preact.JSX.Element {
           style={{ position: "fixed", left: ctx.x + "px", top: ctx.y + "px" }}
         >
           <div class="item" onClick={() => activateSelected(true)}>
-            Aktivieren
+            {t("dcFilterDialog.activate")}
           </div>
           <div class="item" onClick={() => activateSelected(false)}>
-            Deaktivieren
+            {t("dcFilterDialog.deactivate")}
           </div>
           <div
             class="item"
@@ -390,7 +413,7 @@ export default function DCFilterPanel(): preact.JSX.Element {
               setCtx({ open: false, x: 0, y: 0 });
             }}
           >
-            Entfernen
+            {t("dcFilterDialog.remove")}
           </div>
         </div>
       )}
@@ -398,11 +421,11 @@ export default function DCFilterPanel(): preact.JSX.Element {
       {showValues && (
         <div class="modal-backdrop" onClick={() => setShowValues(false)}>
           <div class="modal" onClick={(e) => e.stopPropagation()}>
-            <h3>Bekannte Werte</h3>
+            <h3>{t("dcFilterDialog.knownValues")}</h3>
             <div style="max-height:260px; overflow:auto; border:1px solid #eee;">
               {values.length === 0 && (
                 <div style="padding:8px; color:#777;">
-                  Keine bekannten Werte
+                  {t("dcFilterDialog.noKnownValues")}
                 </div>
               )}
               {values.map((v) => (
@@ -416,7 +439,9 @@ export default function DCFilterPanel(): preact.JSX.Element {
               ))}
             </div>
             <div class="modal-actions">
-              <button onClick={() => setShowValues(false)}>Abbrechen</button>
+              <button onClick={() => setShowValues(false)}>
+                {t("dcFilterDialog.cancel")}
+              </button>
             </div>
           </div>
         </div>
@@ -425,10 +450,12 @@ export default function DCFilterPanel(): preact.JSX.Element {
       {showKeyPicker && (
         <div class="modal-backdrop" onClick={() => setShowKeyPicker(false)}>
           <div class="modal" onClick={(e) => e.stopPropagation()}>
-            <h3>Bekannte MDC Keys</h3>
+            <h3>{t("dcFilterDialog.knownMdcKeys")}</h3>
             <div style="max-height:260px; overflow:auto; border:1px solid #eee;">
               {(!keys || keys.length === 0) && (
-                <div style="padding:8px; color:#777;">Keine bekannten Keys</div>
+                <div style="padding:8px; color:#777;">
+                  {t("dcFilterDialog.noKnownKeys")}
+                </div>
               )}
               {keys &&
                 keys.map((k) => (
@@ -442,7 +469,9 @@ export default function DCFilterPanel(): preact.JSX.Element {
                 ))}
             </div>
             <div class="modal-actions">
-              <button onClick={() => setShowKeyPicker(false)}>Abbrechen</button>
+              <button onClick={() => setShowKeyPicker(false)}>
+                {t("dcFilterDialog.cancel")}
+              </button>
             </div>
           </div>
         </div>

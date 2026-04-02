@@ -3,6 +3,7 @@
  */
 import { createPortal } from "preact/compat";
 import type { SearchMode } from "../../utils/msgFilter";
+import { useI18n } from "../../utils/i18n";
 
 interface SearchModeDropdownProps {
   searchMode: SearchMode;
@@ -19,6 +20,7 @@ export function SearchModeDropdown({
   onToggle,
   onClose,
 }: SearchModeDropdownProps) {
+  const { t } = useI18n();
   const handleSelectMode = (mode: SearchMode) => {
     onModeChange(mode);
     onClose();
@@ -28,7 +30,7 @@ export function SearchModeDropdown({
     <div style={{ position: "relative" }} id="searchModeBtn">
       <button
         onClick={onToggle}
-        title="Suchmodus"
+        title={t("searchMode.title")}
         style={{
           padding: "6px 10px",
           minWidth: "unset",
@@ -62,20 +64,20 @@ export function SearchModeDropdown({
           >
             <DropdownItem
               active={searchMode === "insensitive"}
-              label="Aa ignorieren"
-              hint="Case-insensitiv"
+              label={t("searchMode.caseInsensitive")}
+              hint={t("searchMode.caseInsensitiveDesc")}
               onClick={() => handleSelectMode("insensitive")}
             />
             <DropdownItem
               active={searchMode === "sensitive"}
-              label="Aa beachten"
-              hint="Case-sensitiv"
+              label={t("searchMode.caseSensitive")}
+              hint={t("searchMode.caseSensitiveDesc")}
               onClick={() => handleSelectMode("sensitive")}
             />
             <DropdownItem
               active={searchMode === "regex"}
-              label="Regex"
-              hint="Regulärer Ausdruck"
+              label={t("searchMode.regex")}
+              hint={t("searchMode.regexDesc")}
               onClick={() => handleSelectMode("regex")}
             />
           </div>,

@@ -160,7 +160,7 @@ export function TraceTimeline({
   onClose,
   onEntryClick,
 }: TraceTimelineProps): JSX.Element {
-  const { t } = useI18n();
+  const { t, locale } = useI18n();
   const containerRef = useRef<HTMLDivElement>(null);
   const [selectedSpan, setSelectedSpan] = useState<string | null>(null);
   const [hoveredSpan, setHoveredSpan] = useState<string | null>(null);
@@ -237,15 +237,18 @@ export function TraceTimeline({
   }, []);
 
   // Format timestamp for display
-  const formatTime = useCallback((ts: number): string => {
-    const date = new Date(ts);
-    return date.toLocaleTimeString("de-DE", {
-      hour: "2-digit",
-      minute: "2-digit",
-      second: "2-digit",
-      fractionalSecondDigits: 3,
-    });
-  }, []);
+  const formatTime = useCallback(
+    (ts: number): string => {
+      const date = new Date(ts);
+      return date.toLocaleTimeString(locale === "de" ? "de-DE" : "en-US", {
+        hour: "2-digit",
+        minute: "2-digit",
+        second: "2-digit",
+        fractionalSecondDigits: 3,
+      });
+    },
+    [locale],
+  );
 
   // Calculate span position as percentage
   const getSpanPosition = useCallback(
@@ -410,7 +413,7 @@ export function TraceTimeline({
                   </span>
                   <span className="service-count">
                     {serviceSpans.reduce((sum, s) => sum + s.entries.length, 0)}{" "}
-                    logs
+                    {t("traceTimeline.entries")}
                   </span>
                 </div>
                 <div className="trace-timeline-spans">

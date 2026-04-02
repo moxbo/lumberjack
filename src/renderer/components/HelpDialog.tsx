@@ -93,7 +93,8 @@ export function HelpDialog({ open, onClose }: HelpDialogProps) {
             <h4 style={sectionHeaderStyle}>{t("help.dataSources.heading")}</h4>
             <ul style={{ margin: "0", paddingLeft: "20px" }}>
               <li>
-                <strong>Files:</strong> {t("help.dataSources.files")}
+                <strong>{t("help.dataSources.filesLabel")}:</strong>{" "}
+                {t("help.dataSources.files")}
               </li>
               <li>
                 <strong>HTTP:</strong> {t("help.dataSources.http")}
@@ -173,14 +174,14 @@ export function HelpDialog({ open, onClose }: HelpDialogProps) {
             </p>
             <ul style={{ margin: "0 0 12px 0", paddingLeft: "20px" }}>
               <li>
-                <strong>Application:</strong>{" "}
+                <strong>{t("help.elasticsearch.applicationLabel")}:</strong>{" "}
                 {t("help.elasticsearch.application")}
               </li>
               <li>
                 <strong>Level:</strong> {t("help.elasticsearch.level")}
               </li>
               <li>
-                <strong>Environment:</strong>{" "}
+                <strong>{t("help.elasticsearch.environmentLabel")}:</strong>{" "}
                 {t("help.elasticsearch.environment")}
               </li>
               <li>

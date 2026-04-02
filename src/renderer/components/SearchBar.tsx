@@ -8,6 +8,7 @@
 import { createPortal } from "preact/compat";
 import type { RefObject } from "preact";
 import type { JSX } from "preact/jsx-runtime";
+import { useI18n } from "../../utils/i18n";
 
 export interface SearchBarProps {
   search: string;
@@ -173,7 +174,7 @@ export function SearchBar({
           onClick={() => {
             setShowSearchOptions(!showSearchOptions);
           }}
-          title="Suchmodus"
+          title={t("searchMode.title")}
           style={{
             padding: "6px 10px",
             minWidth: "unset",
@@ -248,13 +249,13 @@ export function SearchBar({
             ))}
             <div className="autocomplete-hint">
               <span>
-                <kbd>↑↓</kbd> Navigation
+                <kbd>↑↓</kbd> {t("autocomplete.navigate")}
               </span>
               <span>
-                <kbd>Enter</kbd> Auswählen
+                <kbd>Enter</kbd> {t("autocomplete.select")}
               </span>
               <span>
-                <kbd>Esc</kbd> Schließen
+                <kbd>Esc</kbd> {t("autocomplete.close")}
               </span>
             </div>
           </div>,
@@ -317,14 +318,31 @@ function SearchModePortal({
   const top = rect ? rect.bottom + 4 + "px" : "60px";
   const left = rect ? Math.max(0, rect.right - 180) + "px" : "auto";
 
+  // Note: SearchModePortal doesn't have access to useI18n since it's a simple function component
+  // rendered via portal. We use the translation keys from the parent via a workaround.
+  // For simplicity, we'll use the context directly.
+  const { t } = useI18n();
+
   const modes: Array<{
     key: "insensitive" | "sensitive" | "regex";
     label: string;
     sub: string;
   }> = [
-    { key: "insensitive", label: "Aa ignorieren", sub: "Case-insensitiv" },
-    { key: "sensitive", label: "Aa beachten", sub: "Case-sensitiv" },
-    { key: "regex", label: "Regex", sub: "Regulärer Ausdruck" },
+    {
+      key: "insensitive",
+      label: t("searchMode.caseInsensitive"),
+      sub: t("searchMode.caseInsensitiveDesc"),
+    },
+    {
+      key: "sensitive",
+      label: t("searchMode.caseSensitive"),
+      sub: t("searchMode.caseSensitiveDesc"),
+    },
+    {
+      key: "regex",
+      label: t("searchMode.regex"),
+      sub: t("searchMode.regexDesc"),
+    },
   ];
 
   return (

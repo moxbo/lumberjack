@@ -301,7 +301,10 @@ export function FilterProfilesDropdown({
     } catch (e) {
       setError(
         t("filterProfiles.importFailed", {
-          message: e instanceof Error ? e.message : "Invalid JSON",
+          message:
+            e instanceof Error
+              ? e.message
+              : t("filterProfiles.errorInvalidJson"),
         }),
       );
     }
@@ -317,15 +320,40 @@ export function FilterProfilesDropdown({
 
   const getFilterSummary = (profile: FilterProfile): string => {
     const parts: string[] = [];
-    if (profile.filters.level) parts.push(`Level: ${profile.filters.level}`);
-    if (profile.filters.logger) parts.push(`Logger: ${profile.filters.logger}`);
-    if (profile.filters.thread) parts.push(`Thread: ${profile.filters.thread}`);
+    if (profile.filters.level)
+      parts.push(
+        t("filterProfiles.includesLevel", { level: profile.filters.level }),
+      );
+    if (profile.filters.logger)
+      parts.push(
+        t("filterProfiles.includesLogger", {
+          logger: profile.filters.logger,
+        }),
+      );
+    if (profile.filters.thread)
+      parts.push(
+        t("filterProfiles.includesThread", {
+          thread: profile.filters.thread,
+        }),
+      );
     if (profile.filters.message)
-      parts.push(`Msg: ${profile.filters.message.substring(0, 20)}...`);
+      parts.push(
+        t("filterProfiles.includesMessage", {
+          message: profile.filters.message.substring(0, 20) + "…",
+        }),
+      );
     if (profile.filters.search)
-      parts.push(`Search: ${profile.filters.search.substring(0, 20)}...`);
+      parts.push(
+        t("filterProfiles.includesSearch", {
+          search: profile.filters.search.substring(0, 20) + "…",
+        }),
+      );
     if (profile.filters.mdcFilters && profile.filters.mdcFilters.length > 0)
-      parts.push(`MDC: ${profile.filters.mdcFilters.length}`);
+      parts.push(
+        t("filterProfiles.includesMdc", {
+          count: profile.filters.mdcFilters.length,
+        }),
+      );
     return parts.length > 0 ? parts.join(", ") : "-";
   };
 
@@ -499,22 +527,22 @@ export function FilterProfilesDropdown({
                   {filter.level && <span className="chip">{filter.level}</span>}
                   {filter.logger && (
                     <span className="chip" title={filter.logger}>
-                      Logger
+                      {t("filterProfiles.chipLogger")}
                     </span>
                   )}
                   {filter.thread && (
                     <span className="chip" title={filter.thread}>
-                      Thread
+                      {t("filterProfiles.chipThread")}
                     </span>
                   )}
                   {filter.message && (
                     <span className="chip" title={filter.message}>
-                      Msg
+                      {t("filterProfiles.chipMessage")}
                     </span>
                   )}
                   {search && (
                     <span className="chip" title={search}>
-                      Search
+                      {t("filterProfiles.chipSearch")}
                     </span>
                   )}
                 </div>
@@ -560,7 +588,7 @@ export function FilterProfilesDropdown({
                           onClick={handleConfirmRename}
                           disabled={!renameValue.trim()}
                         >
-                          OK
+                          {t("filterProfiles.confirmOk")}
                         </button>
                         <button
                           type="button"
@@ -569,6 +597,7 @@ export function FilterProfilesDropdown({
                             setRenamingId(null);
                             setRenameValue("");
                           }}
+                          title={t("filterProfiles.cancelRename")}
                         >
                           ✕
                         </button>

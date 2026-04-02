@@ -359,7 +359,7 @@ export default function ElasticSearchDialog(props: any) {
                     onInput={(e) =>
                       setForm({ ...form, duration: e.currentTarget.value })
                     }
-                    placeholder="z.B. 30m"
+                    placeholder={t("elasticDialog.durationPlaceholder")}
                     style={{ width: "80px" }}
                   />
                 </div>
@@ -497,7 +497,7 @@ export default function ElasticSearchDialog(props: any) {
 
             {/* Level */}
             <div className="kv">
-              <span>Level</span>
+              <span>{t("elasticDialog.level")}</span>
               <div style={{ display: "flex", gap: "6px", flexWrap: "wrap" }}>
                 <button
                   type="button"
@@ -711,7 +711,7 @@ export default function ElasticSearchDialog(props: any) {
           <div className="es-dialog-section-content">
             {/* Index */}
             <div className="kv">
-              <span>Index</span>
+              <span>{t("elasticDialog.index")}</span>
               <div style={{ position: "relative" }}>
                 <div
                   style={{
@@ -726,7 +726,7 @@ export default function ElasticSearchDialog(props: any) {
                     onInput={(e) =>
                       setForm({ ...form, index: e.currentTarget.value })
                     }
-                    placeholder="z.B. logs-*, filebeat-* (leer = _all)"
+                    placeholder={t("elasticDialog.indexPlaceholder")}
                     onClick={(e) => e.stopPropagation()}
                   />
                   <button
@@ -765,23 +765,27 @@ export default function ElasticSearchDialog(props: any) {
 
             {/* Environment Case */}
             <div className="kv">
-              <span>Environment-Case</span>
+              <span>{t("elasticDialog.envCase")}</span>
               <select
                 value={form.environmentCase}
                 onChange={(e) =>
                   setForm({ ...form, environmentCase: e.currentTarget.value })
                 }
               >
-                <option value="original">Original</option>
-                <option value="lower">nach lowercase</option>
-                <option value="upper">nach UPPERCASE</option>
-                <option value="case-sensitive">Case-sensitiv</option>
+                <option value="original">
+                  {t("elasticDialog.envCaseOriginal")}
+                </option>
+                <option value="lower">{t("elasticDialog.envCaseLower")}</option>
+                <option value="upper">{t("elasticDialog.envCaseUpper")}</option>
+                <option value="case-sensitive">
+                  {t("elasticDialog.envCaseSensitive")}
+                </option>
               </select>
             </div>
 
             {/* Sort */}
             <div className="kv">
-              <span>Sortierung</span>
+              <span>{t("elasticDialog.sort")}</span>
               <div style={{ display: "flex", gap: "8px" }}>
                 <label
                   style={{
@@ -797,7 +801,7 @@ export default function ElasticSearchDialog(props: any) {
                     checked={form.sort === "asc"}
                     onChange={() => setForm({ ...form, sort: "asc" })}
                   />
-                  <span>Älteste zuerst</span>
+                  <span>{t("elasticDialog.sortAsc")}</span>
                 </label>
                 <label
                   style={{
@@ -813,7 +817,7 @@ export default function ElasticSearchDialog(props: any) {
                     checked={form.sort === "desc"}
                     onChange={() => setForm({ ...form, sort: "desc" })}
                   />
-                  <span>Neueste zuerst</span>
+                  <span>{t("elasticDialog.sortDesc")}</span>
                 </label>
               </div>
             </div>
@@ -834,17 +838,20 @@ export default function ElasticSearchDialog(props: any) {
                     })
                   }
                 />
-                <span>Unsicheres TLS erlauben (selbstsigniert)</span>
+                <span>{t("elasticDialog.allowInsecureTLS")}</span>
               </label>
             </div>
           </div>
         </div>
 
         <div className="modal-actions">
-          <button onClick={onClear} title="Felder zurücksetzen">
-            Leeren
+          <button
+            onClick={onClear}
+            title={t("elasticDialog.clearFieldsTooltip")}
+          >
+            {t("elasticDialog.clear")}
           </button>
-          <button onClick={onClose}>Abbrechen</button>
+          <button onClick={onClose}>{t("elasticDialog.cancel")}</button>
           <button
             onClick={() => onApply({ ...form, enabled: true })}
             style={{
@@ -853,7 +860,7 @@ export default function ElasticSearchDialog(props: any) {
               borderColor: "transparent",
             }}
           >
-            🔍 Suchen
+            🔍 {t("elasticDialog.search")}
           </button>
         </div>
       </div>

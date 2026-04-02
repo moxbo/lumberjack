@@ -388,6 +388,7 @@ function HistoryDropdown({
   onClose,
   inputRef,
 }: HistoryDropdownProps) {
+  const { t } = useI18n();
   const [highlightedIdx, setHighlightedIdx] = useState(-1);
   const itemRefs = useRef<(HTMLDivElement | null)[]>([]);
 
@@ -478,13 +479,13 @@ function HistoryDropdown({
       ))}
       <div className="autocomplete-hint">
         <span>
-          <kbd>↑↓</kbd> Navigation
+          <kbd>↑↓</kbd> {t("autocomplete.navigate")}
         </span>
         <span>
-          <kbd>Enter</kbd> Auswählen
+          <kbd>Enter</kbd> {t("autocomplete.select")}
         </span>
         <span>
-          <kbd>Esc</kbd> Schließen
+          <kbd>Esc</kbd> {t("autocomplete.close")}
         </span>
       </div>
     </div>
