@@ -58,7 +58,7 @@ export default defineConfig({
             return "vendor-lazy";
           }
           // Split rarely-used dialogs and features
-          if (id.includes("DCFilterDialog") || id.includes("DCFilterPanel")) {
+          if (id.includes("DCFilterDialog")) {
             return "dc-filter";
           }
           if (id.includes("/store/") && !id.includes("loggingStore")) {
