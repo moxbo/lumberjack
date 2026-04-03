@@ -27,14 +27,36 @@ export interface UseFilterProfilesReturn {
 }
 
 export function useFilterProfiles(): UseFilterProfilesReturn {
-  const [profiles, setProfiles] = useState<FilterProfile[]>(
-    filterProfilesStore.getAll(),
-  );
+  const [profiles, setProfiles] = useState<FilterProfile[]>([]);
 
   useEffect(() => {
-    return filterProfilesStore.onChange(() => {
-      setProfiles(filterProfilesStore.getAll());
-    });
+    // Wait for initial load, then subscribe to changes
+    let unsubscribe: (() => void) | null = null;
+
+    filterProfilesStore
+      .waitForInit()
+      .then(() => {
+        // Set initial profiles after init
+        setProfiles(filterProfilesStore.getAll());
+
+        // Subscribe to future changes
+        unsubscribe = filterProfilesStore.onChange(() => {
+          setProfiles(filterProfilesStore.getAll());
+        });
+      })
+      .catch((error) => {
+        console.error("[useFilterProfiles] Init failed:", error);
+        // Still subscribe to changes even if init failed
+        unsubscribe = filterProfilesStore.onChange(() => {
+          setProfiles(filterProfilesStore.getAll());
+        });
+      });
+
+    return () => {
+      if (unsubscribe) {
+        unsubscribe();
+      }
+    };
   }, []);
 
   const saveProfile = useCallback(

@@ -34,11 +34,19 @@ interface Listener {
 class FilterProfilesStore {
   private profiles: Map<string, FilterProfile> = new Map();
   private listeners = new Set<Listener>();
+  private initPromise: Promise<void>;
 
   constructor() {
-    // Start async initialization immediately
-    void this.initFromIpc();
+    // Start async initialization immediately and store the promise
+    this.initPromise = this.initFromIpc();
     this.listenForCrossProcessChanges();
+  }
+
+  /**
+   * Wait for initial load to complete
+   */
+  async waitForInit(): Promise<void> {
+    await this.initPromise;
   }
 
   /**
@@ -62,6 +70,7 @@ class FilterProfilesStore {
             this.migrateFromLocalStorage();
           }
 
+          // Emit after loading - listeners may now be registered
           this.emit();
           return;
         }
@@ -75,6 +84,7 @@ class FilterProfilesStore {
 
     // Fallback: load from localStorage (old behavior / IPC unavailable)
     this.loadFromLocalStorage();
+    // Emit after loading - listeners may now be registered
     this.emit();
   }
 
