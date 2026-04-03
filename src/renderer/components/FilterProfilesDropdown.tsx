@@ -66,10 +66,19 @@ export function FilterProfilesDropdown({
   useEffect(() => {
     if (isOpen && buttonRef.current) {
       const rect = buttonRef.current.getBoundingClientRect();
+      const dropdownWidth = Math.max(320, rect.width);
+
+      // Ensure dropdown doesn't overflow right edge of viewport
+      let left = rect.left;
+      const viewportWidth = window.innerWidth;
+      if (left + dropdownWidth > viewportWidth) {
+        left = Math.max(8, viewportWidth - dropdownWidth - 8);
+      }
+
       setPosition({
         top: rect.bottom + 4,
-        left: rect.left,
-        width: Math.max(280, rect.width),
+        left,
+        width: dropdownWidth,
       });
       // Focus input after opening
       setTimeout(() => inputRef.current?.focus(), 50);
@@ -399,7 +408,8 @@ export function FilterProfilesDropdown({
               position: "fixed",
               top: position.top,
               left: position.left,
-              minWidth: position.width,
+              width: position.width,
+              minWidth: "320px",
               zIndex: 10000,
             }}
           >
