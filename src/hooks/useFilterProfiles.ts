@@ -7,6 +7,7 @@ import {
   filterProfilesStore,
 } from "../store/filterProfiles";
 import type { FilterState } from "./useFilterState";
+import type { SearchMode } from "../utils/msgFilter";
 
 export interface UseFilterProfilesReturn {
   profiles: FilterProfile[];
@@ -16,10 +17,15 @@ export interface UseFilterProfilesReturn {
     search: string,
     stdFiltersEnabled: boolean,
     mdcFilters?: Array<{ key: string; value: string; active: boolean }>,
+    searchMode?: SearchMode,
+    onlyMarked?: boolean,
   ) => FilterProfile | null;
   loadProfile: (id: string) => FilterProfile | null;
   deleteProfile: (id: string) => boolean;
   renameProfile: (id: string, newName: string) => FilterProfile | null;
+  duplicateProfile: (id: string) => FilterProfile | null;
+  undoDelete: () => FilterProfile | null;
+  canUndoDelete: boolean;
   exportProfiles: () => string;
   importProfiles: (json: string, overwrite?: boolean) => number;
   nameExists: (name: string) => boolean;
@@ -28,28 +34,30 @@ export interface UseFilterProfilesReturn {
 
 export function useFilterProfiles(): UseFilterProfilesReturn {
   const [profiles, setProfiles] = useState<FilterProfile[]>([]);
+  const [canUndoDelete, setCanUndoDelete] = useState(false);
 
   useEffect(() => {
     // Wait for initial load, then subscribe to changes
     let unsubscribe: (() => void) | null = null;
 
+    const syncState = () => {
+      setProfiles(filterProfilesStore.getAll());
+      setCanUndoDelete(filterProfilesStore.canUndoDelete);
+    };
+
     filterProfilesStore
       .waitForInit()
       .then(() => {
         // Set initial profiles after init
-        setProfiles(filterProfilesStore.getAll());
+        syncState();
 
         // Subscribe to future changes
-        unsubscribe = filterProfilesStore.onChange(() => {
-          setProfiles(filterProfilesStore.getAll());
-        });
+        unsubscribe = filterProfilesStore.onChange(syncState);
       })
       .catch((error) => {
         console.error("[useFilterProfiles] Init failed:", error);
         // Still subscribe to changes even if init failed
-        unsubscribe = filterProfilesStore.onChange(() => {
-          setProfiles(filterProfilesStore.getAll());
-        });
+        unsubscribe = filterProfilesStore.onChange(syncState);
       });
 
     return () => {
@@ -66,6 +74,8 @@ export function useFilterProfiles(): UseFilterProfilesReturn {
       search: string,
       stdFiltersEnabled: boolean,
       mdcFilters?: Array<{ key: string; value: string; active: boolean }>,
+      searchMode?: SearchMode,
+      onlyMarked?: boolean,
     ): FilterProfile | null => {
       try {
         return filterProfilesStore.saveProfile(
@@ -74,6 +84,8 @@ export function useFilterProfiles(): UseFilterProfilesReturn {
           search,
           stdFiltersEnabled,
           mdcFilters,
+          searchMode,
+          onlyMarked,
         );
       } catch (e) {
         console.error("[useFilterProfiles] Save failed:", e);
@@ -88,7 +100,9 @@ export function useFilterProfiles(): UseFilterProfilesReturn {
   }, []);
 
   const deleteProfile = useCallback((id: string): boolean => {
-    return filterProfilesStore.deleteProfile(id);
+    const result = filterProfilesStore.deleteProfile(id);
+    setCanUndoDelete(filterProfilesStore.canUndoDelete);
+    return result;
   }, []);
 
   const nameExists = useCallback((name: string): boolean => {
@@ -113,6 +127,21 @@ export function useFilterProfiles(): UseFilterProfilesReturn {
     [],
   );
 
+  const duplicateProfile = useCallback((id: string): FilterProfile | null => {
+    try {
+      return filterProfilesStore.duplicateProfile(id);
+    } catch (e) {
+      console.error("[useFilterProfiles] Duplicate failed:", e);
+      return null;
+    }
+  }, []);
+
+  const undoDelete = useCallback((): FilterProfile | null => {
+    const restored = filterProfilesStore.undoDelete();
+    setCanUndoDelete(filterProfilesStore.canUndoDelete);
+    return restored;
+  }, []);
+
   const exportProfiles = useCallback((): string => {
     return filterProfilesStore.exportProfiles();
   }, []);
@@ -130,6 +159,9 @@ export function useFilterProfiles(): UseFilterProfilesReturn {
     loadProfile,
     deleteProfile,
     renameProfile,
+    duplicateProfile,
+    undoDelete,
+    canUndoDelete,
     exportProfiles,
     importProfiles,
     nameExists,

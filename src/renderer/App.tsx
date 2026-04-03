@@ -3255,11 +3255,13 @@ export default function App(): JSX.Element {
               level: profile.filters.level,
               logger: profile.filters.logger,
               thread: profile.filters.thread,
-              service: "",
+              service: profile.filters.service ?? "",
               message: profile.filters.message,
             });
             setSearch(profile.filters.search || "");
+            setSearchMode(profile.filters.searchMode ?? "insensitive");
             setStdFiltersEnabled(profile.filters.stdFiltersEnabled);
+            setOnlyMarked(profile.filters.onlyMarked ?? false);
             // Apply MDC filters if available
             if (
               profile.filters.mdcFilters &&
