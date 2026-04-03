@@ -239,13 +239,104 @@ If issues arise after deployment:
 
 ## Version & Build Info
 
-- **Version**: 1.0.2
-- **Build Date**: November 12, 2025
+- **Version**: 1.0.14
+- **Build Date**: April 3, 2026
 - **Target**: Lumberjack Log Viewer
 - **Platforms**: Windows, macOS, Linux (icon fixes on Win/Mac)
 
 ---
 
+## Code Signing & Notarization
+
+Ohne Code Signing zeigen macOS (Gatekeeper) und Windows (SmartScreen) Warnungen an. Für eine reibungslose Benutzererfahrung muss die App signiert und (auf macOS) notarisiert werden.
+
+> **Detaillierte Anleitung**: Siehe [`docs/developer/CODE_SIGNING_GUIDE.md`](developer/CODE_SIGNING_GUIDE.md) für Schritt-für-Schritt-Instruktionen.
+
+### Voraussetzungen
+
+| Plattform | Zertifikat | Kosten | Zweck |
+|-----------|------------|--------|-------|
+| **macOS** | Apple Developer ID Application | $99/Jahr | Gatekeeper-Freigabe |
+| **Windows** | EV Code Signing (DigiCert, Sectigo, etc.) | $200-500/Jahr | SmartScreen-Freigabe sofort |
+| **Windows** | Standard OV Certificate | $70-300/Jahr | SmartScreen baut Reputation auf |
+
+### GitHub Secrets konfigurieren
+
+Folgende Secrets müssen im GitHub Repository unter **Settings → Secrets and variables → Actions** eingerichtet werden:
+
+**macOS:**
+| Secret | Beschreibung |
+|--------|-------------|
+| `MAC_CSC_LINK` | Base64-encodiertes .p12 Zertifikat |
+| `MAC_CSC_KEY_PASSWORD` | Passwort für das Zertifikat |
+| `APPLE_ID` | Apple ID E-Mail-Adresse |
+| `APPLE_APP_SPECIFIC_PASSWORD` | App-spezifisches Passwort (appleid.apple.com) |
+| `APPLE_TEAM_ID` | 10-stellige Apple Team ID |
+
+**Windows:**
+| Secret | Beschreibung |
+|--------|-------------|
+| `WIN_CSC_LINK` | Base64-encodiertes .pfx Zertifikat |
+| `WIN_CSC_KEY_PASSWORD` | Passwort für das Zertifikat |
+
+### Signing aktivieren
+
+1. **Zertifikat zu Base64 konvertieren:**
+   ```bash
+   # macOS
+   base64 -i certificate.p12 | pbcopy
+   
+   # Windows (PowerShell)
+   [Convert]::ToBase64String([IO.File]::ReadAllBytes("certificate.pfx")) | Set-Clipboard
+   ```
+
+2. **GitHub Secrets anlegen** (siehe Tabelle oben)
+
+3. **Build auslösen** – Die CI/CD Pipeline erkennt automatisch ob Signing-Secrets vorhanden sind:
+   - `afterSign` Hook (`scripts/afterSign.cjs`) führt macOS Notarization durch
+   - `afterPack` Hook (`scripts/afterPack.cjs`) setzt Windows-Metadaten
+   - Wenn keine Secrets vorhanden: Build läuft ohne Signing weiter
+
+### Signing lokal deaktivieren
+
+```bash
+# Lokaler Build ohne Signing (für Tests)
+export CSC_IDENTITY_AUTO_DISCOVERY=false
+npm run build:mac:dmg    # macOS
+npm run build:portable   # Windows
+```
+
+### Signatur verifizieren
+
+```bash
+# macOS
+codesign --verify --deep --strict /path/to/Lumberjack.app
+spctl --assess --verbose=4 /path/to/Lumberjack.app
+
+# Windows (PowerShell)
+Get-AuthenticodeSignature "path\to\Lumberjack.exe"
+```
+
+---
+
+## CI/CD Pipeline
+
+### Workflow-Übersicht
+
+| Workflow | Trigger | Aktionen |
+|----------|---------|----------|
+| `ci.yml` | Push/PR auf main/develop | Lint, Tests (Ubuntu/Windows/macOS), Coverage |
+| `build.yml` | Alle Pushes + Tags | CI-Tests + Release-Builds bei Tags |
+| `release.yml` | Tag-Push (`v*`) | Multi-Platform Build + GitHub Release |
+
+### Test-Coverage
+
+Coverage-Reports werden automatisch als Artifacts hochgeladen:
+- **CI-Workflow**: `coverage-report` (Ubuntu)
+- **Build-Workflow**: `coverage-report-ci`
+
+---
+
 **Status**: ✅ Ready for Deployment  
-**Last Updated**: November 12, 2025  
+**Last Updated**: April 3, 2026
 
