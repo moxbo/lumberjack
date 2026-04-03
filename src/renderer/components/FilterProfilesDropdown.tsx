@@ -7,6 +7,7 @@ import { createPortal } from "preact/compat";
 import { useState, useRef, useEffect, useCallback } from "preact/hooks";
 import { useI18n } from "../../utils/i18n";
 import { useFilterProfiles } from "../../hooks";
+import { Tooltip } from "./Tooltip";
 import type { FilterProfile } from "../../store/filterProfiles";
 import type { FilterState } from "../../hooks";
 
@@ -14,6 +15,8 @@ interface FilterProfilesDropdownProps {
   filter: FilterState;
   search: string;
   stdFiltersEnabled: boolean;
+  searchMode?: import("../../utils/msgFilter").SearchMode;
+  onlyMarked?: boolean;
   onApplyProfile: (profile: FilterProfile) => void;
   getMdcFilters?: () => Array<{ key: string; value: string; active: boolean }>;
   disabled?: boolean;
@@ -23,6 +26,8 @@ export function FilterProfilesDropdown({
   filter,
   search,
   stdFiltersEnabled,
+  searchMode = "insensitive",
+  onlyMarked = false,
   onApplyProfile,
   getMdcFilters,
   disabled = false,
@@ -30,12 +35,19 @@ export function FilterProfilesDropdown({
   const { t } = useI18n();
   const {
     profiles,
+    totalCount,
     saveProfile,
     loadProfile,
     deleteProfile,
     renameProfile,
+    duplicateProfile,
+    undoDelete,
+    canUndoDelete,
+    activeProfileId,
     exportProfiles,
     importProfiles,
+    profileSearch,
+    setProfileSearch,
   } = useFilterProfiles();
 
   const [isOpen, setIsOpen] = useState(false);
@@ -150,6 +162,8 @@ export function FilterProfilesDropdown({
         search,
         stdFiltersEnabled,
         mdcFilters,
+        searchMode,
+        onlyMarked,
       );
 
       if (saved) {
@@ -171,6 +185,8 @@ export function FilterProfilesDropdown({
     filter,
     search,
     stdFiltersEnabled,
+    searchMode,
+    onlyMarked,
     getMdcFilters,
     saveProfile,
     t,
@@ -251,6 +267,8 @@ export function FilterProfilesDropdown({
             search,
             stdFiltersEnabled,
             mdcFilters,
+            searchMode,
+            onlyMarked,
           );
           if (saved) {
             setSuccessMessage(t("filterProfiles.updateSuccess", { name }));
@@ -274,6 +292,8 @@ export function FilterProfilesDropdown({
       filter,
       search,
       stdFiltersEnabled,
+      searchMode,
+      onlyMarked,
       getMdcFilters,
       saveProfile,
       t,
@@ -318,6 +338,27 @@ export function FilterProfilesDropdown({
       );
     }
   }, [importText, importOverwrite, importProfiles, t]);
+
+  const handleDuplicate = useCallback(
+    (id: string, _name: string) => {
+      const dup = duplicateProfile(id);
+      if (dup) {
+        setSuccessMessage(t("filterProfiles.saveSuccess", { name: dup.name }));
+      } else {
+        setError(t("filterProfiles.saveFailed", { message: "Unknown error" }));
+      }
+    },
+    [duplicateProfile, t],
+  );
+
+  const handleUndo = useCallback(() => {
+    const restored = undoDelete();
+    if (restored) {
+      setSuccessMessage(
+        t("filterProfiles.loadSuccess", { name: restored.name }),
+      );
+    }
+  }, [undoDelete, t]);
 
   const hasActiveFilters =
     filter.level ||
@@ -393,9 +434,7 @@ export function FilterProfilesDropdown({
           <polyline points="7 3 7 8 15 8" />
         </svg>
         <span>{t("filterProfiles.button")}</span>
-        {profiles.length > 0 && (
-          <span className="profile-count">{profiles.length}</span>
-        )}
+        {totalCount > 0 && <span className="profile-count">{totalCount}</span>}
       </button>
 
       {isOpen &&
@@ -416,47 +455,70 @@ export function FilterProfilesDropdown({
             <div className="filter-profiles-header">
               <h4>{t("filterProfiles.title")}</h4>
               <div className="filter-profiles-toolbar">
-                <button
-                  type="button"
-                  className="btn-icon"
-                  onClick={handleExport}
-                  title={t("filterProfiles.export")}
-                >
-                  <svg
-                    width="13"
-                    height="13"
-                    viewBox="0 0 24 24"
-                    fill="none"
-                    stroke="currentColor"
-                    strokeWidth="2"
+                {canUndoDelete && (
+                  <Tooltip text={t("filterProfiles.undoDelete")}>
+                    <button
+                      type="button"
+                      className="btn-icon"
+                      onClick={handleUndo}
+                    >
+                      <svg
+                        width="13"
+                        height="13"
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        strokeWidth="2"
+                      >
+                        <polyline points="1 4 1 10 7 10" />
+                        <path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10" />
+                      </svg>
+                    </button>
+                  </Tooltip>
+                )}
+                <Tooltip text={t("filterProfiles.export")}>
+                  <button
+                    type="button"
+                    className="btn-icon"
+                    onClick={handleExport}
                   >
-                    <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
-                    <polyline points="7 10 12 15 17 10" />
-                    <line x1="12" y1="15" x2="12" y2="3" />
-                  </svg>
-                </button>
-                <button
-                  type="button"
-                  className="btn-icon"
-                  onClick={() => {
-                    setShowImport(!showImport);
-                    setError(null);
-                  }}
-                  title={t("filterProfiles.import")}
-                >
-                  <svg
-                    width="13"
-                    height="13"
-                    viewBox="0 0 24 24"
-                    fill="none"
-                    stroke="currentColor"
-                    strokeWidth="2"
+                    <svg
+                      width="13"
+                      height="13"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="2"
+                    >
+                      <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                      <polyline points="7 10 12 15 17 10" />
+                      <line x1="12" y1="15" x2="12" y2="3" />
+                    </svg>
+                  </button>
+                </Tooltip>
+                <Tooltip text={t("filterProfiles.import")}>
+                  <button
+                    type="button"
+                    className="btn-icon"
+                    onClick={() => {
+                      setShowImport(!showImport);
+                      setError(null);
+                    }}
                   >
-                    <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
-                    <polyline points="17 8 12 3 7 8" />
-                    <line x1="12" y1="3" x2="12" y2="15" />
-                  </svg>
-                </button>
+                    <svg
+                      width="13"
+                      height="13"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="2"
+                    >
+                      <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                      <polyline points="17 8 12 3 7 8" />
+                      <line x1="12" y1="3" x2="12" y2="15" />
+                    </svg>
+                  </button>
+                </Tooltip>
               </div>
             </div>
 
@@ -559,6 +621,30 @@ export function FilterProfilesDropdown({
               </div>
             )}
 
+            {/* Profile search (show when 5+ profiles) */}
+            {totalCount >= 5 && (
+              <div className="filter-profiles-search">
+                <input
+                  type="text"
+                  value={profileSearch}
+                  onInput={(e) => setProfileSearch(e.currentTarget.value)}
+                  placeholder={t("filterProfiles.searchPlaceholder")}
+                  className="profile-search-input"
+                />
+                {profileSearch && (
+                  <Tooltip text={t("filterProfiles.clearSearch")}>
+                    <button
+                      type="button"
+                      className="btn-icon profile-search-clear"
+                      onClick={() => setProfileSearch("")}
+                    >
+                      ✕
+                    </button>
+                  </Tooltip>
+                )}
+              </div>
+            )}
+
             {/* Profile list */}
             <div className="filter-profiles-list">
               {profiles.length === 0 ? (
@@ -571,7 +657,7 @@ export function FilterProfilesDropdown({
                     key={profile.id}
                     className={`profile-item ${
                       confirmDelete === profile.id ? "confirm-delete" : ""
-                    }`}
+                    } ${activeProfileId === profile.id ? "active-profile" : ""}`}
                   >
                     {renamingId === profile.id ? (
                       <div className="profile-rename">
@@ -600,17 +686,21 @@ export function FilterProfilesDropdown({
                         >
                           {t("filterProfiles.confirmOk")}
                         </button>
-                        <button
-                          type="button"
-                          className="btn-small"
-                          onClick={() => {
-                            setRenamingId(null);
-                            setRenameValue("");
-                          }}
-                          title={t("filterProfiles.cancelRename")}
+                        <Tooltip
+                          text={t("filterProfiles.cancelRename")}
+                          position="bottom"
                         >
-                          ✕
-                        </button>
+                          <button
+                            type="button"
+                            className="btn-small"
+                            onClick={() => {
+                              setRenamingId(null);
+                              setRenameValue("");
+                            }}
+                          >
+                            ✕
+                          </button>
+                        </Tooltip>
                       </div>
                     ) : (
                       <>
@@ -625,100 +715,147 @@ export function FilterProfilesDropdown({
                           </small>
                         </div>
                         <div className="profile-actions">
-                          <button
-                            type="button"
-                            className="btn-icon btn-load"
-                            onClick={() => handleLoad(profile.id)}
-                            title={t("filterProfiles.load")}
+                          <Tooltip
+                            text={t("filterProfiles.loadTooltip")}
+                            position="bottom"
                           >
-                            <svg
-                              width="12"
-                              height="12"
-                              viewBox="0 0 24 24"
-                              fill="none"
-                              stroke="currentColor"
-                              strokeWidth="2"
+                            <button
+                              type="button"
+                              className="btn-icon btn-load"
+                              onClick={() => handleLoad(profile.id)}
                             >
-                              <polyline points="9 18 15 12 9 6" />
-                            </svg>
-                          </button>
-                          <button
-                            type="button"
-                            className={`btn-icon btn-update ${
-                              confirmUpdate === profile.id ? "confirm" : ""
-                            }`}
-                            onClick={() =>
-                              handleUpdate(profile.id, profile.name)
-                            }
-                            title={
+                              <svg
+                                width="12"
+                                height="12"
+                                viewBox="0 0 24 24"
+                                fill="none"
+                                stroke="currentColor"
+                                strokeWidth="2"
+                              >
+                                <polyline points="9 18 15 12 9 6" />
+                              </svg>
+                            </button>
+                          </Tooltip>
+                          <Tooltip
+                            text={
                               confirmUpdate === profile.id
                                 ? t("filterProfiles.updateConfirm", {
                                     name: profile.name,
                                   })
-                                : t("filterProfiles.update")
+                                : t("filterProfiles.updateTooltip")
                             }
+                            position="bottom"
                           >
-                            <svg
-                              width="12"
-                              height="12"
-                              viewBox="0 0 24 24"
-                              fill="none"
-                              stroke="currentColor"
-                              strokeWidth="2"
+                            <button
+                              type="button"
+                              className={`btn-icon btn-update ${
+                                confirmUpdate === profile.id ? "confirm" : ""
+                              }`}
+                              onClick={() =>
+                                handleUpdate(profile.id, profile.name)
+                              }
                             >
-                              <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z" />
-                              <polyline points="17 21 17 13 7 13 7 21" />
-                              <polyline points="7 3 7 8 15 8" />
-                            </svg>
-                          </button>
-                          <button
-                            type="button"
-                            className="btn-icon btn-rename"
-                            onClick={() =>
-                              handleStartRename(profile.id, profile.name)
-                            }
-                            title={t("filterProfiles.rename")}
+                              <svg
+                                width="12"
+                                height="12"
+                                viewBox="0 0 24 24"
+                                fill="none"
+                                stroke="currentColor"
+                                strokeWidth="2"
+                              >
+                                <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z" />
+                                <polyline points="17 21 17 13 7 13 7 21" />
+                                <polyline points="7 3 7 8 15 8" />
+                              </svg>
+                            </button>
+                          </Tooltip>
+                          <Tooltip
+                            text={t("filterProfiles.renameTooltip")}
+                            position="bottom"
                           >
-                            <svg
-                              width="12"
-                              height="12"
-                              viewBox="0 0 24 24"
-                              fill="none"
-                              stroke="currentColor"
-                              strokeWidth="2"
+                            <button
+                              type="button"
+                              className="btn-icon btn-rename"
+                              onClick={() =>
+                                handleStartRename(profile.id, profile.name)
+                              }
                             >
-                              <path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z" />
-                              <path d="m15 5 4 4" />
-                            </svg>
-                          </button>
-                          <button
-                            type="button"
-                            className={`btn-icon btn-delete ${
-                              confirmDelete === profile.id ? "confirm" : ""
-                            }`}
-                            onClick={() =>
-                              handleDelete(profile.id, profile.name)
-                            }
-                            title={
+                              <svg
+                                width="12"
+                                height="12"
+                                viewBox="0 0 24 24"
+                                fill="none"
+                                stroke="currentColor"
+                                strokeWidth="2"
+                              >
+                                <path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z" />
+                                <path d="m15 5 4 4" />
+                              </svg>
+                            </button>
+                          </Tooltip>
+                          <Tooltip
+                            text={t("filterProfiles.duplicateTooltip")}
+                            position="bottom"
+                          >
+                            <button
+                              type="button"
+                              className="btn-icon btn-duplicate"
+                              onClick={() =>
+                                handleDuplicate(profile.id, profile.name)
+                              }
+                            >
+                              <svg
+                                width="12"
+                                height="12"
+                                viewBox="0 0 24 24"
+                                fill="none"
+                                stroke="currentColor"
+                                strokeWidth="2"
+                              >
+                                <rect
+                                  x="9"
+                                  y="9"
+                                  width="13"
+                                  height="13"
+                                  rx="2"
+                                  ry="2"
+                                />
+                                <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
+                              </svg>
+                            </button>
+                          </Tooltip>
+                          <Tooltip
+                            text={
                               confirmDelete === profile.id
                                 ? t("filterProfiles.deleteConfirm", {
                                     name: profile.name,
                                   })
-                                : t("filterProfiles.delete")
+                                : t("filterProfiles.deleteTooltip")
                             }
+                            position="bottom"
                           >
-                            <svg
-                              width="12"
-                              height="12"
-                              viewBox="0 0 24 24"
-                              fill="none"
-                              stroke="currentColor"
-                              strokeWidth="2"
+                            <button
+                              type="button"
+                              className={`btn-icon btn-delete ${
+                                confirmDelete === profile.id ? "confirm" : ""
+                              }`}
+                              onClick={() =>
+                                handleDelete(profile.id, profile.name)
+                              }
                             >
-                              <polyline points="3 6 5 6 21 6" />
-                              <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
-                            </svg>
-                          </button>
+                              <svg
+                                width="12"
+                                height="12"
+                                viewBox="0 0 24 24"
+                                fill="none"
+                                stroke="currentColor"
+                                strokeWidth="2"
+                              >
+                                <polyline points="3 6 5 6 21 6" />
+                                <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
+                              </svg>
+                            </button>
+                          </Tooltip>
                         </div>
                       </>
                     )}

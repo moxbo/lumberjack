@@ -461,7 +461,16 @@
     "errorUnknown": "Unbekannter Fehler",
     "errorProfileNotFound": "Profil nicht gefunden",
     "errorNameExists": "Name existiert bereits",
-    "errorInvalidJson": "Ungültiges JSON"
+    "errorInvalidJson": "Ungültiges JSON",
+    "duplicate": "Profil duplizieren",
+    "undoDelete": "Letzte Löschung rückgängig",
+    "searchPlaceholder": "Profile durchsuchen...",
+    "clearSearch": "Suche leeren",
+    "loadTooltip": "Profil laden und Filter anwenden",
+    "updateTooltip": "Profil mit aktuellen Filtern überschreiben",
+    "renameTooltip": "Profilnamen ändern",
+    "duplicateTooltip": "Kopie dieses Profils erstellen",
+    "deleteTooltip": "Profil endgültig löschen"
   },
   "traceTimeline": {
     "title": "Trace-Timeline",

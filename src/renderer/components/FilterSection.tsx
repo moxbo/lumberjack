@@ -56,6 +56,7 @@ interface FilterSectionProps {
 
   // Filter Profiles
   search: string;
+  searchMode?: import("../../utils/msgFilter").SearchMode;
   onApplyProfile: (profile: FilterProfile) => void;
   getMdcFilters?: () => Array<{ key: string; value: string; active: boolean }>;
 
@@ -95,6 +96,7 @@ export function FilterSection({
   onShowTimeDialog,
   onClearAllFilters,
   search,
+  searchMode,
   onApplyProfile,
   getMdcFilters,
   esBusy,
@@ -361,6 +363,8 @@ export function FilterSection({
           filter={filter}
           search={search}
           stdFiltersEnabled={stdFiltersEnabled}
+          searchMode={searchMode}
+          onlyMarked={onlyMarked}
           onApplyProfile={onApplyProfile}
           getMdcFilters={getMdcFilters}
           disabled={esBusy}

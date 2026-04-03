@@ -2754,6 +2754,37 @@ button.filter-chip.trace-timeline-chip .chip-label {
   border-radius: var(--radius-full);
 }
 
+/* --- Portal Tooltip (used in dropdowns / Electron) --- */
+.portal-tooltip {
+  padding: 5px 10px;
+  background: var(--color-bg-paper);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  font-size: 12px;
+  white-space: nowrap;
+  box-shadow: var(--shadow-md);
+  pointer-events: none;
+  color: var(--color-text-primary);
+  animation: tooltip-fade-in 120ms ease-out;
+}
+
+.portal-tooltip--top {
+  transform: translateY(-100%);
+}
+
+.portal-tooltip--bottom {
+  /* positioned via inline style */
+}
+
+@keyframes tooltip-fade-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
 /* --- Tooltip-Verbesserungen --- */
 [data-tooltip] {
   position: relative;
@@ -3955,6 +3986,69 @@ button.filter-chip.trace-timeline-chip .chip-label {
 [data-theme="dark"] .filter-profiles-dropdown {
   background: var(--color-bg-paper);
   box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
+}
+
+/* Active profile indicator */
+.filter-profiles-list .profile-item.active-profile {
+  background: rgba(10, 132, 255, 0.06);
+  border-left: 3px solid var(--color-primary, #0a84ff);
+  padding-left: 9px;
+}
+
+.filter-profiles-list .profile-item.active-profile .profile-name {
+  color: var(--color-primary, #0a84ff);
+}
+
+/* Profile search */
+.filter-profiles-search {
+  display: flex;
+  align-items: center;
+  padding: 6px 12px;
+  border-bottom: 1px solid var(--color-divider);
+  background: var(--color-bg-default);
+  position: relative;
+}
+
+.filter-profiles-search .profile-search-input {
+  flex: 1;
+  min-width: 0;
+  padding: 4px 8px;
+  font-size: 12px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-bg-paper);
+  color: var(--color-text-primary);
+}
+
+.filter-profiles-search .profile-search-input:focus {
+  border-color: var(--color-primary);
+  outline: none;
+  box-shadow: 0 0 0 2px rgba(10, 132, 255, 0.1);
+}
+
+.filter-profiles-search .profile-search-clear {
+  position: absolute;
+  right: 14px;
+  width: 20px;
+  height: 20px;
+  font-size: 11px;
+  padding: 0;
+  background: transparent;
+  border: none;
+  color: var(--color-text-secondary);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.filter-profiles-search .profile-search-clear:hover {
+  color: var(--color-text-primary);
+}
+
+/* Duplicate button */
+.filter-profiles-list .btn-duplicate:hover {
+  color: var(--color-info, #5ac8fa);
 }
 
 [data-theme="dark"] .filter-profiles-error {

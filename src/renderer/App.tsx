@@ -3250,6 +3250,7 @@ export default function App(): JSX.Element {
             }
           }}
           search={search}
+          searchMode={searchMode}
           onApplyProfile={(profile) => {
             setFilter({
               level: profile.filters.level,
