@@ -20,6 +20,8 @@ export { useFeatureFlags } from "./useFeatureFlags";
 export type { FeatureName } from "./useFeatureFlags";
 export { useAlerts } from "./useAlerts";
 export type { AlertType } from "./useAlerts";
+export { useToasts } from "./useToasts";
+export type { Toast, ToastSeverity } from "./useToasts";
 export { useHistoryPopovers } from "./useHistoryPopovers";
 export { useFilterProfiles } from "./useFilterProfiles";
 export type { UseFilterProfilesReturn } from "./useFilterProfiles";

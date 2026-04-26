@@ -308,7 +308,7 @@ export function registerIpcHandlers(
     async (): Promise<{
       ok: boolean;
       filePath?: string;
-      format?: "html" | "txt" | "json";
+      format?: "html" | "txt" | "json" | "ndjson" | "csv" | "md";
       error?: string;
     }> => {
       const mainWindow = BrowserWindow.getFocusedWindow();
@@ -322,6 +322,9 @@ export function registerIpcHandlers(
           { name: "HTML", extensions: ["html", "htm"] },
           { name: t("main.dialogs.textFiles"), extensions: ["txt"] },
           { name: "JSON", extensions: ["json"] },
+          { name: "NDJSON (newline-delimited JSON)", extensions: ["ndjson"] },
+          { name: "CSV", extensions: ["csv"] },
+          { name: "Markdown", extensions: ["md"] },
           { name: t("main.dialogs.allFiles"), extensions: ["*"] },
         ];
 
@@ -339,12 +342,12 @@ export function registerIpcHandlers(
 
         // Determine format from file extension
         const ext = path.extname(res.filePath).toLowerCase();
-        let format: "html" | "txt" | "json" = "html";
-        if (ext === ".txt") {
-          format = "txt";
-        } else if (ext === ".json") {
-          format = "json";
-        }
+        let format: "html" | "txt" | "json" | "ndjson" | "csv" | "md" = "html";
+        if (ext === ".txt") format = "txt";
+        else if (ext === ".json") format = "json";
+        else if (ext === ".ndjson") format = "ndjson";
+        else if (ext === ".csv") format = "csv";
+        else if (ext === ".md" || ext === ".markdown") format = "md";
 
         return { ok: true, filePath: res.filePath, format };
       } catch (err) {

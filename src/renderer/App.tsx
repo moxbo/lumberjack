@@ -76,6 +76,7 @@ import {
   useFilterState,
   useHistoryPopovers,
   useAlerts,
+  useToasts,
   useResizeHandlers,
   useEntryManagement,
   useCommands,
@@ -85,9 +86,11 @@ import {
 // Import refactored components - core components loaded eagerly
 import {
   AlertDialog,
+  BookmarksPopover,
   ContextMenu,
   DetailPanel,
   FilterSection,
+  ToastStack,
   UpdateNotification,
   SearchBar,
   ActiveFilterChips,
@@ -162,6 +165,8 @@ export default function App(): JSX.Element {
 
   // Use alerts hook
   const { alertState, showAlert, closeAlert, handleFeatureError } = useAlerts();
+  // Non-blocking toast notifications (success/info confirmations)
+  const toaster = useToasts();
 
   // Entry management hook (entries, IPC batching, deduplication)
   const {
@@ -1316,6 +1321,35 @@ export default function App(): JSX.Element {
     lastClicked.current = globalIdx;
     scrollToIndexCenter(targetVi);
   }
+
+  /**
+   * Direct jump to a specific bookmark (used by the BookmarksPopover).
+   * vi = virtual index (position in filteredIdx).
+   */
+  function gotoBookmark(vi: number) {
+    const globalIdx = filteredIdx[vi];
+    if (globalIdx == null) return;
+    setSelected(new Set([globalIdx]));
+    lastClicked.current = globalIdx;
+    scrollToIndexCenter(vi);
+  }
+
+  // Bookmark items derived from markedIdx for the popover.
+  const bookmarkItems = useMemo(() => {
+    const MAX_PREVIEW = 200; // performance cap for popover
+    const slice = markedIdx.slice(0, MAX_PREVIEW);
+    return slice.map((vi) => {
+      const e = entries[filteredIdx[vi]!];
+      const msg = String(e?.message || "");
+      return {
+        vi,
+        color: (e?._mark as string) || "#3b82f6",
+        timestamp: fmtTimestamp(e?.timestamp),
+        message: msg.length > 200 ? msg.slice(0, 200) + "…" : msg,
+      };
+    });
+  }, [markedIdx, filteredIdx, entries]);
+
   function gotoSearchMatch(dir: number) {
     if (!searchMatchIdx.length) return;
     const curVi =
@@ -1493,6 +1527,8 @@ export default function App(): JSX.Element {
   const [showTitleDlg, setShowTitleDlg] = useState<boolean>(false);
   const [showHelpDlg, setShowHelpDlg] = useState<boolean>(false);
   const [showCommandPalette, setShowCommandPalette] = useState<boolean>(false);
+  // Bookmarks (Lesezeichen) popover toggle – triggered by the mark-count badge.
+  const [showBookmarks, setShowBookmarks] = useState<boolean>(false);
 
   // Alert refs for use in useEffects (useAlerts hook is called earlier with useEntryManagement2)
   const showAlertRef = useRef(showAlert);
@@ -2377,6 +2413,17 @@ export default function App(): JSX.Element {
       const result = await typedSaveExportFile(pathResult.filePath, content);
       if (!result.ok) {
         showAlert(t("errors.exportFailed", { message: result.error || "" }));
+      } else {
+        // Non-blocking success feedback
+        const fileName =
+          pathResult.filePath.split(/[\\/]/).pop() || pathResult.filePath;
+        toaster.success(
+          t("export.success", {
+            count: String(exportEntries.length),
+            file: fileName,
+          }) ||
+            `Export erfolgreich: ${exportEntries.length} Einträge → ${fileName}`,
+        );
       }
     } catch (err) {
       logger.error("Export failed:", err);
@@ -3115,14 +3162,31 @@ export default function App(): JSX.Element {
               🔻
             </button>
             {markedIdx.length > 0 && (
-              <span
-                className="badge-count"
-                title={t("toolbar.marksCount", {
-                  count: String(markedIdx.length),
-                })}
-              >
-                {markedIdx.length}
-              </span>
+              <div style={{ position: "relative", display: "inline-flex" }}>
+                <button
+                  type="button"
+                  className="badge-count"
+                  onClick={() => setShowBookmarks((v) => !v)}
+                  aria-haspopup="dialog"
+                  aria-expanded={showBookmarks}
+                  title={t("toolbar.marksCount", {
+                    count: String(markedIdx.length),
+                  })}
+                >
+                  {markedIdx.length}
+                </button>
+                {showBookmarks && (
+                  <BookmarksPopover
+                    bookmarks={bookmarkItems}
+                    onSelect={(vi) => {
+                      gotoBookmark(vi);
+                      setShowBookmarks(false);
+                    }}
+                    emptyLabel={t("toolbar.noBookmarks") || "Keine Lesezeichen"}
+                    ariaLabel={t("toolbar.marks") || "Lesezeichen"}
+                  />
+                )}
+              </div>
             )}
           </div>
         </div>
@@ -3351,7 +3415,7 @@ export default function App(): JSX.Element {
                 onMouseDown={(e) => onColMouseDown("ts", e)}
               />
             </div>
-            <div className="cell" style={{ textAlign: "center" }}>
+            <div className="cell cell--center">
               {t("list.header.level")}
               <div
                 className="resizer"
@@ -3479,6 +3543,13 @@ export default function App(): JSX.Element {
         message={alertState.message}
         type={alertState.type}
         onClose={closeAlert}
+      />
+
+      {/* Non-blocking Toast Notifications (success/info) */}
+      <ToastStack
+        toasts={toaster.toasts}
+        onDismiss={toaster.dismiss}
+        closeLabel={t("common.close") || "Schließen"}
       />
 
       {/* Update-Benachrichtigung */}

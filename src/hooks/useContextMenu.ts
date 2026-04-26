@@ -11,6 +11,7 @@ import {
 import { BASE_MARK_COLORS } from "../constants";
 import { entrySignature } from "../utils/entryUtils";
 import { patchSettingsQuiet } from "../utils/typedApi";
+import logger from "../utils/logger";
 
 interface ContextMenuState {
   open: boolean;

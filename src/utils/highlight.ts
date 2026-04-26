@@ -14,15 +14,40 @@ const HTML_ESCAPE_MAP: Record<string, string> = {
   ">": "&gt;",
 };
 
+// Hot-Path-Optimierung: Wenn der String keines der Sonderzeichen enthält,
+// gib ihn direkt zurück (spart Regex-Allokation in ~95 % aller Log-Zeilen).
+const HTML_NEEDS_ESCAPE_RE = /[&<>]/;
+
 export function escapeHtml(s: unknown): string {
   const str = toStringSafe(s);
-  // Using standard replace with regex for HTML escape characters
+  if (!HTML_NEEDS_ESCAPE_RE.test(str)) return str;
   return str.replace(/[&<>]/g, (ch) => HTML_ESCAPE_MAP[ch] || ch);
 }
 
-// Cache für kompilierte RegExp-Objekte - vermeidet wiederholtes Kompilieren
-const regexCache = new Map<string, RegExp>();
+// LRU-Cache für kompilierte RegExp-Objekte – verhindert wiederholtes Kompilieren
+// und bevorzugt häufig genutzte Suchbegriffe (recently-used → bleibt im Cache).
 const MAX_REGEX_CACHE = 100;
+const regexCache = new Map<string, RegExp>();
+
+function getCachedRegex(query: string): RegExp {
+  const cached = regexCache.get(query);
+  if (cached) {
+    // LRU: Eintrag durch Re-Insert ans Ende der Iteration verschieben.
+    regexCache.delete(query);
+    regexCache.set(query, cached);
+    cached.lastIndex = 0;
+    return cached;
+  }
+  const escRe = query.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const re = new RegExp(escRe, "gi");
+  if (regexCache.size >= MAX_REGEX_CACHE) {
+    // Map iteration order = insertion order → erster Key ist Least-Recently-Used.
+    const firstKey = regexCache.keys().next().value;
+    if (firstKey !== undefined) regexCache.delete(firstKey);
+  }
+  regexCache.set(query, re);
+  return re;
+}
 
 // Maximale Textlänge für Highlighting um Performance-Probleme zu vermeiden
 const MAX_HIGHLIGHT_LENGTH = 50_000;
@@ -38,23 +63,7 @@ export function highlightAll(text: unknown, needle: unknown): string {
     return escapeHtml(s);
   }
 
-  // Versuche gecachte Regex zu verwenden
-  let re = regexCache.get(q);
-  if (!re) {
-    const escRe = q.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-    re = new RegExp(escRe, "gi");
-
-    // Cache verwalten
-    if (regexCache.size >= MAX_REGEX_CACHE) {
-      // Lösche älteste Einträge
-      const firstKey = regexCache.keys().next().value;
-      if (firstKey) regexCache.delete(firstKey);
-    }
-    regexCache.set(q, re);
-  } else {
-    // Reset lastIndex für wiederholte Verwendung
-    re.lastIndex = 0;
-  }
+  const re = getCachedRegex(q);
 
   let out = "";
   let last = 0;

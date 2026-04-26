@@ -241,10 +241,21 @@ export type MenuCommand =
   | { type: "export-view" };
 
 /**
+ * Supported export formats.
+ * - html: rich, themed table with colours (best for sharing)
+ * - txt:  plain text, one entry per line
+ * - json: structured array (lossless, all fields)
+ * - ndjson: newline-delimited JSON (streamable, log-pipeline friendly)
+ * - csv:   spreadsheet-friendly (Excel/Numbers/Sheets)
+ * - md:    GitHub-flavoured Markdown table
+ */
+export type ExportFormat = "html" | "txt" | "json" | "ndjson" | "csv" | "md";
+
+/**
  * Export options for saving the current view
  */
 export interface ExportViewOptions {
-  format: "html" | "txt" | "json";
+  format: ExportFormat;
   includeStyles?: boolean;
   title?: string;
 }
@@ -255,7 +266,7 @@ export interface ExportViewOptions {
 export interface ExportPathResult {
   ok: boolean;
   filePath?: string;
-  format?: "html" | "txt" | "json";
+  format?: ExportFormat;
   error?: string;
 }
 

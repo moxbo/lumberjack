@@ -4524,3 +4524,181 @@ button.filter-chip.trace-timeline-chip .chip-label {
     animation-iteration-count: infinite !important;
   }
 }
+
+/* ============================================================
+ * Toast notifications (non-blocking, bottom-right)
+ * ============================================================ */
+.toast-stack {
+  position: fixed;
+  bottom: 16px;
+  right: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  z-index: 10000;
+  pointer-events: none;
+  max-width: min(420px, 90vw);
+}
+.toast {
+  pointer-events: auto;
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: var(--color-bg-paper, #1e2329);
+  color: var(--color-text-primary, #e5e7eb);
+  border: 1px solid var(--color-border, #2d3540);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.25);
+  font-size: 13px;
+  line-height: 1.4;
+  animation: toast-slide-in 0.18s ease-out;
+}
+@keyframes toast-slide-in {
+  from {
+    transform: translateX(20px);
+    opacity: 0;
+  }
+  to {
+    transform: translateX(0);
+    opacity: 1;
+  }
+}
+.toast-icon {
+  flex: 0 0 auto;
+  font-weight: 700;
+  font-size: 14px;
+  width: 18px;
+  text-align: center;
+}
+.toast-message {
+  flex: 1 1 auto;
+  word-break: break-word;
+}
+.toast-close {
+  flex: 0 0 auto;
+  background: transparent;
+  border: none;
+  color: inherit;
+  cursor: pointer;
+  font-size: 16px;
+  line-height: 1;
+  padding: 2px 6px;
+  border-radius: 4px;
+  opacity: 0.6;
+}
+.toast-close:hover {
+  opacity: 1;
+  background: rgba(255, 255, 255, 0.08);
+}
+.toast-success {
+  border-left: 4px solid #10b981;
+}
+.toast-success .toast-icon {
+  color: #10b981;
+}
+.toast-info {
+  border-left: 4px solid #3b82f6;
+}
+.toast-info .toast-icon {
+  color: #3b82f6;
+}
+.toast-warning {
+  border-left: 4px solid #f59e0b;
+}
+.toast-warning .toast-icon {
+  color: #f59e0b;
+}
+.toast-error {
+  border-left: 4px solid #ef4444;
+}
+.toast-error .toast-icon {
+  color: #ef4444;
+}
+
+/* Bookmarks dropdown (sidebar of marked entries) */
+.bookmarks-popover {
+  position: absolute;
+  top: 100%;
+  right: 0;
+  margin-top: 4px;
+  background: var(--color-bg-paper, #1e2329);
+  border: 1px solid var(--color-border, #2d3540);
+  border-radius: 8px;
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.35);
+  min-width: 280px;
+  max-width: 420px;
+  max-height: 50vh;
+  overflow-y: auto;
+  z-index: 1000;
+  padding: 6px;
+}
+.bookmarks-popover-empty {
+  padding: 14px;
+  color: var(--color-text-secondary, #9ca3af);
+  font-style: italic;
+  font-size: 12px;
+  text-align: center;
+}
+.bookmarks-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.bookmarks-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 12px;
+  border: none;
+  background: transparent;
+  color: inherit;
+  width: 100%;
+  text-align: left;
+}
+.bookmarks-item:hover,
+.bookmarks-item:focus-visible {
+  background: rgba(255, 255, 255, 0.06);
+  outline: none;
+}
+.bookmarks-item-color {
+  flex: 0 0 auto;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  border: 1px solid rgba(0, 0, 0, 0.2);
+}
+.bookmarks-item-time {
+  flex: 0 0 auto;
+  font-family: var(--font-mono, monospace);
+  color: var(--color-text-secondary, #9ca3af);
+  font-size: 11px;
+}
+.bookmarks-item-msg {
+  flex: 1 1 auto;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Helper classes replacing inline styles in App.tsx */
+.dialog-loading {
+  padding: 20px;
+}
+.cell--center {
+  text-align: center;
+}
+.section--gap-tight {
+  gap: 4px;
+}
+.section--filter-area {
+  flex: 1;
+  flex-wrap: wrap;
+}
+.count--with-stats {
+  cursor: help;
+  text-decoration: underline dotted;
+}
