@@ -50,7 +50,12 @@ export function ElasticStatusBar({
   }
 
   return (
-    <div className="section">
+    <div
+      className="section"
+      role="status"
+      aria-live="polite"
+      aria-atomic="false"
+    >
       {dcTotal > 0 && (
         <span
           className="status"

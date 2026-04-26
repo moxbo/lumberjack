@@ -11,6 +11,7 @@ import {
   Menu,
   type NativeImage,
   nativeImage,
+  shell,
 } from "electron";
 // Early imports needed for settings loading before app ready
 import * as path from "path";
@@ -1529,6 +1530,44 @@ function createWindow(opts: { makePrimary?: boolean } = {}): BrowserWindow {
 
   windowMeta.set(win.id, { canTcpControl: true, baseTitle: null });
   if (settings.isMaximized) win.maximize();
+
+  // --- Security hardening (mitigates CVE-2026-34765 & general renderer escape) ---
+  // 1) Verbiete jegliches window.open() – wir sind ein Log-Viewer, keine Browser-Shell.
+  //    Externe Links sollen explizit über shell.openExternal geroutet werden.
+  win.webContents.setWindowOpenHandler(({ url }) => {
+    try {
+      const parsed = new URL(url);
+      if (parsed.protocol === "https:" || parsed.protocol === "http:") {
+        // Externer Link → im System-Browser öffnen, nicht in Electron.
+        void shell.openExternal(url);
+      }
+    } catch {
+      // ignore malformed URLs
+    }
+    return { action: "deny" };
+  });
+
+  // 2) Verhindere Navigation des Renderers weg von der App (z. B. durch Drag-Drop von URLs).
+  win.webContents.on("will-navigate", (event, navigationUrl) => {
+    try {
+      const current = win.webContents.getURL();
+      if (navigationUrl !== current) {
+        event.preventDefault();
+        const parsed = new URL(navigationUrl);
+        if (parsed.protocol === "https:" || parsed.protocol === "http:") {
+          void shell.openExternal(navigationUrl);
+        }
+      }
+    } catch {
+      event.preventDefault();
+    }
+  });
+
+  // 3) Verbiete <webview>-Tags falls sie je ins Markup gelangen.
+  win.webContents.on("will-attach-webview", (event) => {
+    event.preventDefault();
+  });
+  // --- /Security hardening ---
 
   windows.add(win);
   if (!mainWindow || makePrimary) mainWindow = win;

@@ -42,15 +42,21 @@ export default defineConfig({
     // Generate sourcemaps only in development
     sourcemap: process.env.NODE_ENV !== "production",
     rollupOptions: {
+      // electron-log und adm-zip sind ausschließlich Main-Process-Module.
+      // Schützt davor, dass sie versehentlich ins Renderer-Bundle landen,
+      // falls jemand sie importiert (würde sonst Node-Internals ziehen).
+      external: ["electron-log", "electron-log/main", "adm-zip", "electron"],
       output: {
         // Code splitting: split rarely-used features into separate chunks
         manualChunks: (id) => {
+          // Normiere Pfadtrenner für Windows/macOS-Konsistenz
+          const norm = id.replace(/\\/g, "/");
           // Core app bundle
-          if (id.includes("node_modules")) {
+          if (norm.includes("/node_modules/")) {
             // Keep core dependencies in main bundle for faster initial load
             if (
-              id.includes("preact") ||
-              id.includes("@tanstack/react-virtual")
+              norm.includes("/preact/") ||
+              norm.includes("/@tanstack/react-virtual/")
             ) {
               return "vendor";
             }
@@ -58,16 +64,16 @@ export default defineConfig({
             return "vendor-lazy";
           }
           // Split rarely-used dialogs and features
-          if (id.includes("DCFilterDialog")) {
+          if (norm.includes("/DCFilterDialog")) {
             return "dc-filter";
           }
-          if (id.includes("/store/") && !id.includes("loggingStore")) {
+          if (norm.includes("/src/store/") && !norm.includes("loggingStore")) {
             return "store-utils";
           }
           if (
-            id.includes("/utils/") &&
-            !id.includes("highlight") &&
-            !id.includes("msgFilter")
+            norm.includes("/src/utils/") &&
+            !norm.includes("highlight") &&
+            !norm.includes("msgFilter")
           ) {
             return "utils-lazy";
           }

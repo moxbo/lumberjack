@@ -84,3 +84,16 @@ body {
     opacity: 0.9;
   }
 }
+
+/* Respect users who prefer reduced motion (a11y, vestibular disorders). */
+@media (prefers-reduced-motion: reduce) {
+  #splash-screen {
+    transition: none;
+  }
+  .splash-logo {
+    animation: none;
+  }
+  .splash-spinner {
+    animation: splash-spin 2s linear infinite;
+  }
+}

@@ -32,17 +32,24 @@ export function StatusSection({
   const isHttpError = !!httpStatus && httpStatus.startsWith(errorPrefix);
 
   return (
-    <div className="section">
+    <div
+      className="section"
+      role="status"
+      aria-live="polite"
+      aria-atomic="true"
+      aria-label={t("toolbar.statusRegion") || "Verbindungsstatus"}
+    >
       {busy && (
         <span className="busy">
-          <span className="spinner"></span>
+          <span className="spinner" aria-hidden="true"></span>
           {t("toolbar.busy")}
         </span>
       )}
       {/* TCP Status - show when active */}
       {isTcpActive && (
         <span id="tcpStatus" className="status status-active">
-          🟢 {tcpStatus}
+          <span aria-hidden="true">🟢 </span>
+          {tcpStatus}
         </span>
       )}
       {/* HTTP Status - show when active */}
@@ -50,8 +57,10 @@ export function StatusSection({
         <span
           id="httpStatus"
           className={`status ${isHttpError ? "status-error" : "status-active"}`}
+          role={isHttpError ? "alert" : undefined}
         >
-          {isHttpError ? "🔴" : "🟢"} {httpStatus}
+          <span aria-hidden="true">{isHttpError ? "🔴 " : "🟢 "}</span>
+          {httpStatus}
         </span>
       )}
       {nextPollIn && (

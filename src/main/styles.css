@@ -4502,3 +4502,25 @@ button.filter-chip.trace-timeline-chip .chip-label {
 [data-theme="dark"] .trace-span.hovered {
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.5);
 }
+/* ============================================================
+ * A11y: respect "prefers-reduced-motion"
+ * Disables non-essential animations & transitions for users with
+ * vestibular disorders or who explicitly prefer reduced motion.
+ * Keeps loading indicators visible but slower.
+ * ============================================================ */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+    scroll-behavior: auto !important;
+  }
+  /* Keep spinners visually rotating, just much slower */
+  .spinner,
+  .splash-spinner {
+    animation-duration: 2s !important;
+    animation-iteration-count: infinite !important;
+  }
+}

@@ -2391,20 +2391,20 @@ export default function App(): JSX.Element {
   async function httpMenuStopPoll() {
     // Use ref value instead of state value to avoid stale closures
     const currentPollId = httpPollIdRef.current;
-    console.warn(
+    logger.debug(
       "[httpMenuStopPoll] called, httpPollIdRef.current =",
       currentPollId,
     );
     if (currentPollId == null) {
-      console.warn("[httpMenuStopPoll] currentPollId is null, returning early");
+      logger.debug("[httpMenuStopPoll] currentPollId is null, returning early");
       return;
     }
-    console.warn(
+    logger.debug(
       "[httpMenuStopPoll] calling window.api.httpStopPoll with id =",
       currentPollId,
     );
     const r = await typedHttpStopPoll(currentPollId);
-    console.warn("[httpMenuStopPoll] result =", r);
+    logger.debug("[httpMenuStopPoll] result =", r);
     if (r.ok) {
       setHttpStatus(t("status.httpPollStopped"));
       setHttpPollId(null);
