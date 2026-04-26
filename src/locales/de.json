@@ -690,7 +690,13 @@
   "export": {
     "exported": "Exportiert",
     "entries": "Einträge",
-    "filteredOf": "gefiltert aus {{total}} gesamt"
+    "filteredOf": "gefiltert aus {{total}} gesamt",
+    "success": "Export erfolgreich: {{count}} Einträge → {{file}}"
+  },
+  "common": {
+    "close": "Schließen",
+    "cancel": "Abbrechen",
+    "ok": "OK"
   },
   "searchMode": {
     "title": "Suchmodus",

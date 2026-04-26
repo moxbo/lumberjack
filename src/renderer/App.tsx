@@ -3549,7 +3549,7 @@ export default function App(): JSX.Element {
       <ToastStack
         toasts={toaster.toasts}
         onDismiss={toaster.dismiss}
-        closeLabel={t("common.close") || "Schließen"}
+        closeLabel={t("common.close")}
       />
 
       {/* Update-Benachrichtigung */}
