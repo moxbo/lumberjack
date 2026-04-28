@@ -524,7 +524,11 @@
       "toggleTheme": "Toggle Theme",
       "toggleThemeDesc": "Switch between light/dark",
       "focusSearch": "Focus Search",
-      "focusSearchDesc": "Jump to search field"
+      "focusSearchDesc": "Jump to search field",
+      "openAlerts": "Alerts…",
+      "openAlertsDesc": "Manage notification rules",
+      "openStats": "Show Statistics",
+      "openStatsDesc": "Histogram & top loggers of the current view"
     },
     "categories": {
       "navigation": "Navigation",
@@ -697,6 +701,40 @@
     "close": "Close",
     "cancel": "Cancel",
     "ok": "OK"
+  },
+  "alerts": {
+    "title": "Alert Rules",
+    "description": "Define rules that trigger a notification when matching log entries arrive.",
+    "add": "New rule",
+    "empty": "No rules defined yet. Click \"New rule\".",
+    "edit": "Edit",
+    "remove": "Delete rule",
+    "toggle": "Enable/disable rule",
+    "anyLevel": "(any)",
+    "fieldName": "Name",
+    "fieldLevel": "Level",
+    "fieldLogger": "Logger contains",
+    "fieldMessage": "Message contains",
+    "fieldSeverity": "Severity",
+    "fieldCooldown": "Cooldown (ms)",
+    "cooldownHint": "Minimum interval between notifications for this rule.",
+    "severity": {
+      "info": "Info",
+      "warning": "Warning",
+      "critical": "Critical"
+    }
+  },
+  "stats": {
+    "title": "Statistics",
+    "scope": "Current view: {{visible}} of {{total}} entries",
+    "entries": "Entries",
+    "uniqueLoggers": "Loggers",
+    "errors": "Errors",
+    "warnings": "Warnings",
+    "byLevel": "Distribution by level",
+    "topLoggers": "Top Loggers",
+    "noLoggers": "No logger information available.",
+    "overTime": "Activity over time"
   },
   "searchMode": {
     "title": "Search mode",

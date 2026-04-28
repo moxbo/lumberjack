@@ -345,6 +345,37 @@ const api: ElectronAPI = {
       ipcRenderer.removeListener("filterProfiles:changed", listener);
     };
   },
+
+  // ============================================================================
+  // Alert Rules – file-based persistence + native notifications
+  // ============================================================================
+  alertRulesGetAll: (): Promise<{
+    ok: boolean;
+    rules: unknown[];
+    error?: string;
+  }> => ipcRenderer.invoke("alertRules:getAll"),
+
+  alertRulesSave: (
+    rules: unknown[],
+  ): Promise<{ ok: boolean; error?: string }> =>
+    ipcRenderer.invoke("alertRules:save", rules),
+
+  onAlertRulesChanged: (callback: () => void): (() => void) => {
+    const listener = (): void => {
+      callback();
+    };
+    ipcRenderer.on("alertRules:changed", listener);
+    return (): void => {
+      ipcRenderer.removeListener("alertRules:changed", listener);
+    };
+  },
+
+  notificationShow: (args: {
+    title: string;
+    body: string;
+    severity?: "info" | "warning" | "critical";
+  }): Promise<{ ok: boolean; error?: string }> =>
+    ipcRenderer.invoke("notification:show", args),
 };
 
 // Expose the API to the renderer process in a secure way

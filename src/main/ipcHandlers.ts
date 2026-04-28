@@ -3,7 +3,13 @@
  * Handles IPC communication between main and renderer processes
  */
 
-import { app, BrowserWindow, dialog, ipcMain } from "electron";
+import {
+  app,
+  BrowserWindow,
+  dialog,
+  ipcMain,
+  Notification as ElectronNotification,
+} from "electron";
 import log from "electron-log/main";
 import * as path from "path";
 import * as fs from "fs";
@@ -1109,4 +1115,121 @@ export function registerIpcHandlers(
       return { ok: false, error: String(e) };
     }
   });
+
+  // ============================================================================
+  // Alert Rules – file-based persistence (analogous to filterProfiles)
+  // ============================================================================
+  const resolveAlertRulesPath = (): string => {
+    const portableDir = process.env.PORTABLE_EXECUTABLE_DIR;
+    if (portableDir && portableDir.length) {
+      return path.join(portableDir, "data", "alert-rules.json");
+    }
+    return path.join(app.getPath("userData"), "alert-rules.json");
+  };
+
+  ipcMain.handle("alertRules:getAll", () => {
+    try {
+      const filePath = resolveAlertRulesPath();
+      if (!fs.existsSync(filePath)) {
+        return { ok: true, rules: [] };
+      }
+      const raw = fs.readFileSync(filePath, "utf8");
+      const rules: unknown = JSON.parse(raw);
+      return { ok: true, rules: Array.isArray(rules) ? rules : [] };
+    } catch (e) {
+      log.warn(
+        "[alertRules] Failed to load rules:",
+        e instanceof Error ? e.message : String(e),
+      );
+      return { ok: false, rules: [], error: String(e) };
+    }
+  });
+
+  ipcMain.handle("alertRules:save", (_event, rules: unknown[]) => {
+    try {
+      const filePath = resolveAlertRulesPath();
+      const dir = path.dirname(filePath);
+      if (!fs.existsSync(dir)) {
+        fs.mkdirSync(dir, { recursive: true });
+      }
+      fs.writeFileSync(filePath, JSON.stringify(rules, null, 2), "utf8");
+
+      // Notify all OTHER windows (multi-window sync, like filterProfiles)
+      const senderWc = _event.sender;
+      for (const win of BrowserWindow.getAllWindows()) {
+        try {
+          if (
+            !win.isDestroyed() &&
+            win.webContents &&
+            !win.webContents.isDestroyed() &&
+            win.webContents.id !== senderWc.id
+          ) {
+            win.webContents.send("alertRules:changed");
+          }
+        } catch {
+          // ignore
+        }
+      }
+      return { ok: true };
+    } catch (e) {
+      log.error(
+        "[alertRules] Failed to save rules:",
+        e instanceof Error ? e.message : String(e),
+      );
+      return { ok: false, error: String(e) };
+    }
+  });
+
+  /**
+   * Show a native OS notification.
+   * Falls back to a no-op (returns ok:false) if notifications are not supported.
+   */
+  ipcMain.handle(
+    "notification:show",
+    (
+      _event,
+      args: {
+        title: string;
+        body: string;
+        severity?: "info" | "warning" | "critical";
+      },
+    ) => {
+      try {
+        if (!ElectronNotification.isSupported()) {
+          return { ok: false, error: "notifications not supported" };
+        }
+        const n = new ElectronNotification({
+          title: String(args?.title ?? "Lumberjack"),
+          body: String(args?.body ?? ""),
+          urgency:
+            args?.severity === "critical"
+              ? "critical"
+              : args?.severity === "warning"
+                ? "normal"
+                : "low",
+          silent: args?.severity === "info",
+        });
+        // Focus the originating window when the notification is clicked.
+        n.on("click", () => {
+          try {
+            const win = BrowserWindow.fromWebContents(_event.sender);
+            if (win && !win.isDestroyed()) {
+              if (win.isMinimized()) win.restore();
+              win.focus();
+            }
+          } catch {
+            // ignore
+          }
+        });
+        n.show();
+        return { ok: true };
+      } catch (e) {
+        log.warn(
+          "[notification] failed:",
+          e instanceof Error ? e.message : String(e),
+        );
+        return { ok: false, error: String(e) };
+      }
+    },
+  );
 }

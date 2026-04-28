@@ -421,6 +421,22 @@ export type ElectronAPI = {
     profiles: unknown[],
   ) => Promise<{ ok: boolean; error?: string }>;
   onFilterProfilesChanged: (callback: () => void) => () => void;
+
+  // Alert Rules – file-based persistence + native notifications
+  alertRulesGetAll: () => Promise<{
+    ok: boolean;
+    rules: unknown[];
+    error?: string;
+  }>;
+  alertRulesSave: (
+    rules: unknown[],
+  ) => Promise<{ ok: boolean; error?: string }>;
+  onAlertRulesChanged: (callback: () => void) => () => void;
+  notificationShow: (args: {
+    title: string;
+    body: string;
+    severity?: "info" | "warning" | "critical";
+  }) => Promise<{ ok: boolean; error?: string }>;
 };
 
 /**

@@ -77,6 +77,8 @@ import {
   useHistoryPopovers,
   useAlerts,
   useToasts,
+  useAlertRules,
+  useAlertRunner,
   useResizeHandlers,
   useEntryManagement,
   useCommands,
@@ -131,6 +133,14 @@ const CommandPalette = lazy(() =>
     default: m.CommandPalette,
   })),
 );
+const AlertsDialog = lazy(() =>
+  import("./components/AlertsDialog").then((m) => ({
+    default: m.AlertsDialog,
+  })),
+);
+const StatsDialog = lazy(() =>
+  import("./components/StatsDialog").then((m) => ({ default: m.StatsDialog })),
+);
 const TraceTimeline = lazy(() =>
   import("./components/TraceTimeline").then((m) => ({
     default: m.TraceTimeline,
@@ -167,6 +177,28 @@ export default function App(): JSX.Element {
   const { alertState, showAlert, closeAlert, handleFeatureError } = useAlerts();
   // Non-blocking toast notifications (success/info confirmations)
   const toaster = useToasts();
+  // Alert rules (persisted via IPC) + evaluator hooked into the append-pipeline.
+  const alertRulesHook = useAlertRules();
+  const alertRunner = useAlertRunner({
+    rules: alertRulesHook.rules,
+    onEvent: (ev) => {
+      const sev =
+        ev.severity === "critical"
+          ? "error"
+          : ev.severity === "warning"
+            ? "warning"
+            : "info";
+      toaster.show(
+        `🚨 ${ev.ruleName} – ${ev.triggeringMessage.slice(0, 120)}`,
+        {
+          severity: sev,
+          durationMs: ev.severity === "critical" ? 10_000 : 6_000,
+        },
+      );
+    },
+  });
+  const [showAlertsDialog, setShowAlertsDialog] = useState<boolean>(false);
+  const [showStatsDialog, setShowStatsDialog] = useState<boolean>(false);
 
   // Entry management hook (entries, IPC batching, deduplication)
   const {
@@ -1877,6 +1909,14 @@ export default function App(): JSX.Element {
             `[renderer-diag] Received IPC logs:append with ${newEntries?.length || 0} entries`,
           );
           appendEntries(newEntries as any[]);
+          // Sprint 5: feed alert evaluator with new entries.
+          try {
+            if (Array.isArray(newEntries) && newEntries.length > 0) {
+              alertRunner.evaluate(newEntries as any[]);
+            }
+          } catch (e) {
+            logger.warn("[alerts] evaluation failed:", e);
+          }
         });
         offs.push(off);
       }
@@ -2575,6 +2615,8 @@ export default function App(): JSX.Element {
     onOpenSettings: () => setShowSettings(true),
     onOpenElastic: () => openTimeFilterDialog(),
     onOpenHelp: () => setShowHelpDlg(true),
+    onOpenAlerts: () => setShowAlertsDialog(true),
+    onOpenStats: () => setShowStatsDialog(true),
 
     // File
     onOpenFile: async () => {
@@ -3563,6 +3605,38 @@ export default function App(): JSX.Element {
           commands={commands}
         />
       </Suspense>
+
+      {/* Sprint 5: Alerts dialog - lazy loaded */}
+      {showAlertsDialog && (
+        <Suspense fallback={null}>
+          <AlertsDialog
+            open={showAlertsDialog}
+            rules={alertRulesHook.rules}
+            onClose={() => setShowAlertsDialog(false)}
+            onAdd={alertRulesHook.addRule}
+            onUpdate={alertRulesHook.updateRule}
+            onRemove={alertRulesHook.removeRule}
+            onToggle={alertRulesHook.toggleRule}
+            t={t}
+          />
+        </Suspense>
+      )}
+
+      {/* Sprint 5: Statistics dialog - lazy loaded */}
+      {showStatsDialog && (
+        <Suspense fallback={null}>
+          <StatsDialog
+            open={showStatsDialog}
+            entries={
+              filteredIdx.map((i) => entries[i]).filter(Boolean) as any[]
+            }
+            totalEntries={entries.length}
+            onClose={() => setShowStatsDialog(false)}
+            t={t}
+            fmtTimestamp={(v) => fmtTimestamp(v as any)}
+          />
+        </Suspense>
+      )}
 
       {/* Trace Timeline - lazy loaded */}
       {showTraceTimeline && traceTimelineId && (

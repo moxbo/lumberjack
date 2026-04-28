@@ -22,6 +22,8 @@ export { useAlerts } from "./useAlerts";
 export type { AlertType } from "./useAlerts";
 export { useToasts } from "./useToasts";
 export type { Toast, ToastSeverity } from "./useToasts";
+export { useAlertRules } from "./useAlertRules";
+export { useAlertRunner } from "./useAlertRunner";
 export { useHistoryPopovers } from "./useHistoryPopovers";
 export { useFilterProfiles } from "./useFilterProfiles";
 export type { UseFilterProfilesReturn } from "./useFilterProfiles";

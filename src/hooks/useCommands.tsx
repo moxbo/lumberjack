@@ -25,6 +25,8 @@ interface UseCommandsOptions {
   onOpenSettings: () => void;
   onOpenElastic: () => void;
   onOpenHelp: () => void;
+  onOpenAlerts?: () => void;
+  onOpenStats?: () => void;
 
   // File
   onOpenFile: () => void;
@@ -255,6 +257,42 @@ export function useCommands(options: UseCommandsOptions): Command[] {
           "optionen",
         ],
       },
+      ...(options.onOpenAlerts
+        ? [
+            {
+              id: "open-alerts",
+              label: t("commandPalette.commands.openAlerts") || "Alerts…",
+              description:
+                t("commandPalette.commands.openAlertsDesc") ||
+                "Benachrichtigungs-Regeln verwalten",
+              category: "settings" as const,
+              action: options.onOpenAlerts,
+              keywords: ["alert", "notification", "rules", "warnung", "regel"],
+            },
+          ]
+        : []),
+      ...(options.onOpenStats
+        ? [
+            {
+              id: "open-stats",
+              label:
+                t("commandPalette.commands.openStats") || "Statistik anzeigen",
+              description:
+                t("commandPalette.commands.openStatsDesc") ||
+                "Histogramm & Top-Logger der aktuellen Ansicht",
+              category: "view" as const,
+              action: options.onOpenStats,
+              keywords: [
+                "stats",
+                "statistics",
+                "analytics",
+                "histogram",
+                "statistik",
+                "auswertung",
+              ],
+            },
+          ]
+        : []),
       {
         id: "toggle-theme",
         label: t("commandPalette.commands.toggleTheme") || "Theme wechseln",

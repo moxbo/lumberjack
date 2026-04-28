@@ -524,7 +524,11 @@
       "toggleTheme": "Theme wechseln",
       "toggleThemeDesc": "Zwischen Hell/Dunkel wechseln",
       "focusSearch": "Suche fokussieren",
-      "focusSearchDesc": "Zum Suchfeld springen"
+      "focusSearchDesc": "Zum Suchfeld springen",
+      "openAlerts": "Alerts…",
+      "openAlertsDesc": "Benachrichtigungs-Regeln verwalten",
+      "openStats": "Statistik anzeigen",
+      "openStatsDesc": "Histogramm & Top-Logger der aktuellen Ansicht"
     },
     "categories": {
       "navigation": "Navigation",
@@ -697,6 +701,40 @@
     "close": "Schließen",
     "cancel": "Abbrechen",
     "ok": "OK"
+  },
+  "alerts": {
+    "title": "Alert-Regeln",
+    "description": "Lege Regeln fest, die bei passenden Log-Einträgen eine Benachrichtigung auslösen.",
+    "add": "Neue Regel",
+    "empty": "Noch keine Regeln definiert. Klicke auf \"Neue Regel\".",
+    "edit": "Bearbeiten",
+    "remove": "Regel löschen",
+    "toggle": "Regel aktivieren/deaktivieren",
+    "anyLevel": "(beliebig)",
+    "fieldName": "Name",
+    "fieldLevel": "Level",
+    "fieldLogger": "Logger enthält",
+    "fieldMessage": "Nachricht enthält",
+    "fieldSeverity": "Schweregrad",
+    "fieldCooldown": "Cooldown (ms)",
+    "cooldownHint": "Mindestabstand zwischen Benachrichtigungen für diese Regel.",
+    "severity": {
+      "info": "Info",
+      "warning": "Warnung",
+      "critical": "Kritisch"
+    }
+  },
+  "stats": {
+    "title": "Statistik",
+    "scope": "Aktuelle Ansicht: {{visible}} von {{total}} Einträgen",
+    "entries": "Einträge",
+    "uniqueLoggers": "Logger",
+    "errors": "Fehler",
+    "warnings": "Warnungen",
+    "byLevel": "Verteilung nach Level",
+    "topLoggers": "Top Logger",
+    "noLoggers": "Keine Logger-Information vorhanden.",
+    "overTime": "Verlauf über Zeit"
   },
   "searchMode": {
     "title": "Suchmodus",
