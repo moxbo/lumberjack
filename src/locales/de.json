@@ -273,6 +273,20 @@
       "invalidUrl": "Bitte eine gültige URL eingeben",
       "stopFirst": "Bitte laufendes Polling zuerst stoppen"
     },
+    "httpTail": {
+      "title": "HTTP-Tail starten (Range-basiert)",
+      "hint": "Inkrementelles Tailing für Endpunkte mit Range-Unterstützung (z. B. Spring Boot Actuator /actuator/logfile). Es werden nur neu geschriebene Bytes übertragen.",
+      "url": "HTTP URL",
+      "urlPlaceholder": "https://app.example.com/actuator/logfile",
+      "interval": "Intervall (s)",
+      "authHeader": "Authorization",
+      "authHeaderPlaceholder": "Bearer …  oder  Basic dXNlcjpwYXNz",
+      "emitInitial": "Vorhandenen Inhalt zuerst laden",
+      "emitInitialHint": "Lädt die komplette Datei einmal vorab; danach werden nur noch neue Zeilen gestreamt.",
+      "start": "Starten",
+      "stopFirst": "Es läuft bereits ein HTTP-Tail – diesen zuerst stoppen.",
+      "invalidUrl": "Bitte eine gültige URL eingeben"
+    },
     "windowTitle": {
       "title": "Fenster-Titel setzen",
       "label": "Titel",
@@ -327,6 +341,7 @@
       "httpLoadOnce": "HTTP einmal laden…",
       "httpPollStart": "HTTP Poll starten…",
       "httpPollStop": "HTTP Poll stoppen",
+      "httpTailStart": "HTTP-Tail starten…",
       "followMode": "Follow-Modus",
       "helpMenu": "Hilfe",
       "helpGuide": "Hilfe / Anleitung…",
@@ -528,7 +543,15 @@
       "openAlerts": "Alerts…",
       "openAlertsDesc": "Benachrichtigungs-Regeln verwalten",
       "openStats": "Statistik anzeigen",
-      "openStatsDesc": "Histogramm & Top-Logger der aktuellen Ansicht"
+      "openStatsDesc": "Histogramm & Top-Logger der aktuellen Ansicht",
+      "tailFile": "Datei beobachten (Tail)",
+      "tailFileDesc": "Log-Datei live verfolgen – neue Einträge werden automatisch angehängt",
+      "stopWatchers": "Alle Tail-Watcher stoppen",
+      "stopWatchersDesc": "Alle aktiven Datei-Beobachtungen beenden",
+      "httpTail": "HTTP-Tail starten…",
+      "httpTailDesc": "Inkrementelles Tailing für /actuator/logfile & andere Range-fähige HTTP-Endpunkte",
+      "stopHttpTails": "Alle HTTP-Tails stoppen",
+      "stopHttpTailsDesc": "Alle aktiven HTTP-Tail-Verbindungen beenden"
     },
     "categories": {
       "navigation": "Navigation",
@@ -735,6 +758,20 @@
     "topLoggers": "Top Logger",
     "noLoggers": "Keine Logger-Information vorhanden.",
     "overTime": "Verlauf über Zeit"
+  },
+  "watch": {
+    "rotated": "Datei rotiert – Tail wird fortgesetzt",
+    "error": "Watch-Fehler",
+    "started": "Tail aktiv: {{file}}",
+    "startFailed": "Tail konnte nicht gestartet werden: {{message}}",
+    "stoppedAll": "Alle Tail-Watcher gestoppt"
+  },
+  "httpTail": {
+    "started": "HTTP-Tail aktiv",
+    "rotated": "Endpunkt rotiert – Tail wird ab Anfang fortgesetzt",
+    "error": "HTTP-Tail-Fehler",
+    "startFailed": "HTTP-Tail konnte nicht gestartet werden: {{message}}",
+    "stoppedAll": "Alle HTTP-Tails gestoppt"
   },
   "searchMode": {
     "title": "Suchmodus",

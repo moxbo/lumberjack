@@ -5,7 +5,7 @@
  * list as state. Listens to `watch:status` events to keep the UI in sync and
  * to surface rotation/error events to a caller-provided sink.
  */
-import { useCallback, useEffect, useState } from "preact/hooks";
+import { useCallback, useEffect, useRef, useState } from "preact/hooks";
 import logger from "../utils/logger";
 
 export interface ActiveWatcher {
@@ -52,6 +52,10 @@ interface UseFileWatcherOptions {
 
 export function useFileWatcher(options: UseFileWatcherOptions = {}) {
   const [watchers, setWatchers] = useState<ActiveWatcher[]>([]);
+  // Stable ref so consumers can pass inline arrow functions without
+  // tearing down the IPC subscription on every render of the parent.
+  const onStatusRef = useRef(options.onStatus);
+  onStatusRef.current = options.onStatus;
 
   const refresh = useCallback(async () => {
     try {
@@ -70,7 +74,7 @@ export function useFileWatcher(options: UseFileWatcherOptions = {}) {
     if (!api?.onWatchStatus) return;
     const off = api.onWatchStatus((payload) => {
       try {
-        options.onStatus?.(payload);
+        onStatusRef.current?.(payload);
       } catch {
         // ignore consumer errors
       }
@@ -83,7 +87,7 @@ export function useFileWatcher(options: UseFileWatcherOptions = {}) {
       }
     });
     return off;
-  }, [refresh, options.onStatus]);
+  }, [refresh]);
 
   const start = useCallback(
     async (

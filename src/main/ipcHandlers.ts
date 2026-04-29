@@ -14,6 +14,7 @@ import log from "electron-log/main";
 import * as path from "path";
 import * as fs from "fs";
 import { WatchManager } from "./FileWatcher";
+import { HttpTailManager } from "./HttpTailManager";
 import { getSharedMainApi } from "./sharedMainApi";
 import { t } from "../locales/mainI18n";
 import {
@@ -1384,6 +1385,176 @@ export function registerIpcHandlers(
   app.on("before-quit", () => {
     try {
       watchManager.stopAll();
+    } catch {
+      // ignore
+    }
+  });
+
+  // ============================================================================
+  // HTTP Tail – incremental Range-based polling for endpoints like
+  // Spring Boot Actuator's `/actuator/logfile`.
+  // ============================================================================
+  const httpTailManager = new HttpTailManager();
+
+  function emitHttpTailStatus(
+    senderId: number,
+    payload: {
+      type: "started" | "stopped" | "rotated" | "error" | "lines" | "progress";
+      id: number;
+      url: string;
+      lineCount?: number;
+      offset?: number;
+      total?: number;
+      message?: string;
+    },
+  ): void {
+    for (const win of BrowserWindow.getAllWindows()) {
+      try {
+        if (
+          !win.isDestroyed() &&
+          win.webContents &&
+          !win.webContents.isDestroyed() &&
+          win.webContents.id === senderId
+        ) {
+          win.webContents.send("httpTail:status", payload);
+          break;
+        }
+      } catch {
+        // ignore
+      }
+    }
+  }
+
+  ipcMain.handle(
+    "httpTail:start",
+    (
+      event,
+      args: {
+        url: string;
+        intervalMs?: number;
+        emitInitial?: boolean;
+        headers?: Record<string, string>;
+        allowInsecureSSL?: boolean;
+      },
+    ) => {
+      try {
+        if (!args?.url || typeof args.url !== "string") {
+          return { ok: false, error: "url required" };
+        }
+        const senderId = event.sender.id;
+        const { parseTextLines, parseJsonFile } = getParsers();
+        // Best-effort source label (host + last path segment).
+        let source = args.url;
+        try {
+          const u = new URL(args.url);
+          const last = u.pathname.split("/").filter(Boolean).pop() ?? "log";
+          source = `${u.host}/${last}`;
+        } catch {
+          // fall through
+        }
+
+        const tail = httpTailManager.start(
+          args.url,
+          {
+            onLines: (lines: string[]) => {
+              if (lines.length === 0) return;
+              try {
+                const data = lines.join("\n");
+                // Try JSON first if the chunk smells like JSON, otherwise text.
+                const trimmed = data.trim();
+                const isJson =
+                  trimmed.startsWith("{") || trimmed.startsWith("[");
+                const entries = isJson
+                  ? parseJsonFile(source, data)
+                  : parseTextLines(source, data);
+                if (entries.length > 0 && enqueueWatchEntries) {
+                  enqueueWatchEntries(entries, senderId);
+                }
+                emitHttpTailStatus(senderId, {
+                  type: "lines",
+                  id: tail.id,
+                  url: args.url,
+                  lineCount: lines.length,
+                });
+              } catch (e) {
+                log.warn(
+                  "[httpTail] parse failed:",
+                  e instanceof Error ? e.message : String(e),
+                );
+              }
+            },
+            onError: (err: Error) => {
+              emitHttpTailStatus(senderId, {
+                type: "error",
+                id: tail.id,
+                url: args.url,
+                message: err.message,
+              });
+            },
+            onRotated: () => {
+              emitHttpTailStatus(senderId, {
+                type: "rotated",
+                id: tail.id,
+                url: args.url,
+              });
+            },
+            onProgress: (p) => {
+              emitHttpTailStatus(senderId, {
+                type: "progress",
+                id: tail.id,
+                url: args.url,
+                offset: p.offset,
+                total: p.total,
+              });
+            },
+          },
+          {
+            intervalMs: args.intervalMs,
+            emitInitial: !!args.emitInitial,
+            headers: args.headers,
+            allowInsecureSSL: !!args.allowInsecureSSL,
+          },
+        );
+
+        emitHttpTailStatus(senderId, {
+          type: "started",
+          id: tail.id,
+          url: args.url,
+        });
+        return { ok: true, id: tail.id, url: args.url };
+      } catch (e) {
+        log.warn(
+          "[httpTail] start failed:",
+          e instanceof Error ? e.message : String(e),
+        );
+        return { ok: false, error: String(e) };
+      }
+    },
+  );
+
+  ipcMain.handle("httpTail:stop", (event, args: { id: number }) => {
+    try {
+      const ok = httpTailManager.stop(args?.id);
+      if (ok) {
+        emitHttpTailStatus(event.sender.id, {
+          type: "stopped",
+          id: args.id,
+          url: "",
+        });
+      }
+      return { ok };
+    } catch (e) {
+      return { ok: false, error: String(e) };
+    }
+  });
+
+  ipcMain.handle("httpTail:list", () => {
+    return { ok: true, tails: httpTailManager.list() };
+  });
+
+  app.on("before-quit", () => {
+    try {
+      httpTailManager.stopAll();
     } catch {
       // ignore
     }

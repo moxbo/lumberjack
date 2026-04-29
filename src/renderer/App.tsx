@@ -80,6 +80,7 @@ import {
   useAlertRules,
   useAlertRunner,
   useFileWatcher,
+  useHttpTail,
   useResizeHandlers,
   useEntryManagement,
   useCommands,
@@ -123,6 +124,11 @@ const HttpLoadDialog = lazy(() =>
 const HttpPollDialog = lazy(() =>
   import("./components/HttpDialogs").then((m) => ({
     default: m.HttpPollDialog,
+  })),
+);
+const HttpTailDialog = lazy(() =>
+  import("./components/HttpDialogs").then((m) => ({
+    default: m.HttpTailDialog,
   })),
 );
 
@@ -214,6 +220,20 @@ export default function App(): JSX.Element {
       }
     },
   });
+
+  // HTTP Tail – incremental Range-based polling (e.g. Spring Boot Actuator).
+  const httpTail = useHttpTail({
+    onStatus: (payload) => {
+      if (payload.type === "rotated") {
+        toaster.info(`${payload.url}: ${t("httpTail.rotated")}`);
+      } else if (payload.type === "error") {
+        toaster.error(`${t("httpTail.error")}: ${payload.message || ""}`);
+      } else if (payload.type === "started") {
+        toaster.success(`${t("httpTail.started")}: ${payload.url}`);
+      }
+    },
+  });
+  const [showHttpTailDialog, setShowHttpTailDialog] = useState<boolean>(false);
 
   // Entry management hook (entries, IPC batching, deduplication)
   const {
@@ -1980,6 +2000,10 @@ export default function App(): JSX.Element {
                 void openHttpPollDialog();
                 break;
               }
+              case "http-tail-start": {
+                setShowHttpTailDialog(true);
+                break;
+              }
               case "http-stop-poll": {
                 console.warn(
                   "[menu] http-stop-poll received, httpPollIdRef.current =",
@@ -2667,6 +2691,18 @@ export default function App(): JSX.Element {
       }
     },
     hasActiveWatchers: fileWatcher.watchers.length > 0,
+    onOpenHttpTail: () => setShowHttpTailDialog(true),
+    onStopAllHttpTails: async () => {
+      try {
+        for (const t2 of httpTail.tails) {
+          await httpTail.stop(t2.id);
+        }
+        toaster.info(t("httpTail.stoppedAll"));
+      } catch (err) {
+        logger.error("Stop HTTP tails failed:", err);
+      }
+    },
+    hasActiveHttpTails: httpTail.tails.length > 0,
 
     // File
     onOpenFile: async () => {
@@ -3126,6 +3162,43 @@ export default function App(): JSX.Element {
             } catch (e) {
               setHttpStatus(
                 t("status.error", {
+                  message: e instanceof Error ? e.message : String(e),
+                }),
+              );
+            }
+          }}
+        />
+      </Suspense>
+
+      {/* HTTP Tail Dialog – incremental Range-based polling */}
+      <Suspense fallback={null}>
+        <HttpTailDialog
+          open={showHttpTailDialog}
+          initialUrl={httpUrl}
+          initialIntervalSec={Math.max(1, Math.round(httpInterval || 2))}
+          initialEmitInitial={false}
+          initialAllowInsecureSSL={false}
+          initialAuthHeader=""
+          isAnyTailActive={httpTail.tails.length > 0}
+          onClose={() => setShowHttpTailDialog(false)}
+          onStart={async (args) => {
+            try {
+              const headers: Record<string, string> = {};
+              if (args.authHeader) headers.Authorization = args.authHeader;
+              const r = await httpTail.start(args.url, {
+                intervalMs: args.intervalSec * 1000,
+                emitInitial: args.emitInitial,
+                headers: Object.keys(headers).length ? headers : undefined,
+                allowInsecureSSL: args.allowInsecureSSL,
+              });
+              if (!r.ok) {
+                showAlert(
+                  t("httpTail.startFailed", { message: r.error || "" }),
+                );
+              }
+            } catch (e) {
+              showAlert(
+                t("httpTail.startFailed", {
                   message: e instanceof Error ? e.message : String(e),
                 }),
               );

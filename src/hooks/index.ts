@@ -26,6 +26,8 @@ export { useAlertRules } from "./useAlertRules";
 export { useAlertRunner } from "./useAlertRunner";
 export { useFileWatcher } from "./useFileWatcher";
 export type { ActiveWatcher, WatchStatusPayload } from "./useFileWatcher";
+export { useHttpTail } from "./useHttpTail";
+export type { ActiveHttpTail, HttpTailStatusPayload } from "./useHttpTail";
 export { useHistoryPopovers } from "./useHistoryPopovers";
 export { useFilterProfiles } from "./useFilterProfiles";
 export type { UseFilterProfilesReturn } from "./useFilterProfiles";

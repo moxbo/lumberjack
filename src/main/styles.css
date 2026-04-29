@@ -1550,9 +1550,9 @@ body {
 }
 
 @media (prefers-color-scheme: dark) {
-  :root:not([data-theme="light"]),
-  .modal-settings-modern,
-  .feature-disabled-warning {
+  :root:not([data-theme="light"])
+    .modal-settings-modern
+    .feature-disabled-warning {
     background: rgba(239, 68, 68, 0.15);
     color: #f87171;
   }

@@ -176,3 +176,155 @@ export function HttpPollDialog({
     </div>
   );
 }
+
+interface HttpTailDialogProps {
+  open: boolean;
+  initialUrl: string;
+  initialIntervalSec: number;
+  initialEmitInitial: boolean;
+  initialAllowInsecureSSL: boolean;
+  initialAuthHeader: string;
+  isAnyTailActive: boolean;
+  onClose: () => void;
+  onStart: (args: {
+    url: string;
+    intervalSec: number;
+    emitInitial: boolean;
+    allowInsecureSSL: boolean;
+    authHeader: string;
+  }) => Promise<void>;
+}
+
+/**
+ * Dialog for starting an incremental HTTP tail (Range-based).
+ * Optimised for endpoints like Spring Boot Actuator's `/actuator/logfile`.
+ */
+export function HttpTailDialog({
+  open,
+  initialUrl,
+  initialIntervalSec,
+  initialEmitInitial,
+  initialAllowInsecureSSL,
+  initialAuthHeader,
+  isAnyTailActive,
+  onClose,
+  onStart,
+}: HttpTailDialogProps) {
+  const { t } = useI18n();
+  const [url, setUrl] = useState<string>(initialUrl);
+  const [intervalSec, setIntervalSec] = useState<number>(initialIntervalSec);
+  const [emitInitial, setEmitInitial] = useState<boolean>(initialEmitInitial);
+  const [allowInsecureSSL, setAllowInsecureSSL] = useState<boolean>(
+    initialAllowInsecureSSL,
+  );
+  const [authHeader, setAuthHeader] = useState<string>(initialAuthHeader);
+
+  useEffect(() => {
+    if (open) {
+      setUrl(initialUrl);
+      setIntervalSec(initialIntervalSec);
+      setEmitInitial(initialEmitInitial);
+      setAllowInsecureSSL(initialAllowInsecureSSL);
+      setAuthHeader(initialAuthHeader);
+    }
+  }, [
+    open,
+    initialUrl,
+    initialIntervalSec,
+    initialEmitInitial,
+    initialAllowInsecureSSL,
+    initialAuthHeader,
+  ]);
+
+  const handleStart = async () => {
+    const trimmed = String(url || "").trim();
+    if (!trimmed) {
+      nativeAlert(t("dialogs.httpTail.invalidUrl"));
+      return;
+    }
+    onClose();
+    await onStart({
+      url: trimmed,
+      intervalSec: Math.max(1, intervalSec),
+      emitInitial,
+      allowInsecureSSL,
+      authHeader: String(authHeader || "").trim(),
+    });
+  };
+
+  if (!open) return null;
+
+  return (
+    <div className="modal-backdrop" onClick={onClose}>
+      <div className="modal" onClick={(e) => e.stopPropagation()}>
+        <h3>{t("dialogs.httpTail.title")}</h3>
+        <p className="dialog-hint">{t("dialogs.httpTail.hint")}</p>
+        <div className="kv">
+          <span>{t("dialogs.httpTail.url")}</span>
+          <input
+            type="text"
+            value={url}
+            onInput={(e) => setUrl(e.currentTarget.value)}
+            placeholder={t("dialogs.httpTail.urlPlaceholder")}
+            autoFocus
+          />
+        </div>
+        <div className="kv">
+          <span>{t("dialogs.httpTail.interval")}</span>
+          <input
+            type="number"
+            min="1"
+            step="1"
+            value={intervalSec}
+            onInput={(e) =>
+              setIntervalSec(Math.max(1, Number(e.currentTarget.value || 1)))
+            }
+          />
+        </div>
+        <div className="kv">
+          <span>{t("dialogs.httpTail.authHeader")}</span>
+          <input
+            type="text"
+            value={authHeader}
+            onInput={(e) => setAuthHeader(e.currentTarget.value)}
+            placeholder={t("dialogs.httpTail.authHeaderPlaceholder")}
+          />
+        </div>
+        <div className="kv">
+          <label className="checkbox-row">
+            <input
+              type="checkbox"
+              checked={emitInitial}
+              onChange={(e) => setEmitInitial(e.currentTarget.checked)}
+            />
+            <span title={t("dialogs.httpTail.emitInitialHint")}>
+              {t("dialogs.httpTail.emitInitial")}
+            </span>
+          </label>
+        </div>
+        <div className="kv">
+          <label className="checkbox-row">
+            <input
+              type="checkbox"
+              checked={allowInsecureSSL}
+              onChange={(e) => setAllowInsecureSSL(e.currentTarget.checked)}
+            />
+            <span title={t("dialogs.httpLoad.allowInsecureSSLHint")}>
+              {t("dialogs.httpLoad.allowInsecureSSL")}
+            </span>
+          </label>
+        </div>
+        <div className="modal-actions">
+          <button onClick={onClose}>{t("common.cancel")}</button>
+          <button
+            disabled={isAnyTailActive}
+            title={isAnyTailActive ? t("dialogs.httpTail.stopFirst") : ""}
+            onClick={handleStart}
+          >
+            {t("dialogs.httpTail.start")}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}

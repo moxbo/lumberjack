@@ -1295,6 +1295,15 @@ function buildMenu(): void {
         },
         { type: "separator" as const },
         {
+          label: t("main.menu.httpTailStart"),
+          click: (_mi, win) =>
+            sendMenuCmd(
+              { type: "http-tail-start" },
+              (win as BrowserWindow | null | undefined) || null,
+            ),
+        },
+        { type: "separator" as const },
+        {
           id: "tcp-toggle",
           label: tcpStatus.running
             ? t("main.menu.tcpToggleStop")

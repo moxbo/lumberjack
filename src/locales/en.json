@@ -273,6 +273,20 @@
       "invalidUrl": "Please enter a valid URL",
       "stopFirst": "Please stop current polling first"
     },
+    "httpTail": {
+      "title": "Start HTTP tail (Range-based)",
+      "hint": "Incremental tailing for endpoints that support Range requests (e.g. Spring Boot Actuator's /actuator/logfile). Only newly written bytes are transferred.",
+      "url": "HTTP URL",
+      "urlPlaceholder": "https://app.example.com/actuator/logfile",
+      "interval": "Interval (s)",
+      "authHeader": "Authorization",
+      "authHeaderPlaceholder": "Bearer …  or  Basic dXNlcjpwYXNz",
+      "emitInitial": "Load existing content first",
+      "emitInitialHint": "Loads the full file once up-front; afterwards only new lines are streamed.",
+      "start": "Start",
+      "stopFirst": "An HTTP tail is already running – stop it first.",
+      "invalidUrl": "Please enter a valid URL"
+    },
     "windowTitle": {
       "title": "Set window title",
       "label": "Title",
@@ -327,6 +341,7 @@
       "httpLoadOnce": "Load HTTP once…",
       "httpPollStart": "Start HTTP polling…",
       "httpPollStop": "Stop HTTP polling",
+      "httpTailStart": "Start HTTP tail…",
       "followMode": "Follow Mode",
       "helpMenu": "Help",
       "helpGuide": "Help / Guide…",
@@ -528,7 +543,15 @@
       "openAlerts": "Alerts…",
       "openAlertsDesc": "Manage notification rules",
       "openStats": "Show Statistics",
-      "openStatsDesc": "Histogram & top loggers of the current view"
+      "openStatsDesc": "Histogram & top loggers of the current view",
+      "tailFile": "Tail File",
+      "tailFileDesc": "Watch a log file live – new entries are appended automatically",
+      "stopWatchers": "Stop all tail watchers",
+      "stopWatchersDesc": "End all active file watches",
+      "httpTail": "Start HTTP Tail…",
+      "httpTailDesc": "Incremental tailing for /actuator/logfile and other Range-capable HTTP endpoints",
+      "stopHttpTails": "Stop all HTTP tails",
+      "stopHttpTailsDesc": "End all active HTTP tail connections"
     },
     "categories": {
       "navigation": "Navigation",
@@ -735,6 +758,20 @@
     "topLoggers": "Top Loggers",
     "noLoggers": "No logger information available.",
     "overTime": "Activity over time"
+  },
+  "watch": {
+    "rotated": "File rotated – tail will continue",
+    "error": "Watch error",
+    "started": "Tail active: {{file}}",
+    "startFailed": "Failed to start tail: {{message}}",
+    "stoppedAll": "All tail watchers stopped"
+  },
+  "httpTail": {
+    "started": "HTTP tail active",
+    "rotated": "Endpoint rotated – tail resuming from start",
+    "error": "HTTP tail error",
+    "startFailed": "Failed to start HTTP tail: {{message}}",
+    "stoppedAll": "All HTTP tails stopped"
   },
   "searchMode": {
     "title": "Search mode",

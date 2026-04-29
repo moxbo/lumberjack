@@ -234,6 +234,7 @@ export type MenuCommand =
   | { type: "http-load" }
   | { type: "http-start-poll" }
   | { type: "http-stop-poll" }
+  | { type: "http-tail-start" }
   | { type: "tcp-configure" }
   | { type: "tcp-start" }
   | { type: "tcp-stop" }
@@ -437,6 +438,62 @@ export type ElectronAPI = {
     body: string;
     severity?: "info" | "warning" | "critical";
   }) => Promise<{ ok: boolean; error?: string }>;
+
+  // File watching (tail mode for local files)
+  watchStart: (args: {
+    filePath: string;
+    emitInitial?: boolean;
+    pollIntervalMs?: number;
+  }) => Promise<{
+    ok: boolean;
+    id?: number;
+    filePath?: string;
+    error?: string;
+  }>;
+  watchStop: (id: number) => Promise<{ ok: boolean; error?: string }>;
+  watchList: () => Promise<{
+    ok: boolean;
+    watchers: Array<{ id: number; filePath: string }>;
+  }>;
+  onWatchStatus: (
+    callback: (payload: {
+      type: "started" | "stopped" | "rotated" | "error" | "lines";
+      id: number;
+      filePath: string;
+      lineCount?: number;
+      message?: string;
+    }) => void,
+  ) => () => void;
+
+  // HTTP Tail (incremental Range-based polling, e.g. Spring Boot Actuator)
+  httpTailStart: (args: {
+    url: string;
+    intervalMs?: number;
+    emitInitial?: boolean;
+    headers?: Record<string, string>;
+    allowInsecureSSL?: boolean;
+  }) => Promise<{
+    ok: boolean;
+    id?: number;
+    url?: string;
+    error?: string;
+  }>;
+  httpTailStop: (id: number) => Promise<{ ok: boolean; error?: string }>;
+  httpTailList: () => Promise<{
+    ok: boolean;
+    tails: Array<{ id: number; url: string; offset: number }>;
+  }>;
+  onHttpTailStatus: (
+    callback: (payload: {
+      type: "started" | "stopped" | "rotated" | "error" | "lines" | "progress";
+      id: number;
+      url: string;
+      lineCount?: number;
+      offset?: number;
+      total?: number;
+      message?: string;
+    }) => void,
+  ) => () => void;
 };
 
 /**

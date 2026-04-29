@@ -425,6 +425,65 @@ const api: ElectronAPI = {
       ipcRenderer.removeListener("watch:status", listener);
     };
   },
+
+  // ---- HTTP Tail (incremental Range-based polling) -----------------------
+  httpTailStart: (args: {
+    url: string;
+    intervalMs?: number;
+    emitInitial?: boolean;
+    headers?: Record<string, string>;
+    allowInsecureSSL?: boolean;
+  }): Promise<{
+    ok: boolean;
+    id?: number;
+    url?: string;
+    error?: string;
+  }> => ipcRenderer.invoke("httpTail:start", args),
+
+  httpTailStop: (id: number): Promise<{ ok: boolean; error?: string }> =>
+    ipcRenderer.invoke("httpTail:stop", { id }),
+
+  httpTailList: (): Promise<{
+    ok: boolean;
+    tails: Array<{ id: number; url: string; offset: number }>;
+  }> => ipcRenderer.invoke("httpTail:list"),
+
+  onHttpTailStatus: (
+    callback: (payload: {
+      type: "started" | "stopped" | "rotated" | "error" | "lines" | "progress";
+      id: number;
+      url: string;
+      lineCount?: number;
+      offset?: number;
+      total?: number;
+      message?: string;
+    }) => void,
+  ): (() => void) => {
+    const listener = (
+      _e: IpcRendererEvent,
+      payload: {
+        type:
+          | "started"
+          | "stopped"
+          | "rotated"
+          | "error"
+          | "lines"
+          | "progress";
+        id: number;
+        url: string;
+        lineCount?: number;
+        offset?: number;
+        total?: number;
+        message?: string;
+      },
+    ): void => {
+      callback(payload);
+    };
+    ipcRenderer.on("httpTail:status", listener);
+    return (): void => {
+      ipcRenderer.removeListener("httpTail:status", listener);
+    };
+  },
 };
 
 // Expose the API to the renderer process in a secure way

@@ -30,6 +30,9 @@ interface UseCommandsOptions {
   onTailFile?: () => void;
   onStopAllWatchers?: () => void;
   hasActiveWatchers?: boolean;
+  onOpenHttpTail?: () => void;
+  onStopAllHttpTails?: () => void;
+  hasActiveHttpTails?: boolean;
 
   // File
   onOpenFile: () => void;
@@ -332,6 +335,39 @@ export function useCommands(options: UseCommandsOptions): Command[] {
               category: "file" as const,
               action: options.onStopAllWatchers,
               keywords: ["stop", "watch", "tail", "stoppen", "beenden"],
+            },
+          ]
+        : []),
+      ...(options.onOpenHttpTail
+        ? [
+            {
+              id: "http-tail",
+              label: t("commandPalette.commands.httpTail"),
+              description: t("commandPalette.commands.httpTailDesc"),
+              category: "file" as const,
+              action: options.onOpenHttpTail,
+              keywords: [
+                "http",
+                "tail",
+                "spring",
+                "actuator",
+                "logfile",
+                "range",
+                "stream",
+                "verfolgen",
+              ],
+            },
+          ]
+        : []),
+      ...(options.hasActiveHttpTails && options.onStopAllHttpTails
+        ? [
+            {
+              id: "stop-http-tails",
+              label: t("commandPalette.commands.stopHttpTails"),
+              description: t("commandPalette.commands.stopHttpTailsDesc"),
+              category: "file" as const,
+              action: options.onStopAllHttpTails,
+              keywords: ["http", "tail", "stop", "stoppen", "beenden"],
             },
           ]
         : []),
