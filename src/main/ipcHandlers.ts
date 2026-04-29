@@ -13,6 +13,7 @@ import {
 import log from "electron-log/main";
 import * as path from "path";
 import * as fs from "fs";
+import { WatchManager } from "./FileWatcher";
 import { getSharedMainApi } from "./sharedMainApi";
 import { t } from "../locales/mainI18n";
 import {
@@ -65,6 +66,16 @@ export function registerIpcHandlers(
   getParsers: () => ParsersModule,
   getAdmZip: () => typeof import("adm-zip"),
   featureFlags?: FeatureFlags,
+  /**
+   * Sprint 5 – C3: hook for routing tail-watcher entries into the same
+   * append-pipeline used by TCP/HTTP/Elasticsearch. If omitted, watching is
+   * still possible but new entries will only be available via the events
+   * emitted to the originating window (`watch:status`).
+   */
+  enqueueWatchEntries?: (
+    entries: LogEntry[],
+    senderWebContentsId: number,
+  ) => void,
 ): void {
   const sharedApi = getSharedMainApi();
 
@@ -1232,4 +1243,149 @@ export function registerIpcHandlers(
       }
     },
   );
+
+  // ============================================================================
+  // Sprint 5 – C3: Tail/Watch mode for log files
+  // ============================================================================
+  const watchManager = new WatchManager();
+
+  /**
+   * Send watcher status updates (started/stopped/rotated/error) to the owning
+   * window so the renderer can show toasts and keep its watcher list in sync.
+   */
+  function emitWatchStatus(
+    senderId: number,
+    payload: {
+      type: "started" | "stopped" | "rotated" | "error" | "lines";
+      id: number;
+      filePath: string;
+      lineCount?: number;
+      message?: string;
+    },
+  ): void {
+    for (const win of BrowserWindow.getAllWindows()) {
+      try {
+        if (
+          !win.isDestroyed() &&
+          win.webContents &&
+          !win.webContents.isDestroyed() &&
+          win.webContents.id === senderId
+        ) {
+          win.webContents.send("watch:status", payload);
+          break;
+        }
+      } catch {
+        // ignore
+      }
+    }
+  }
+
+  ipcMain.handle(
+    "watch:start",
+    (
+      event,
+      args: {
+        filePath: string;
+        emitInitial?: boolean;
+        pollIntervalMs?: number;
+      },
+    ) => {
+      try {
+        if (!args?.filePath || typeof args.filePath !== "string") {
+          return { ok: false, error: "filePath required" };
+        }
+        const senderId = event.sender.id;
+        const { parseTextLines } = getParsers();
+        const fileName = path.basename(args.filePath);
+
+        const watcher = watchManager.start(
+          args.filePath,
+          {
+            onLines: (lines: string[]) => {
+              if (lines.length === 0) return;
+              try {
+                const data = lines.join("\n");
+                const entries = parseTextLines(fileName, data);
+                if (entries.length > 0 && enqueueWatchEntries) {
+                  enqueueWatchEntries(entries, senderId);
+                }
+                emitWatchStatus(senderId, {
+                  type: "lines",
+                  id: watcher.id,
+                  filePath: args.filePath,
+                  lineCount: lines.length,
+                });
+              } catch (e) {
+                log.warn(
+                  "[watch] parse failed:",
+                  e instanceof Error ? e.message : String(e),
+                );
+              }
+            },
+            onError: (err: Error) => {
+              emitWatchStatus(senderId, {
+                type: "error",
+                id: watcher.id,
+                filePath: args.filePath,
+                message: err.message,
+              });
+            },
+            onRotated: () => {
+              emitWatchStatus(senderId, {
+                type: "rotated",
+                id: watcher.id,
+                filePath: args.filePath,
+              });
+            },
+          },
+          {
+            emitInitial: !!args.emitInitial,
+            pollIntervalMs: args.pollIntervalMs,
+          },
+        );
+
+        emitWatchStatus(senderId, {
+          type: "started",
+          id: watcher.id,
+          filePath: args.filePath,
+        });
+        return { ok: true, id: watcher.id, filePath: args.filePath };
+      } catch (e) {
+        log.warn(
+          "[watch] start failed:",
+          e instanceof Error ? e.message : String(e),
+        );
+        return { ok: false, error: String(e) };
+      }
+    },
+  );
+
+  ipcMain.handle("watch:stop", (event, args: { id: number }) => {
+    try {
+      const ok = watchManager.stop(args?.id);
+      if (ok) {
+        emitWatchStatus(event.sender.id, {
+          type: "stopped",
+          id: args.id,
+          filePath: "",
+        });
+      }
+      return { ok };
+    } catch (e) {
+      return { ok: false, error: String(e) };
+    }
+  });
+
+  ipcMain.handle("watch:list", () => {
+    return { ok: true, watchers: watchManager.list() };
+  });
+
+  // Stop all watchers when the app quits.
+  app.on("before-quit", () => {
+    try {
+      watchManager.stopAll();
+    } catch {
+      // ignore
+    }
+  });
 }

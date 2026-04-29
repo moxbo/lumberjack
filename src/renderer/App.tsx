@@ -79,6 +79,7 @@ import {
   useToasts,
   useAlertRules,
   useAlertRunner,
+  useFileWatcher,
   useResizeHandlers,
   useEntryManagement,
   useCommands,
@@ -188,17 +189,31 @@ export default function App(): JSX.Element {
           : ev.severity === "warning"
             ? "warning"
             : "info";
-      toaster.show(
-        `🚨 ${ev.ruleName} – ${ev.triggeringMessage.slice(0, 120)}`,
-        {
-          severity: sev,
-          durationMs: ev.severity === "critical" ? 10_000 : 6_000,
-        },
-      );
+      toaster.show(` ${ev.ruleName} – ${ev.triggeringMessage.slice(0, 120)}`, {
+        severity: sev,
+        durationMs: ev.severity === "critical" ? 10_000 : 6_000,
+      });
     },
   });
   const [showAlertsDialog, setShowAlertsDialog] = useState<boolean>(false);
   const [showStatsDialog, setShowStatsDialog] = useState<boolean>(false);
+
+  // Sprint 5 – C3: Tail/Watch mode. Show toast on rotation/error.
+  const fileWatcher = useFileWatcher({
+    onStatus: (payload) => {
+      if (payload.type === "rotated") {
+        toaster.info(
+          ` ${
+            payload.filePath.split(/[\\/]/).pop() || payload.filePath
+          }: ${t("watch.rotated") || "Datei rotiert – tail wird fortgesetzt"}`,
+        );
+      } else if (payload.type === "error") {
+        toaster.error(
+          `${t("watch.error") || "Watch-Fehler"}: ${payload.message || ""}`,
+        );
+      }
+    },
+  });
 
   // Entry management hook (entries, IPC batching, deduplication)
   const {
@@ -2427,7 +2442,7 @@ export default function App(): JSX.Element {
   </style>
 </head>
 <body>
-  <h1>🪵 Lumberjack Log Export</h1>
+  <h1> Lumberjack Log Export</h1>
   <div class="meta">
     ${t("export.exported")}: ${new Date().toLocaleString()}<br>
     ${t("export.entries")}: ${exportEntries.length} (${t("export.filteredOf", { total: String(currentEntries.length) })})
@@ -2617,6 +2632,41 @@ export default function App(): JSX.Element {
     onOpenHelp: () => setShowHelpDlg(true),
     onOpenAlerts: () => setShowAlertsDialog(true),
     onOpenStats: () => setShowStatsDialog(true),
+    onTailFile: async () => {
+      try {
+        const result = await typedOpenFiles();
+        if (!result || result.length === 0) return;
+        // Watch each picked file (typically just one).
+        for (const filePath of result) {
+          const res = await fileWatcher.start(filePath, { emitInitial: true });
+          if (res.ok) {
+            const fileName = filePath.split(/[\\/]/).pop() || filePath;
+            toaster.success(
+              t("watch.started", { file: fileName }) ||
+                ` Tail aktiv: ${fileName}`,
+            );
+          } else {
+            showAlert(
+              t("watch.startFailed", { message: res.error || "" }) ||
+                `Tail konnte nicht gestartet werden: ${res.error || ""}`,
+            );
+          }
+        }
+      } catch (err) {
+        logger.error("Tail start failed:", err);
+      }
+    },
+    onStopAllWatchers: async () => {
+      try {
+        for (const w of fileWatcher.watchers) {
+          await fileWatcher.stop(w.id);
+        }
+        toaster.info(t("watch.stoppedAll") || "Alle Tail-Watcher gestoppt");
+      } catch (err) {
+        logger.error("Stop watchers failed:", err);
+      }
+    },
+    hasActiveWatchers: fileWatcher.watchers.length > 0,
 
     // File
     onOpenFile: async () => {
@@ -3192,17 +3242,13 @@ export default function App(): JSX.Element {
               title={t("toolbar.prevMarkTooltip")}
               onClick={() => gotoMarked(-1)}
               disabled={markedIdx.length === 0}
-            >
-              🔺
-            </button>
+            ></button>
             <button
               className="btn-icon"
               title={t("toolbar.nextMarkTooltip")}
               onClick={() => gotoMarked(1)}
               disabled={markedIdx.length === 0}
-            >
-              🔻
-            </button>
+            ></button>
             {markedIdx.length > 0 && (
               <div style={{ position: "relative", display: "inline-flex" }}>
                 <button
@@ -3272,7 +3318,7 @@ export default function App(): JSX.Element {
             onClick={() => setFiltersExpanded(!filtersExpanded)}
             title={t("toolbar.filterToggle")}
           >
-            <span>🎛️ {t("toolbar.filterLabel")}</span>
+            <span>️ {t("toolbar.filterLabel")}</span>
             <span className="chevron">▼</span>
           </button>
           {/* Aktive Filter-Chips inline */}
@@ -3518,14 +3564,14 @@ export default function App(): JSX.Element {
             })}
             {countFiltered === 0 && entries.length === 0 && (
               <div className="list-empty">
-                <div className="list-empty-icon">📋</div>
+                <div className="list-empty-icon"></div>
                 <div className="list-empty-title">{t("list.emptyTitle")}</div>
                 <div className="list-empty-hint">{t("list.emptyHint")}</div>
               </div>
             )}
             {countFiltered === 0 && entries.length > 0 && (
               <div className="list-empty">
-                <div className="list-empty-icon">🔍</div>
+                <div className="list-empty-icon"></div>
                 <div className="list-empty-title">{t("list.noMatchTitle")}</div>
                 <div className="list-empty-hint">{t("list.noMatchHint")}</div>
               </div>

@@ -27,6 +27,9 @@ interface UseCommandsOptions {
   onOpenHelp: () => void;
   onOpenAlerts?: () => void;
   onOpenStats?: () => void;
+  onTailFile?: () => void;
+  onStopAllWatchers?: () => void;
+  hasActiveWatchers?: boolean;
 
   // File
   onOpenFile: () => void;
@@ -290,6 +293,45 @@ export function useCommands(options: UseCommandsOptions): Command[] {
                 "statistik",
                 "auswertung",
               ],
+            },
+          ]
+        : []),
+      ...(options.onTailFile
+        ? [
+            {
+              id: "tail-file",
+              label:
+                t("commandPalette.commands.tailFile") ||
+                "Datei beobachten (Tail)",
+              description:
+                t("commandPalette.commands.tailFileDesc") ||
+                "Log-Datei live verfolgen – neue Einträge werden automatisch angehängt",
+              category: "file" as const,
+              action: options.onTailFile,
+              keywords: [
+                "tail",
+                "watch",
+                "follow",
+                "live",
+                "beobachten",
+                "verfolgen",
+              ],
+            },
+          ]
+        : []),
+      ...(options.hasActiveWatchers && options.onStopAllWatchers
+        ? [
+            {
+              id: "stop-watchers",
+              label:
+                t("commandPalette.commands.stopWatchers") ||
+                "Alle Tail-Watcher stoppen",
+              description:
+                t("commandPalette.commands.stopWatchersDesc") ||
+                "Alle aktiven Datei-Beobachtungen beenden",
+              category: "file" as const,
+              action: options.onStopAllWatchers,
+              keywords: ["stop", "watch", "tail", "stoppen", "beenden"],
             },
           ]
         : []),

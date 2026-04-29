@@ -2178,6 +2178,28 @@ try {
     getParsers,
     getAdmZip,
     featureFlags,
+    // Sprint 5 – C3: route tail-watcher entries through the same per-window
+    // append pipeline as TCP/HTTP/Elasticsearch.
+    (entries: LogEntry[], senderWcId: number): void => {
+      try {
+        const win = BrowserWindow.fromId(
+          BrowserWindow.getAllWindows().find(
+            (w) => w.webContents?.id === senderWcId,
+          )?.id ?? -1,
+        );
+        if (win && !win.isDestroyed()) {
+          enqueueAppendsFor(win.id, entries);
+        } else {
+          // Fallback: route to main window queue
+          enqueueAppends(entries);
+        }
+      } catch (err) {
+        log.warn(
+          "[watch] enqueue failed:",
+          err instanceof Error ? err.message : String(err),
+        );
+      }
+    },
   );
   log.info("[diag] IPC handlers registered successfully");
 } catch (err) {

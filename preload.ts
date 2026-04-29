@@ -376,6 +376,55 @@ const api: ElectronAPI = {
     severity?: "info" | "warning" | "critical";
   }): Promise<{ ok: boolean; error?: string }> =>
     ipcRenderer.invoke("notification:show", args),
+
+  // ============================================================================
+  // Sprint 5 – C3: Tail / Watch mode
+  // ============================================================================
+  watchStart: (args: {
+    filePath: string;
+    emitInitial?: boolean;
+    pollIntervalMs?: number;
+  }): Promise<{
+    ok: boolean;
+    id?: number;
+    filePath?: string;
+    error?: string;
+  }> => ipcRenderer.invoke("watch:start", args),
+
+  watchStop: (id: number): Promise<{ ok: boolean; error?: string }> =>
+    ipcRenderer.invoke("watch:stop", { id }),
+
+  watchList: (): Promise<{
+    ok: boolean;
+    watchers: Array<{ id: number; filePath: string }>;
+  }> => ipcRenderer.invoke("watch:list"),
+
+  onWatchStatus: (
+    callback: (payload: {
+      type: "started" | "stopped" | "rotated" | "error" | "lines";
+      id: number;
+      filePath: string;
+      lineCount?: number;
+      message?: string;
+    }) => void,
+  ): (() => void) => {
+    const listener = (
+      _e: IpcRendererEvent,
+      payload: {
+        type: "started" | "stopped" | "rotated" | "error" | "lines";
+        id: number;
+        filePath: string;
+        lineCount?: number;
+        message?: string;
+      },
+    ): void => {
+      callback(payload);
+    };
+    ipcRenderer.on("watch:status", listener);
+    return (): void => {
+      ipcRenderer.removeListener("watch:status", listener);
+    };
+  },
 };
 
 // Expose the API to the renderer process in a secure way

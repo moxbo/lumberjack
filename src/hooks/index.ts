@@ -24,6 +24,8 @@ export { useToasts } from "./useToasts";
 export type { Toast, ToastSeverity } from "./useToasts";
 export { useAlertRules } from "./useAlertRules";
 export { useAlertRunner } from "./useAlertRunner";
+export { useFileWatcher } from "./useFileWatcher";
+export type { ActiveWatcher, WatchStatusPayload } from "./useFileWatcher";
 export { useHistoryPopovers } from "./useHistoryPopovers";
 export { useFilterProfiles } from "./useFilterProfiles";
 export type { UseFilterProfilesReturn } from "./useFilterProfiles";
