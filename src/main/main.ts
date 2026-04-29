@@ -1386,8 +1386,68 @@ function buildMenu(): void {
   Menu.setApplicationMenu(menu);
 }
 function updateMenu(): void {
+  // Suppress menu rebuilds while the app is still bootstrapping; the real
+  // menu is installed once via tryInstallMenu() when both the renderer
+  // has finished loading AND settings have been loaded.
+  if (!menuReady) return;
   buildMenu();
   applyWindowTitles();
+}
+
+// --- Bootstrapping gate for the native menu ----------------------------------
+// On startup (and when a new window is created) we don't want a half-built
+// menu to flash before settings are loaded. We install a minimal placeholder
+// (or none on Win/Linux) and only swap in the real menu once everything is
+// ready.
+let menuReady = false;
+let settingsLoadedForMenu = false;
+
+function installPlaceholderMenu(): void {
+  if (menuReady) return; // real menu already up – don't downgrade
+  try {
+    if (process.platform === "darwin") {
+      // macOS always shows an application menu in the system menu bar; provide
+      // a minimal one with About + Quit so the app stays usable during load.
+      const placeholder = Menu.buildFromTemplate([
+        {
+          label: app.name,
+          submenu: [
+            { role: "about" as const },
+            { type: "separator" as const },
+            { role: "hide" as const },
+            { role: "hideOthers" as const },
+            { role: "unhide" as const },
+            { type: "separator" as const },
+            { role: "quit" as const },
+          ],
+        },
+      ]);
+      Menu.setApplicationMenu(placeholder);
+    } else {
+      // Win/Linux: hide the menu bar entirely until ready.
+      Menu.setApplicationMenu(null);
+    }
+  } catch (e) {
+    log.warn?.("[menu] installPlaceholderMenu failed:", e);
+  }
+}
+
+/**
+ * Install the real menu once both signals are present:
+ *  - settings have been loaded (so menu items reflect persisted state)
+ *  - at least one renderer window has finished loading (so menu commands
+ *    can actually be delivered).
+ */
+function tryInstallMenu(): void {
+  if (menuReady) return;
+  if (!settingsLoadedForMenu) return;
+  const wins = BrowserWindow.getAllWindows();
+  const anyReady = wins.some((w) => loadedWindows.has(w.id));
+  if (!anyReady) return;
+  menuReady = true;
+  buildMenu();
+  applyWindowTitles();
+  log.debug?.("[menu] real application menu installed");
 }
 // updateMenu is already exposed via sharedMainApi (see sharedApi.updateAppMenu above)
 
@@ -1669,6 +1729,11 @@ function createWindow(opts: { makePrimary?: boolean } = {}): BrowserWindow {
     log.debug(
       `[window-ready] Window ${win.id} finished loading, marked as ready`,
     );
+
+    // Install the real native menu now that the renderer is alive (and if
+    // settings have already been loaded). No-op if either gate isn't met
+    // yet – the post-settings-load path also calls tryInstallMenu().
+    tryInstallMenu();
 
     applyWindowTitles();
 
@@ -2152,11 +2217,14 @@ function createWindow(opts: { makePrimary?: boolean } = {}): BrowserWindow {
   }
 
   setImmediate(async () => {
-    buildMenu();
+    // Show a minimal placeholder menu (or none on Win/Linux) until settings
+    // are loaded AND the renderer signals ready – see tryInstallMenu().
+    installPlaceholderMenu();
     await settingsService.load();
     const s = settingsService.get();
     if (s.logToFile) openLogStream();
-    updateMenu();
+    settingsLoadedForMenu = true;
+    tryInstallMenu();
   });
 
   return win;
