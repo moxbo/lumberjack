@@ -5,7 +5,7 @@
   "main": "dist-main/main.cjs",
   "type": "module",
   "engines": {
-    "node": ">=20.0.0"
+    "node": ">=22.12.0"
   },
   "scripts": {
     "prebuild": "esbuild src/main/parsers.ts src/utils/settings.ts --outdir=src --out-extension:.js=.cjs --format=cjs --platform=node && esbuild src/main/parsers.ts --outfile=release/app/dist/main/parsers.cjs --format=cjs --platform=node && npm run build:main && npm run build:preload && npm run build:main-local && npm run build:filter-process",
