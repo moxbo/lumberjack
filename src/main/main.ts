@@ -1693,6 +1693,23 @@ function createWindow(opts: { makePrimary?: boolean } = {}): BrowserWindow {
   });
   // --- /Security hardening ---
 
+  // Page-Title-Updates aus dem Renderer (HTML <title> oder document.title) abfangen,
+  // damit dynamische Suffixe wie" — TCP:<port>" nicht überschrieben werden.
+  // Stattdessen wird der Renderer-Titel als Base-Title gespeichert und über
+  // applyWindowTitles() inkl. TCP-Suffix neu gesetzt.
+  win.webContents.on("page-title-updated", (event, newTitle) => {
+    try {
+      event.preventDefault();
+      setWindowBaseTitle(win, newTitle);
+      applyWindowTitles();
+    } catch (e) {
+      log.warn(
+        "page-title-updated handler failed:",
+        e instanceof Error ? e.message : String(e),
+      );
+    }
+  });
+
   windows.add(win);
   if (!mainWindow || makePrimary) mainWindow = win;
 
