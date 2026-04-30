@@ -1384,7 +1384,59 @@ function buildMenu(): void {
   ];
   const menu = Menu.buildFromTemplate(template);
   Menu.setApplicationMenu(menu);
+  applyTaskbarMenus();
 }
+
+/**
+ * Installs platform-specific taskbar / dock menus so the user can quickly
+ * open a new window from outside the app:
+ *  - macOS: dock right-click menu via app.dock.setMenu()
+ *  - Windows: JumpList user task via app.setUserTasks() that launches a
+ *    new instance with the --new-window flag (handled by second-instance).
+ */
+function applyTaskbarMenus(): void {
+  const newWindowLabel = t("main.menu.newWindow");
+  try {
+    if (process.platform === "darwin") {
+      // app.dock can be undefined on non-macOS or when running headless
+      const dock = (app as unknown as { dock?: Electron.Dock }).dock;
+      if (dock && typeof dock.setMenu === "function") {
+        const dockMenu = Menu.buildFromTemplate([
+          {
+            label: newWindowLabel,
+            click: () => {
+              try {
+                openWindowInNewProcess();
+              } catch (e) {
+                log.warn?.("[dock-menu] new window failed:", e);
+              }
+            },
+          },
+        ]);
+        dock.setMenu(dockMenu);
+      }
+    } else if (process.platform === "win32") {
+      try {
+        const iconPath = resolveIconPathSync() || "";
+        app.setUserTasks([
+          {
+            program: process.execPath,
+            arguments: `${MULTI_INSTANCE_FLAG} ${NEW_WINDOW_FLAG}`,
+            iconPath,
+            iconIndex: 0,
+            title: newWindowLabel,
+            description: newWindowLabel,
+          },
+        ]);
+      } catch (e) {
+        log.warn?.("[user-tasks] setUserTasks failed:", e);
+      }
+    }
+  } catch (e) {
+    log.warn?.("[taskbar-menu] applyTaskbarMenus failed:", e);
+  }
+}
+
 function updateMenu(): void {
   // Suppress menu rebuilds while the app is still bootstrapping; the real
   // menu is installed once via tryInstallMenu() when both the renderer
@@ -1427,6 +1479,9 @@ function installPlaceholderMenu(): void {
       // Win/Linux: hide the menu bar entirely until ready.
       Menu.setApplicationMenu(null);
     }
+    // Install dock menu / jump list early so "Neues Fenster" is available
+    // even before the real menu is ready.
+    applyTaskbarMenus();
   } catch (e) {
     log.warn?.("[menu] installPlaceholderMenu failed:", e);
   }
