@@ -634,7 +634,7 @@ export class NetworkService {
           if (urlErr instanceof Error && urlErr.message.includes("protocol")) {
             throw urlErr;
           }
-          throw new Error(`Invalid URL: ${url}`);
+          throw new Error(`Invalid URL: ${url}`, { cause: urlErr });
         }
 
         // For HTTPS with insecure SSL option, use native Node.js https module
@@ -681,39 +681,49 @@ export class NetworkService {
         if (err instanceof Error && err.name === "AbortError") {
           // Check if it was external abort (poll stopped) vs timeout
           if (externalSignal?.aborted) {
-            throw new Error("Request aborted (poll stopped)");
+            throw new Error("Request aborted (poll stopped)", { cause: err });
           }
           throw new Error(
             `Request timeout after ${NetworkService.HTTP_FETCH_TIMEOUT_MS}ms`,
+            { cause: err },
           );
         }
         // Provide more helpful error messages for common network errors
         if (err instanceof Error) {
           const errMsg = err.message.toLowerCase();
           if (errMsg.includes("enotfound") || errMsg.includes("getaddrinfo")) {
-            throw new Error(`DNS lookup failed: Host not found for ${url}`);
+            throw new Error(`DNS lookup failed: Host not found for ${url}`, {
+              cause: err,
+            });
           }
           if (errMsg.includes("econnrefused")) {
             throw new Error(
               `Connection refused: Server at ${url} is not accepting connections`,
+              { cause: err },
             );
           }
           if (errMsg.includes("econnreset")) {
-            throw new Error(`Connection reset: Server closed the connection`);
+            throw new Error(`Connection reset: Server closed the connection`, {
+              cause: err,
+            });
           }
           if (errMsg.includes("etimedout") || errMsg.includes("timeout")) {
-            throw new Error(`Connection timeout: Could not reach ${url}`);
+            throw new Error(`Connection timeout: Could not reach ${url}`, {
+              cause: err,
+            });
           }
           if (
             errMsg.includes("cert") ||
             errMsg.includes("ssl") ||
             errMsg.includes("tls")
           ) {
-            throw new Error(`SSL/TLS error: ${err.message}`);
+            throw new Error(`SSL/TLS error: ${err.message}`, { cause: err });
           }
           if (errMsg.includes("fetch failed")) {
             // Generic fetch error - provide URL for context
-            throw new Error(`Network error: Could not connect to ${url}`);
+            throw new Error(`Network error: Could not connect to ${url}`, {
+              cause: err,
+            });
           }
         }
         throw err;

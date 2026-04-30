@@ -173,7 +173,7 @@ function parseTextLinesWorker(lines: string[], source: string): LogEntry[] {
     if (!trimmed) continue;
 
     // Try JSON parsing first
-    let obj: AnyMap | null = null;
+    let obj: AnyMap | null;
     try {
       const parsed: unknown = JSON.parse(trimmed);
       obj = parsed && typeof parsed === "object" ? (parsed as AnyMap) : null;

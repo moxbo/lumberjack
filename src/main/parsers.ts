@@ -1334,6 +1334,7 @@ export async function fetchElasticPitPage(
         pitSessions.delete(sess.sessionId);
         throw new Error(
           `Scroll-Kontext abgelaufen oder ungültig. Bitte Suche erneut starten. (${scrollErr instanceof Error ? scrollErr.message : String(scrollErr)})`,
+          { cause: scrollErr },
         );
       }
     }

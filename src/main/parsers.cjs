@@ -998,7 +998,8 @@ async function fetchElasticPitPage(opts) {
         );
         pitSessions.delete(sess.sessionId);
         throw new Error(
-          `Scroll-Kontext abgelaufen oder ung\xFCltig. Bitte Suche erneut starten. (${scrollErr instanceof Error ? scrollErr.message : String(scrollErr)})`
+          `Scroll-Kontext abgelaufen oder ung\xFCltig. Bitte Suche erneut starten. (${scrollErr instanceof Error ? scrollErr.message : String(scrollErr)})`,
+          { cause: scrollErr }
         );
       }
     }

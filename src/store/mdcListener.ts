@@ -3,6 +3,7 @@
 
 import { lazyInstance } from "./_lazy";
 import { canonicalDcKey } from "./dcFilter";
+import { LoggingStore } from "./loggingStore";
 
 type Listener = () => void;
 class SimpleEmitter {
@@ -40,40 +41,22 @@ class MDCListenerImpl {
       // guard: multiple calls should not add duplicate listeners
       if (this._started) return;
       this._started = true;
-      // Load LoggingStore dynamically to avoid a static circular import
-      import("./loggingStore")
-        .then((mod) => {
-          const modAny = mod as {
-            LoggingStore?: {
-              addLoggingStoreListener: (listener: unknown) => void;
-              getAllEvents?: () => Array<Record<string, unknown>>;
-            };
-            default?: {
-              addLoggingStoreListener: (listener: unknown) => void;
-              getAllEvents?: () => Array<Record<string, unknown>>;
-            };
-          };
-          const LS = modAny?.LoggingStore || modAny?.default;
-          try {
-            // Seed with existing events (if any)
-            try {
-              const all = LS?.getAllEvents?.() || [];
-              if (Array.isArray(all) && all.length) this._onAdded(all);
-            } catch (e) {
-              console.warn("MDCListener seeding failed:", e);
-            }
-            LS?.addLoggingStoreListener({
-              loggingEventsAdded: (events: Record<string, unknown>[]) =>
-                this._onAdded(events),
-              loggingStoreReset: () => this._onReset(),
-            });
-          } catch (e) {
-            console.warn("Failed to attach LoggingStore listener:", e);
-          }
-        })
-        .catch((e) => {
-          console.warn("Dynamic import of LoggingStore failed:", e);
+      try {
+        // Seed with existing events (if any)
+        try {
+          const all = LoggingStore?.getAllEvents?.() || [];
+          if (Array.isArray(all) && all.length) this._onAdded(all);
+        } catch (e) {
+          console.warn("MDCListener seeding failed:", e);
+        }
+        LoggingStore?.addLoggingStoreListener({
+          loggingEventsAdded: (events: Record<string, unknown>[]) =>
+            this._onAdded(events),
+          loggingStoreReset: () => this._onReset(),
         });
+      } catch (e) {
+        console.warn("Failed to attach LoggingStore listener:", e);
+      }
     } catch (e) {
       console.warn("startListening failed:", e);
     }
