@@ -443,6 +443,14 @@ const api: ElectronAPI = {
   httpTailStop: (id: number): Promise<{ ok: boolean; error?: string }> =>
     ipcRenderer.invoke("httpTail:stop", { id }),
 
+  httpTailNotifyActiveCount: (count: number): void => {
+    try {
+      ipcRenderer.send("httpTail:activeCount", { count });
+    } catch {
+      // ignore – best effort
+    }
+  },
+
   httpTailList: (): Promise<{
     ok: boolean;
     tails: Array<{ id: number; url: string; offset: number }>;

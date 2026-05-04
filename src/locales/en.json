@@ -342,6 +342,7 @@
       "httpPollStart": "Start HTTP polling…",
       "httpPollStop": "Stop HTTP polling",
       "httpTailStart": "Start HTTP tail…",
+      "httpTailStop": "Stop HTTP tail",
       "followMode": "Follow Mode",
       "helpMenu": "Help",
       "helpGuide": "Help / Guide…",

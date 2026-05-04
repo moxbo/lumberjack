@@ -572,6 +572,13 @@ const pendingMenuCmdsByWindow = new Map<
 let lastFocusedWindowId: number | null = null;
 const pendingAppendsByWindow = new Map<number, LogEntry[]>();
 
+/**
+ * Active HTTP-tail count reported by each renderer window. The native
+ * Network menu uses this to enable/disable the "HTTP-Tail stoppen" item
+ * for the currently focused window.
+ */
+const httpTailCountByWindow = new Map<number, number>();
+
 // Track last memory warning time to avoid spamming
 let lastMemoryWarningTime = 0;
 const MEMORY_WARNING_COOLDOWN_MS = 60000; // Only warn once per minute
@@ -1151,6 +1158,9 @@ function buildMenu(): void {
   const tcpStatus = networkService.getTcpStatus();
   const focused = BrowserWindow.getFocusedWindow?.() || null;
   const canTcp = getWindowCanTcpControl(focused);
+  const focusedWinId = focused?.id ?? lastFocusedWindowId;
+  const httpTailCount =
+    focusedWinId != null ? httpTailCountByWindow.get(focusedWinId) || 0 : 0;
   const template: Electron.MenuItemConstructorOptions[] = [
     ...(isMac
       ? ([
@@ -1299,6 +1309,19 @@ function buildMenu(): void {
           click: (_mi, win) =>
             sendMenuCmd(
               { type: "http-tail-start" },
+              (win as BrowserWindow | null | undefined) || null,
+            ),
+        },
+        {
+          id: "http-tail-stop",
+          label:
+            httpTailCount > 1
+              ? `${t("main.menu.httpTailStop")} (${httpTailCount})`
+              : t("main.menu.httpTailStop"),
+          enabled: httpTailCount > 0,
+          click: (_mi, win) =>
+            sendMenuCmd(
+              { type: "http-tail-stop-all" },
               (win as BrowserWindow | null | undefined) || null,
             ),
         },
@@ -2085,6 +2108,7 @@ function createWindow(opts: { makePrimary?: boolean } = {}): BrowserWindow {
     windowMeta.delete(win.id);
     pendingAppendsByWindow.delete(win.id);
     loadedWindows.delete(win.id); // Remove from loaded windows set
+    httpTailCountByWindow.delete(win.id);
     if (tcpOwnerWindowId != null && tcpOwnerWindowId === win.id) {
       try {
         void networkService.stopTcpServer();
@@ -2373,6 +2397,31 @@ try {
       );
     }
   });
+
+  // Track HTTP-tail count per window so the native menu can show a
+  // contextual "Stop HTTP tail" entry. The renderer sends this whenever
+  // the active tail list changes (see useHttpTail in App.tsx).
+  ipcMain.on(
+    "httpTail:activeCount",
+    (event: Electron.IpcMainEvent, payload: { count?: number } | undefined) => {
+      try {
+        const win = BrowserWindow.fromWebContents(event.sender);
+        if (!win) return;
+        const count = Math.max(0, Number(payload?.count) || 0);
+        if (count <= 0) {
+          httpTailCountByWindow.delete(win.id);
+        } else {
+          httpTailCountByWindow.set(win.id, count);
+        }
+        updateMenu();
+      } catch (err) {
+        log.error(
+          "[diag] Error in httpTail:activeCount handler:",
+          err instanceof Error ? err.message : String(err),
+        );
+      }
+    },
+  );
 } catch (err) {
   log.error(
     "[diag] Failed to register tcp:status handler:",

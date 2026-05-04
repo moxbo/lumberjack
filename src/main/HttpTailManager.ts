@@ -184,9 +184,14 @@ export class HttpTailManager {
         }
       }
     } catch (err) {
-      state.callbacks.onError?.(
-        err instanceof Error ? err : new Error(String(err)),
-      );
+      // Swallow abort errors triggered by stop() – the user explicitly
+      // requested termination and shouldn't see a misleading "AbortError"
+      // toast in the renderer.
+      if (!state.stopped) {
+        state.callbacks.onError?.(
+          err instanceof Error ? err : new Error(String(err)),
+        );
+      }
     } finally {
       this.scheduleNext(state);
     }
@@ -303,6 +308,10 @@ export class HttpTailManager {
    */
   private async discoverSize(state: TailState): Promise<number | undefined> {
     const ac = new AbortController();
+    // Register so HttpTailManager.stop() can abort an in-flight discovery
+    // (important when the URL is unreachable and we'd otherwise wait for the
+    // 15s default timeout before the manager actually shuts down).
+    state.abort = ac;
     const timeout = setTimeout(() => ac.abort(), state.timeoutMs);
     try {
       // Try HEAD first.
@@ -353,6 +362,7 @@ export class HttpTailManager {
       }
     } finally {
       clearTimeout(timeout);
+      state.abort = null;
     }
     return undefined;
   }

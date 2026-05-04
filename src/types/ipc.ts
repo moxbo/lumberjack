@@ -235,6 +235,7 @@ export type MenuCommand =
   | { type: "http-start-poll" }
   | { type: "http-stop-poll" }
   | { type: "http-tail-start" }
+  | { type: "http-tail-stop-all" }
   | { type: "tcp-configure" }
   | { type: "tcp-start" }
   | { type: "tcp-stop" }
@@ -479,6 +480,12 @@ export type ElectronAPI = {
     error?: string;
   }>;
   httpTailStop: (id: number) => Promise<{ ok: boolean; error?: string }>;
+  /**
+   * Notify the main process about the number of currently active HTTP tails
+   * for this renderer window. The native menu uses this to enable/disable the
+   * "Stop HTTP tail" entry without having to query the renderer.
+   */
+  httpTailNotifyActiveCount: (count: number) => void;
   httpTailList: () => Promise<{
     ok: boolean;
     tails: Array<{ id: number; url: string; offset: number }>;

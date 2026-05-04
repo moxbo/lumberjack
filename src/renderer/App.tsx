@@ -235,6 +235,29 @@ export default function App(): JSX.Element {
   });
   const [showHttpTailDialog, setShowHttpTailDialog] = useState<boolean>(false);
 
+  // Stable ref that always points to the latest httpTail API so the (mount-only)
+  // menu IPC handler below can stop tails even after re-renders. Without this,
+  // the closure captures the initial (empty) tails list and "Stop all HTTP
+  // tails" silently does nothing – particularly visible when the URL is
+  // unreachable and the user has no other UI to stop the tail.
+  const httpTailRef = useRef(httpTail);
+  httpTailRef.current = httpTail;
+
+  // Notify the main process whenever the active HTTP-tail count changes so
+  // the native Network menu can enable/disable the "HTTP-Tail stoppen" item.
+  useEffect(() => {
+    try {
+      const api = (
+        window as unknown as {
+          api?: { httpTailNotifyActiveCount?: (n: number) => void };
+        }
+      ).api;
+      api?.httpTailNotifyActiveCount?.(httpTail.tails.length);
+    } catch {
+      // ignore – best effort, menu just won't reflect state
+    }
+  }, [httpTail.tails.length]);
+
   // Entry management hook (entries, IPC batching, deduplication)
   const {
     entries,
@@ -2002,6 +2025,25 @@ export default function App(): JSX.Element {
               }
               case "http-tail-start": {
                 setShowHttpTailDialog(true);
+                break;
+              }
+              case "http-tail-stop-all": {
+                void (async () => {
+                  try {
+                    // Read latest tails via ref to avoid stale closure
+                    // (this handler is registered once with []-deps).
+                    const current = httpTailRef.current;
+                    const tails = current.tails.slice();
+                    for (const tl of tails) {
+                      await current.stop(tl.id);
+                    }
+                    if (tails.length > 0) {
+                      toaster.info(t("httpTail.stoppedAll"));
+                    }
+                  } catch (err) {
+                    logger.error("[menu] http-tail-stop-all failed:", err);
+                  }
+                })();
                 break;
               }
               case "http-stop-poll": {
