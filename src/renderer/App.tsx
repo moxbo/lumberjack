@@ -106,6 +106,7 @@ import {
 import { SkeletonLoader } from "./components/SkeletonLoader";
 import { ElasticStatusBar } from "./components/ElasticStatusBar";
 import { JSX } from "preact/jsx-runtime";
+import { buildDemoEntries, LOGBACK_TCP_SNIPPET } from "./onboardingData";
 
 // Lazy-load dialogs that are not shown on initial render for faster startup
 const HelpDialog = lazy(() =>
@@ -3737,21 +3738,113 @@ export default function App(): JSX.Element {
                 />
               );
             })}
-            {countFiltered === 0 && entries.length === 0 && (
-              <div className="list-empty">
-                <div className="list-empty-icon"></div>
-                <div className="list-empty-title">{t("list.emptyTitle")}</div>
-                <div className="list-empty-hint">{t("list.emptyHint")}</div>
-              </div>
-            )}
-            {countFiltered === 0 && entries.length > 0 && (
-              <div className="list-empty">
-                <div className="list-empty-icon"></div>
-                <div className="list-empty-title">{t("list.noMatchTitle")}</div>
-                <div className="list-empty-hint">{t("list.noMatchHint")}</div>
-              </div>
-            )}
           </div>
+          {/* Empty-States außerhalb des virtualisierten Wrappers,
+              damit sie bei totalHeight=0 nicht durch `contain: strict` geclippt werden. */}
+          {countFiltered === 0 && entries.length === 0 && (
+            <div className="list-empty">
+              <div className="list-empty-icon">📜</div>
+              <div className="list-empty-title">{t("list.emptyTitle")}</div>
+              <div className="list-empty-hint">{t("list.emptyHint")}</div>
+              <div className="list-empty-actions">
+                <button
+                  type="button"
+                  className="btn-primary"
+                  onClick={async () => {
+                    try {
+                      const paths = await typedOpenFiles();
+                      if (paths && paths.length) {
+                        const res = await typedParsePaths(paths);
+                        if (res?.ok) appendEntries(res.entries as any);
+                      }
+                    } catch (e) {
+                      logger.error("Open file failed:", e);
+                    }
+                  }}
+                >
+                  📂 {t("list.actionOpenFile")}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    try {
+                      typedTcpStart(tcpPortRef.current);
+                    } catch (e) {
+                      logger.error("TCP start failed:", e);
+                    }
+                  }}
+                >
+                  ⏵ {t("list.actionStartTcp")}
+                </button>
+                <button type="button" onClick={() => setShowTimeDialog(true)}>
+                  🔍 {t("list.actionElastic")}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    const demo = buildDemoEntries();
+                    appendEntries(demo as any);
+                    toaster.success(
+                      t("list.demoLoaded", { count: String(demo.length) }),
+                    );
+                  }}
+                >
+                  🎬 {t("list.actionLoadDemo")}
+                </button>
+                <button
+                  type="button"
+                  onClick={async () => {
+                    try {
+                      await navigator.clipboard.writeText(LOGBACK_TCP_SNIPPET);
+                      toaster.success(t("list.logbackCopied"));
+                    } catch (e) {
+                      logger.error("Clipboard write failed:", e);
+                      toaster.error(t("errors.copyFailed"));
+                    }
+                  }}
+                >
+                  📋 {t("list.actionCopyLogback")}
+                </button>
+              </div>
+            </div>
+          )}
+          {countFiltered === 0 && entries.length > 0 && (
+            <div className="list-empty">
+              <div className="list-empty-icon">🔎</div>
+              <div className="list-empty-title">{t("list.noMatchTitle")}</div>
+              <div className="list-empty-hint">{t("list.noMatchHint")}</div>
+              <div className="list-empty-actions">
+                <button
+                  type="button"
+                  className="btn-primary"
+                  onClick={() => {
+                    setSearch("");
+                    setFilter({
+                      level: "",
+                      logger: "",
+                      thread: "",
+                      service: "",
+                      message: "",
+                    });
+                    setOnlyMarked(false);
+                    try {
+                      patchSettingsQuiet({ onlyMarked: false });
+                    } catch {}
+                    try {
+                      TimeFilter.reset();
+                    } catch (e) {
+                      logger.error("Resetting TimeFilter failed:", e);
+                    }
+                    try {
+                      DiagnosticContextFilter.setEnabled(false);
+                    } catch {}
+                  }}
+                >
+                  ✕ {t("list.actionResetFilters")}
+                </button>
+              </div>
+            </div>
+          )}
         </div>
 
         {/* Overlay: Divider + Detailbereich */}
