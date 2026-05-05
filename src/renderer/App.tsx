@@ -2277,6 +2277,32 @@ export default function App(): JSX.Element {
     }
     return cnt;
   }, [entries]);
+
+  // Min/Max timestamps across ALL entries (ignoring active filters), used by
+  // the Elastic-Search-Dialog quick-select buttons ("older than" / "newer than").
+  // Filters must NOT influence these values, otherwise the user cannot easily
+  // load entries outside the current filter window.
+  const entriesTsRange = useMemo(() => {
+    let minTs: number | null = null;
+    let maxTs: number | null = null;
+    let minRaw: unknown = null;
+    let maxRaw: unknown = null;
+    for (const e of entries) {
+      const raw = e?.timestamp;
+      if (raw == null) continue;
+      const t = new Date(raw as any).getTime();
+      if (isNaN(t)) continue;
+      if (minTs === null || t < minTs) {
+        minTs = t;
+        minRaw = raw;
+      }
+      if (maxTs === null || t > maxTs) {
+        maxTs = t;
+        maxRaw = raw;
+      }
+    }
+    return { firstTs: minRaw, lastTs: maxRaw };
+  }, [entries]);
   const esLoaded = Math.max(0, esElasticCountAll - esBaseline);
   const esTarget = Math.max(1, Number(elasticSize || 0));
   const esPct =
@@ -2914,14 +2940,8 @@ export default function App(): JSX.Element {
             histAppName={histAppName}
             histEnvironment={histEnvironment}
             histIndex={histIndex} // NEW: pass histIndex to dialog
-            firstTs={(() => {
-              const firstIdx = filteredIdx[0];
-              return firstIdx != null ? entries[firstIdx]?.timestamp : null;
-            })()}
-            lastTs={(() => {
-              const lastIdx = filteredIdx[filteredIdx.length - 1];
-              return lastIdx != null ? entries[lastIdx]?.timestamp : null;
-            })()}
+            firstTs={entriesTsRange.firstTs}
+            lastTs={entriesTsRange.lastTs}
             onApply={async (formVals: any) => {
               try {
                 setShowTimeDialog(false);
