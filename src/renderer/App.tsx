@@ -3357,13 +3357,17 @@ export default function App(): JSX.Element {
               title={t("toolbar.prevMarkTooltip")}
               onClick={() => gotoMarked(-1)}
               disabled={markedIdx.length === 0}
-            ></button>
+            >
+              🔺
+            </button>
             <button
               className="btn-icon"
               title={t("toolbar.nextMarkTooltip")}
               onClick={() => gotoMarked(1)}
               disabled={markedIdx.length === 0}
-            ></button>
+            >
+              🔻
+            </button>
             {markedIdx.length > 0 && (
               <div style={{ position: "relative", display: "inline-flex" }}>
                 <button
