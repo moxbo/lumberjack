@@ -1,5 +1,5 @@
 import type { JSX } from "preact/jsx-runtime";
-import type { Toast } from "../../hooks/useToasts";
+import type { Toast } from "../../hooks";
 
 interface ToastStackProps {
   toasts: Toast[];
