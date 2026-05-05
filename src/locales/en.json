@@ -110,7 +110,35 @@
     "emptyTitle": "Ready for logs",
     "emptyHint": "Drag log files here, start the TCP server, or connect to Elasticsearch.",
     "noMatchTitle": "No matches",
-    "noMatchHint": "Active filters show no results."
+    "noMatchHint": "Active filters show no results.",
+    "actionOpenFile": "Open file…",
+    "actionStartTcp": "Start TCP server",
+    "actionElastic": "Elastic search…",
+    "actionLoadDemo": "Load demo data",
+    "actionCopyLogback": "Copy Logback snippet",
+    "actionResetFilters": "Reset all filters",
+    "logbackCopied": "Logback snippet copied to clipboard",
+    "demoLoaded": "Loaded {{count}} demo entries",
+    "ariaLiveAppend": "{{count}} new entries ({{summary}})",
+    "marksToolbarLabel": "Bookmark navigation"
+  },
+  "searchHelp": {
+    "buttonTooltip": "Show search syntax help",
+    "title": "Search syntax",
+    "phrase": "\"hello world\" — exact phrase",
+    "and": "foo&bar — AND",
+    "or": "foo|bar — OR",
+    "not": "!foo — NOT",
+    "group": "xml&(CB|AGV) — grouping",
+    "escape": "Tom\\&Jerry — escape special chars",
+    "moreHelp": "Open full help (F1)"
+  },
+  "a11y": {
+    "gotoStart": "Jump to start of list",
+    "gotoEnd": "Jump to end of list",
+    "prevMark": "Previous bookmark",
+    "nextMark": "Next bookmark",
+    "newEntries": "New log entries received"
   },
   "details": {
     "noSelection": "No selection",

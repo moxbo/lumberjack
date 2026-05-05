@@ -15,7 +15,7 @@ const ICONS: Record<Toast["severity"], string> = {
 };
 
 export function ToastStack(props: ToastStackProps): JSX.Element | null {
-  const { toasts, onDismiss, closeLabel = "Schliessen" } = props;
+  const { toasts, onDismiss, closeLabel = "Close" } = props;
   if (toasts.length === 0) return null;
   return (
     <div

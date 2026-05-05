@@ -187,6 +187,36 @@ export default function App(): JSX.Element {
   const { alertState, showAlert, closeAlert, handleFeatureError } = useAlerts();
   // Non-blocking toast notifications (success/info confirmations)
   const toaster = useToasts();
+
+  // QW-11 / A11Y-3: aggregated aria-live announcement for incoming logs.
+  // Screen readers receive a debounced summary like "+12 INFO, +1 ERROR" every ~2s.
+  const [a11yAnnouncement, setA11yAnnouncement] = useState<string>("");
+  const a11yPendingRef = useRef<Record<string, number>>({});
+  const a11yTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const announceAppend = useCallback(
+    (newEntries: ReadonlyArray<{ level?: string | null }> | undefined) => {
+      if (!newEntries || newEntries.length === 0) return;
+      const pend = a11yPendingRef.current;
+      for (const e of newEntries) {
+        const lvl = (e?.level || "OTHER").toString().toUpperCase();
+        pend[lvl] = (pend[lvl] || 0) + 1;
+      }
+      if (a11yTimerRef.current) return;
+      a11yTimerRef.current = setTimeout(() => {
+        a11yTimerRef.current = null;
+        const counts = a11yPendingRef.current;
+        a11yPendingRef.current = {};
+        const total = Object.values(counts).reduce((a, b) => a + b, 0);
+        if (total === 0) return;
+        const summary = Object.entries(counts)
+          .sort((a, b) => b[1] - a[1])
+          .map(([lvl, n]) => `+${n} ${lvl}`)
+          .join(", ");
+        setA11yAnnouncement(`${total} – ${summary}`);
+      }, 2000);
+    },
+    [],
+  );
   // Alert rules (persisted via IPC) + evaluator hooked into the append-pipeline.
   const alertRulesHook = useAlertRules();
   const alertRunner = useAlertRunner({
@@ -1970,6 +2000,7 @@ export default function App(): JSX.Element {
             `[renderer-diag] Received IPC logs:append with ${newEntries?.length || 0} entries`,
           );
           appendEntries(newEntries as any[]);
+          announceAppend(newEntries as any[]);
           // Sprint 5: feed alert evaluator with new entries.
           try {
             if (Array.isArray(newEntries) && newEntries.length > 0) {
@@ -3783,6 +3814,27 @@ export default function App(): JSX.Element {
         onDismiss={toaster.dismiss}
         closeLabel={t("common.close")}
       />
+
+      {/* QW-11 / A11Y-3: visually hidden aria-live region for incoming logs */}
+      <div
+        role="status"
+        aria-live="polite"
+        aria-atomic="true"
+        aria-label={t("a11y.newEntries")}
+        style={{
+          position: "absolute",
+          width: "1px",
+          height: "1px",
+          padding: 0,
+          margin: "-1px",
+          overflow: "hidden",
+          clip: "rect(0,0,0,0)",
+          whiteSpace: "nowrap",
+          border: 0,
+        }}
+      >
+        {a11yAnnouncement}
+      </div>
 
       {/* Update-Benachrichtigung */}
       <UpdateNotification />

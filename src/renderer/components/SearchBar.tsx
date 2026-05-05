@@ -6,6 +6,7 @@
  * and prev/next match navigation buttons.
  */
 import { createPortal } from "preact/compat";
+import { useRef, useState } from "preact/hooks";
 import type { RefObject } from "preact";
 import type { JSX } from "preact/jsx-runtime";
 import { useI18n } from "../../utils/i18n";
@@ -71,9 +72,11 @@ export function SearchBar({
   gotoSearchMatch,
   t,
 }: SearchBarProps): JSX.Element {
+  const [showSyntaxHelp, setShowSyntaxHelp] = useState(false);
+  const syntaxHelpBtnRef = useRef<HTMLButtonElement | null>(null);
   return (
     <div className="section">
-      <div className="search-wrapper">
+      <div className="search-wrapper" style={{ position: "relative" }}>
         <input
           id="searchText"
           ref={searchInputRef as any}
@@ -166,7 +169,107 @@ export function SearchBar({
           onBlur={(e) => addFilterHistory("search", e.currentTarget.value)}
           placeholder={t("toolbar.searchPlaceholder")}
           autocomplete="off"
+          style={{ paddingRight: "26px" }}
         />
+        <button
+          type="button"
+          ref={syntaxHelpBtnRef as any}
+          className="search-syntax-help-btn"
+          aria-label={t("searchHelp.buttonTooltip")}
+          title={t("searchHelp.buttonTooltip")}
+          aria-expanded={showSyntaxHelp}
+          onMouseDown={(e) => e.preventDefault()}
+          onClick={() => setShowSyntaxHelp((v) => !v)}
+          onBlur={() => setTimeout(() => setShowSyntaxHelp(false), 200)}
+          style={{
+            position: "absolute",
+            right: "4px",
+            top: "50%",
+            transform: "translateY(-50%)",
+            background: "var(--color-bg-hover, rgba(127,127,127,0.15))",
+            border: "1px solid var(--color-border, rgba(127,127,127,0.25))",
+            cursor: "help",
+            color: "var(--color-text-secondary)",
+            fontSize: "12px",
+            fontWeight: 700,
+            width: "20px",
+            height: "20px",
+            padding: 0,
+            borderRadius: "50%",
+            lineHeight: "18px",
+            display: "inline-flex",
+            alignItems: "center",
+            justifyContent: "center",
+            zIndex: 1,
+          }}
+        >
+          ?
+        </button>
+        {showSyntaxHelp &&
+          (() => {
+            const rect = syntaxHelpBtnRef.current?.getBoundingClientRect();
+            const top = rect ? rect.bottom + 6 : 60;
+            const right = rect
+              ? Math.max(8, window.innerWidth - rect.right)
+              : 16;
+            return createPortal(
+              <div
+                role="dialog"
+                aria-label={t("searchHelp.title")}
+                className="search-syntax-popover"
+                style={{
+                  position: "fixed",
+                  top: top + "px",
+                  right: right + "px",
+                  minWidth: "280px",
+                  maxWidth: "360px",
+                  padding: "10px 12px",
+                  background: "var(--color-bg-paper)",
+                  border: "1px solid var(--color-border)",
+                  borderRadius: "6px",
+                  boxShadow: "0 8px 32px rgba(0,0,0,0.28)",
+                  zIndex: 999999,
+                  fontSize: "12px",
+                  lineHeight: 1.7,
+                  color: "var(--color-text-primary)",
+                }}
+                onMouseDown={(e) => e.preventDefault()}
+              >
+                <div style={{ fontWeight: 600, marginBottom: 6 }}>
+                  {t("searchHelp.title")}
+                </div>
+                <div>
+                  <code>{t("searchHelp.phrase")}</code>
+                </div>
+                <div>
+                  <code>{t("searchHelp.and")}</code>
+                </div>
+                <div>
+                  <code>{t("searchHelp.or")}</code>
+                </div>
+                <div>
+                  <code>{t("searchHelp.not")}</code>
+                </div>
+                <div>
+                  <code>{t("searchHelp.group")}</code>
+                </div>
+                <div>
+                  <code>{t("searchHelp.escape")}</code>
+                </div>
+                <div
+                  style={{
+                    marginTop: 6,
+                    paddingTop: 6,
+                    borderTop: "1px solid var(--color-divider)",
+                    color: "var(--color-text-secondary)",
+                  }}
+                >
+                  <kbd>F1</kbd> {t("searchHelp.moreHelp")}
+                </div>
+              </div>,
+              document.body,
+            );
+          })()}
       </div>
       {/* Search mode button with dropdown */}
       <div style={{ position: "relative" }} id="searchModeBtn">

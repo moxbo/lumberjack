@@ -110,7 +110,35 @@
     "emptyTitle": "Bereit für Logs",
     "emptyHint": "Ziehe Log-Dateien hierher, starte den TCP-Server oder verbinde dich mit Elasticsearch.",
     "noMatchTitle": "Keine Treffer",
-    "noMatchHint": "Die aktiven Filter zeigen keine Ergebnisse."
+    "noMatchHint": "Die aktiven Filter zeigen keine Ergebnisse.",
+    "actionOpenFile": "Datei öffnen…",
+    "actionStartTcp": "TCP-Server starten",
+    "actionElastic": "Elastic-Suche…",
+    "actionLoadDemo": "Demo-Daten laden",
+    "actionCopyLogback": "Logback-Snippet kopieren",
+    "actionResetFilters": "Alle Filter zurücksetzen",
+    "logbackCopied": "Logback-Snippet in die Zwischenablage kopiert",
+    "demoLoaded": "{{count}} Demo-Einträge geladen",
+    "ariaLiveAppend": "{{count}} neue Einträge ({{summary}})",
+    "marksToolbarLabel": "Markierungs-Navigation"
+  },
+  "searchHelp": {
+    "buttonTooltip": "Suchsyntax-Hilfe anzeigen",
+    "title": "Suchsyntax",
+    "phrase": "\"hello world\" — exakte Phrase",
+    "and": "foo&bar — UND",
+    "or": "foo|bar — ODER",
+    "not": "!foo — NICHT",
+    "group": "xml&(CB|AGV) — Gruppierung",
+    "escape": "Tom\\&Jerry — Sonderzeichen escapen",
+    "moreHelp": "Vollständige Hilfe öffnen (F1)"
+  },
+  "a11y": {
+    "gotoStart": "Zum Anfang der Liste springen",
+    "gotoEnd": "Zum Ende der Liste springen",
+    "prevMark": "Vorherige Markierung",
+    "nextMark": "Nächste Markierung",
+    "newEntries": "Neue Log-Einträge eingegangen"
   },
   "details": {
     "noSelection": "Keine Auswahl",

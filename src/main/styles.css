@@ -709,6 +709,30 @@ body {
   margin-top: 20px;
   display: flex;
   gap: 12px;
+  flex-wrap: wrap;
+  justify-content: center;
+  max-width: 640px;
+}
+
+.list-empty-actions button {
+  cursor: pointer;
+}
+
+.list-empty-actions .btn-primary {
+  background: var(--accent-gradient, var(--color-primary, #2563eb));
+  color: #fff;
+  border: 1px solid transparent;
+}
+
+.list-empty-actions .btn-primary:hover {
+  filter: brightness(1.08);
+}
+
+.search-syntax-popover code {
+  background: var(--color-bg-hover, rgba(127, 127, 127, 0.12));
+  padding: 1px 4px;
+  border-radius: 3px;
+  font-size: 11.5px;
 }
 
 /* Überdeckende Füllfläche entfernen – Scrollbar bleibt vollständig sichtbar */
