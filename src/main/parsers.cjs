@@ -737,7 +737,7 @@ function buildQueryBodyWithPit(opts, pitId) {
   return baseBody;
 }
 async function searchWithPit(sess, body) {
-  const url = `${sess.baseUrl}/_search?filter_path=hits.hits._source,hits.hits.sort,hits.total`;
+  const url = `${sess.baseUrl}/_search?filter_path=hits.hits._source,hits.hits.sort,hits.hits._id,hits.hits._index,hits.total`;
   const exec = () => httpJsonRequest(
     "POST",
     url,
@@ -880,7 +880,7 @@ function parseHitsResponse(data, size) {
 }
 async function openScroll(baseUrl, index, keepAlive, size, sortOrder, headers, allowInsecureTLS, timeoutMs, maxRetries, backoffBaseMs, queryOpts) {
   const idx = index && index.trim() ? index.trim() : "_all";
-  const url = `${baseUrl}/${encodeURIComponent(idx)}/_search?scroll=${encodeURIComponent(keepAlive)}&ignore_unavailable=true&allow_no_indices=true&expand_wildcards=open&filter_path=hits.hits._source,hits.hits.sort,hits.total,_scroll_id`;
+  const url = `${baseUrl}/${encodeURIComponent(idx)}/_search?scroll=${encodeURIComponent(keepAlive)}&ignore_unavailable=true&allow_no_indices=true&expand_wildcards=open&filter_path=hits.hits._source,hits.hits.sort,hits.hits._id,hits.hits._index,hits.total,_scroll_id`;
   const body = buildElasticSearchBody({
     ...queryOpts || {},
     index: idx,
@@ -904,7 +904,7 @@ async function openScroll(baseUrl, index, keepAlive, size, sortOrder, headers, a
   return { scrollId, entries, total };
 }
 async function scrollNext(baseUrl, keepAlive, scrollId, headers, allowInsecureTLS, timeoutMs, maxRetries, backoffBaseMs) {
-  const url = `${baseUrl}/_search/scroll?filter_path=hits.hits._source,hits.hits.sort,_scroll_id`;
+  const url = `${baseUrl}/_search/scroll?filter_path=hits.hits._source,hits.hits.sort,hits.hits._id,hits.hits._index,_scroll_id`;
   const body = { scroll: keepAlive, scroll_id: scrollId };
   const exec = () => httpJsonRequest("POST", url, body, headers, allowInsecureTLS, timeoutMs);
   const res = await requestWithRetry(exec, { maxRetries, backoffBaseMs });

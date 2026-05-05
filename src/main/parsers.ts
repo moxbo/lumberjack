@@ -992,7 +992,7 @@ async function searchWithPit(
   sess: PitSession,
   body: AnyMap,
 ): Promise<{ status: number; text: string; json: AnyMap | null }> {
-  const url = `${sess.baseUrl}/_search?filter_path=hits.hits._source,hits.hits.sort,hits.total`;
+  const url = `${sess.baseUrl}/_search?filter_path=hits.hits._source,hits.hits.sort,hits.hits._id,hits.hits._index,hits.total`;
   const exec = (): Promise<HttpResponse> =>
     httpJsonRequest(
       "POST",
@@ -1178,7 +1178,7 @@ async function openScroll(
   queryOpts?: ElasticsearchOptions,
 ): Promise<{ scrollId: string; entries: Entry[]; total: number | null }> {
   const idx = index && index.trim() ? index.trim() : "_all";
-  const url = `${baseUrl}/${encodeURIComponent(idx)}/_search?scroll=${encodeURIComponent(keepAlive)}&ignore_unavailable=true&allow_no_indices=true&expand_wildcards=open&filter_path=hits.hits._source,hits.hits.sort,hits.total,_scroll_id`;
+  const url = `${baseUrl}/${encodeURIComponent(idx)}/_search?scroll=${encodeURIComponent(keepAlive)}&ignore_unavailable=true&allow_no_indices=true&expand_wildcards=open&filter_path=hits.hits._source,hits.hits.sort,hits.hits._id,hits.hits._index,hits.total,_scroll_id`;
   const body = buildElasticSearchBody({
     ...(queryOpts || {}),
     index: idx,
@@ -1213,7 +1213,7 @@ async function scrollNext(
   maxRetries: number,
   backoffBaseMs: number,
 ): Promise<{ scrollId: string; entries: Entry[] }> {
-  const url = `${baseUrl}/_search/scroll?filter_path=hits.hits._source,hits.hits.sort,_scroll_id`;
+  const url = `${baseUrl}/_search/scroll?filter_path=hits.hits._source,hits.hits.sort,hits.hits._id,hits.hits._index,_scroll_id`;
   const body = { scroll: keepAlive, scroll_id: scrollId } as AnyMap;
   const exec = (): Promise<HttpResponse> =>
     httpJsonRequest("POST", url, body, headers, allowInsecureTLS, timeoutMs);
