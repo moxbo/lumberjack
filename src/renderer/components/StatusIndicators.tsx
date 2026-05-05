@@ -7,6 +7,7 @@ interface StatusIndicatorsProps {
   busy: boolean;
   tcpStatus: string;
   httpStatus: string;
+  httpTailCount?: number;
   nextPollIn: string;
   t: (key: string, params?: Record<string, string>) => string;
 }
@@ -15,6 +16,7 @@ export function StatusIndicators({
   busy,
   tcpStatus,
   httpStatus,
+  httpTailCount = 0,
   nextPollIn,
   t,
 }: StatusIndicatorsProps) {
@@ -46,6 +48,14 @@ export function StatusIndicators({
           className={`status ${isHttpError ? "status-error" : "status-active"}`}
         >
           {isHttpError ? "🔴" : "🟢"} {httpStatus}
+        </span>
+      )}
+      {httpTailCount > 0 && (
+        <span id="httpTailStatus" className="status status-active">
+          🟢{" "}
+          {httpTailCount > 1
+            ? t("status.httpTailingMulti", { count: String(httpTailCount) })
+            : t("status.httpTailing")}
         </span>
       )}
       {nextPollIn && (

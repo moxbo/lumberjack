@@ -3423,6 +3423,7 @@ export default function App(): JSX.Element {
           busy={busy}
           tcpStatus={tcpStatus}
           httpStatus={httpStatus}
+          httpTailCount={httpTail.tails.length}
           nextPollIn={nextPollIn}
           t={t}
         />

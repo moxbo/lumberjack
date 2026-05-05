@@ -10,6 +10,8 @@ export interface StatusSectionProps {
   busy: boolean;
   tcpStatus: string;
   httpStatus: string;
+  /** Number of currently active HTTP-Tail watchers (0 = hidden). */
+  httpTailCount?: number;
   nextPollIn: string;
   t: (key: string, params?: Record<string, string>) => string;
 }
@@ -18,6 +20,7 @@ export function StatusSection({
   busy,
   tcpStatus,
   httpStatus,
+  httpTailCount = 0,
   nextPollIn,
   t,
 }: StatusSectionProps): JSX.Element {
@@ -61,6 +64,15 @@ export function StatusSection({
         >
           <span aria-hidden="true">{isHttpError ? "🔴 " : "🟢 "}</span>
           {httpStatus}
+        </span>
+      )}
+      {/* HTTP-Tail Status - show when at least one tail is running */}
+      {httpTailCount > 0 && (
+        <span id="httpTailStatus" className="status status-active">
+          <span aria-hidden="true">🟢 </span>
+          {httpTailCount > 1
+            ? t("status.httpTailingMulti", { count: String(httpTailCount) })
+            : t("status.httpTailing")}
         </span>
       )}
       {nextPollIn && (

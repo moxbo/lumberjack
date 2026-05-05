@@ -8,6 +8,8 @@
     "tcpError": "TCP-Fehler",
     "httpPolling": "Polling #{{id}}",
     "httpPollStopped": "Poll gestoppt",
+    "httpTailing": "HTTP-Tail aktiv",
+    "httpTailingMulti": "HTTP-Tail aktiv ({{count}})",
     "error": "Fehler: {{message}}",
     "errorUnknown": "unbekannt",
     "elasticError": "Elastic-Fehler: {{message}}"

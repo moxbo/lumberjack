@@ -8,6 +8,8 @@
     "tcpError": "TCP error",
     "httpPolling": "Polling #{{id}}",
     "httpPollStopped": "Poll stopped",
+    "httpTailing": "HTTP tail active",
+    "httpTailingMulti": "HTTP tail active ({{count}})",
     "error": "Error: {{message}}",
     "errorUnknown": "unknown",
     "elasticError": "Elastic error: {{message}}"
