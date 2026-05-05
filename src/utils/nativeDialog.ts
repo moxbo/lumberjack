@@ -11,33 +11,52 @@
  * dialog returns, which reliably re-establishes keyboard input.
  */
 
+function isUnfocusable(el: Element | null): boolean {
+  if (!el) return true;
+  if (!(el instanceof HTMLElement)) return true;
+  if (el === document.body) return true;
+  if (!el.isConnected) return true;
+  // Disabled form controls cannot reliably hold focus; refocusing them is a no-op
+  // and leaves Chromium's internal focus state in a broken limbo.
+  return (el as HTMLElement & { disabled?: boolean }).disabled === true;
+}
+
+function focusCycle(target: HTMLElement): void {
+  try {
+    target.blur();
+  } catch {
+    /* ignore */
+  }
+  requestAnimationFrame(() => {
+    try {
+      target.focus();
+    } catch {
+      /* ignore */
+    }
+  });
+}
+
 function restoreFocus(): void {
-  setTimeout(() => {
+  // First pass: immediately after the dialog closes (microtask boundary).
+  // Second pass: after React has had a chance to flush state updates that
+  // may have disabled the originally-focused element (e.g. the "Clear logs"
+  // button becoming disabled after the entries list is emptied). Without
+  // the second pass, refocusing a now-disabled element silently fails and
+  // Chromium's webContents gets stuck in a state where <input> elements
+  // don't accept keystrokes until the OS window loses and regains focus.
+  const run = (): void => {
     try {
       const active = document.activeElement;
-      if (active && active !== document.body && active instanceof HTMLElement) {
-        active.blur();
-        requestAnimationFrame(() => {
-          try {
-            active.focus();
-          } catch {
-            /* ignore */
-          }
-        });
-      } else {
-        document.body.blur();
-        requestAnimationFrame(() => {
-          try {
-            document.body.focus();
-          } catch {
-            /* ignore */
-          }
-        });
-      }
+      const target = isUnfocusable(active)
+        ? document.body
+        : (active as HTMLElement);
+      focusCycle(target);
     } catch {
       // Ignore focus errors
     }
-  }, 0);
+  };
+  setTimeout(run, 0);
+  setTimeout(run, 50);
 }
 
 /** Drop-in replacement for `window.alert()` that restores keyboard focus afterwards. */

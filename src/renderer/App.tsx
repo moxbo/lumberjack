@@ -68,7 +68,10 @@ import { BASE_MARK_COLORS } from "../constants";
 
 // Import refactored utilities
 import { entrySignature } from "../utils/entryUtils";
-import { nativeConfirm } from "../utils/nativeDialog";
+import {
+  nativeConfirm,
+  restoreFocusAfterNativeDialog,
+} from "../utils/nativeDialog";
 
 // Import refactored hooks
 import {
@@ -2316,6 +2319,20 @@ export default function App(): JSX.Element {
   }
 
   function clearLogs() {
+    // Den Fokus vom auslösenden Element (z. B. dem "Logs leeren"-Button)
+    // entfernen, BEVOR der Bestätigungsdialog erscheint und der Button durch
+    // `disabled={entries.length === 0}` deaktiviert wird. Andernfalls verbleibt
+    // der Fokus auf einem deaktivierten Element und Chromium/Electron landet
+    // in einem Limbo-Zustand, in dem <input>-Felder erst wieder Tastatureingaben
+    // annehmen, nachdem das OS-Fenster einmal Fokus verloren und wieder
+    // erlangt hat.
+    try {
+      if (document.activeElement instanceof HTMLElement) {
+        document.activeElement.blur();
+      }
+    } catch {
+      /* ignore */
+    }
     // Sicherheitsabfrage, nur wenn etwas zu löschen ist
     if (entries && entries.length > 0) {
       const confirmed = nativeConfirm(t("list.clearConfirmation"));
@@ -2350,6 +2367,13 @@ export default function App(): JSX.Element {
     } catch (e) {
       logger.error("LoggingStore.reset error:", e);
       showAlert(t("errors.resetLoggingStoreFailed"));
+    }
+    // Nach dem React-Flush (in dem der Button disabled wird) erneut die
+    // Tastatur-Eingabe wiederherstellen.
+    try {
+      restoreFocusAfterNativeDialog();
+    } catch {
+      /* ignore */
     }
     // HTTP/TCP Status wird NICHT zurückgesetzt, da Verbindungen noch aktiv sein können
   }
