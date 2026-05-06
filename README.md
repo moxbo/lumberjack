@@ -4,7 +4,7 @@ A fast, lightweight Electron-based log viewer with powerful filtering capabiliti
 
 [![Version](https://img.shields.io/github/v/release/moxbo/lumberjack)](https://github.com/moxbo/lumberjack/releases/latest)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
-[![Electron](https://img.shields.io/badge/electron-39.x-brightgreen.svg)](https://electronjs.org)
+[![Electron](https://img.shields.io/badge/electron-41.x-brightgreen.svg)](https://electronjs.org)
 [![CI](https://github.com/moxbo/lumberjack/actions/workflows/ci.yml/badge.svg)](https://github.com/moxbo/lumberjack/actions/workflows/ci.yml)
 [![codecov](https://codecov.io/gh/moxbo/lumberjack/branch/main/graph/badge.svg)](https://codecov.io/gh/moxbo/lumberjack)
 [![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](CONTRIBUTING.md)
@@ -34,12 +34,20 @@ A fast, lightweight Electron-based log viewer with powerful filtering capabiliti
 ## ✨ Features
 
 - **Powerful Filters**: AND (`&`), OR (`|`), NOT (`!`) operators
+- **Filter Profiles**: Save, search, import/export and undo filter sets
 - **Fast Startup**: < 2 seconds cold start
 - **Efficient Rendering**: 100,000+ log entries at 60 FPS
 - **TCP Log Reception**: Real-time log streaming
-- **Cross-Platform**: Windows, macOS, Linux
+- **HTTP Tailing**: Incremental Range-based polling of remote log endpoints
+- **File Watcher Tail**: Live-tailing of local log files (with rotation handling)
 - **Elasticsearch Integration**: Query and view logs from Elasticsearch
 - **MDC/Diagnostic Context**: Filter by diagnostic context fields
+- **Bookmarks**: Mark and quickly jump to important log entries
+- **Alert Rules**: Define rules and get notified when logs match
+- **Auto-Updater**: Automatic updates on installed builds (portable mode auto-detected)
+- **Internationalization**: German and English UI (`de` / `en`)
+- **Accessibility**: Aria-live announcements, reduced-motion support, keyboard-friendly dialogs
+- **Cross-Platform**: Windows, macOS, Linux
 
 ---
 
@@ -152,7 +160,7 @@ QcStatus&!CB23       → "QcStatus", but NOT "CB23"
 ## 🚀 Quick Start
 
 ### Prerequisites
-- Node.js LTS (18+)
+- Node.js 22.12+ (LTS)
 - npm
 
 ### Installation
