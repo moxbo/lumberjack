@@ -7,6 +7,9 @@ on:
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
+env:
+  # Keine Code-Signing-Zertifikate vorhanden
+  CSC_IDENTITY_AUTO_DISCOVERY: "false"
 jobs:
   lint:
     name: Lint & Format
@@ -24,6 +27,7 @@ jobs:
     name: Unit Tests (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     strategy:
+      fail-fast: false
       matrix:
         os: [ubuntu-latest, windows-latest, macos-latest]
     steps:
@@ -42,12 +46,9 @@ jobs:
           path: coverage/
           retention-days: 14
   build:
-    name: Build
+    name: Build (smoke)
     needs: [lint, test]
-    runs-on: ${{ matrix.os }}
-    strategy:
-      matrix:
-        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4

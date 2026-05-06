@@ -3,7 +3,7 @@ name: Build/release
 on:
   push:
     branches:
-      - "**"
+      - main
     tags:
       - "v*"
   workflow_dispatch:
@@ -28,6 +28,14 @@ on:
 
 permissions:
   contents: write
+
+concurrency:
+  group: build-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/') }}
+
+env:
+  # Code-Signing global deaktivieren (keine Zertifikate vorhanden)
+  CSC_IDENTITY_AUTO_DISCOVERY: "false"
 
 jobs:
   prepare-release:
@@ -161,34 +169,8 @@ jobs:
             gh release create "$tag" --draft --title "$tag" --notes "Release $tag"
           fi
 
-  # Schneller CI-Job: Nur Tests, läuft bei allen Pushes
-  ci:
-    runs-on: ubuntu-latest
-    # Nicht bei Tag-Pushes ausführen (da wird der release-Job verwendet)
-    if: ${{ !startsWith(github.ref, 'refs/tags/') && github.event.inputs.release_tag == '' }}
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-          cache: npm
-
-      - name: Install dependencies
-        run: npm ci
-
-      - name: Run tests with coverage
-        run: npx vitest run --coverage
-
-      - name: Upload coverage report
-        uses: actions/upload-artifact@v4
-        with:
-          name: coverage-report-ci
-          path: coverage/
-          retention-days: 14
-
-      - name: Lint check
-        run: npm run lint
+  # Schneller CI-Job: in ci.yml ausgelagert (Lint, Tests, Coverage).
+  # Hier nur noch der Release-Pfad bei Tags / workflow_dispatch.
 
   # Voller Build & Release: Nur bei Tags oder manuellem Release
   release:
@@ -253,24 +235,18 @@ jobs:
         run: npx electron-builder --win nsis --x64 --publish never
         env:
           CI: true
-          CSC_LINK: ${{ secrets.WIN_CSC_LINK }}
-          CSC_KEY_PASSWORD: ${{ secrets.WIN_CSC_KEY_PASSWORD }}
 
       - name: Build Windows Portable (optimized for fast startup)
         if: ${{ matrix.platform == 'win' && matrix.arch == 'x64' }}
         run: npx electron-builder --win portable --x64 --publish never
         env:
           CI: true
-          CSC_LINK: ${{ secrets.WIN_CSC_LINK }}
-          CSC_KEY_PASSWORD: ${{ secrets.WIN_CSC_KEY_PASSWORD }}
 
       - name: Build Windows Directory (for ZIP distribution)
         if: ${{ matrix.platform == 'win' && matrix.arch == 'x64' }}
         run: npx electron-builder --win dir --x64 --publish never
         env:
           CI: true
-          CSC_LINK: ${{ secrets.WIN_CSC_LINK }}
-          CSC_KEY_PASSWORD: ${{ secrets.WIN_CSC_KEY_PASSWORD }}
 
       - name: Create ZIP from win-unpacked (alternative to portable)
         if: ${{ matrix.platform == 'win' && matrix.arch == 'x64' }}
@@ -309,12 +285,8 @@ jobs:
         run: npx electron-builder --mac dir --${{ matrix.arch }} --publish never
         env:
           CI: true
-          # Code Signing & Notarization: Set these secrets to enable
-          CSC_LINK: ${{ secrets.MAC_CSC_LINK }}
-          CSC_KEY_PASSWORD: ${{ secrets.MAC_CSC_KEY_PASSWORD }}
-          APPLE_ID: ${{ secrets.APPLE_ID }}
-          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
-          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          # Kein Code-Signing/Notarization (keine Apple-Zertifikate vorhanden).
+          # Ad-hoc-Signatur wird im nächsten Schritt angewendet.
 
       - name: Ad-hoc sign macOS app (if not already signed)
         if: ${{ matrix.platform == 'mac' }}
