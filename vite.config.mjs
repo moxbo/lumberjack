@@ -1,8 +1,26 @@
 import { defineConfig } from "vite";
 import preact from "@preact/preset-vite";
 
+/**
+ * Lockert im Dev-Modus die CSP aus index.html, damit Vite seine Styles
+ * (die zur Laufzeit als <style>-Tags ins DOM injiziert werden) laden kann.
+ * In Production bleibt die strikte CSP aus index.html unverändert erhalten.
+ */
+const devCspPlugin = () => ({
+  name: "lumberjack-dev-csp",
+  apply: "serve",
+  transformIndexHtml(html) {
+    // Ersetze nur das CSP-Meta-Tag und erweitere style-src/script-src
+    // um die für Vite-Dev (inline-Style-Injection, eval) nötigen Quellen.
+    return html.replace(
+      /<meta\s+http-equiv="Content-Security-Policy"[^>]*>/i,
+      `<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'self' http://localhost:* https://localhost:* ws://localhost:* wss://localhost:*; worker-src 'self' blob:; font-src 'self' data:;" />`,
+    );
+  },
+});
+
 export default defineConfig({
-  plugins: [preact()],
+  plugins: [preact(), devCspPlugin()],
   base: "./",
   // Disable HMR to prevent Prefresh render loop issues
   server: {
