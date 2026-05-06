@@ -1168,6 +1168,7 @@ body {
 .settings-nav-item {
   display: flex;
   align-items: center;
+  justify-content: flex-start;
   gap: 12px;
   padding: 10px 12px;
   border: none;
@@ -1197,6 +1198,14 @@ body {
   align-items: center;
   justify-content: center;
   flex-shrink: 0;
+  width: 20px;
+  height: 20px;
+}
+
+.settings-nav-icon svg {
+  width: 20px;
+  height: 20px;
+  display: block;
 }
 
 .settings-nav-label {
