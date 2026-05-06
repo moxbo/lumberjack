@@ -147,6 +147,71 @@ log4j.rootLogger=INFO, console, lumberjack
 
 ---
 
+## 🌐 HTTP Tailing
+
+Lumberjack can incrementally tail remote log endpoints (e.g. Spring Boot Actuator's
+`/actuator/logfile`) using HTTP `Range` requests. Only new bytes since the last
+poll are transferred — efficient even for large rolling log files.
+
+**Configure** in Lumberjack: *File → Tail HTTP URL…*
+
+- **URL**: e.g. `http://localhost:8080/actuator/logfile`
+- **Interval**: poll interval in ms (default: 2000)
+- **Headers**: optional auth headers (e.g. `Authorization: Bearer …`)
+- **Allow insecure SSL**: skip certificate validation (self-signed dev servers)
+
+Rotation (file shrinks / `Content-Range` jumps backward) is detected
+automatically and the offset is reset.
+
+### Example: Spring Boot
+
+```properties
+# application.properties
+logging.file.name=logs/app.log
+management.endpoints.web.exposure.include=logfile
+management.endpoint.logfile.external-file=logs/app.log
+```
+
+Then point Lumberjack at `http://localhost:8080/actuator/logfile`.
+
+---
+
+## 📁 File Tailing
+
+Lumberjack can live-tail local log files (`fs.watchFile`-based polling, robust
+across editors and rotation strategies).
+
+**Configure** in Lumberjack: *File → Tail File…*
+
+- Auto-detects file rotation (truncate / rename) and re-attaches.
+- Works with JSON-per-line and plain-text patterns.
+- Combine with filter profiles for focused live monitoring.
+
+---
+
+## 🔔 Alert Rules
+
+Define rules that match incoming log entries (by level, message, MDC fields…)
+and receive native OS notifications when they fire. Manage rules under
+*Settings → Alerts*.
+
+---
+
+## 🔖 Bookmarks
+
+Mark important entries with one click (or `Ctrl/Cmd+D`) and jump between them
+via the bookmarks popover in the toolbar. Bookmarks survive filter changes.
+
+---
+
+## 🌍 Internationalization
+
+Lumberjack ships with German (`de`) and English (`en`) translations.
+Switch the UI language under *Settings → Language*. Both Electron menus and
+renderer UI are localized.
+
+---
+
 ### Filter Examples
 
 ```
