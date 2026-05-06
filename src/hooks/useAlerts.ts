@@ -1,8 +1,12 @@
 /**
  * Hook for managing alerts/dialogs
  */
-import { useCallback, useState } from "preact/hooks";
+import { useCallback, useEffect, useState } from "preact/hooks";
 import { useI18n } from "../utils/i18n";
+import {
+  type AlertOptions,
+  registerInAppDialogHandlers,
+} from "../utils/inAppDialog";
 
 export type AlertType = "info" | "warning" | "error";
 
@@ -36,6 +40,25 @@ export function useAlerts() {
   // Close alert
   const closeAlert = useCallback(() => {
     setAlertState((prev) => ({ ...prev, open: false }));
+  }, []);
+
+  // Bridge for non-React callers (services, utility modules) – Promise resolves
+  // when the alert is shown (we don't currently track dismissal but the dialog
+  // is non-blocking so callers don't need to await it).
+  useEffect(() => {
+    const handler = (
+      message: string,
+      options?: AlertOptions,
+    ): Promise<void> => {
+      setAlertState({
+        open: true,
+        message,
+        title: options?.title,
+        type: options?.type || "error",
+      });
+      return Promise.resolve();
+    };
+    return registerInAppDialogHandlers({ alert: handler });
   }, []);
 
   // Helper to show feature-disabled alert

@@ -1,89 +1,35 @@
 /**
- * Focus-safe wrappers around native browser dialogs (alert / confirm / prompt).
+ * Compatibility wrappers around dialog APIs.
  *
- * In Electron, native dialogs steal keyboard focus from the webContents.
- * After the dialog closes the DOM *looks* focused, but Chromium's internal
- * input routing is broken – no keystrokes reach any <input> until the user
- * Alt-Tabs away and back.
+ * Native browser dialogs (`window.alert`/`confirm`/`prompt`) trigger a
+ * well-known Electron/Chromium bug: after the dialog closes, keyboard
+ * input routing inside the webContents stays broken until the OS window
+ * loses and regains focus. We therefore route everything to in-app modal
+ * components via `inAppDialog`.
  *
- * These wrappers perform a blur → requestAnimationFrame → focus cycle
- * (the same pattern the "window:focus" IPC handler uses) after the native
- * dialog returns, which reliably re-establishes keyboard input.
+ * The exported names are kept for backwards compatibility with existing
+ * callers:
+ *   - `nativeAlert(msg)`     → in-app alert (non-blocking, fire-and-forget)
+ *   - `nativeConfirm(msg)`   → in-app confirm (Promise<boolean>) – BREAKING:
+ *                              previously synchronous boolean. Callers must
+ *                              `await` it.
  */
 
-function isUnfocusable(el: Element | null): boolean {
-  if (!el) return true;
-  if (!(el instanceof HTMLElement)) return true;
-  if (el === document.body) return true;
-  if (!el.isConnected) return true;
-  // Disabled form controls cannot reliably hold focus; refocusing them is a no-op
-  // and leaves Chromium's internal focus state in a broken limbo.
-  return (el as HTMLElement & { disabled?: boolean }).disabled === true;
-}
+import {
+  showAlert as inAppAlert,
+  showConfirm as inAppConfirm,
+} from "./inAppDialog";
 
-function focusCycle(target: HTMLElement): void {
-  try {
-    target.blur();
-  } catch {
-    /* ignore */
-  }
-  requestAnimationFrame(() => {
-    try {
-      target.focus();
-    } catch {
-      /* ignore */
-    }
-  });
-}
-
-function restoreFocus(): void {
-  // First pass: immediately after the dialog closes (microtask boundary).
-  // Second pass: after React has had a chance to flush state updates that
-  // may have disabled the originally-focused element (e.g. the "Clear logs"
-  // button becoming disabled after the entries list is emptied). Without
-  // the second pass, refocusing a now-disabled element silently fails and
-  // Chromium's webContents gets stuck in a state where <input> elements
-  // don't accept keystrokes until the OS window loses and regains focus.
-  const run = (): void => {
-    try {
-      const active = document.activeElement;
-      const target = isUnfocusable(active)
-        ? document.body
-        : (active as HTMLElement);
-      focusCycle(target);
-    } catch {
-      // Ignore focus errors
-    }
-  };
-  setTimeout(run, 0);
-  setTimeout(run, 50);
-}
-
-/** Drop-in replacement for `window.alert()` that restores keyboard focus afterwards. */
+/** Drop-in replacement for `window.alert()` (non-blocking, in-app modal). */
 export function nativeAlert(message: string): void {
-  window.alert(message);
-  restoreFocus();
-}
-
-/** Drop-in replacement for `window.confirm()` that restores keyboard focus afterwards. */
-export function nativeConfirm(message: string): boolean {
-  const result = window.confirm(message);
-  restoreFocus();
-  return result;
-}
-
-/** Drop-in replacement for `window.prompt()` that restores keyboard focus afterwards. */
-export function nativePrompt(
-  message: string,
-  defaultValue?: string,
-): string | null {
-  const result = window.prompt(message, defaultValue);
-  restoreFocus();
-  return result;
+  // Fire and forget – the in-app modal renders without blocking JS execution.
+  void inAppAlert(message);
 }
 
 /**
- * Standalone helper – call this if you already used a native dialog
- * without the wrappers above and need to fix focus after the fact.
+ * Promise-based confirm. Renders the in-app ConfirmDialog and resolves to
+ * true (OK) or false (Cancel). NOTE: callers must `await` this.
  */
-export { restoreFocus as restoreFocusAfterNativeDialog };
+export function nativeConfirm(message: string): Promise<boolean> {
+  return inAppConfirm(message);
+}

@@ -13,6 +13,7 @@ export { FilterSection } from "./FilterSection";
 export { DetailPanel } from "./DetailPanel";
 export { FeatureFlagsPanel } from "./FeatureFlagsPanel";
 export { AlertDialog } from "./AlertDialog";
+export { ConfirmDialog } from "./ConfirmDialog";
 export { BookmarksPopover } from "./BookmarksPopover";
 export type { BookmarkItem } from "./BookmarksPopover";
 export { ToastStack } from "./ToastStack";

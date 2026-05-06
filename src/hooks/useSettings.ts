@@ -271,7 +271,7 @@ export function useSettings() {
             setThemeMode(mode as ThemeMode);
             applyThemeMode(mode);
           }
-          if (typeof r.follow === "boolean") setFollow(!!r.follow);
+          if (typeof r.follow === "boolean") setFollow(r.follow);
           if (r.tcpPort != null) {
             curTcpPort = Number(r.tcpPort) || 5000;
             setTcpPort(curTcpPort);
@@ -408,7 +408,7 @@ export function useSettings() {
       elasticSize: Math.max(1, Number(form.elasticSize || 1000)),
       elasticUser: String(form.elasticUser || "").trim(),
       elasticMaxParallel: Math.max(1, Number(form.elasticMaxParallel || 1)),
-      allowPrerelease: !!form.allowPrerelease,
+      allowPrerelease: form.allowPrerelease,
       heapSizeMB: Math.max(
         512,
         Math.min(8192, Number(form.heapSizeMB || 2048)),
@@ -461,12 +461,14 @@ export function useSettings() {
       if (newHeapSize !== originalHeapSizeMB) {
         // Use setTimeout to allow the modal to close first
         setTimeout(() => {
-          const shouldRestart = nativeConfirm(
-            "Das Speicherlimit wurde geändert. Die Änderung wird erst nach einem Neustart wirksam.\n\nMöchten Sie die Anwendung jetzt neu starten?",
-          );
-          if (shouldRestart) {
-            void appRelaunch();
-          }
+          void (async () => {
+            const shouldRestart = await nativeConfirm(
+              "Das Speicherlimit wurde geändert. Die Änderung wird erst nach einem Neustart wirksam.\n\nMöchten Sie die Anwendung jetzt neu starten?",
+            );
+            if (shouldRestart) {
+              void appRelaunch();
+            }
+          })();
         }, 100);
       }
 

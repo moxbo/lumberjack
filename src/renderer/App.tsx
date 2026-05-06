@@ -68,10 +68,7 @@ import { BASE_MARK_COLORS } from "../constants";
 
 // Import refactored utilities
 import { entrySignature } from "../utils/entryUtils";
-import {
-  nativeConfirm,
-  restoreFocusAfterNativeDialog,
-} from "../utils/nativeDialog";
+import { nativeConfirm } from "../utils/nativeDialog";
 
 // Import refactored hooks
 import {
@@ -79,6 +76,7 @@ import {
   useFilterState,
   useHistoryPopovers,
   useAlerts,
+  useConfirmDialog,
   useToasts,
   useAlertRules,
   useAlertRunner,
@@ -94,6 +92,7 @@ import {
 import {
   AlertDialog,
   BookmarksPopover,
+  ConfirmDialog,
   ContextMenu,
   DetailPanel,
   FilterSection,
@@ -186,6 +185,12 @@ export default function App(): JSX.Element {
 
   // Use alerts hook
   const { alertState, showAlert, closeAlert, handleFeatureError } = useAlerts();
+  // In-app confirm dialog (replaces native window.confirm)
+  const {
+    state: confirmState,
+    onConfirm: confirmOnConfirm,
+    onCancel: confirmOnCancel,
+  } = useConfirmDialog();
   // Non-blocking toast notifications (success/info confirmations)
   const toaster = useToasts();
 
@@ -1960,12 +1965,14 @@ export default function App(): JSX.Element {
       if (newHeapSize !== originalHeapSizeMB) {
         // Use setTimeout to allow the modal to close first
         setTimeout(() => {
-          const shouldRestart = nativeConfirm(
-            t("settings.performance.restartRequired"),
-          );
-          if (shouldRestart) {
-            void typedAppRelaunch();
-          }
+          void (async () => {
+            const shouldRestart = await nativeConfirm(
+              t("settings.performance.restartRequired"),
+            );
+            if (shouldRestart) {
+              void typedAppRelaunch();
+            }
+          })();
         }, 100);
       }
     } catch (e) {
@@ -2377,25 +2384,19 @@ export default function App(): JSX.Element {
   }
 
   function clearLogs() {
-    // Den Fokus vom auslösenden Element (z. B. dem "Logs leeren"-Button)
-    // entfernen, BEVOR der Bestätigungsdialog erscheint und der Button durch
-    // `disabled={entries.length === 0}` deaktiviert wird. Andernfalls verbleibt
-    // der Fokus auf einem deaktivierten Element und Chromium/Electron landet
-    // in einem Limbo-Zustand, in dem <input>-Felder erst wieder Tastatureingaben
-    // annehmen, nachdem das OS-Fenster einmal Fokus verloren und wieder
-    // erlangt hat.
-    try {
-      if (document.activeElement instanceof HTMLElement) {
-        document.activeElement.blur();
-      }
-    } catch {
-      /* ignore */
-    }
-    // Sicherheitsabfrage, nur wenn etwas zu löschen ist
+    // Sicherheitsabfrage über In-App-Dialog (keine native Dialog-Fokus-Bugs).
     if (entries && entries.length > 0) {
-      const confirmed = nativeConfirm(t("list.clearConfirmation"));
-      if (!confirmed) return;
+      void (async () => {
+        const confirmed = await nativeConfirm(t("list.clearConfirmation"));
+        if (!confirmed) return;
+        doClearLogs();
+      })();
+      return;
     }
+    doClearLogs();
+  }
+
+  function doClearLogs() {
     setEntries([]);
     setSelected(new Set());
     setNextId(1);
@@ -2425,13 +2426,6 @@ export default function App(): JSX.Element {
     } catch (e) {
       logger.error("LoggingStore.reset error:", e);
       showAlert(t("errors.resetLoggingStoreFailed"));
-    }
-    // Nach dem React-Flush (in dem der Button disabled wird) erneut die
-    // Tastatur-Eingabe wiederherstellen.
-    try {
-      restoreFocusAfterNativeDialog();
-    } catch {
-      /* ignore */
     }
     // HTTP/TCP Status wird NICHT zurückgesetzt, da Verbindungen noch aktiv sein können
   }
@@ -3919,6 +3913,18 @@ export default function App(): JSX.Element {
         message={alertState.message}
         type={alertState.type}
         onClose={closeAlert}
+      />
+
+      {/* In-App Confirm-Dialog (ersetzt natives window.confirm) */}
+      <ConfirmDialog
+        open={confirmState.open}
+        title={confirmState.title}
+        message={confirmState.message}
+        confirmLabel={confirmState.confirmLabel ?? t("common.ok")}
+        cancelLabel={confirmState.cancelLabel ?? t("common.cancel")}
+        type={confirmState.type}
+        onConfirm={confirmOnConfirm}
+        onCancel={confirmOnCancel}
       />
 
       {/* Non-blocking Toast Notifications (success/info) */}

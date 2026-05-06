@@ -20,6 +20,7 @@ export { useFeatureFlags } from "./useFeatureFlags";
 export type { FeatureName } from "./useFeatureFlags";
 export { useAlerts } from "./useAlerts";
 export type { AlertType } from "./useAlerts";
+export { useConfirmDialog } from "./useConfirmDialog";
 export { useToasts } from "./useToasts";
 export type { Toast, ToastSeverity } from "./useToasts";
 export { useAlertRules } from "./useAlertRules";
