@@ -494,6 +494,7 @@ if (!lumberjackGlobals.lumberjack) {
   lumberjackGlobals.lumberjack = {};
 }
 const sharedApi = getSharedMainApi();
+sharedApi.setTcpOwnerWindowId = setTcpOwnerWindowId;
 sharedApi.getTcpOwnerWindowId = getTcpOwnerWindowId;
 sharedApi.applyWindowTitles = applyWindowTitles;
 sharedApi.getWindowBaseTitle = (winId: number) => {
