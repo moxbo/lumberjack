@@ -1,215 +1,100 @@
-# 🚀 START HERE - Interactive List Bug Fix
+# 🚀 Erste Schritte mit Lumberjack
 
-## ⚡ Quick Start (2 Minutes)
-
-Your log list was not responding to clicks. This has been **FIXED!**
-
-### Build & Run
-```bash
-npm run prebuild
-npm run build:renderer
-npm start
-```
-
-### Test It Works
-1. Click on a log entry → should highlight
-2. Shift+Click for range selection → should select multiple
-3. Press arrow keys → should navigate
-4. Press Escape → should clear selection
-
-**That's it!** The list should now be fully interactive.
+Willkommen! Diese Seite führt dich in unter **5 Minuten** durch die wichtigsten
+Funktionen von Lumberjack.
 
 ---
 
-## 📚 Documentation Roadmap
+## 📦 Installation
 
-### 🟢 **I want the quick summary** (5 min)
-→ Read: `FIX_README.md`
-
-### 🟡 **I want to test properly** (10 min)
-→ Use: `VERIFICATION_CHECKLIST.md`
-
-### 🔵 **I want all the details** (30 min)
-→ Read: `BUGFIX_INTERACTIVE_LIST.md`
-
-### 🟣 **I want to understand the fix** (45 min)
-→ Read: `CHANGELOG_FIX.md`
-
-### 🔴 **I have a problem** (variable)
-→ Use: `DEBUG_INTERACTION_HANDLER.md` or `DEBUG_SCRIPT.js`
+Siehe Hauptseite: [../../README.md#-quick-start](../../README.md#-quick-start)
+für die plattformspezifischen Schritte (Homebrew, DMG, Portable, Setup, AppImage).
 
 ---
 
-## 🎯 What Was Fixed
+## 🪵 Logs in Lumberjack laden
 
-### Problem
-- ❌ List clicks didn't work
-- ❌ Keyboard navigation broken
-- ❌ Selection not updating
-- ❌ Only Electron menus responsive
+Du hast mehrere Wege, Logs zu sehen:
 
-### Solution
-- ✅ CSS `pointer-events` fixed
-- ✅ Event handlers improved
-- ✅ Keyboard support enhanced
-- ✅ Focus management robust
-
-### Changes
-- **CSS**: 5 changes to enable interactivity
-- **TypeScript**: 7 changes to improve event handling
-- **Total**: 12 specific fixes
+1. **Datei öffnen** – `Datei → Datei öffnen…` (oder `Ctrl/Cmd+O`)
+2. **TCP-Streaming** – Konfiguriere deine App so, dass sie Logs an
+   `localhost:4445` sendet. Beispiel-Konfigurationen für Logback / Log4j2 /
+   Log4j 1.x findest du in der
+   [Haupt-README](../../README.md#-tcp-log-streaming-configuration).
+3. **HTTP-Tailing** – `Datei → HTTP URL tailen…`, ideal für Spring Boot
+   Actuator (`/actuator/logfile`). Nur neue Bytes werden per
+   `Range`-Request übertragen.
+4. **Datei-Tail** – `Datei → Datei tailen…` für lokale Log-Dateien mit
+   Live-Updates (inklusive Rotation).
+5. **Elasticsearch** – Über die Elasticsearch-Suchmaske gezielt Indizes
+   abfragen.
 
 ---
 
-## ✅ Verification (Pick One)
+## 🔎 Filtern
 
-### Option 1: Quick Check (1 min)
-```bash
-npm start
-# Then manually click entries, test keyboard
-# If it works → ✅ Done!
-```
+Lumberjack hat eine Mini-Filter-Sprache:
 
-### Option 2: Automated Check (2 min)
-```javascript
-// Open DevTools (F12) → Console
-// Paste this:
-const checks = ['layout','list','row'].map(sel => {
-  const el = document.querySelector('.' + sel);
-  return getComputedStyle(el).pointerEvents === 'auto';
-});
-console.log(checks.every(c => c) ? '✅ PASS' : '❌ FAIL');
-```
+| Operator | Bedeutung | Beispiel          |
+|----------|-----------|-------------------|
+| `&`      | UND       | `service&timeout` |
+| `\|`     | ODER      | `error\|warn`     |
+| `!`      | NICHT     | `QcStatus&!CB23`  |
 
-### Option 3: Full Checklist (15 min)
-→ Use: `VERIFICATION_CHECKLIST.md`
+**Filter-Profile** (`Filter → Profile`):
+
+- Speichern, Suchen, Import/Export
+- Undo nach versehentlichem Überschreiben
+
+**MDC-/Diagnostic-Context-Filter:** Klicke auf einen MDC-Schlüssel in einer
+Zeile, um nach diesem Wert zu filtern.
 
 ---
 
-## 📂 Key Files Modified
+## 🔖 Bookmarks
 
-### `src/main/styles.css`
-- Added `pointer-events: auto` to `.layout`, `.list`, `.row`
-- Added `cursor: pointer` to `.row`
-- Added `will-change: contents` to `.details`
-
-### `src/renderer/App.tsx`
-- Enhanced `onListKeyDown` with Home/End/Escape
-- Added Focus Management to `.list`
-- Improved Error Handling throughout
+- Eintrag markieren: `Ctrl/Cmd+D` oder Kontextmenü → *Bookmark*
+- Übersicht: Bookmark-Popover in der Toolbar
+- Bookmarks bleiben über Filteränderungen erhalten
 
 ---
 
-## 📋 Important Files in This Fix
+## 🔔 Alert-Regeln
 
-| File | Purpose | Time |
-|------|---------|------|
-| `FIX_README.md` | Main documentation | 7 min |
-| `QUICK_REFERENCE.md` | Quick lookup | 3 min |
-| `VERIFICATION_CHECKLIST.md` | Test procedures | 15 min |
-| `DEBUG_SCRIPT.js` | Browser console tool | 2 min |
-| `BUGFIX_INTERACTIVE_LIST.md` | Technical deep dive | 25 min |
-| `DEBUG_INTERACTION_HANDLER.md` | Debugging guide | 10 min |
-| `CHANGELOG_FIX.md` | Detailed changelog | 20 min |
-| `IMPLEMENTATION_SUMMARY.md` | Overview | 5 min |
-| `INDEX_FIX_DOCUMENTATION.md` | Doc index | 5 min |
+Unter `Einstellungen → Alerts` kannst du Regeln definieren (Level, Text, MDC),
+die bei passenden Log-Einträgen eine native OS-Notification auslösen.
 
 ---
 
-## 🆘 If It Still Doesn't Work
+## 🌍 Sprache umschalten
 
-1. **Check console** (F12 → Console) for errors
-2. **Run** `DEBUG_SCRIPT.js` in browser console
-3. **Follow** `VERIFICATION_CHECKLIST.md`
-4. **See** troubleshooting in `DEBUG_INTERACTION_HANDLER.md`
+`Einstellungen → Sprache` – Deutsch oder Englisch. Sowohl die Renderer-UI als
+auch das Electron-Menü werden umgestellt.
 
 ---
 
-## ✨ What's Improved
+## ⌨️ Wichtige Shortcuts
 
-### Functionality
-- ✅ List is fully interactive
-- ✅ Keyboard navigation works
-- ✅ Home/End/Escape keys work
-- ✅ Focus management proper
-
-### Code Quality
-- ✅ Better error handling
-- ✅ More robust event handling
-- ✅ Performance optimizations
-- ✅ Cleaner code structure
-
-### Testing
-- ✅ All automated tests pass
-- ✅ All manual tests pass
-- ✅ No performance regression
-- ✅ No memory leaks
+| Aktion                   | Shortcut                           |
+|--------------------------|------------------------------------|
+| Datei öffnen             | `Ctrl/Cmd+O`                       |
+| Suchen                   | `Ctrl/Cmd+F`                       |
+| Bookmark setzen          | `Ctrl/Cmd+D`                       |
+| Nächster/Voriger Treffer | `F3` / `Shift+F3`                  |
+| Auswahl löschen          | `Esc`                              |
+| Listennavigation         | `↑` `↓` `Home` `End` `PgUp` `PgDn` |
 
 ---
 
-## 🚀 Ready to Deploy?
+## 🆘 Probleme?
 
-**Before deployment, verify:**
-- [ ] Build succeeds: `npm run prebuild && npm run build:renderer`
-- [ ] Linting passes: `npm run lint`
-- [ ] Interactive tests pass: Follow `VERIFICATION_CHECKLIST.md`
-- [ ] No console errors
+→ [TROUBLESHOOTING_AND_FAQ.md](TROUBLESHOOTING_AND_FAQ.md)
 
-**If all checked:**
-```bash
-npm run build:x64  # or your target build
-# Deploy the result
-```
+→ Logs der App findest du unter:
 
----
-
-## 📞 Support
-
-### Quick Questions
-→ `QUICK_REFERENCE.md`
-
-### Testing Help
-→ `VERIFICATION_CHECKLIST.md`
-
-### Debugging
-→ `DEBUG_INTERACTION_HANDLER.md` or use `DEBUG_SCRIPT.js`
-
-### Technical Details
-→ `BUGFIX_INTERACTIVE_LIST.md`
-
-### Changes Summary
-→ `CHANGELOG_FIX.md`
-
-### Full Index
-→ `INDEX_FIX_DOCUMENTATION.md`
-
----
-
-## ⏱️ Timeline
-
-- **Problem identified**: CSS pointer-events + event handler issues
-- **Fixes implemented**: 12 specific changes
-- **Tests performed**: All passed ✅
-- **Documentation**: 9 comprehensive files
-- **Status**: Ready for production ✅
-
----
-
-## 🎉 You're All Set!
-
-The fix is complete, tested, and documented.
-
-**Next step**: 
-1. Run `npm run prebuild && npm run build:renderer && npm start`
-2. Test by clicking on entries
-3. If it works → ✅ Deploy!
-
-**Questions?** Check the documentation above.
-
----
-
-**Created**: November 13, 2025  
-**Status**: ✅ COMPLETE  
-**Version**: 1.0.1  
-**Ready**: YES 🚀
+| OS      | Pfad                                 |
+|---------|--------------------------------------|
+| Windows | `%APPDATA%\Lumberjack\logs\main.log` |
+| macOS   | `~/Library/Logs/Lumberjack/main.log` |
+| Linux   | `~/.config/Lumberjack/logs/main.log` |
 

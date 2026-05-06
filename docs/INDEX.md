@@ -1,18 +1,19 @@
 # 📚 Lumberjack Dokumentation
 
-**Version:** 1.0.2  
-**Stand:** Dezember 2025
+**Version:** 1.0.15  
+**Stand:** Mai 2026
 
 ---
 
 ## 🚀 Schnellstart
 
-| Ich möchte... | Dokument |
-|---------------|----------|
-| **Die App nutzen** | [user/START_HERE.md](user/START_HERE.md) |
-| **Optimierungen verstehen** | [SUMMARY_QUICK_REFERENCE.md](SUMMARY_QUICK_REFERENCE.md) |
-| **Die App deployen** | [DEPLOYMENT_GUIDE.md](DEPLOYMENT_GUIDE.md) |
-| **Probleme beheben** | [user/TROUBLESHOOTING_AND_FAQ.md](user/TROUBLESHOOTING_AND_FAQ.md) |
+| Ich möchte...                     | Dokument                                                           |
+|-----------------------------------|--------------------------------------------------------------------|
+| **Die App nutzen**                | [user/START_HERE.md](user/START_HERE.md)                           |
+| **Einen Überblick über Features** | [../README.md](../README.md)                                       |
+| **Optimierungen verstehen**       | [SUMMARY_QUICK_REFERENCE.md](SUMMARY_QUICK_REFERENCE.md)           |
+| **Die App deployen**              | [DEPLOYMENT_GUIDE.md](DEPLOYMENT_GUIDE.md)                         |
+| **Probleme beheben**              | [user/TROUBLESHOOTING_AND_FAQ.md](user/TROUBLESHOOTING_AND_FAQ.md) |
 
 ---
 
@@ -20,12 +21,12 @@
 
 ### Hauptdokumente (Root)
 
-| Datei | Beschreibung |
-|-------|--------------|
-| [DEPLOYMENT_GUIDE.md](DEPLOYMENT_GUIDE.md) | Build & Deployment Anleitung |
-| [MONITORING_AND_TESTING_GUIDE.md](MONITORING_AND_TESTING_GUIDE.md) | Tests & Monitoring |
-| [QUICK_REFERENCE.md](QUICK_REFERENCE.md) | Kurzreferenz |
-| [SUMMARY_QUICK_REFERENCE.md](SUMMARY_QUICK_REFERENCE.md) | Executive Summary |
+| Datei                                                              | Beschreibung                 |
+|--------------------------------------------------------------------|------------------------------|
+| [DEPLOYMENT_GUIDE.md](DEPLOYMENT_GUIDE.md)                         | Build & Deployment Anleitung |
+| [MONITORING_AND_TESTING_GUIDE.md](MONITORING_AND_TESTING_GUIDE.md) | Tests & Monitoring           |
+| [QUICK_REFERENCE.md](QUICK_REFERENCE.md)                           | Kurzreferenz                 |
+| [SUMMARY_QUICK_REFERENCE.md](SUMMARY_QUICK_REFERENCE.md)           | Executive Summary            |
 
 ### 👤 Benutzer-Dokumentation (`user/`)
 
@@ -41,10 +42,12 @@ Für Endbenutzer und Tester:
 Für Entwickler und Contributors:
 
 **Architektur & Design:**
+
 - [ARCHITECTURE_DECISION.md](developer/ARCHITECTURE_DECISION.md) - Architektur-Entscheidungen
 - [COPILOT_AGENT.md](developer/COPILOT_AGENT.md) - AI-Assistenten Leitfaden
 
 **Performance & Optimierung:**
+
 - [PERFORMANCE.md](developer/PERFORMANCE.md) - Performance-Übersicht
 - [PERFORMANCE_OPTIMIZATIONS.md](developer/PERFORMANCE_OPTIMIZATIONS.md) - Detaillierte Optimierungen
 - [OPTIMIZATION_STABILITY_ROADMAP_2025.md](developer/OPTIMIZATION_STABILITY_ROADMAP_2025.md) - Roadmap
@@ -52,10 +55,12 @@ Für Entwickler und Contributors:
 - [STABILITY_IMPROVEMENTS.md](developer/STABILITY_IMPROVEMENTS.md) - Stabilitäts-Verbesserungen
 
 **Windows-spezifisch:**
+
 - [WINDOWS_OPTIMIZATIONS.md](developer/WINDOWS_OPTIMIZATIONS.md) - Windows-Optimierungen
 - [WINDOWS_PERFORMANCE.md](developer/WINDOWS_PERFORMANCE.md) - Windows-Performance
 
 **Implementierung:**
+
 - [PRACTICAL_IMPLEMENTATION_GUIDE.md](developer/PRACTICAL_IMPLEMENTATION_GUIDE.md) - Implementierungs-Leitfaden
 - [MDC_FILTER_IMPLEMENTATION.md](developer/MDC_FILTER_IMPLEMENTATION.md) - MDC Filter
 - [TESTING.md](developer/TESTING.md) - Test-Dokumentation
@@ -79,12 +84,14 @@ Diese Dateien dienen der Nachvollziehbarkeit und werden nicht aktiv gepflegt.
 ## 🎯 Quick Links nach Aufgabe
 
 ### Entwicklung starten
+
 ```bash
 npm install
 npm run dev
 ```
 
 ### Build erstellen
+
 ```bash
 # Windows Portable
 npm run build:portable:x64
@@ -94,6 +101,7 @@ npm run build:mac:dmg
 ```
 
 ### Tests ausführen
+
 ```bash
 npm test
 ```
@@ -107,6 +115,13 @@ npm test
 - ✅ Windows/macOS Icon-Support
 - ✅ Stabilitäts-Verbesserungen implementiert
 - ✅ Produktionsreife erreicht
+- ✅ HTTP-Tailing (Range-basiertes Polling) und File-Tail (Watcher) verfügbar
+- ✅ Filter-Profile mit Suche, Import/Export, Undo
+- ✅ Alert-Regeln mit OS-Notifications
+- ✅ Bookmarks für schnelle Navigation
+- ✅ Internationalisierung (DE / EN) für UI und Electron-Menü
+- ✅ Auto-Updater (mit Portable-Modus-Erkennung)
+- ✅ Barrierefreiheit (aria-live, prefers-reduced-motion, Fokus-Handling)
 
 ---
 

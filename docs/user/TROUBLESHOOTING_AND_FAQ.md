@@ -38,8 +38,8 @@ Nach dem Entfernen des Quarantine-Attributs kann die App normal geöffnet werden
 **Methode 1 - Rechtsklick (Empfohlen):**
 1. Im Finder zur App navigieren (`/Applications/Lumberjack.app`)
 2. **Rechtsklick** (oder Ctrl+Klick) auf die App
-3. "Öffnen" auswählen
-4. Im Dialog erneut "Öffnen" klicken
+3. "Ööffnen" auswählen
+4. Im Dialog erneut "Ööffnen" klicken
 5. ✅ Die App startet und wird für zukünftige Starts freigeschaltet
 
 **Methode 2 - Systemeinstellungen:**
