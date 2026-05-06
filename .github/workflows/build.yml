@@ -1,9 +1,11 @@
 name: Build/release
 
+# Läuft NICHT bei normalen Commits auf main – nur:
+#   1. Push eines Versions-Tags (v*)
+#   2. Manueller Start über die GitHub-UI (workflow_dispatch)
+# Lint/Tests für main/PRs übernimmt ci.yml.
 on:
   push:
-    branches:
-      - main
     tags:
       - "v*"
   workflow_dispatch:
