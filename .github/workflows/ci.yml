@@ -10,6 +10,8 @@ concurrency:
 env:
   # Keine Code-Signing-Zertifikate vorhanden
   CSC_IDENTITY_AUTO_DISCOVERY: "false"
+  # JS-Actions auf Node.js 24 zwingen (Node 20 wird ab 2026-09-16 entfernt)
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
 jobs:
   lint:
     name: Lint & Format
