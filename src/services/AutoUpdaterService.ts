@@ -732,22 +732,66 @@ export class AutoUpdaterService {
   }
 
   /**
-   * Compare semantic versions: returns true if latest > current
+   * Compare semantic versions (incl. prereleases): returns true if latest > current.
+   * Examples:
+   *   isNewerVersion("1.0.15", "1.0.15-beta.3") === true   // release > prerelease
+   *   isNewerVersion("1.0.14", "1.0.15-beta.3") === false  // older main
+   *   isNewerVersion("1.0.15-beta.4", "1.0.15-beta.3") === true
    */
   private isNewerVersion(latest: string, current: string): boolean {
     try {
-      const latestParts = latest.split(".").map(Number);
-      const currentParts = current.split(".").map(Number);
+      const parse = (v: string) => {
+        // Strip optional leading "v" and build metadata after "+"
+        const stripped = (v.replace(/^v/i, "").split("+", 1)[0] ?? "").trim();
+        const dashIdx = stripped.indexOf("-");
+        const main = dashIdx === -1 ? stripped : stripped.slice(0, dashIdx);
+        const pre = dashIdx === -1 ? "" : stripped.slice(dashIdx + 1);
+        const mainParts = main.split(".").map((p) => {
+          const n = parseInt(p, 10);
+          return Number.isFinite(n) ? n : 0;
+        });
+        const preParts = pre ? pre.split(".") : [];
+        return { mainParts, preParts };
+      };
 
-      for (
-        let i = 0;
-        i < Math.max(latestParts.length, currentParts.length);
-        i++
-      ) {
-        const l = latestParts[i] || 0;
-        const c = currentParts[i] || 0;
-        if (l > c) return true;
-        if (l < c) return false;
+      const a = parse(latest);
+      const b = parse(current);
+
+      const maxMain = Math.max(a.mainParts.length, b.mainParts.length);
+      for (let i = 0; i < maxMain; i++) {
+        const av = a.mainParts[i] ?? 0;
+        const bv = b.mainParts[i] ?? 0;
+        if (av > bv) return true;
+        if (av < bv) return false;
+      }
+
+      // Main version equal: per SemVer, a release (no prerelease) > prerelease
+      const aHasPre = a.preParts.length > 0;
+      const bHasPre = b.preParts.length > 0;
+      if (!aHasPre && !bHasPre) return false;
+      if (!aHasPre && bHasPre) return true; // latest is release, current is prerelease
+      if (aHasPre && !bHasPre) return false; // latest is prerelease, current is release
+
+      // Both have prerelease: compare identifier-by-identifier.
+      const maxPre = Math.max(a.preParts.length, b.preParts.length);
+      for (let i = 0; i < maxPre; i++) {
+        const ap = a.preParts[i];
+        const bp = b.preParts[i];
+        if (ap === undefined) return false; // shorter prerelease has lower precedence
+        if (bp === undefined) return true;
+        const an = /^\d+$/.test(ap) ? parseInt(ap, 10) : null;
+        const bn = /^\d+$/.test(bp) ? parseInt(bp, 10) : null;
+        if (an !== null && bn !== null) {
+          if (an > bn) return true;
+          if (an < bn) return false;
+        } else if (an !== null && bn === null) {
+          return false; // numeric < alphanumeric per SemVer
+        } else if (an === null && bn !== null) {
+          return true;
+        } else {
+          if (ap > bp) return true;
+          if (ap < bp) return false;
+        }
       }
       return false;
     } catch {
