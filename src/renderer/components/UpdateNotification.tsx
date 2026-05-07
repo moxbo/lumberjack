@@ -232,7 +232,7 @@ export function UpdateNotification(): VNode | null {
           {showDetails && notesText && (
             <div
               className="update-release-notes"
-              dangerouslySetInnerHTML={{ __html: notesText }}
+              dangerouslySetInnerHTML={{ __html: renderMarkdown(notesText) }}
             />
           )}
         </div>
@@ -329,4 +329,92 @@ function formatBytes(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
   return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
+}
+
+/**
+ * Escape HTML-significant characters so user content can be safely embedded.
+ */
+function escapeHtml(s: string): string {
+  return s.replace(
+    /[&<>"']/g,
+    (c) =>
+      ({
+        "&": "&amp;",
+        "<": "&lt;",
+        ">": "&gt;",
+        '"': "&quot;",
+        "'": "&#39;",
+      })[c] as string,
+  );
+}
+
+/**
+ * Apply inline markdown patterns to already HTML-escaped text.
+ * Supports: `code`, **bold**, *italic*, [text](url), bare URLs.
+ */
+function renderInline(escaped: string): string {
+  return escaped
+    .replace(/`([^`]+)`/g, "<code>$1</code>")
+    .replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>")
+    .replace(/(^|[^*])\*([^*\s][^*]*)\*/g, "$1<em>$2</em>")
+    .replace(
+      /\[([^\]]+)]\(([^)\s]+)\)/g,
+      (_m: string, text: string, url: string) =>
+        `<a href="${url}" target="_blank" rel="noopener noreferrer">${text}</a>`,
+    )
+    .replace(
+      /(^|[\s(])(https?:\/\/[^\s<)]+)/g,
+      (_m: string, lead: string, url: string) =>
+        `${lead}<a href="${url}" target="_blank" rel="noopener noreferrer">${url}</a>`,
+    );
+}
+
+/**
+ * Minimal Markdown -> HTML renderer for GitHub release notes.
+ * Supports headings, unordered lists, paragraphs and inline formatting.
+ * Input is HTML-escaped first to keep this safe for dangerouslySetInnerHTML.
+ */
+function renderMarkdown(src: string): string {
+  const lines = src.replace(/\r\n/g, "\n").split("\n");
+  const out: string[] = [];
+  let inList = false;
+  const closeList = () => {
+    if (inList) {
+      out.push("</ul>");
+      inList = false;
+    }
+  };
+
+  for (const raw of lines) {
+    const heading = /^(#{1,6})\s+(.*)$/.exec(raw);
+    if (heading) {
+      closeList();
+      const level = heading[1]?.length ?? 1;
+      out.push(
+        `<h${level}>${renderInline(escapeHtml(heading[2] ?? ""))}</h${level}>`,
+      );
+      continue;
+    }
+
+    const li = /^\s*[-*]\s+(.*)$/.exec(raw);
+    if (li) {
+      if (!inList) {
+        out.push("<ul>");
+        inList = true;
+      }
+      out.push(`<li>${renderInline(escapeHtml(li[1] ?? ""))}</li>`);
+      continue;
+    }
+
+    if (raw.trim() === "") {
+      closeList();
+      continue;
+    }
+
+    closeList();
+    out.push(`<p>${renderInline(escapeHtml(raw))}</p>`);
+  }
+
+  closeList();
+  return out.join("\n");
 }
