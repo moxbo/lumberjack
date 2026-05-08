@@ -62,9 +62,61 @@ export async function patchSettings(
 /**
  * Fire-and-forget variant of patchSettings (void-returning, swallows errors).
  * Use when you don't need to check the result.
+ *
+ * Performance-Quick-Win #4: Patches werden über ein kurzes Fenster (250 ms)
+ * im Renderer **gemerged** und als ein einziger IPC-Call rausgeschickt.
+ * Vorher führte jedes `marksMap`/`follow`/`customMarkColors`/History-Update
+ * zu einem eigenen IPC-Roundtrip + Disk-Write. Bei intensiver Nutzung
+ * (Markieren mehrerer Einträge nacheinander, Theme-Toggle, History-Push)
+ * spart das Hunderte IPC-Calls pro Minute.
+ *
+ * Letzter Wert pro Key gewinnt (Last-Write-Wins-Merge), passend zur
+ * `Object.assign`-Semantik im Main-Prozess.
  */
+const PATCH_COALESCE_MS = 250;
+let pendingPatch: Partial<Settings> | null = null;
+let pendingTimer: ReturnType<typeof setTimeout> | null = null;
+
+function flushPendingPatch(): void {
+  const patch = pendingPatch;
+  pendingPatch = null;
+  if (pendingTimer) {
+    clearTimeout(pendingTimer);
+    pendingTimer = null;
+  }
+  if (patch && Object.keys(patch).length > 0) {
+    void patchSettings(patch);
+  }
+}
+
 export function patchSettingsQuiet(patch: Partial<Settings>): void {
-  void patchSettings(patch);
+  if (!patch || typeof patch !== "object") return;
+  pendingPatch = pendingPatch
+    ? Object.assign(pendingPatch, patch)
+    : { ...patch };
+  if (!pendingTimer) {
+    pendingTimer = setTimeout(flushPendingPatch, PATCH_COALESCE_MS);
+  }
+}
+
+/**
+ * Force an immediate flush of any pending coalesced settings patch.
+ * Useful before app shutdown / window close to avoid losing the last
+ * in-flight patch.
+ */
+export function flushSettingsPatch(): void {
+  flushPendingPatch();
+}
+
+// In-Browser-/Renderer-Lifecycle: best-effort flush bei Tab-/Window-Close,
+// damit kein eingerolltes Patch verloren geht.
+if (typeof window !== "undefined") {
+  try {
+    window.addEventListener("beforeunload", flushPendingPatch);
+    window.addEventListener("pagehide", flushPendingPatch);
+  } catch {
+    /* ignore (z. B. SSR/Test) */
+  }
 }
 
 /**
