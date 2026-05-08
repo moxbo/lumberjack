@@ -1291,7 +1291,7 @@ body {
   color: var(--color-success, #22c55e);
 }
 .settings-update-available {
-  color: var(--color-accent, #3b82f6);
+  color: var(--accent, #3b82f6);
   font-weight: 500;
 }
 .settings-update-error {
