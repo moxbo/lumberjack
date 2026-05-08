@@ -230,7 +230,13 @@
     },
     "updates": {
       "betaChannel": "Beta Updates",
-      "betaChannelHint": "Receive pre-release versions (beta/RC) before they are officially released."
+      "betaChannelHint": "Receive pre-release versions (beta/RC) before they are officially released.",
+      "checkNow": "Check for updates now",
+      "checkNowHint": "Checks GitHub for a newer version.",
+      "checking": "Checking…",
+      "upToDate": "You are already on the latest version ({{version}}).",
+      "available": "Update available: {{version}}",
+      "checkFailed": "Check failed: {{error}}"
     },
     "performance": {
       "heapSize": "Memory Limit",
@@ -376,6 +382,7 @@
       "followMode": "Follow Mode",
       "helpMenu": "Help",
       "helpGuide": "Help / Guide…",
+      "checkForUpdates": "Check for Updates…",
       "settings": "Settings…",
       "speech": "Speech"
     },

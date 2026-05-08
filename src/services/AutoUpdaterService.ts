@@ -89,6 +89,13 @@ export class AutoUpdaterService {
 
   // Cached update check result to avoid redundant network calls
   private cachedUpdateInfo: UpdateInfo | null = null;
+  // Whether the cached info represents an actually-available update,
+  // a "not-available" response, or (portable) something fetched from GitHub.
+  private cachedStatus:
+    | "available"
+    | "not-available"
+    | "available-portable"
+    | null = null;
   private lastUpdateCheck = 0;
   private readonly updateCheckCacheMs = 60000; // Cache for 1 minute
 
@@ -278,6 +285,7 @@ export class AutoUpdaterService {
 
     // Invalidate cache when settings change - different releases may be available
     this.cachedUpdateInfo = null;
+    this.cachedStatus = null;
     this.lastUpdateCheck = 0;
 
     log.info("[auto-updater] allowPrerelease set to:", allow);
@@ -331,6 +339,7 @@ export class AutoUpdaterService {
     const availableHandler = (info: UpdateInfo) => {
       log.info("[auto-updater] Update available:", info.version);
       this.cachedUpdateInfo = info;
+      this.cachedStatus = "available";
       this.lastUpdateCheck = Date.now();
       this.sendStatusToRenderer({ status: "available", info });
     };
@@ -343,6 +352,7 @@ export class AutoUpdaterService {
         info.version,
       );
       this.cachedUpdateInfo = info;
+      this.cachedStatus = "not-available";
       this.lastUpdateCheck = Date.now();
       this.sendStatusToRenderer({ status: "not-available", info });
     };
@@ -522,6 +532,15 @@ export class AutoUpdaterService {
       Date.now() - this.lastUpdateCheck < this.updateCheckCacheMs
     ) {
       log.debug("[auto-updater] Returning cached update info");
+      // Re-broadcast the cached result so any listeners (e.g. a manual
+      // "check now" button in the settings) receive a status update even
+      // when the network call is suppressed by the cache.
+      if (this.cachedStatus) {
+        this.sendStatusToRenderer({
+          status: this.cachedStatus,
+          info: this.cachedUpdateInfo,
+        });
+      }
       return this.cachedUpdateInfo;
     }
 
@@ -571,6 +590,14 @@ export class AutoUpdaterService {
       Date.now() - this.lastUpdateCheck < this.updateCheckCacheMs
     ) {
       log.debug("[auto-updater] Returning cached portable update info");
+      // Re-broadcast the cached status so manual checks get visible feedback.
+      if (this.cachedStatus) {
+        this.sendStatusToRenderer({
+          status: this.cachedStatus,
+          info: this.cachedUpdateInfo,
+          isPortable: true,
+        });
+      }
       return this.cachedUpdateInfo;
     }
 
@@ -605,6 +632,7 @@ export class AutoUpdaterService {
         } as UpdateInfo;
 
         this.cachedUpdateInfo = info;
+        this.cachedStatus = "available-portable";
         this.lastUpdateCheck = Date.now();
 
         this.sendStatusToRenderer({
@@ -618,6 +646,7 @@ export class AutoUpdaterService {
         return info;
       } else {
         log.info("[auto-updater] Portable is up to date");
+        this.cachedStatus = "not-available";
         this.lastUpdateCheck = Date.now();
         this.sendStatusToRenderer({
           status: "not-available",
@@ -937,6 +966,7 @@ export class AutoUpdaterService {
     // Clear references
     this.mainWindowRef = null;
     this.cachedUpdateInfo = null;
+    this.cachedStatus = null;
 
     // Reset state flags
     this.isCheckingForUpdates = false;

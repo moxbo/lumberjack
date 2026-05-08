@@ -1286,6 +1286,19 @@ body {
   line-height: 1.4;
 }
 
+/* Inline status text for the manual update check row */
+.settings-update-ok {
+  color: var(--color-success, #22c55e);
+}
+.settings-update-available {
+  color: var(--color-accent, #3b82f6);
+  font-weight: 500;
+}
+.settings-update-error {
+  color: var(--color-error, #ef4444);
+}
+
+/* Settings Input */
 .settings-input {
   width: 100%;
   padding: 10px 12px;
@@ -3638,7 +3651,7 @@ button.filter-chip.trace-timeline-chip .chip-label {
   box-shadow: var(--shadow-lg);
   max-height: 400px;
   min-width: 320px;
-  overflow: hidden;
+  overflow-y: auto;
   display: flex;
   flex-direction: column;
 }
@@ -3794,7 +3807,6 @@ button.filter-chip.trace-timeline-chip .chip-label {
 .filter-profiles-list .profile-rename .btn-primary {
   background: var(--accent-gradient);
   color: white;
-  border: none;
 }
 
 .filter-profiles-list .btn-rename:hover {
@@ -3872,7 +3884,7 @@ button.filter-chip.trace-timeline-chip .chip-label {
 
 .filter-profiles-success {
   padding: 6px 12px;
-  background: rgba(52, 199, 89, 0.1);
+  background: rgba(48, 209, 88, 0.1);
   color: var(--color-success, #34c759);
   font-size: 11px;
   border-bottom: 1px solid var(--color-divider);
@@ -4417,7 +4429,7 @@ button.filter-chip.trace-timeline-chip .chip-label {
 
 .trace-timeline-details .level-badge.level-debug {
   background: rgba(142, 142, 147, 0.15);
-  color: var(--color-level-debug, #8e8e93);
+  color: #8e8e93;
 }
 
 .trace-timeline-details .duration {

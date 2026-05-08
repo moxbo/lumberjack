@@ -12,6 +12,8 @@ import {
   getDefaultLogPath as typedGetDefaultLogPath,
   windowPermsSet,
   chooseLogFile,
+  autoUpdaterCheck,
+  onAutoUpdaterStatus,
 } from "../../utils/typedApi";
 
 // SVG Icons for tabs
@@ -129,6 +131,143 @@ interface SettingsModalProps {
   onSave: () => Promise<void>;
   onClose: () => void;
   applyThemeMode: (mode: string | null | undefined) => void;
+}
+
+/**
+ * Inline row in the settings dialog that lets the user manually trigger
+ * an update check. Reflects the resulting status (checking / up-to-date /
+ * available / failed) without depending on the global update toast.
+ */
+function UpdateCheckRow(): JSX.Element {
+  const { t } = useI18n();
+  type CheckState =
+    | { kind: "idle" }
+    | { kind: "checking" }
+    | { kind: "upToDate"; version: string }
+    | { kind: "available"; version: string }
+    | { kind: "failed"; error: string };
+
+  const [state, setState] = useState<CheckState>({ kind: "idle" });
+  // Only react to status events that originated from a user-triggered check
+  // in this row, otherwise the global update flow would override our state.
+  const [active, setActive] = useState(false);
+
+  useEffect(() => {
+    if (!active) return;
+    const unsubscribe = onAutoUpdaterStatus(
+      (status: {
+        status: string;
+        info?: { version?: string };
+        error?: string;
+      }) => {
+        switch (status.status) {
+          case "checking":
+            setState({ kind: "checking" });
+            break;
+          case "available":
+          case "available-portable":
+            setState({
+              kind: "available",
+              version: status.info?.version ?? "?",
+            });
+            setActive(false);
+            break;
+          case "not-available":
+            setState({
+              kind: "upToDate",
+              version: status.info?.version ?? "",
+            });
+            setActive(false);
+            break;
+          case "error":
+            setState({
+              kind: "failed",
+              error: status.error ?? "unknown",
+            });
+            setActive(false);
+            break;
+          default:
+            // ignore downloading/downloaded for inline status
+            break;
+        }
+      },
+    );
+    return () => {
+      unsubscribe?.();
+    };
+  }, [active]);
+
+  const onClick = async () => {
+    setState({ kind: "checking" });
+    setActive(true);
+    try {
+      await autoUpdaterCheck();
+    } catch (e) {
+      logger.warn("[SettingsModal] manual update check failed:", e);
+      setState({
+        kind: "failed",
+        error: e instanceof Error ? e.message : String(e),
+      });
+      setActive(false);
+    }
+  };
+
+  let statusEl: JSX.Element | null = null;
+  if (state.kind === "checking") {
+    statusEl = (
+      <span className="settings-field-hint">
+        {t("settings.updates.checking")}
+      </span>
+    );
+  } else if (state.kind === "upToDate") {
+    statusEl = (
+      <span className="settings-field-hint settings-update-ok">
+        {t("settings.updates.upToDate", { version: state.version })}
+      </span>
+    );
+  } else if (state.kind === "available") {
+    statusEl = (
+      <span className="settings-field-hint settings-update-available">
+        {t("settings.updates.available", { version: state.version })}
+      </span>
+    );
+  } else if (state.kind === "failed") {
+    statusEl = (
+      <span className="settings-field-hint settings-update-error">
+        {t("settings.updates.checkFailed", { error: state.error })}
+      </span>
+    );
+  }
+
+  return (
+    <div className="settings-field">
+      <label className="settings-label">{t("settings.updates.checkNow")}</label>
+      <p className="settings-field-hint">
+        {t("settings.updates.checkNowHint")}
+      </p>
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          gap: "0.75rem",
+          flexWrap: "wrap",
+          marginTop: "0.5rem",
+        }}
+      >
+        <button
+          type="button"
+          className="settings-btn settings-btn-secondary"
+          onClick={onClick}
+          disabled={state.kind === "checking"}
+        >
+          {state.kind === "checking"
+            ? t("settings.updates.checking")
+            : t("settings.updates.checkNow")}
+        </button>
+        {statusEl}
+      </div>
+    </div>
+  );
 }
 
 export function SettingsModal({
@@ -811,6 +950,9 @@ export function SettingsModal({
                       </label>
                     </div>
                   </div>
+
+                  {/* Manual update check */}
+                  <UpdateCheckRow />
 
                   <div className="settings-divider" />
 

@@ -230,7 +230,13 @@
     },
     "updates": {
       "betaChannel": "Beta-Updates",
-      "betaChannelHint": "Vorab-Versionen (Beta/RC) erhalten, bevor sie offiziell veröffentlicht werden."
+      "betaChannelHint": "Vorab-Versionen (Beta/RC) erhalten, bevor sie offiziell veröffentlicht werden.",
+      "checkNow": "Jetzt nach Updates suchen",
+      "checkNowHint": "Prüft bei GitHub, ob eine neuere Version verfügbar ist.",
+      "checking": "Suche läuft…",
+      "upToDate": "Sie verwenden bereits die neueste Version ({{version}}).",
+      "available": "Update verfügbar: {{version}}",
+      "checkFailed": "Prüfung fehlgeschlagen: {{error}}"
     },
     "performance": {
       "heapSize": "Speicherlimit",
@@ -376,6 +382,7 @@
       "followMode": "Follow-Modus",
       "helpMenu": "Hilfe",
       "helpGuide": "Hilfe / Anleitung…",
+      "checkForUpdates": "Nach Updates suchen…",
       "settings": "Einstellungen…",
       "speech": "Sprachausgabe"
     },

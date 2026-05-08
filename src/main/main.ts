@@ -1169,6 +1169,19 @@ function buildMenu(): void {
             label: app.name,
             submenu: [
               { role: "about" as const },
+              {
+                label: t("main.menu.checkForUpdates"),
+                click: () => {
+                  void getAutoUpdaterService()
+                    .checkForUpdates()
+                    .catch((err) => {
+                      log.warn(
+                        "[menu] checkForUpdates failed:",
+                        err instanceof Error ? err.message : String(err),
+                      );
+                    });
+                },
+              },
               { type: "separator" as const },
               {
                 label: t("settings.title"),
@@ -1403,6 +1416,24 @@ function buildMenu(): void {
               (win as BrowserWindow | null | undefined) || null,
             ),
         },
+        ...(isMac
+          ? []
+          : [
+              { type: "separator" as const },
+              {
+                label: t("main.menu.checkForUpdates"),
+                click: () => {
+                  void getAutoUpdaterService()
+                    .checkForUpdates()
+                    .catch((err) => {
+                      log.warn(
+                        "[menu] checkForUpdates failed:",
+                        err instanceof Error ? err.message : String(err),
+                      );
+                    });
+                },
+              },
+            ]),
       ],
     },
   ];
