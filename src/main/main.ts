@@ -2927,6 +2927,27 @@ try {
         // FilterService may not have been initialized, ignore
       }
 
+      // Dispose AutoUpdaterService only if it was actually instantiated.
+      // Using getAutoUpdaterServiceIfExists() preserves lazy-loading: if the
+      // service module was never required (e.g. quick app exit before the
+      // startup check), we don't pay the cost of loading electron-updater
+      // just to dispose it.
+      try {
+        if (_autoUpdaterServiceModule) {
+          const autoUpdater =
+            _autoUpdaterServiceModule.getAutoUpdaterServiceIfExists();
+          if (autoUpdater) {
+            autoUpdater.dispose();
+            log.info("[diag] AutoUpdaterService disposed");
+          }
+        }
+      } catch (err) {
+        log.warn(
+          "[diag] AutoUpdaterService dispose failed:",
+          err instanceof Error ? err.message : String(err),
+        );
+      }
+
       forceFlushLogs();
     } catch (err) {
       log.error(
