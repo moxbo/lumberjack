@@ -1016,6 +1016,26 @@ export default function App(): JSX.Element {
   // Use worker results for filtered indices
   const filteredIdx = workerFilteredIdx;
 
+  // Reverse-Index globalIdx → vi für O(1)-Lookup statt O(n) `indexOf`.
+  // Performance-Quick-Win #7: Bisher verursachte jeder Tastendruck
+  // (moveSelectionBy/gotoMarked/gotoSearchMatch/Range-Selection) einen
+  // linearen Scan über bis zu 300k Einträge.
+  const filteredIdxLookup = useMemo(() => {
+    const m = new Map<number, number>();
+    for (let vi = 0; vi < filteredIdx.length; vi++) {
+      m.set(filteredIdx[vi]!, vi);
+    }
+    return m;
+  }, [filteredIdx]);
+  const viOfGlobal = useCallback(
+    (g: number | null | undefined): number => {
+      if (g == null) return -1;
+      const v = filteredIdxLookup.get(g);
+      return v === undefined ? -1 : v;
+    },
+    [filteredIdxLookup],
+  );
+
   // Update filter stats from worker
   useEffect(() => {
     if (workerFilterStats) {
@@ -1196,7 +1216,7 @@ export default function App(): JSX.Element {
     if (currentSelected == null) return;
 
     // Prüfe ob der ausgewählte Eintrag noch in der gefilterten Liste ist
-    const viIndex = filteredIdx.indexOf(currentSelected);
+    const viIndex = viOfGlobal(currentSelected);
     if (viIndex >= 0) {
       // Markiere als programmatisches Scrollen
       isProgrammaticScrollRef.current = true;
@@ -1326,8 +1346,8 @@ export default function App(): JSX.Element {
         try {
           let next = new Set(prev);
           if (shift && lastClicked.current != null) {
-            const a = filteredIdx.indexOf(lastClicked.current);
-            const b = filteredIdx.indexOf(idx);
+            const a = viOfGlobal(lastClicked.current);
+            const b = viOfGlobal(idx);
             if (a >= 0 && b >= 0) {
               const [lo, hi] = a < b ? [a, b] : [b, a];
               next = new Set(filteredIdx.slice(lo, hi + 1).map((i) => i));
@@ -1426,8 +1446,7 @@ export default function App(): JSX.Element {
 
   function gotoMarked(dir: number) {
     if (!markedIdx.length) return;
-    const curVi =
-      selectedOneIdx != null ? filteredIdx.indexOf(selectedOneIdx) : -1;
+    const curVi = selectedOneIdx != null ? viOfGlobal(selectedOneIdx) : -1;
     const first = markedIdx[0]!;
     const last = markedIdx[markedIdx.length - 1]!;
     let targetVi: number | undefined;
@@ -1488,8 +1507,7 @@ export default function App(): JSX.Element {
 
   function gotoSearchMatch(dir: number) {
     if (!searchMatchIdx.length) return;
-    const curVi =
-      selectedOneIdx != null ? filteredIdx.indexOf(selectedOneIdx) : -1;
+    const curVi = selectedOneIdx != null ? viOfGlobal(selectedOneIdx) : -1;
     const first = searchMatchIdx[0]!;
     const last = searchMatchIdx[searchMatchIdx.length - 1]!;
     let targetVi: number | undefined;
@@ -1524,7 +1542,7 @@ export default function App(): JSX.Element {
         : lastClicked.current != null
           ? (lastClicked.current as number)
           : null;
-    const curVi = curGlobal != null ? filteredIdx.indexOf(curGlobal) : -1;
+    const curVi = curGlobal != null ? viOfGlobal(curGlobal) : -1;
 
     let targetVi =
       curVi < 0 ? (dir > 0 ? 0 : filteredIdx.length - 1) : curVi + dir;
@@ -1540,7 +1558,7 @@ export default function App(): JSX.Element {
         lastClicked.current != null
           ? (lastClicked.current as number)
           : (curGlobal ?? targetGlobal);
-      const a = filteredIdx.indexOf(anchorGlobal);
+      const a = viOfGlobal(anchorGlobal);
       const b = targetVi;
       if (a >= 0 && b >= 0) {
         const [lo, hi] = a < b ? [a, b] : [b, a];
@@ -4028,7 +4046,7 @@ export default function App(): JSX.Element {
               if (entry._id !== undefined) {
                 setSelected(new Set([entry._id]));
                 // Scroll to entry
-                const idx = filteredIdx.indexOf(entry._id);
+                const idx = viOfGlobal(entry._id);
                 if (idx >= 0) {
                   virtualizer.scrollToIndex(idx, { align: "center" });
                 }
