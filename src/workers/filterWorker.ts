@@ -9,6 +9,8 @@ interface FilterRequest {
   type: "filter";
   entries: any[];
   options: FilterOptions;
+  /** Optional request id used by the consumer to discard stale results. */
+  requestId?: number;
 }
 
 interface FilterOptions {
@@ -31,6 +33,8 @@ interface FilterResponse {
   type: "result";
   filteredIndices: number[];
   stats: FilterStats;
+  /** Echoed back from the request so the caller can drop stale results. */
+  requestId?: number;
 }
 
 interface FilterStats {
@@ -453,10 +457,11 @@ function filterEntries(entries: any[], options: FilterOptions): FilterResponse {
 
 // Worker message handler
 self.onmessage = (event: MessageEvent<FilterRequest>) => {
-  const { type, entries, options } = event.data;
+  const { type, entries, options, requestId } = event.data;
 
   if (type === "filter") {
     const result = filterEntries(entries, options);
+    if (requestId !== undefined) result.requestId = requestId;
     self.postMessage(result);
   }
 };
