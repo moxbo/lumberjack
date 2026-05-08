@@ -209,6 +209,20 @@ function toEntry(obj: AnyMap = {}, fallbackMessage = "", source = ""): Entry {
     entry._messageSize = messageSize;
   }
 
+  // Re-import einer Lumberjack-Export-Datei: Markierungs-Farbe aus
+  // `markColor` (neueres Format) bzw. `_mark` (Legacy) übernehmen, damit
+  // die Marks im UI nach dem Import wieder gefärbt sind.
+  // Ein Hex/CSS-Color-String wird akzeptiert, alles andere ignoriert
+  // (z. B. Truthy-Bools, die früher mal als Mark-Marker dienten).
+  const importedMark = obj.markColor ?? obj._mark;
+  if (
+    typeof importedMark === "string" &&
+    importedMark.trim().length > 0 &&
+    importedMark.length < 64
+  ) {
+    entry._mark = importedMark.trim();
+  }
+
   return entry;
 }
 

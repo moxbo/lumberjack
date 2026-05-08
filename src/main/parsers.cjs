@@ -175,6 +175,10 @@ function toEntry(obj = {}, fallbackMessage = "", source = "") {
     entry._fullMessage = originalMessage;
     entry._messageSize = messageSize;
   }
+  const importedMark = obj.markColor ?? obj._mark;
+  if (typeof importedMark === "string" && importedMark.trim().length > 0 && importedMark.length < 64) {
+    entry._mark = importedMark.trim();
+  }
   return entry;
 }
 function tryParseJson(line) {

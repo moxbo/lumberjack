@@ -806,6 +806,42 @@ export default function App(): JSX.Element {
   // Markierungen werden nun direkt aus `marksMap` zur Render-Zeit
   // aufgelöst (siehe LogRow/DetailPanel-Aufrufe weiter unten).
 
+  /**
+   * Hydratisiert `marksMap` aus frisch importierten Einträgen, die bereits
+   * eine Mark-Farbe (z. B. aus einem JSON/NDJSON-Re-Import einer früheren
+   * Lumberjack-Export-Datei) im Feld `_mark` mitbringen.
+   *
+   * Wird nach jedem `appendEntries`-Aufruf aus einem Import-Pfad
+   * aufgerufen. Berührt den State nur, wenn tatsächlich neue Marks
+   * gefunden wurden – Tail-Streaming-Batches (TCP/HTTP) bleiben damit
+   * vollständig kostenfrei.
+   */
+  const hydrateMarksFromEntries = useCallback(
+    (importedEntries: any[] | undefined | null) => {
+      if (!importedEntries || importedEntries.length === 0) return;
+      let next: Record<string, string> | null = null;
+      for (let i = 0; i < importedEntries.length; i++) {
+        const e = importedEntries[i];
+        const m = e?._mark;
+        if (typeof m !== "string" || !m) continue;
+        const sig = entrySignature(e);
+        if (!sig) continue;
+        if ((next ?? marksMap)[sig] === m) continue;
+        if (!next) next = { ...marksMap };
+        next[sig] = m;
+      }
+      if (next) {
+        setMarksMap(next);
+        try {
+          patchSettingsQuiet({ marksMap: next });
+        } catch {
+          /* ignore */
+        }
+      }
+    },
+    [marksMap],
+  );
+
   function adoptTraceIds() {
     try {
       const variants = [
@@ -2065,7 +2101,10 @@ export default function App(): JSX.Element {
                 const paths = await typedOpenFiles();
                 if (paths && paths.length) {
                   const res = await typedParsePaths(paths);
-                  if (res?.ok) appendEntries(res.entries as any);
+                  if (res?.ok) {
+                    appendEntries(res.entries as any);
+                    hydrateMarksFromEntries(res.entries as any[]);
+                  }
                 }
                 break;
               }
@@ -2264,8 +2303,10 @@ export default function App(): JSX.Element {
       onFiles: async (paths) => {
         await withBusy(async () => {
           const res = await typedParsePaths(paths);
-          if (res?.ok) appendEntries(res.entries as any);
-          else
+          if (res?.ok) {
+            appendEntries(res.entries as any);
+            hydrateMarksFromEntries(res.entries as any[]);
+          } else
             showAlertRef.current(
               tRef.current("errors.dropLoadError", {
                 message: res?.error || tRef.current("status.errorUnknown"),
@@ -2278,8 +2319,10 @@ export default function App(): JSX.Element {
         await withBusy(async () => {
           try {
             const res = await typedParseRawDrops(files);
-            if (res?.ok) appendEntries(res.entries as any);
-            else
+            if (res?.ok) {
+              appendEntries(res.entries as any);
+              hydrateMarksFromEntries(res.entries as any[]);
+            } else
               showAlertRef.current(
                 tRef.current("errors.dropLoadError", {
                   message: res?.error || tRef.current("status.errorUnknown"),
@@ -2866,6 +2909,7 @@ export default function App(): JSX.Element {
           const parsed = await typedParsePaths(result);
           if (parsed?.ok && parsed.entries && parsed.entries.length > 0) {
             appendEntries(parsed.entries);
+            hydrateMarksFromEntries(parsed.entries as any[]);
           }
         }
       } catch (err) {
@@ -3809,7 +3853,10 @@ export default function App(): JSX.Element {
                       const paths = await typedOpenFiles();
                       if (paths && paths.length) {
                         const res = await typedParsePaths(paths);
-                        if (res?.ok) appendEntries(res.entries as any);
+                        if (res?.ok) {
+                          appendEntries(res.entries as any);
+                          hydrateMarksFromEntries(res.entries as any[]);
+                        }
                       }
                     } catch (e) {
                       logger.error("Open file failed:", e);

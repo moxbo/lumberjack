@@ -52,6 +52,11 @@ interface LogEntry {
   stackTrace?: string;
   service: string;
   raw: unknown;
+  /**
+   * Optional Mark-Farbe aus Re-Importen einer Lumberjack-Export-Datei.
+   * Wird im Renderer in `marksMap` hydriert (siehe App.tsx).
+   */
+  _mark?: string;
 }
 
 /**
@@ -318,6 +323,18 @@ function toEntry(obj: AnyMap, source: string): LogEntry {
     return fallback;
   };
 
+  // Re-import einer Lumberjack-Export-Datei: Mark-Farbe aus
+  // `markColor` (neueres Format) oder `_mark` (Legacy) übernehmen.
+  let importedMark: string | undefined;
+  const rawMark = obj.markColor ?? obj._mark;
+  if (
+    typeof rawMark === "string" &&
+    rawMark.trim().length > 0 &&
+    rawMark.length < 64
+  ) {
+    importedMark = rawMark.trim();
+  }
+
   return {
     timestamp: String(timestamp),
     level: safeString(level, "INFO").toUpperCase(),
@@ -330,5 +347,6 @@ function toEntry(obj: AnyMap, source: string): LogEntry {
     stackTrace: stackTrace ? safeString(stackTrace) : undefined,
     service: safeString(service),
     raw: truncateRaw(obj),
+    ...(importedMark ? { _mark: importedMark } : {}),
   };
 }
