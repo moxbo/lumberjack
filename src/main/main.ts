@@ -72,21 +72,27 @@ if (process.env.LUMBERJACK_DISABLE_GPU === "1") {
 }
 
 // V8 Optimizations for faster JavaScript execution
-// --turbo-fast-api-calls: Faster native API calls
 // --expose-gc: Only in development for diagnostics (security risk in production)
-// --max-old-space-size: Configurable heap size for large datasets (Windows only)
+// --max-old-space-size: Configurable heap size for large datasets (all platforms)
 // NOTE: All js-flags are consolidated into a single appendSwitch call
 // because multiple calls would overwrite previous flags.
+//
+// Quick-Win #6:
+// - `--turbo-fast-api-calls` removed: it is a no-op (and warning) on
+//   modern V8 versions and was never officially supported.
+// - `--max-old-space-size` is now applied on all platforms (was Win-only).
+//   macOS / Linux users with very large log sessions previously hit the
+//   default ~1.4 GB heap limit and crashed with OOM.
 if (!process.env.LUMBERJACK_DISABLE_V8_OPTS) {
-  const flagParts: string[] = ["--turbo-fast-api-calls"];
+  const flagParts: string[] = [];
   if (isDevEnv) {
     flagParts.push("--expose-gc");
   }
-  if (process.platform === "win32") {
-    const heapSizeMB = loadHeapSizeSync();
-    console.warn(`[startup] Heap size configured: ${heapSizeMB}MB`);
-    flagParts.push(`--max-old-space-size=${heapSizeMB}`);
-  }
+  const heapSizeMB = loadHeapSizeSync();
+  console.warn(
+    `[startup] Heap size configured: ${heapSizeMB}MB (platform=${process.platform})`,
+  );
+  flagParts.push(`--max-old-space-size=${heapSizeMB}`);
   app.commandLine.appendSwitch("js-flags", flagParts.join(" "));
 }
 
