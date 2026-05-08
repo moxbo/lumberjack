@@ -40,6 +40,12 @@ interface DetailPanelProps {
   onAddMdcToFilter: (key: string, value: string) => void;
   onFilterByLogger?: (logger: string) => void;
   onFilterByThread?: (thread: string) => void;
+  /**
+   * Optional vom Aufrufer aufgelöste Markierungs-Farbe (signature → color).
+   * Performance-Quick-Win #2: das Mark wird nicht mehr in `selectedEntry._mark`
+   * gespeichert, sondern aus der zentralen marksMap im App-State abgeleitet.
+   */
+  markColor?: string | null;
 }
 
 export function DetailPanel({
@@ -49,6 +55,7 @@ export function DetailPanel({
   onAddMdcToFilter,
   onFilterByLogger,
   onFilterByThread,
+  markColor,
 }: DetailPanelProps) {
   const { t } = useI18n();
   const [showFullMessage, setShowFullMessage] = useState(false);
@@ -57,19 +64,18 @@ export function DetailPanel({
   const isTruncated = selectedEntry?._truncated === true;
   const messageSize = selectedEntry ? getMessageSize(selectedEntry) : 0;
 
+  // #2: bevorzugt aus marksMap (per Prop), fällt auf legacy `_mark`/`color` zurück.
+  const effectiveMark =
+    markColor ||
+    (selectedEntry && (selectedEntry._mark || selectedEntry.color)) ||
+    null;
+
   return (
     <div
       className="details"
-      data-tinted={
-        selectedEntry && (selectedEntry._mark || selectedEntry.color)
-          ? "1"
-          : "0"
-      }
+      data-tinted={effectiveMark ? "1" : "0"}
       style={{
-        ["--details-tint" as any]: computeTint(
-          (selectedEntry && selectedEntry._mark) || selectedEntry?.color,
-          0.22,
-        ),
+        ["--details-tint" as any]: computeTint(effectiveMark, 0.22),
       }}
     >
       {!selectedEntry && (

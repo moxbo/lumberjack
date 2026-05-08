@@ -770,52 +770,41 @@ export default function App(): JSX.Element {
     }
   }
 
-  // Markierung anwenden/entfernen + Persistenz
+  // Markierung anwenden/entfernen + Persistenz.
+  // Performance-Quick-Win #2: Es wird KEIN `_mark`-Feld mehr in die
+  // Entry-Objekte geschrieben. Stattdessen ist die `marksMap` (signature
+  // → color) die Single-Source-of-Truth. LogRow, DetailPanel, Filter
+  // (`onlyMarked`) und Bookmarks lesen die Markierung über die Map.
+  // Vorteil: kein Vollscan über `entries` + kein Re-Filter pro Mark-Change.
   function applyMarkColor(color?: string) {
-    setEntries((prev) => {
-      if (!prev || !prev.length) return prev;
-      const next = prev.slice();
-      const newMap: Record<string, string> = { ...marksMap };
-      for (const i of selected) {
-        if (i >= 0 && i < next.length) {
-          const e = next[i];
-          if (!e) continue;
-          const n: RendererLogEntry = { ...e };
-          if (color) {
-            n._mark = color;
-            newMap[entrySignature(n)] = color;
-          } else {
-            if (n._mark) delete newMap[entrySignature(n)];
-            delete n._mark;
-          }
-          next[i] = n;
+    if (!entries.length) {
+      closeContextMenu();
+      return;
+    }
+    const newMap: Record<string, string> = { ...marksMap };
+    for (const i of selected) {
+      if (i >= 0 && i < entries.length) {
+        const e = entries[i];
+        if (!e) continue;
+        const sig = entrySignature(e);
+        if (color) {
+          newMap[sig] = color;
+        } else {
+          delete newMap[sig];
         }
       }
-      setMarksMap(newMap);
-      try {
-        patchSettingsQuiet({ marksMap: newMap });
-      } catch {}
-      return next;
-    });
+    }
+    setMarksMap(newMap);
+    try {
+      patchSettingsQuiet({ marksMap: newMap });
+    } catch {}
     closeContextMenu();
   }
-  // Synchronisiere bestehende Einträge, wenn marksMap geladen/aktualisiert wird
-  useEffect(() => {
-    if (!entries.length) return;
-    setEntries((prev) =>
-      prev.map((e) => {
-        const sig = entrySignature(e);
-        const c = marksMap[sig];
-        if (c && e._mark !== c) return { ...e, _mark: c };
-        if (!c && e._mark) {
-          const n = { ...e };
-          delete n._mark;
-          return n;
-        }
-        return e;
-      }),
-    );
-  }, [marksMap]);
+  // Hinweis: Der frühere Sync-Effect, der bei jeder marksMap-Änderung das
+  // gesamte `entries`-Array via setEntries(prev.map(...)) rebuildete, ist
+  // entfernt. Er triggerte einen Vollscan + Re-Filter im UtilityProcess.
+  // Markierungen werden nun direkt aus `marksMap` zur Render-Zeit
+  // aufgelöst (siehe LogRow/DetailPanel-Aufrufe weiter unten).
 
   function adoptTraceIds() {
     try {
@@ -988,21 +977,27 @@ export default function App(): JSX.Element {
     const timeFilterTo = timeState.to || undefined;
 
     hasTriggeredFilterRef.current = true;
-    filterEntries(entries, {
-      stdFiltersEnabled,
-      filter: {
-        level: debouncedFilter.level || "",
-        logger: debouncedFilter.logger || "",
-        thread: debouncedFilter.thread || "",
-        message: debouncedFilter.message || "",
+    filterEntries(
+      entries,
+      {
+        stdFiltersEnabled,
+        filter: {
+          level: debouncedFilter.level || "",
+          logger: debouncedFilter.logger || "",
+          thread: debouncedFilter.thread || "",
+          message: debouncedFilter.message || "",
+        },
+        onlyMarked,
+        dcFilterEnabled,
+        dcFilterEntries,
+        timeFilterEnabled,
+        timeFilterFrom,
+        timeFilterTo,
       },
-      onlyMarked,
-      dcFilterEnabled,
-      dcFilterEntries,
-      timeFilterEnabled,
-      timeFilterFrom,
-      timeFilterTo,
-    });
+      // marksMap nur für `onlyMarked` relevant – sonst wird es im Worker
+      // ohnehin ignoriert. Übergabe ist zustandslos und billig.
+      onlyMarked ? marksMap : undefined,
+    );
   }, [
     entries,
     stdFiltersEnabled,
@@ -1012,6 +1007,10 @@ export default function App(): JSX.Element {
     onlyMarked,
     searchMode,
     filterEntries,
+    // marksMap wirkt sich nur auf das Ergebnis aus, wenn `onlyMarked` aktiv
+    // ist. Anderfalls wäre eine Aufnahme in die Deps eine unnötige
+    // Re-Filter-Quelle bei jedem Mark/Unmark-Klick.
+    onlyMarked ? marksMap : null,
   ]);
 
   // Use worker results for filtered indices
@@ -1394,6 +1393,7 @@ export default function App(): JSX.Element {
 
   const markedIdx = useMemo(() => {
     const out: number[] = [];
+    if (!Object.keys(marksMap).length) return out;
     const len = filteredIdx.length;
     // Performance: Bei sehr großen Listen nur die ersten 100k durchsuchen
     // um UI-Freezes zu vermeiden
@@ -1401,10 +1401,12 @@ export default function App(): JSX.Element {
     for (let vi = 0; vi < searchLimit; vi++) {
       const idx = filteredIdx[vi]!;
       const e = entries[idx];
-      if (e?._mark) out.push(vi);
+      if (!e) continue;
+      // #2: Markierung kommt aus marksMap, nicht mehr aus e._mark.
+      if (marksMap[entrySignature(e)]) out.push(vi);
     }
     return out;
-  }, [filteredIdx, entries]);
+  }, [filteredIdx, entries, marksMap]);
 
   const searchMatchIdx = useMemo(() => {
     const s = String(debouncedSearch || "").trim();
@@ -1470,14 +1472,19 @@ export default function App(): JSX.Element {
     return slice.map((vi) => {
       const e = entries[filteredIdx[vi]!];
       const msg = String(e?.message || "");
+      // #2: Farbe aus marksMap statt aus e._mark.
+      const color =
+        (e ? marksMap[entrySignature(e)] : undefined) ||
+        (e?._mark as string | undefined) ||
+        "#3b82f6";
       return {
         vi,
-        color: (e?._mark as string) || "#3b82f6",
+        color,
         timestamp: fmtTimestamp(e?.timestamp),
         message: msg.length > 200 ? msg.slice(0, 200) + "…" : msg,
       };
     });
-  }, [markedIdx, filteredIdx, entries]);
+  }, [markedIdx, filteredIdx, entries, marksMap]);
 
   function gotoSearchMatch(dir: number) {
     if (!searchMatchIdx.length) return;
@@ -2474,7 +2481,9 @@ export default function App(): JSX.Element {
           spanId: e?.spanId,
           stackTrace: e?.stackTrace,
           mdc: e?.mdc,
-          markColor: e?._mark || null, // Explicitly include mark color
+          // #2: Mark-Farbe primär aus marksMap (Single-Source-of-Truth).
+          markColor:
+            (e ? marksMap[entrySignature(e)] : undefined) || e?._mark || null,
         }));
         content = JSON.stringify(jsonEntries, null, 2);
       } else if (format === "txt") {
@@ -2522,7 +2531,9 @@ export default function App(): JSX.Element {
             .replace(/&/g, "&amp;")
             .replace(/</g, "&lt;")
             .replace(/>/g, "&gt;");
-          const markColor = e?._mark as string | undefined;
+          const markColor =
+            (e ? marksMap[entrySignature(e)] : undefined) ||
+            (e?._mark as string | undefined);
           const levelColor = levelColors[lvl] || textColor;
 
           const rowStyle = markColor
@@ -3728,7 +3739,11 @@ export default function App(): JSX.Element {
               const e: RendererLogEntry | undefined = entries[globalIdx];
               if (!e) return null;
               const isSel = selected.has(globalIdx);
-              const markColor = e._mark || e.color;
+              // #2: Markierung kommt primär aus marksMap (Single-Source-of-Truth).
+              // Fallback auf e._mark/e.color für Legacy-Pfade (z. B. Entries
+              // mit eingebetteter Farbe aus früheren Sessions).
+              const markColor =
+                marksMap[entrySignature(e)] || e._mark || e.color;
               const y: number =
                 typeof vi?.start === "number" ? (vi.start as number) : 0;
               const key = (vi && vi.key) || `row-${globalIdx}`;
@@ -3874,6 +3889,9 @@ export default function App(): JSX.Element {
             onAddMdcToFilter={addMdcToFilter}
             onFilterByLogger={filterByLogger}
             onFilterByThread={filterByThread}
+            markColor={
+              selectedEntry ? marksMap[entrySignature(selectedEntry)] : null
+            }
           />
         </div>
       </div>

@@ -12,6 +12,7 @@
  */
 import { useState, useEffect, useRef, useCallback } from "preact/hooks";
 import { msgMatches } from "../utils/msgFilter";
+import { entrySignature } from "../utils/entryUtils";
 import {
   filterIsAvailable,
   filterEntries as typedFilterEntries,
@@ -49,7 +50,19 @@ interface UseFilterWorkerResult {
   filteredIndices: number[];
   isFiltering: boolean;
   stats: FilterStats | null;
-  filterEntries: (entries: unknown[], options: FilterOptions) => void;
+  /**
+   * @param entries  Vollständige Renderer-Einträge.
+   * @param options  Filter-Optionen.
+   * @param marksMap Optional: Map signature → Farbe. Wird genutzt, um
+   *                 `_mark` für `onlyMarked` und für die Worker-Projektion
+   *                 nachzuschlagen, ohne dass das Feld in den Entry-Objekten
+   *                 selbst gepflegt werden muss (Performance-Quick-Win #2).
+   */
+  filterEntries: (
+    entries: unknown[],
+    options: FilterOptions,
+    marksMap?: Record<string, string>,
+  ) => void;
   /** True wenn UtilityProcess verwendet wird, false für Web Worker/Sync */
   useUtilityProcess: boolean;
 }
@@ -80,14 +93,32 @@ interface SlimEntry {
 /**
  * Project full entries to slim entries for worker transfer
  * This prevents DataCloneError: out of memory when transferring large datasets
+ *
+ * `marksMap` (signature → color) wird – falls vorhanden – genutzt, um das
+ * `_mark`-Feld zu projizieren, ohne dass die Renderer-Entries selbst eine
+ * `_mark`-Property tragen müssen.
  */
-function projectToSlimEntries(entries: unknown[]): SlimEntry[] {
+function projectToSlimEntries(
+  entries: unknown[],
+  marksMap?: Record<string, string>,
+): SlimEntry[] {
   const result: SlimEntry[] = new Array(entries.length);
+  const hasMarks = !!marksMap && Object.keys(marksMap).length > 0;
   for (let i = 0; i < entries.length; i++) {
     const e = entries[i] as Record<string, unknown> | null;
     if (!e) {
       result[i] = {};
       continue;
+    }
+    let mark: string | null | undefined = e._mark as string | null | undefined;
+    if (hasMarks && mark == null) {
+      try {
+        const sig = entrySignature(e as any);
+        const c = marksMap![sig];
+        if (c) mark = c;
+      } catch {
+        /* ignore */
+      }
     }
     // Only copy fields needed for filtering - skip raw, stackTrace, etc.
     result[i] = {
@@ -98,7 +129,7 @@ function projectToSlimEntries(entries: unknown[]): SlimEntry[] {
       timestamp: e.timestamp as string | number | Date | null | undefined,
       source: e.source as string | null | undefined,
       mdc: e.mdc as Record<string, unknown> | null | undefined,
-      _mark: e._mark as string | null | undefined,
+      _mark: mark,
     };
   }
   return result;
@@ -424,12 +455,12 @@ function getWorkerCode(): string {
 
 /**
  * Hook that uses UtilityProcess (Electron 40+) or Web Worker for filtering large datasets.
- * Falls back to synchronous filtering for smaller datasets or when UtilityProcess unavailable.
+ * Falls back to synchronous filtering for kleinere Datensätze oder wenn UtilityProcess nicht verfügbar ist.
  *
- * Priority:
- * 1. UtilityProcess (best performance, separate process)
- * 2. Web Worker (fallback, runs in renderer thread pool)
- * 3. Synchronous (for small datasets < 5000 entries)
+ * Priorität:
+ * 1. UtilityProcess (beste Performance, separater Prozess)
+ * 2. Web Worker (Fallback, läuft im Renderer-Thread-Pool)
+ * 3. Synchron (für kleine Datensätze < 5000 Einträge)
  */
 export function useFilterWorker(): UseFilterWorkerResult {
   const [filteredIndices, setFilteredIndices] = useState<number[]>([]);
@@ -512,6 +543,7 @@ export function useFilterWorker(): UseFilterWorkerResult {
     (
       entries: unknown[],
       options: FilterOptions,
+      marksMap?: Record<string, string>,
     ): { indices: number[]; stats: FilterStats } => {
       const filterStats: FilterStats = {
         total: 0,
@@ -526,15 +558,26 @@ export function useFilterWorker(): UseFilterWorkerResult {
       };
 
       const indices: number[] = [];
+      const hasMarks = !!marksMap && Object.keys(marksMap).length > 0;
 
       for (let i = 0; i < entries.length; i++) {
         const e = entries[i] as Record<string, unknown> | null;
         filterStats.total++;
         if (!e) continue;
 
-        if (options.onlyMarked && !e._mark) {
-          filterStats.rejectedByOnlyMarked++;
-          continue;
+        if (options.onlyMarked) {
+          let mark: unknown = e._mark;
+          if (mark == null && hasMarks) {
+            try {
+              mark = marksMap![entrySignature(e as any)];
+            } catch {
+              /* ignore */
+            }
+          }
+          if (!mark) {
+            filterStats.rejectedByOnlyMarked++;
+            continue;
+          }
         }
 
         if (options.stdFiltersEnabled) {
@@ -623,13 +666,17 @@ export function useFilterWorker(): UseFilterWorkerResult {
 
   // Main filter function - uses UtilityProcess, Web Worker, or sync based on availability
   const filterEntries = useCallback(
-    (entries: unknown[], options: FilterOptions) => {
+    (
+      entries: unknown[],
+      options: FilterOptions,
+      marksMap?: Record<string, string>,
+    ) => {
       const requestId = Date.now();
       pendingRequestRef.current = requestId;
 
       // For small datasets, use synchronous filtering (fastest for small data)
       if (entries.length <= WORKER_THRESHOLD) {
-        const result = filterSync(entries, options);
+        const result = filterSync(entries, options, marksMap);
         setFilteredIndices(result.indices);
         setStats(result.stats);
         setIsFiltering(false);
@@ -646,7 +693,7 @@ export function useFilterWorker(): UseFilterWorkerResult {
             console.warn(
               `[FilterWorker] Dataset too large for UtilityProcess (${entries.length} entries), falling back to sync`,
             );
-            const syncResult = filterSync(entries, options);
+            const syncResult = filterSync(entries, options, marksMap);
             setFilteredIndices(syncResult.indices);
             setStats(syncResult.stats);
             setIsFiltering(false);
@@ -654,7 +701,7 @@ export function useFilterWorker(): UseFilterWorkerResult {
           }
 
           // Project to slim entries to prevent DataCloneError (out of memory)
-          const slimEntries = projectToSlimEntries(entries);
+          const slimEntries = projectToSlimEntries(entries, marksMap);
 
           typedFilterEntries(slimEntries, options)
             .then((result: import("../types/ipc").FilterResult) => {
@@ -669,7 +716,7 @@ export function useFilterWorker(): UseFilterWorkerResult {
                     "[FilterWorker] UtilityProcess failed, falling back to sync:",
                     result.error,
                   );
-                  const syncResult = filterSync(entries, options);
+                  const syncResult = filterSync(entries, options, marksMap);
                   setFilteredIndices(syncResult.indices);
                   setStats(syncResult.stats);
                 }
@@ -680,7 +727,7 @@ export function useFilterWorker(): UseFilterWorkerResult {
               console.warn("[FilterWorker] UtilityProcess error:", error);
               // Fall back to sync on error
               if (pendingRequestRef.current === requestId) {
-                const syncResult = filterSync(entries, options);
+                const syncResult = filterSync(entries, options, marksMap);
                 setFilteredIndices(syncResult.indices);
                 setStats(syncResult.stats);
                 setIsFiltering(false);
@@ -691,7 +738,7 @@ export function useFilterWorker(): UseFilterWorkerResult {
           const errorMessage =
             error instanceof Error ? error.message : String(error);
           console.warn("[FilterWorker] IPC call failed:", errorMessage);
-          const syncResult = filterSync(entries, options);
+          const syncResult = filterSync(entries, options, marksMap);
           setFilteredIndices(syncResult.indices);
           setStats(syncResult.stats);
           setIsFiltering(false);
@@ -709,7 +756,7 @@ export function useFilterWorker(): UseFilterWorkerResult {
             console.warn(
               `[FilterWorker] Dataset too large for Web Worker (${entries.length} entries), falling back to sync`,
             );
-            const syncResult = filterSync(entries, options);
+            const syncResult = filterSync(entries, options, marksMap);
             setFilteredIndices(syncResult.indices);
             setStats(syncResult.stats);
             setIsFiltering(false);
@@ -718,7 +765,7 @@ export function useFilterWorker(): UseFilterWorkerResult {
 
           // Project to slim entries to prevent DataCloneError (out of memory)
           // Only transfer fields needed for filtering, skip raw/stackTrace/etc.
-          const slimEntries = projectToSlimEntries(entries);
+          const slimEntries = projectToSlimEntries(entries, marksMap);
 
           workerRef.current.postMessage({
             type: "filter",
@@ -733,14 +780,14 @@ export function useFilterWorker(): UseFilterWorkerResult {
           console.warn("[FilterWorker] postMessage failed:", errorMessage);
 
           // Fall back to synchronous filtering
-          const syncResult = filterSync(entries, options);
+          const syncResult = filterSync(entries, options, marksMap);
           setFilteredIndices(syncResult.indices);
           setStats(syncResult.stats);
           setIsFiltering(false);
         }
       } else {
         // Last resort: synchronous filtering
-        const result = filterSync(entries, options);
+        const result = filterSync(entries, options, marksMap);
         setFilteredIndices(result.indices);
         setStats(result.stats);
         setIsFiltering(false);
