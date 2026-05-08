@@ -42,13 +42,10 @@ class MDCListenerImpl {
       if (this._started) return;
       this._started = true;
       try {
-        // Seed with existing events (if any)
-        try {
-          const all = LoggingStore?.getAllEvents?.() || [];
-          if (Array.isArray(all) && all.length) this._onAdded(all);
-        } catch (e) {
-          console.warn("MDCListener seeding failed:", e);
-        }
+        // LoggingStore ist ein reiner Event-Bus (kein persistenter Snapshot mehr).
+        // Daher entfällt das frühere Seeding via getAllEvents(). startListening()
+        // wird in App.tsx vor dem Eintreffen der ersten Events aufgerufen, sodass
+        // alle Events über loggingEventsAdded eingehen.
         LoggingStore?.addLoggingStoreListener({
           loggingEventsAdded: (events: Record<string, unknown>[]) =>
             this._onAdded(events),

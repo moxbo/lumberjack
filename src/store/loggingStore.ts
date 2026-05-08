@@ -112,10 +112,15 @@ export function computeMdcFromRaw(
 
 class LoggingStoreImpl {
   private _listeners = new Set<Listener>();
-  private _events: LogEvent[] = [];
-  // Memory limit to prevent unbounded growth
-  // Set high enough for normal usage but prevents runaway memory consumption
-  private static readonly TRIM_THRESHOLD = 1_000_000;
+  // Pure event-bus: events sind nicht mehr persistent gespeichert.
+  // Die Entries werden bereits in useEntryManagement (entries-State) gehalten;
+  // ein zweites paralleles Array hier verdoppelte den Renderer-Heap bei
+  // großen Sessions (z. B. 300k Einträge). Konsumenten (z. B. MDCListener)
+  // erhalten Events über loggingEventsAdded; ein Seeding-Snapshot wird nicht
+  // mehr benötigt, da MDCListener.startListening() vor dem Eintreffen der
+  // ersten Events in App.tsx aufgerufen wird.
+  // Ein leerer Zähler ersetzt _events nur für Debug-Zwecke (getEventCount).
+  private _eventCount = 0;
 
   addLoggingStoreListener(listener: Listener) {
     if (listener && typeof listener === "object") {
@@ -124,8 +129,19 @@ class LoggingStoreImpl {
     }
     return () => {};
   }
+  /**
+   * Liefert keinen Snapshot mehr, da der Store nun reiner Event-Bus ist.
+   * Aus Kompatibilitätsgründen weiterhin verfügbar, gibt aber immer ein
+   * leeres Array zurück. Konsumenten sollten Listener nutzen.
+   */
   getAllEvents(): LogEvent[] {
-    return this._events.slice();
+    return [];
+  }
+  /**
+   * Anzahl der jemals durchgeleiteten Events (nur Debug/Diagnose).
+   */
+  getEventCount(): number {
+    return this._eventCount;
   }
   addEvents(events: LogEvent[]): void {
     if (!Array.isArray(events) || events.length === 0) return;
@@ -142,22 +158,7 @@ class LoggingStoreImpl {
       }
     }
 
-    // Add events (use concat for better performance with large arrays)
-    if (events.length > 1000) {
-      this._events = this._events.concat(events);
-    } else {
-      this._events.push(...events);
-    }
-
-    // Trim if we exceed the threshold to prevent memory issues
-    if (this._events.length > LoggingStoreImpl.TRIM_THRESHOLD) {
-      const trimCount =
-        this._events.length - Math.floor(LoggingStoreImpl.TRIM_THRESHOLD * 0.8);
-      this._events = this._events.slice(trimCount);
-      console.warn(
-        `[LoggingStore] Trimmed ${trimCount} oldest events to prevent memory overflow`,
-      );
-    }
+    this._eventCount += events.length;
 
     for (const l of this._listeners) {
       try {
@@ -168,7 +169,7 @@ class LoggingStoreImpl {
     }
   }
   reset(): void {
-    this._events = [];
+    this._eventCount = 0;
     for (const l of this._listeners) {
       try {
         l.loggingStoreReset?.();
@@ -184,7 +185,9 @@ import { lazyInstance } from "./_lazy";
 /** Public interface for typed access (avoids `as any` casts in consumers) */
 export interface ILoggingStore {
   addLoggingStoreListener(listener: Listener): () => void;
+  /** @deprecated Store is a pure event-bus; returns always []. Use a listener instead. */
   getAllEvents(): LogEvent[];
+  getEventCount(): number;
   addEvents(events: LogEvent[]): void;
   reset(): void;
 }

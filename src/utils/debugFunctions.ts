@@ -282,12 +282,13 @@ export function setupDebugFunctions(): void {
      * Get the total count of entries.
      */
     getTotalCount: () => {
-      // Try debugEntriesRef first, then fall back to LoggingStore
+      // Try debugEntriesRef first, then fall back to LoggingStore-Counter.
+      // (LoggingStore hält keine Events mehr persistent; getEventCount liefert
+      // die Anzahl der durchgeleiteten Events seit dem letzten reset.)
       const refCount = debugEntriesRef?.current?.length || 0;
       if (refCount > 0) return refCount;
-      // Fall back to LoggingStore directly
       try {
-        return (LoggingStore as any).getAllEvents?.()?.length || 0;
+        return (LoggingStore as any).getEventCount?.() || 0;
       } catch {
         return 0;
       }
