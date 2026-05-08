@@ -554,4 +554,11 @@ if (parentPort) {
   parentPort.postMessage({ type: "ready" });
 }
 
-export type { FilterRequest, FilterResponse, FilterOptions, FilterStats };
+export type {
+  FilterRequest,
+  FilterResponse,
+  FilterOptions,
+  FilterStats,
+  LogEntry,
+};
+export { filterEntries };
