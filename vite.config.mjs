@@ -57,8 +57,10 @@ export default defineConfig({
     chunkSizeWarningLimit: 1000,
     // Optimize CSS extraction for faster first paint
     cssCodeSplit: true,
-    // Generate sourcemaps only in development
-    sourcemap: process.env.NODE_ENV !== "production",
+    // Sourcemaps nur außerhalb Production. Quick-Win #5: explizit `false`
+    // in Production, damit selbst bei vergessenem NODE_ENV keine Maps
+    // ausgeliefert werden (Bundle-Size + Code-Disclosure).
+    sourcemap: process.env.NODE_ENV === "production" ? false : true,
     rollupOptions: {
       // electron-log und adm-zip sind ausschließlich Main-Process-Module.
       // Schützt davor, dass sie versehentlich ins Renderer-Bundle landen,

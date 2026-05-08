@@ -13,7 +13,7 @@
     "build:main-local": "esbuild src/main/main.ts --bundle --outfile=dist-main/main.cjs --platform=node --format=cjs --external:electron --external:electron-log/main && esbuild src/main/ipcHandlers.ts --bundle --outfile=dist-main/ipcHandlers.cjs --platform=node --format=cjs --external:electron --external:electron-log/main",
     "build:filter-process": "esbuild src/main/filterProcess.ts --bundle --outfile=dist-main/filterProcess.cjs --platform=node --format=cjs && esbuild src/main/filterProcess.ts --bundle --outfile=release/app/dist/main/filterProcess.cjs --platform=node --format=cjs",
     "build:preload": "esbuild preload.ts --outfile=release/app/dist/preload/preload.js --bundle --platform=node --format=cjs --external:electron",
-    "build:renderer": "vite build --outDir release/app/dist/renderer",
+    "build:renderer": "cross-env NODE_ENV=production vite build --outDir release/app/dist/renderer",
     "build:prod": "npm run prebuild && npm run build:renderer",
     "build": "npm run prepack:app && npm run build:prod",
     "start": "npm run prebuild && npm run build:renderer && electron .",
