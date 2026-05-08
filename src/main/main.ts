@@ -175,9 +175,24 @@ const isMultiInstanceLaunch = process.argv.includes(MULTI_INSTANCE_FLAG);
 log.initialize();
 
 // Configure log levels
-log.transports.console.level = "debug";
+log.transports.console.level = isDev ? "debug" : "info";
 // In production, only log info and above to file (not debug/silly)
 log.transports.file.level = isDev ? false : "info";
+
+// Quick-Win #8: Hot-Path-Diagnose-Logs (silly/debug in TCP/Flush/Freeze/Batch)
+// werden in Production komplett entkoppelt. Vorher wurden Template-Strings
+// und Diagnose-Objekte selbst dann konstruiert, wenn der Transport sie
+// ohnehin verwarf (level=info). Mit dem Helper-Wrapper entfällt diese
+// CPU- und GC-Last komplett. Über LJ_DIAG=1 kann man die Logs in einer
+// Production-Build punktuell wieder einschalten.
+const DIAG_LOG: boolean = isDev || process.env.LJ_DIAG === "1";
+const noopLog: (..._args: unknown[]) => void = () => {};
+const diagSilly: (...args: unknown[]) => void = DIAG_LOG
+  ? (log.silly.bind(log) as (...a: unknown[]) => void)
+  : noopLog;
+const diagDebug: (...args: unknown[]) => void = DIAG_LOG
+  ? (log.debug.bind(log) as (...a: unknown[]) => void)
+  : noopLog;
 
 // Configure file transport for immediate writes to prevent data loss on crashes
 if (log.transports.file.level !== false) {
@@ -715,7 +730,7 @@ function sendBatchesAsyncTo(
       try {
         if (!wc || wc.isDestroyed?.()) {
           try {
-            log.silly("[freeze-diag] wc destroyed before batch send:", {
+            diagSilly("[freeze-diag] wc destroyed before batch send:", {
               idx,
               batchCount,
             });
@@ -726,7 +741,7 @@ function sendBatchesAsyncTo(
         }
 
         // Only log IPC batches at silly level (lowest) to avoid flooding console
-        log.silly(
+        diagSilly(
           `[ipc-diag] Sending IPC batch on channel "${channel}": ${batch?.length || 0} entries`,
         );
         wc.send(channel, batch);
@@ -749,7 +764,7 @@ function sendBatchesAsyncTo(
           try {
             const elapsed = Date.now() - startTime;
             if (elapsed > 100) {
-              log.silly("[freeze-diag] batch send taking time:", {
+              diagSilly("[freeze-diag] batch send taking time:", {
                 batchIdx: idx,
                 batchCount,
                 totalEntries,
@@ -973,16 +988,16 @@ function enqueueAppends(entries: LogEntry[]): void {
 }
 function flushPendingAppends(): void {
   if (!isRendererReady()) {
-    log.silly("[flush-diag] Renderer not ready, skipping flush");
+    diagSilly("[flush-diag] Renderer not ready, skipping flush");
     return;
   }
   if (!pendingAppends.length) return;
   const wc = mainWindow?.webContents;
   if (!wc) {
-    log.silly("[flush-diag] No webContents, skipping flush");
+    diagSilly("[flush-diag] No webContents, skipping flush");
     return;
   }
-  log.silly(
+  diagSilly(
     `[flush-diag] Flushing ${pendingAppends.length} pending appends to main window`,
   );
   try {
@@ -993,10 +1008,10 @@ function flushPendingAppends(): void {
     }
     // gestaffelt senden, damit der Event-Loop atmen kann
     sendBatchesAsyncTo(wc, "logs:append", batches);
-    log.silly(`[flush-diag] Sent ${batches.length} batches to main window`);
+    diagSilly(`[flush-diag] Sent ${batches.length} batches to main window`);
   } catch (err) {
     // nicht leeren, damit später erneut versucht werden kann
-    log.silly(
+    diagSilly(
       "[flush-diag] Error flushing, will retry:",
       err instanceof Error ? err.message : String(err),
     );
@@ -1029,12 +1044,12 @@ function enqueueAppendsFor(winId: number, entries: LogEntry[]): void {
 }
 function flushPendingAppendsFor(win: BrowserWindow): void {
   if (!isWindowReady(win)) {
-    log.silly(`[flush-diag] Window ${win.id} not ready, skipping flush`);
+    diagSilly(`[flush-diag] Window ${win.id} not ready, skipping flush`);
     return;
   }
   const buf = pendingAppendsByWindow.get(win.id);
   if (!buf || !buf.length) return;
-  log.silly(
+  diagSilly(
     `[flush-diag] Flushing ${buf.length} pending appends for window ${win.id}`,
   );
   const wc = win.webContents;
@@ -1045,7 +1060,7 @@ function flushPendingAppendsFor(win: BrowserWindow): void {
       batches.push(prepareRenderBatch(slice));
     }
     sendBatchesAsyncTo(wc, "logs:append", batches);
-    log.silly(
+    diagSilly(
       `[flush-diag] Sent ${batches.length} batches to window ${win.id}`,
     );
   } catch (e) {
@@ -1073,7 +1088,7 @@ function sendAppend(entries: LogEntry[]): void {
   const otherEntries: LogEntry[] = [];
   for (const e of entries) (isTcpEntry(e) ? tcpEntries : otherEntries).push(e);
 
-  log.debug(
+  diagDebug(
     `[tcp-diag] sendAppend called: ${entries.length} total, ${tcpEntries.length} TCP, ${otherEntries.length} other`,
   );
 
@@ -1090,31 +1105,31 @@ function sendAppend(entries: LogEntry[]): void {
   // TCP → owner window only
   if (tcpEntries.length) {
     const ownerId = getTcpOwnerWindowId();
-    log.debug(`[tcp-diag] TCP owner window ID: ${ownerId}`);
+    diagDebug(`[tcp-diag] TCP owner window ID: ${ownerId}`);
     const ownerWin =
       ownerId != null ? BrowserWindow.fromId?.(ownerId) || null : null;
     if (ownerWin && isWindowReady(ownerWin)) {
-      log.debug(
+      diagDebug(
         `[tcp-diag] Sending ${tcpEntries.length} TCP entries directly to owner window ${ownerWin.id}`,
       );
       try {
         sendEntriesToWc(ownerWin.webContents, tcpEntries);
       } catch (err) {
-        log.debug(
+        diagDebug(
           `[tcp-diag] Failed to send directly, enqueueing for window ${ownerWin.id}:`,
           err instanceof Error ? err.message : String(err),
         );
         enqueueAppendsFor(ownerWin.id, tcpEntries);
       }
     } else if (ownerWin) {
-      log.debug(
+      diagDebug(
         `[tcp-diag] Owner window ${ownerWin.id} not ready, enqueueing ${tcpEntries.length} TCP entries`,
       );
       enqueueAppendsFor(ownerWin.id, tcpEntries);
     }
     // else: no owner → route to main
     else {
-      log.debug(
+      diagDebug(
         `[tcp-diag] No owner window, routing ${tcpEntries.length} TCP entries to main window`,
       );
       otherEntries.push(...tcpEntries);
@@ -1124,7 +1139,7 @@ function sendAppend(entries: LogEntry[]): void {
   // Non-TCP → primary window (bestehendes Verhalten)
   if (otherEntries.length) {
     if (!isRendererReady()) {
-      log.debug(
+      diagDebug(
         `[tcp-diag] Main renderer not ready, enqueueing ${otherEntries.length} entries`,
       );
       enqueueAppends(otherEntries);
@@ -1133,18 +1148,18 @@ function sendAppend(entries: LogEntry[]): void {
     try {
       const wc = mainWindow?.webContents as any;
       if (wc) {
-        log.debug(
+        diagDebug(
           `[tcp-diag] Sending ${otherEntries.length} entries to main window`,
         );
         sendEntriesToWc(wc, otherEntries);
       } else {
-        log.debug(
+        diagDebug(
           `[tcp-diag] No main window webContents, enqueueing ${otherEntries.length} entries`,
         );
         enqueueAppends(otherEntries);
       }
     } catch (err) {
-      log.debug(
+      diagDebug(
         `[tcp-diag] Error sending to main window, enqueueing:`,
         err instanceof Error ? err.message : String(err),
       );
@@ -1859,7 +1874,7 @@ function createWindow(opts: { makePrimary?: boolean } = {}): BrowserWindow {
   win.webContents.on("did-finish-load", () => {
     // Mark window as loaded so isWindowReady() will return true
     loadedWindows.add(win.id);
-    log.debug(
+    diagDebug(
       `[window-ready] Window ${win.id} finished loading, marked as ready`,
     );
 
@@ -2488,7 +2503,7 @@ function startFlushTimer(): void {
       });
 
       if (flushTimerCount % 10 === 1 || hasPending || hasWindowPending) {
-        log.silly(
+        diagSilly(
           `[flush-timer] Run #${flushTimerCount}: pendingAppends=${pendingAppends.length}, windows=${windows.size}, hasWindowPending=${hasWindowPending}`,
         );
       }
@@ -2509,7 +2524,7 @@ function startFlushTimer(): void {
     } catch (err) {
       // Ignore errors to prevent timer from being cancelled
       try {
-        log.silly(
+        diagSilly(
           "[flush-timer] Periodic flush error (continuing):",
           err instanceof Error ? err.message : String(err),
         );
@@ -3175,7 +3190,7 @@ app
       try {
         if (typeof global.gc === "function") {
           global.gc();
-          log.debug("[PERF] Post-startup GC triggered");
+          diagDebug("[PERF] Post-startup GC triggered");
         }
       } catch {
         // GC not available, ignore

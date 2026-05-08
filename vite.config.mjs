@@ -60,7 +60,7 @@ export default defineConfig({
     // Sourcemaps nur außerhalb Production. Quick-Win #5: explizit `false`
     // in Production, damit selbst bei vergessenem NODE_ENV keine Maps
     // ausgeliefert werden (Bundle-Size + Code-Disclosure).
-    sourcemap: process.env.NODE_ENV === "production" ? false : true,
+    sourcemap: process.env.NODE_ENV !== "production",
     rollupOptions: {
       // electron-log und adm-zip sind ausschließlich Main-Process-Module.
       // Schützt davor, dass sie versehentlich ins Renderer-Bundle landen,

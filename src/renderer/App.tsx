@@ -2025,13 +2025,20 @@ export default function App(): JSX.Element {
   useEffect(() => {
     rendererPerf.mark("ipc-setup-start");
     const offs: Array<() => void> = [];
+    // Quick-Win #8: Diagnose-Logs auf dem IPC-Hot-Path nur im Dev-Build.
+    // Vite ersetzt `process.env.NODE_ENV` statisch (siehe vite.config.mjs
+    // `define`), sodass `DIAG` in Production zu `false` evaluiert und der
+    // gesamte Diagnose-Block per Dead-Code-Elimination entfernt wird.
+    const DIAG = process.env.NODE_ENV !== "production";
     try {
       {
-        console.warn("[renderer-diag] Setting up onAppend listener");
+        if (DIAG) console.warn("[renderer-diag] Setting up onAppend listener");
         const off = typedOnAppend((newEntries) => {
-          console.warn(
-            `[renderer-diag] Received IPC logs:append with ${newEntries?.length || 0} entries`,
-          );
+          if (DIAG) {
+            console.warn(
+              `[renderer-diag] Received IPC logs:append with ${newEntries?.length || 0} entries`,
+            );
+          }
           appendEntries(newEntries as any[]);
           announceAppend(newEntries as any[]);
           // Sprint 5: feed alert evaluator with new entries.
