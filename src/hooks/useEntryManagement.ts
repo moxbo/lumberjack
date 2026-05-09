@@ -219,9 +219,16 @@ export function useEntryManagement({ marksMap }: UseEntryManagementOptions) {
         pooled._fullMessage = e._fullMessage;
         pooled._truncated = e._truncated;
         pooled._messageSize = e._messageSize;
+        // Preserve mark color from imported entries (JSON/NDJSON re-import).
+        // Streaming sources (TCP/HTTP/Elastic) don't set _mark so this is a no-op
+        // for them; marksMap below still wins for entries the user already marked
+        // in the current session.
+        pooled._mark =
+          typeof e._mark === "string" && e._mark ? e._mark : undefined;
         pooled._id = baseId + i;
 
-        // Apply marks
+        // Apply marks from the live marks map – existing user marks take
+        // precedence over the value carried in the imported entry.
         const sig = entrySignature(pooled);
         if (marksMap[sig]) pooled._mark = marksMap[sig];
 

@@ -346,7 +346,11 @@ export function registerIpcHandlers(
           { name: t("main.dialogs.allFiles"), extensions: ["*"] },
         ];
 
-        const defaultName = `lumberjack-export-${new Date().toISOString().slice(0, 10)}.html`;
+        // Default filename WITHOUT extension – the OS save dialog will append the
+        // extension matching the selected filter (HTML, NDJSON, CSV, ...). Hardcoding
+        // `.html` here caused the bug where switching the filter to NDJSON kept the
+        // `.html` suffix and the content ended up serialized as HTML.
+        const defaultName = `lumberjack-export-${new Date().toISOString().slice(0, 10)}`;
 
         const res = await dialog.showSaveDialog(mainWindow, {
           title: t("main.dialogs.exportView"),
