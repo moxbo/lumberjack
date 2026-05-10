@@ -58,6 +58,11 @@ import { MDCListener } from "../store/mdcListener";
 import { clearHighlightCache, LogRow } from "./LogRow";
 import { clearTimestampCache, fmtTimestamp } from "../utils/format";
 import {
+  exportToCsv,
+  exportToMarkdown,
+  exportToNdjson,
+} from "../utils/exportFormats";
+import {
   setupDebugFunctions,
   setDebugEntriesRef,
   setDebugFilteredIdxRef,
@@ -1102,6 +1107,12 @@ export default function App(): JSX.Element {
   // Refs to track current values for menu handlers (avoid stale closures)
   const filteredIdxRef = useRef<number[]>(filteredIdx);
   const entriesRef = useRef<any[]>(entries);
+  // marksMapRef ist nötig, weil der Application-Menu-Handler (typedOnMenu)
+  // einmalig in einem useEffect mit []-Deps registriert wird. Ohne diesen Ref
+  // würde `exportCurrentView` über den Menu-Pfad auf eine stale `marksMap`-
+  // Closure zugreifen → exportierte Einträge hätten `markColor: null`,
+  // obwohl sie sichtbar markiert sind.
+  const marksMapRef = useRef<Record<string, string>>(marksMap);
   useEffect(() => {
     filteredIdxRef.current = filteredIdx;
     // Update debug reference
@@ -1112,6 +1123,9 @@ export default function App(): JSX.Element {
     // Update debug reference
     setDebugEntriesRef(entriesRef);
   }, [entries]);
+  useEffect(() => {
+    marksMapRef.current = marksMap;
+  }, [marksMap]);
 
   const countTotal = entries.length;
   const countFiltered = filteredIdx.length;
@@ -2512,6 +2526,10 @@ export default function App(): JSX.Element {
     // Use refs to get current values (avoid stale closures from menu handlers)
     const currentFilteredIdx = filteredIdxRef.current;
     const currentEntries = entriesRef.current;
+    // Auch marksMap muss über Ref gelesen werden – der App-Menu-Handler
+    // (typedOnMenu) wird einmalig mit []-Deps registriert und würde sonst
+    // permanent das initiale `{}` sehen → markColor wäre beim Export `null`.
+    const currentMarksMap = marksMapRef.current;
 
     if (currentFilteredIdx.length === 0) {
       showAlert(t("errors.exportNoEntries"));
@@ -2551,7 +2569,9 @@ export default function App(): JSX.Element {
           mdc: e?.mdc,
           // #2: Mark-Farbe primär aus marksMap (Single-Source-of-Truth).
           markColor:
-            (e ? marksMap[entrySignature(e)] : undefined) || e?._mark || null,
+            (e ? currentMarksMap[entrySignature(e)] : undefined) ||
+            e?._mark ||
+            null,
         }));
         content = JSON.stringify(jsonEntries, null, 2);
       } else if (format === "txt") {
@@ -2564,6 +2584,29 @@ export default function App(): JSX.Element {
           return `${ts} [${lvl}] ${loggerVal} - ${msg}`;
         });
         content = lines.join("\n");
+      } else if (format === "ndjson" || format === "csv" || format === "md") {
+        // Strukturierte Formate über exportFormats-Utilities. Mark-Farbe muss
+        // dafür auf jedem Eintrag als `_mark` anliegen – wir injizieren sie
+        // aus marksMap (Single-Source-of-Truth), damit auch in der aktuellen
+        // Session manuell gesetzte Marks (die nicht mehr direkt in `e._mark`
+        // landen) korrekt exportiert werden.
+        const enriched = exportEntries.map((e) => {
+          const mark = e
+            ? currentMarksMap[entrySignature(e)] ||
+              (e._mark as string | undefined)
+            : undefined;
+          return mark ? { ...e, _mark: mark } : e;
+        });
+        if (format === "ndjson") {
+          content = exportToNdjson(enriched);
+        } else if (format === "csv") {
+          content = exportToCsv(enriched);
+        } else {
+          content = exportToMarkdown(enriched, {
+            exportedAt: new Date().toISOString(),
+            total: currentEntries.length,
+          });
+        }
       } else {
         // HTML export with styling
         const cssVars = getComputedStyle(document.documentElement);
@@ -2600,7 +2643,7 @@ export default function App(): JSX.Element {
             .replace(/</g, "&lt;")
             .replace(/>/g, "&gt;");
           const markColor =
-            (e ? marksMap[entrySignature(e)] : undefined) ||
+            (e ? currentMarksMap[entrySignature(e)] : undefined) ||
             (e?._mark as string | undefined);
           const levelColor = levelColors[lvl] || textColor;
 
