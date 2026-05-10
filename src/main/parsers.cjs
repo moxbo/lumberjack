@@ -297,7 +297,7 @@ function parseZipFile(zipPath) {
   zip.getEntries().forEach((zEntry) => {
     const name = zEntry.entryName;
     const ext = import_path.default.extname(name).toLowerCase();
-    if (!zEntry.isDirectory && (ext === ".log" || ext === ".json" || ext === ".jsonl" || ext === ".txt")) {
+    if (!zEntry.isDirectory && (ext === ".log" || ext === ".json" || ext === ".jsonl" || ext === ".ndjson" || ext === ".txt")) {
       const text = zEntry.getData().toString("utf8");
       const parsed = ext === ".json" ? parseJsonFile(name, text) : parseTextLines(name, text);
       parsed.forEach((e) => e.source = `${zipPath}::${name}`);
@@ -313,7 +313,7 @@ function parsePath(p) {
   const text = ext === ".zip" ? null : import_fs.default.readFileSync(p, "utf8");
   if (ext === ".zip") return parseZipFile(p);
   if (ext === ".json") return parseJsonFile(p, text);
-  if (ext === ".jsonl" || ext === ".txt")
+  if (ext === ".jsonl" || ext === ".ndjson" || ext === ".txt")
     return parseTextLines(p, text);
   if (ext === ".log" || !ext) return parseTextLines(p, text);
   return [];

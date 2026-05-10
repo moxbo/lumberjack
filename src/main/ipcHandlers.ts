@@ -286,7 +286,7 @@ export function registerIpcHandlers(
       filters: [
         {
           name: t("main.dialogs.openLogs"),
-          extensions: ["log", "json", "jsonl", "txt", "zip"],
+          extensions: ["log", "json", "jsonl", "ndjson", "txt", "zip"],
         },
         { name: t("main.dialogs.openAllFiles"), extensions: ["*"] },
       ],
@@ -310,7 +310,7 @@ export function registerIpcHandlers(
       filters: [
         {
           name: t("main.dialogs.logFiles"),
-          extensions: ["log", "jsonl", "txt"],
+          extensions: ["log", "jsonl", "ndjson", "txt"],
         },
         { name: t("main.dialogs.allFiles"), extensions: ["*"] },
       ],
@@ -547,6 +547,7 @@ export function registerIpcHandlers(
                 (eext === ".log" ||
                   eext === ".json" ||
                   eext === ".jsonl" ||
+                  eext === ".ndjson" ||
                   eext === ".txt")
               ) {
                 // Yield between zip entries for large archives
