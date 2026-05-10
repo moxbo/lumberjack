@@ -335,21 +335,23 @@ export function registerIpcHandlers(
       }
 
       try {
-        // Show all formats in save dialog
+        // Show all formats in save dialog. NDJSON ist der Default (erstes
+        // Filter-Item), weil es das verlustfreie, re-importierbare Format ist
+        // (HTML ist nur für Read-only-Sharing geeignet).
         const filters: { name: string; extensions: string[] }[] = [
-          { name: "HTML", extensions: ["html", "htm"] },
-          { name: t("main.dialogs.textFiles"), extensions: ["txt"] },
-          { name: "JSON", extensions: ["json"] },
           { name: "NDJSON (newline-delimited JSON)", extensions: ["ndjson"] },
+          { name: "JSON", extensions: ["json"] },
           { name: "CSV", extensions: ["csv"] },
           { name: "Markdown", extensions: ["md"] },
+          { name: "HTML", extensions: ["html", "htm"] },
+          { name: t("main.dialogs.textFiles"), extensions: ["txt"] },
           { name: t("main.dialogs.allFiles"), extensions: ["*"] },
         ];
 
         // Default filename WITHOUT extension – the OS save dialog will append the
-        // extension matching the selected filter (HTML, NDJSON, CSV, ...). Hardcoding
-        // `.html` here caused the bug where switching the filter to NDJSON kept the
-        // `.html` suffix and the content ended up serialized as HTML.
+        // extension matching the selected filter (NDJSON, JSON, CSV, ...). Hardcoding
+        // an extension here caused the bug where switching the filter kept the
+        // original suffix and the content ended up serialized in the wrong format.
         const defaultName = `lumberjack-export-${new Date().toISOString().slice(0, 10)}`;
 
         const res = await dialog.showSaveDialog(mainWindow, {
@@ -362,10 +364,13 @@ export function registerIpcHandlers(
           return { ok: false, error: "canceled" };
         }
 
-        // Determine format from file extension
+        // Determine format from file extension. Fallback ist NDJSON (verlustfrei),
+        // nicht mehr HTML.
         const ext = path.extname(res.filePath).toLowerCase();
-        let format: "html" | "txt" | "json" | "ndjson" | "csv" | "md" = "html";
-        if (ext === ".txt") format = "txt";
+        let format: "html" | "txt" | "json" | "ndjson" | "csv" | "md" =
+          "ndjson";
+        if (ext === ".html" || ext === ".htm") format = "html";
+        else if (ext === ".txt") format = "txt";
         else if (ext === ".json") format = "json";
         else if (ext === ".ndjson") format = "ndjson";
         else if (ext === ".csv") format = "csv";
@@ -424,15 +429,16 @@ export function registerIpcHandlers(
       }
 
       try {
-        // Show all formats in save dialog
+        // Show all formats in save dialog (Legacy-Handler). NDJSON ist Default.
         const filters: { name: string; extensions: string[] }[] = [
+          { name: "NDJSON (newline-delimited JSON)", extensions: ["ndjson"] },
+          { name: "JSON", extensions: ["json"] },
           { name: "HTML", extensions: ["html", "htm"] },
           { name: t("main.dialogs.textFiles"), extensions: ["txt"] },
-          { name: "JSON", extensions: ["json"] },
           { name: t("main.dialogs.allFiles"), extensions: ["*"] },
         ];
 
-        const defaultFormat = options.format || "html";
+        const defaultFormat = options.format || "ndjson";
         const defaultName = `lumberjack-export-${new Date().toISOString().slice(0, 10)}.${defaultFormat}`;
 
         const res = await dialog.showSaveDialog(mainWindow, {

@@ -2547,7 +2547,7 @@ export default function App(): JSX.Element {
         return;
       }
 
-      const format = pathResult.format || "html";
+      const format = pathResult.format || "ndjson";
       const exportEntries = currentFilteredIdx.map(
         (idx) => currentEntries[idx],
       );
