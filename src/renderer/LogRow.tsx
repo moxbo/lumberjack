@@ -102,9 +102,14 @@ const LogRowComponent = ({
       transform: `translateY(${yOffset}px)`,
       height: `${rowHeight}px`,
       borderLeft: `4px solid ${markColor || "transparent"}`,
-      background: markColor ? computeTint(markColor, 0.12) : undefined,
+      // Wenn die Zeile ausgewählt ist, soll die Auswahl-Hintergrundfarbe
+      // (aus .row.sel) sichtbar bleiben. Daher hier keinen Inline-Hintergrund
+      // für markierte Zeilen setzen – die Markierung bleibt durch den
+      // farbigen linken Rand erkennbar.
+      background:
+        markColor && !isSelected ? computeTint(markColor, 0.12) : undefined,
     }),
-    [yOffset, rowHeight, markColor],
+    [yOffset, rowHeight, markColor, isSelected],
   );
 
   // Memoize the message text
