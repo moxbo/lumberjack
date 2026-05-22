@@ -91,78 +91,39 @@ interface Token {
  *  - Klammern '(' und ')' für Gruppierung
  *  - Escape mit '\' für Sonderzeichen: \& \| \! \( \)
  */
-function msgMatches(message: unknown, pattern: string): boolean {
-  if (!pattern) return true;
-  const rawMsg = String(message || "");
-  const rawExpr = pattern.trim();
+function tokenizePattern(s: string): Token[] {
+  const toks: Token[] = [];
+  let i = 0;
+  const N = s.length;
+  const isOp = (ch: string): boolean =>
+    ch === "&" || ch === "|" || ch === "!" || ch === "(" || ch === ")";
 
-  if (!rawExpr) return true;
-
-  const m = rawMsg.toLowerCase();
-  const q = rawExpr.toLowerCase();
-
-  // Tokenizer mit Escape-Support
-  function tokenize(s: string): Token[] {
-    const toks: Token[] = [];
-    let i = 0;
-    const N = s.length;
-    const isOp = (ch: string): boolean =>
-      ch === "&" || ch === "|" || ch === "!" || ch === "(" || ch === ")";
-
-    while (i < N) {
-      const ch = s[i]!;
-      if (ch <= " ") {
-        i++;
-        continue;
-      }
-      // Quoted string: "..." wird als einzelnes WORD behandelt (Phrasensuche)
-      if (ch === '"') {
-        let j = i + 1;
-        let word = "";
-        while (j < N && s[j] !== '"') {
-          if (s[j] === "\\" && j + 1 < N) {
-            word += s[j + 1]!;
-            j += 2;
-            continue;
-          }
-          word += s[j]!;
-          j++;
+  while (i < N) {
+    const ch = s[i]!;
+    if (ch <= " ") {
+      i++;
+      continue;
+    }
+    // Quoted string: "..." wird als einzelnes WORD behandelt (Phrasensuche)
+    if (ch === '"') {
+      let j = i + 1;
+      let word = "";
+      while (j < N && s[j] !== '"') {
+        if (s[j] === "\\" && j + 1 < N) {
+          word += s[j + 1]!;
+          j += 2;
+          continue;
         }
-        if (j < N) j++; // schließendes " überspringen
-        if (word) toks.push({ t: "WORD", v: word });
-        i = j;
-        continue;
+        word += s[j]!;
+        j++;
       }
-      // Escape handling
-      if (ch === "\\" && i + 1 < N) {
-        let j = i;
-        let word = "";
-        while (j < N) {
-          const c = s[j]!;
-          if (c <= " ") break;
-          if (c === "\\" && j + 1 < N) {
-            word += s[j + 1]!;
-            j += 2;
-            continue;
-          }
-          if (isOp(c)) break;
-          word += c;
-          j++;
-        }
-        if (word) toks.push({ t: "WORD", v: word });
-        i = j;
-        continue;
-      }
-      if (isOp(ch)) {
-        if (ch === "&") toks.push({ t: "AND" });
-        else if (ch === "|") toks.push({ t: "OR" });
-        else if (ch === "!") toks.push({ t: "NOT" });
-        else if (ch === "(") toks.push({ t: "LPAREN" });
-        else if (ch === ")") toks.push({ t: "RPAREN" });
-        i++;
-        continue;
-      }
-      // Collect word with escape support
+      if (j < N) j++; // schließendes " überspringen
+      if (word) toks.push({ t: "WORD", v: word });
+      i = j;
+      continue;
+    }
+    // Escape handling
+    if (ch === "\\" && i + 1 < N) {
       let j = i;
       let word = "";
       while (j < N) {
@@ -179,12 +140,74 @@ function msgMatches(message: unknown, pattern: string): boolean {
       }
       if (word) toks.push({ t: "WORD", v: word });
       i = j;
+      continue;
     }
-    return toks;
+    if (isOp(ch)) {
+      if (ch === "&") toks.push({ t: "AND" });
+      else if (ch === "|") toks.push({ t: "OR" });
+      else if (ch === "!") toks.push({ t: "NOT" });
+      else if (ch === "(") toks.push({ t: "LPAREN" });
+      else if (ch === ")") toks.push({ t: "RPAREN" });
+      i++;
+      continue;
+    }
+    // Collect word with escape support
+    let j = i;
+    let word = "";
+    while (j < N) {
+      const c = s[j]!;
+      if (c <= " ") break;
+      if (c === "\\" && j + 1 < N) {
+        word += s[j + 1]!;
+        j += 2;
+        continue;
+      }
+      if (isOp(c)) break;
+      word += c;
+      j++;
+    }
+    if (word) toks.push({ t: "WORD", v: word });
+    i = j;
   }
+  return toks;
+}
 
-  const tokens = tokenize(q);
-  if (tokens.length === 0) return true;
+/**
+ * Vorkompiliertes Filter-Pattern. Wird einmal pro Filter-Lauf erstellt
+ * und für alle Entries wiederverwendet.
+ *
+ * Performance-Hinweis: Vorher wurde tokenize() pro Log-Eintrag aufgerufen,
+ * was bei 100k Einträgen 100k mal die gleiche Arbeit gemacht hat.
+ * Jetzt: einmal kompilieren, N mal evaluieren.
+ */
+interface CompiledMessageFilter {
+  /** true, wenn das Pattern leer ist → matcht immer */
+  alwaysTrue: boolean;
+  /** Vorkompilierte Tokens (lowercase) */
+  tokens: Token[];
+}
+
+function compileMessageFilter(pattern: string): CompiledMessageFilter {
+  if (!pattern) return { alwaysTrue: true, tokens: [] };
+  const rawExpr = pattern.trim();
+  if (!rawExpr) return { alwaysTrue: true, tokens: [] };
+  const q = rawExpr.toLowerCase();
+  const tokens = tokenizePattern(q);
+  if (tokens.length === 0) return { alwaysTrue: true, tokens: [] };
+  return { alwaysTrue: false, tokens };
+}
+
+/**
+ * Evaluiert ein vorkompiliertes Filter-Pattern gegen einen Message-String.
+ * Erwartet bereits ein lowercase-Pattern in compiled.tokens.
+ */
+function evalCompiledFilter(
+  message: unknown,
+  compiled: CompiledMessageFilter,
+): boolean {
+  if (compiled.alwaysTrue) return true;
+  const m = String(message || "").toLowerCase();
+  const tokens = compiled.tokens;
 
   let pos = 0;
   const peek = (): Token | undefined => tokens[pos];
@@ -303,6 +326,10 @@ function msgMatches(message: unknown, pattern: string): boolean {
   return evalOr();
 }
 
+// (msgMatches Convenience-Funktion entfernt – Hot-Path nutzt direkt
+// compileMessageFilter + evalCompiledFilter für optimale Performance.
+// Tests gehen über filterEntries() bzw. die utils/msgFilter.ts.)
+
 // ============================================================================
 // Filter-Hilfsfunktionen
 // ============================================================================
@@ -416,6 +443,9 @@ function filterEntries(
   const loggerFilter = options.filter.logger?.toLowerCase() || "";
   const threadFilter = options.filter.thread?.toLowerCase() || "";
   const messageFilter = options.filter.message || "";
+  // Vorkompilieren des Message-Filters → spart bei N Entries
+  // (N-1) Tokenize-Operationen. Bei 100k Entries ein massiver Speedup.
+  const compiledMessageFilter = compileMessageFilter(messageFilter);
 
   for (let i = 0; i < entries.length; i++) {
     const e = entries[i];
@@ -466,7 +496,7 @@ function filterEntries(
 
       // Message filter
       if (messageFilter) {
-        if (!msgMatches(e.message, messageFilter)) {
+        if (!evalCompiledFilter(e.message, compiledMessageFilter)) {
           stats.rejectedByMessage++;
           continue;
         }

@@ -38,6 +38,7 @@ import type { FeatureFlags } from "../services/FeatureFlags";
 // Type for parser functions from parsers.cjs
 interface ParsersModule {
   parsePaths: (paths: string[]) => LogEntry[];
+  parsePathsAsync?: (paths: string[]) => Promise<LogEntry[]>;
   parseJsonFile: (name: string, data: string) => LogEntry[];
   parseTextLines: (name: string, data: string) => LogEntry[];
   fetchElasticPitPage: (
@@ -478,12 +479,17 @@ export function registerIpcHandlers(
     "logs:parsePaths",
     async (_event, filePaths: string[]): Promise<ParseResult> => {
       try {
-        const { parsePaths } = getParsers();
+        const { parsePaths, parsePathsAsync } = getParsers();
 
         // Yield before heavy parsing to keep UI responsive
         await yieldToEventLoop();
 
-        const entries: LogEntry[] = parsePaths(filePaths);
+        // Bevorzuge die async-parallele Variante (non-blocking I/O,
+        // mehrere Dateien werden parallel gelesen). Fallback auf
+        // synchrone Variante, falls Parser-Modul älter ist.
+        const entries: LogEntry[] = parsePathsAsync
+          ? await parsePathsAsync(filePaths)
+          : parsePaths(filePaths);
 
         // Yield after parsing before processing results
         await yieldToEventLoop();

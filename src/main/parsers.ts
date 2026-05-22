@@ -412,6 +412,72 @@ function parsePaths(paths: string[]): Entry[] {
   return all;
 }
 
+/**
+ * Asynchrone Variante von parsePath:
+ * - Nutzt fs.promises (non-blocking I/O)
+ * - In Node 24 (Electron 42) merklich schneller bei großen Dateien
+ *   dank optimiertem readFile-Pfad und besserer Worker-Pool-Auslastung.
+ * ZIP-Verarbeitung bleibt synchron (adm-zip unterstützt kein async).
+ */
+async function parsePathAsync(p: string): Promise<Entry[]> {
+  const stat = await fs.promises.stat(p);
+  if (stat.isDirectory()) return [];
+  const ext = path.extname(p).toLowerCase();
+  if (ext === ".zip") return parseZipFile(p);
+  const text = await fs.promises.readFile(p, "utf8");
+  if (ext === ".json") return parseJsonFile(p, text);
+  if (ext === ".jsonl" || ext === ".ndjson" || ext === ".txt")
+    return parseTextLines(p, text);
+  if (ext === ".log" || !ext) return parseTextLines(p, text);
+  return [];
+}
+
+/**
+ * Asynchrone Variante von parsePaths mit paralleler I/O.
+ *
+ * Verarbeitet bis zu CONCURRENCY Dateien gleichzeitig – auf SSDs/NVMe
+ * ein signifikanter Speedup beim Öffnen mehrerer Logfiles, da die
+ * Lese-Operationen sich überlappen statt sequenziell zu blockieren.
+ */
+async function parsePathsAsync(paths: string[]): Promise<Entry[]> {
+  if (paths.length === 0) return [];
+  // Mit Node 24 / Electron 42 ist der libuv-Threadpool default 4.
+  // Wir begrenzen die parallele Anzahl, um den Pool nicht zu überlasten,
+  // wenn auch andere Async-Ops (Watcher, HTTP) laufen.
+  const CONCURRENCY = Math.min(paths.length, 8);
+  const results: Entry[][] = new Array(paths.length);
+  let next = 0;
+
+  async function worker(): Promise<void> {
+    while (true) {
+      const idx = next++;
+      if (idx >= paths.length) return;
+      const p = paths[idx]!;
+      try {
+        results[idx] = await parsePathAsync(p);
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        results[idx] = [
+          toEntry(
+            { level: "ERROR", message: `Failed to parse ${p}: ${msg}` },
+            "",
+            p,
+          ),
+        ];
+      }
+    }
+  }
+
+  const workers: Promise<void>[] = [];
+  for (let i = 0; i < CONCURRENCY; i++) workers.push(worker());
+  await Promise.all(workers);
+
+  // Reihenfolge der Eingabe-Pfade bewahren
+  const all: Entry[] = [];
+  for (const list of results) if (list) all.push(...list);
+  return all;
+}
+
 // Elasticsearch types
 export interface ElasticsearchAuth {
   type: "basic" | "apiKey" | "bearer";
@@ -1475,4 +1541,12 @@ export async function closeElasticPitSession(sessionId: string): Promise<void> {
   }
 }
 
-export { parsePaths, parseTextLines, parseJsonFile, parseZipFile, toEntry };
+export {
+  parsePaths,
+  parsePathsAsync,
+  parsePathAsync,
+  parseTextLines,
+  parseJsonFile,
+  parseZipFile,
+  toEntry,
+};
