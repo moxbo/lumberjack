@@ -116,13 +116,11 @@ export default defineConfig({
           if (norm.includes("/src/store/") && !norm.includes("loggingStore")) {
             return "store-utils";
           }
-          if (
-            norm.includes("/src/utils/") &&
-            !norm.includes("highlight") &&
-            !norm.includes("msgFilter")
-          ) {
-            return "utils-lazy";
-          }
+          // src/utils/* nicht mehr in einen eigenen Chunk zwingen:
+          // Mess-Ergebnis zeigte, dass Rolldown sonst die gesamte
+          // Preact-Bibliothek (~15 KB) zusätzlich in utils-lazy dupliziert,
+          // statt sie korrekt in vendor zu platzieren. Ohne diese Regel
+          // landen utils-Module direkt in index.js (besser tree-shakable).
         },
       },
     },
