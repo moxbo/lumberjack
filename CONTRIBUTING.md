@@ -122,16 +122,25 @@ npm run changelog:since-stable   # Preview all commits since last STABLE tag
 ### Cutting a Beta
 
 ```bash
+# Einfach (empfohlen) — der Helper macht alles:
+npm run release -- 1.0.16-beta.1
+
+# Oder manuell:
 # 1) Bump version (e.g. 1.0.16-beta.1) in package.json
 # 2) Regenerate full CHANGELOG.md and commit
 npm run changelog
 git add CHANGELOG.md package.json
 git commit -m "chore: release 1.0.16-beta.1 [skip ci]"
-git tag v1.0.16-beta.1
-git push --follow-tags
+git tag -a v1.0.16-beta.1 -m "Release 1.0.16-beta.1"
+git push origin main
+git push origin v1.0.16-beta.1
 ```
 
 ### Cutting a Release Candidate (recommended before every Full Release)
+
+```bash
+npm run release -- 1.0.16-rc.1
+```
 
 Same as beta, but tagged `vX.Y.Z-rc.1`. The RC must contain exactly the code
 intended for the stable release. If no blocker shows up, promote it.
@@ -139,18 +148,27 @@ intended for the stable release. If no blocker shows up, promote it.
 ### Cutting a Full / Stable Release
 
 > 🟢 **Best Practice:** Don't release a stable version that contains commits
-> not previously shipped in at least a beta or RC. If `npm run changelog:since-stable`
-> shows entries not contained in any pre-release, cut an **RC first**.
+> not previously shipped in at least a beta or RC. The `scripts/release.sh`
+> helper detects this and asks for confirmation.
 
 ```bash
+# Einfach (empfohlen):
+npm run release -- 1.0.16
+
+# Oder manuell:
 # 1) Bump version (e.g. 1.0.16) in package.json
 # 2) Aggregate all commits since the last stable tag into the new entry
 npm run changelog
 git add CHANGELOG.md package.json
 git commit -m "chore: release 1.0.16 [skip ci]"
-git tag v1.0.16
-git push --follow-tags
+git tag -a v1.0.16 -m "Release 1.0.16"
+git push origin main
+git push origin v1.0.16
 ```
+
+> ⚠️ **Wichtig:** Tags **explizit** pushen (`git push origin <tag>`).
+> `git push --follow-tags` pusht **keine** Tags, wenn der Branch bereits
+> up-to-date ist — der Helper macht es richtig.
 
 `npm run release:notes` emits a Markdown snippet suitable for the GitHub Release
 body (no header, just the latest version's entries).
@@ -159,6 +177,7 @@ body (no header, just the latest version's entries).
 
 | Script                            | Purpose                                                  |
 |-----------------------------------|----------------------------------------------------------|
+| `npm run release -- X.Y.Z`        | **Helper:** Bump + CHANGELOG + Commit + Tag + Push       |
 | `npm run changelog`               | Regenerate full `CHANGELOG.md`                           |
 | `npm run changelog:unreleased`    | Preview `[Unreleased]` block                             |
 | `npm run changelog:next`          | Preview next version block (uses `package.json` version) |

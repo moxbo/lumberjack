@@ -48,6 +48,10 @@
     "changelog:next": "git-cliff --config cliff.toml --unreleased --tag",
     "changelog:since-stable": "git-cliff --config cliff.toml $(git describe --tags --abbrev=0 --match='v[0-9]*' --exclude='*-*')..HEAD",
     "release:notes": "git-cliff --config cliff.toml --latest --strip header",
+    "release": "bash scripts/release.sh",
+    "release:beta": "bash scripts/release.sh",
+    "release:rc": "bash scripts/release.sh",
+    "release:stable": "bash scripts/release.sh",
     "prepare": "husky"
   },
   "author": {
