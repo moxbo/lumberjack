@@ -124,7 +124,7 @@ function statsFor(samples: number[]): {
   };
 }
 
-async function benchSite(site: Site, tmpDir: string): Promise<void> {
+async function benchSite(site: Site, tmpDir: string): Promise<string> {
   const filePath = path.join(tmpDir, site.file);
   // Realistische Daten: PNG = binary, alle anderen JSON-ähnlich
   const payload = site.file.endsWith(".png")
@@ -192,9 +192,11 @@ async function benchSite(site: Site, tmpDir: string): Promise<void> {
       `  blockade/Tag ~${blockedSecPerDay.toFixed(3)}s main-loop\n` +
       `  ► ${verdict}\n`,
   );
+  return verdict;
 }
 
 async function main(): Promise<void> {
+  const strict = process.argv.includes("--strict");
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "lj-sync-io-bench-"));
   console.log("══════════════════════════════════════════════════════════════");
   console.log(" Lumberjack sync-I/O Bedarfsanalyse");
@@ -203,11 +205,17 @@ async function main(): Promise<void> {
   console.log(` Platform:  ${process.platform} ${process.arch}`);
   console.log(` tmpDir:    ${tmpDir}`);
   console.log(` Iterationen: ${ITER} (Warmup ${WARMUP})`);
+  console.log(
+    ` Strict-Mode: ${strict ? "ja (failt bei 🔴)" : "nein (nur info)"}`,
+  );
   console.log("");
+
+  const failures: string[] = [];
 
   try {
     for (const site of sites) {
-      await benchSite(site, tmpDir);
+      const v = await benchSite(site, tmpDir);
+      if (v.startsWith("🔴")) failures.push(`${site.name} – ${v}`);
     }
 
     console.log(
@@ -226,6 +234,13 @@ async function main(): Promise<void> {
     console.log(
       "  🔴 refactor     – Refactor empfohlen (Hot-Path mit nennenswerter Latenz)",
     );
+
+    if (strict && failures.length > 0) {
+      console.error("\n❌ Strict-Mode: kritische Pfade gefunden:");
+      for (const f of failures) console.error(`  - ${f}`);
+      process.exit(1);
+    }
+    console.log("\n✅ sync-I/O Bedarfsanalyse abgeschlossen.");
   } finally {
     fs.rmSync(tmpDir, { recursive: true, force: true });
   }
