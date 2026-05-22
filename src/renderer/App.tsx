@@ -3728,25 +3728,31 @@ export default function App(): JSX.Element {
             setSearchMode(profile.filters.searchMode ?? "insensitive");
             setStdFiltersEnabled(profile.filters.stdFiltersEnabled);
             setOnlyMarked(profile.filters.onlyMarked ?? false);
-            // Apply MDC filters if available
-            if (
-              profile.filters.mdcFilters &&
-              profile.filters.mdcFilters.length > 0
-            ) {
-              try {
-                for (const mdc of profile.filters.mdcFilters) {
+            // MDC-Filter konsistent übernehmen: zuerst alle bisherigen Einträge
+            // entfernen, dann nur die im Profil hinterlegten (immer als aktiv
+            // gespeicherten) Einträge übernehmen.
+            try {
+              DiagnosticContextFilter.reset();
+              const profMdc = profile.filters.mdcFilters ?? [];
+              if (profMdc.length > 0) {
+                for (const mdc of profMdc) {
                   DiagnosticContextFilter.addMdcEntry(mdc.key, mdc.value);
-                  if (mdc.active) {
-                    DiagnosticContextFilter.activateMdcEntry(
+                  // addMdcEntry setzt active=true. Falls ein Profil dennoch
+                  // einen inaktiven Eintrag enthält (Altdaten), korrigieren.
+                  if (mdc.active === false) {
+                    DiagnosticContextFilter.deactivateMdcEntry(
                       mdc.key,
                       mdc.value,
                     );
                   }
                 }
                 DiagnosticContextFilter.setEnabled(true);
-              } catch (e) {
-                logger.error("Applying MDC filters from profile failed:", e);
+              } else {
+                // Kein MDC im Profil → Filter aus.
+                DiagnosticContextFilter.setEnabled(false);
               }
+            } catch (e) {
+              logger.error("Applying MDC filters from profile failed:", e);
             }
           }}
           getMdcFilters={() => {

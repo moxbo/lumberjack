@@ -82,7 +82,12 @@ function filtersMatchProfile(
     f.searchMode === searchMode &&
     f.stdFiltersEnabled === stdFiltersEnabled &&
     (f.onlyMarked ?? false) === onlyMarked &&
-    JSON.stringify(f.mdcFilters ?? []) === JSON.stringify(mdcFilters)
+    JSON.stringify(f.mdcFilters ?? []) ===
+      JSON.stringify(
+        // Profile speichern nur aktive MDC-Einträge – Vergleich entsprechend
+        // auf aktive Einträge der aktuellen Sitzung beschränken.
+        (mdcFilters ?? []).filter((m) => m && m.active),
+      )
   );
 }
 

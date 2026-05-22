@@ -408,7 +408,10 @@ class FilterProfilesStore {
         searchMode: searchMode ?? "insensitive",
         stdFiltersEnabled,
         onlyMarked: onlyMarked ?? false,
-        mdcFilters: mdcFilters ?? [],
+        // Nur aktive MDC-Einträge persistieren – inaktive (deselektierte) Einträge
+        // verbleiben zwar im DiagnosticContextFilter-Speicher, gehören aber nicht
+        // zum gewählten Filterzustand des Profils.
+        mdcFilters: (mdcFilters ?? []).filter((m) => m && m.active),
       },
     };
 
