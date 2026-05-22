@@ -52,7 +52,9 @@
     "release:beta": "bash scripts/release.sh",
     "release:rc": "bash scripts/release.sh",
     "release:stable": "bash scripts/release.sh",
-    "prepare": "husky"
+    "prepare": "husky",
+    "postinstall": "node scripts/fix-electron-install.cjs",
+    "fix:electron": "node scripts/fix-electron-install.cjs"
   },
   "author": {
     "name": "Bohm, Moritz"
