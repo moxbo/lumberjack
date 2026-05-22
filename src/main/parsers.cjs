@@ -31,7 +31,9 @@ __export(parsers_exports, {
   closeElasticPitSession: () => closeElasticPitSession,
   fetchElasticPitPage: () => fetchElasticPitPage,
   parseJsonFile: () => parseJsonFile,
+  parsePathAsync: () => parsePathAsync,
   parsePaths: () => parsePaths,
+  parsePathsAsync: () => parsePathsAsync,
   parseTextLines: () => parseTextLines,
   parseZipFile: () => parseZipFile,
   toEntry: () => toEntry
@@ -334,6 +336,49 @@ function parsePaths(paths) {
       );
     }
   }
+  return all;
+}
+async function parsePathAsync(p) {
+  const stat = await import_fs.default.promises.stat(p);
+  if (stat.isDirectory()) return [];
+  const ext = import_path.default.extname(p).toLowerCase();
+  if (ext === ".zip") return parseZipFile(p);
+  const text = await import_fs.default.promises.readFile(p, "utf8");
+  if (ext === ".json") return parseJsonFile(p, text);
+  if (ext === ".jsonl" || ext === ".ndjson" || ext === ".txt")
+    return parseTextLines(p, text);
+  if (ext === ".log" || !ext) return parseTextLines(p, text);
+  return [];
+}
+async function parsePathsAsync(paths) {
+  if (paths.length === 0) return [];
+  const CONCURRENCY = Math.min(paths.length, 8);
+  const results = new Array(paths.length);
+  let next = 0;
+  async function worker() {
+    while (true) {
+      const idx = next++;
+      if (idx >= paths.length) return;
+      const p = paths[idx];
+      try {
+        results[idx] = await parsePathAsync(p);
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        results[idx] = [
+          toEntry(
+            { level: "ERROR", message: `Failed to parse ${p}: ${msg}` },
+            "",
+            p
+          )
+        ];
+      }
+    }
+  }
+  const workers = [];
+  for (let i = 0; i < CONCURRENCY; i++) workers.push(worker());
+  await Promise.all(workers);
+  const all = [];
+  for (const list of results) if (list) all.push(...list);
   return all;
 }
 const pitSessions = /* @__PURE__ */ new Map();
@@ -1126,7 +1171,9 @@ async function closeElasticPitSession(sessionId) {
   closeElasticPitSession,
   fetchElasticPitPage,
   parseJsonFile,
+  parsePathAsync,
   parsePaths,
+  parsePathsAsync,
   parseTextLines,
   parseZipFile,
   toEntry
