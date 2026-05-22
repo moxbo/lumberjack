@@ -464,8 +464,18 @@ jobs:
           REPO="${{ github.repository }}"
           REPO_URL="https://github.com/$REPO"
 
-          # Find previous release tag
-          previous_tag=$(git tag --sort=-version:refname | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+' | grep -v "^$tag$" | head -n 1 || echo "")
+          # Find previous release tag.
+          # - Stable release (no '-'): compare against the last STABLE tag, so
+          #   Full-Release notes aggregate ALL commits since the last stable
+          #   (including everything that was in any beta/rc plus commits that
+          #   were never shipped in a pre-release).
+          # - Pre-release (-beta.N / -rc.N): compare against the previous tag
+          #   of ANY kind (incremental notes between betas).
+          if [[ "$tag" == *-* ]]; then
+            previous_tag=$(git tag --sort=-version:refname | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+' | grep -v "^$tag$" | head -n 1 || echo "")
+          else
+            previous_tag=$(git tag --sort=-version:refname | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | grep -v "^$tag$" | head -n 1 || echo "")
+          fi
 
           echo "Current tag: $tag"
           echo "Previous tag: $previous_tag"

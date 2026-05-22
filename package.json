@@ -43,6 +43,11 @@
     "build:mac:publish": "npm run prepack:app && npm run build:prod && cross-env CSC_IDENTITY_AUTO_DISCOVERY=false electron-builder --mac dmg zip --publish always",
     "release:mac": "npm run prepack:app && npm run build:prod && cross-env CSC_IDENTITY_AUTO_DISCOVERY=false electron-builder --mac dmg zip --publish always",
     "release:win": "npm run prepack:app && npm run build:prod && cross-env CSC_IDENTITY_AUTO_DISCOVERY=false electron-builder --win nsis portable --x64 --publish always",
+    "changelog": "git-cliff --config cliff.toml --output CHANGELOG.md",
+    "changelog:unreleased": "git-cliff --config cliff.toml --unreleased",
+    "changelog:next": "git-cliff --config cliff.toml --unreleased --tag",
+    "changelog:since-stable": "git-cliff --config cliff.toml $(git describe --tags --abbrev=0 --match='v[0-9]*' --exclude='*-*')..HEAD",
+    "release:notes": "git-cliff --config cliff.toml --latest --strip header",
     "prepare": "husky"
   },
   "author": {
@@ -67,6 +72,7 @@
     "eslint": "^10.2.1",
     "eslint-config-prettier": "^10.1.8",
     "eslint-plugin-prettier": "^5.5.5",
+    "git-cliff": "^2.13.1",
     "globals": "^17.5.0",
     "husky": "^9.1.7",
     "jimp": "^1.6.1",
