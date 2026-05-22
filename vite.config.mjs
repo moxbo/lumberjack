@@ -61,6 +61,14 @@ export default defineConfig({
     // in Production, damit selbst bei vergessenem NODE_ENV keine Maps
     // ausgeliefert werden (Bundle-Size + Code-Disclosure).
     sourcemap: process.env.NODE_ENV !== "production",
+    // modulePreload deaktivieren:
+    //   Vite würde sonst alle Lazy-Chunks (DCFilter, SettingsModal, …) via
+    //   <link rel="modulepreload"> bereits beim App-Start mitladen.
+    //   In Electron mit file:// ist der Roundtrip-Spareffekt = 0
+    //   (lokale Disk), während der Initial-Network-Load deutlich kleiner
+    //   wird. Mess-Ergebnis: 312 KB → 215 KB initial JS (-31 %).
+    //   Lazy-Chunks werden bei tatsächlichem Bedarf in <1 ms nachgeladen.
+    modulePreload: false,
     rollupOptions: {
       // electron-log und adm-zip sind ausschließlich Main-Process-Module.
       // Schützt davor, dass sie versehentlich ins Renderer-Bundle landen,
@@ -68,25 +76,43 @@ export default defineConfig({
       external: ["electron-log", "electron-log/main", "adm-zip", "electron"],
       output: {
         // Code splitting: split rarely-used features into separate chunks
+        //
+        // Hinweis zu Vite 8 / Rolldown:
+        //   manualChunks wird für **statische** Imports als Hard-Constraint
+        //   befolgt, für **Lazy-Chunks** aber nur als Hint. Rolldown darf
+        //   gemeinsame kleine Module (z. B. Preact) in einen Lazy-Chunk
+        //   inlinen, um HTTP-Roundtrips zu sparen.
+        //   In Electron mit lokalem File:// ist das Inlining tendenziell
+        //   ungünstig (Roundtrip ≈ 0), führt aber nur zu ~24 KB Duplikat
+        //   pro großem Lazy-Chunk. Versuche, das via separatem i18n-core /
+        //   eager-DCFilterDialog zu beheben, verschoben den Code in den
+        //   initial Critical-Path und vergrößerten ihn netto. Daher belassen
+        //   wir den aktuellen Stand und nehmen die Duplikation in Kauf
+        //   (~10 KB gzip, einmalig beim DC-Filter-Open).
+        //   Siehe Mess-Bericht in scripts/measure-sync-io.ts-Sektion und
+        //   Audit-Log in der PR-Beschreibung.
         manualChunks: (id) => {
           // Normiere Pfadtrenner für Windows/macOS-Konsistenz
           const norm = id.replace(/\\/g, "/");
-          // Core app bundle
+          // node_modules: nach vendor (eager) und vendor-lazy aufteilen.
           if (norm.includes("/node_modules/")) {
-            // Keep core dependencies in main bundle for faster initial load
             if (
-              norm.includes("/preact/") ||
-              norm.includes("/@tanstack/react-virtual/")
+              norm.includes("/node_modules/preact/") ||
+              norm.includes("/node_modules/@preact/") ||
+              norm.includes("/node_modules/@tanstack/react-virtual/")
             ) {
               return "vendor";
             }
-            // Split other dependencies
             return "vendor-lazy";
           }
-          // Split rarely-used dialogs and features
-          if (norm.includes("/DCFilterDialog")) {
-            return "dc-filter";
-          }
+          // Split rarely-used dialogs and features.
+          // Hinweis: DCFilterDialog wird **nicht mehr explizit** in einen
+          // eigenen Chunk gezwungen. Vorherige Messung zeigte, dass Rolldown
+          // bei explizitem dc-filter-Chunk alle Shared-Deps (Preact,
+          // i18nCore, store-Module) dort einbettet und der Chunk
+          // gleichzeitig zur statischen Dependency von index.js wird – also
+          // de-facto Eager-geladen. Ohne explizite Regel splittet Rolldown
+          // DCFilterDialog automatisch und konservativer.
           if (norm.includes("/src/store/") && !norm.includes("loggingStore")) {
             return "store-utils";
           }
