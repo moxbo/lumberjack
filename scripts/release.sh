@@ -140,7 +140,7 @@ if [[ "$IS_PRERELEASE" == "false" ]]; then
 fi
 
 # ---------- bump version ----------------------------------------------------
-blue "▶ Bumping package.json to $VERSION…"
+blue "▶ Bumping package.json to ${VERSION}…"
 npm version "$VERSION" --no-git-tag-version --allow-same-version >/dev/null
 green "  ✓ package.json updated"
 
