@@ -28,6 +28,7 @@
     "test:e2e:debug": "npm run prebuild && npx playwright test --debug",
     "test:e2e:report": "npx playwright show-report",
     "diagnose:memory": "tsx ./scripts/diagnose-memory.ts",
+    "test:filter-latency": "tsx ./scripts/test-filter-latency.ts",
     "lint": "eslint src --ext .ts,.tsx",
     "lint:fix": "eslint src --ext .ts,.tsx --fix",
     "format": "prettier --write .",

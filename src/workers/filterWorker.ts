@@ -1,19 +1,46 @@
 // filepath: /Users/mo/develop/my-electron-app/src/workers/filterWorker.ts
 /**
  * Web Worker für das Filtern großer Log-Mengen.
- * Wird verwendet, wenn mehr als 10.000 Einträge gefiltert werden müssen.
+ *
+ * Der Worker ist *zustandsbehaftet*: Einträge werden einmal per `setEntries`
+ * (und inkrementell per `appendEntries`) in den Worker geladen und dort
+ * gecached. Beim eigentlichen Filtern muss nur noch die (kleine) Optionen-
+ * Nachricht gesendet werden – nicht erneut der komplette Datensatz. Das
+ * verhindert, dass bei 300k+ Einträgen pro Tastendruck Hunderttausende
+ * Objekte über die postMessage-Grenze geklont werden (Haupt-Thread-Blocker).
  */
 
 import { matchesDcFilter as sharedMatchesDcFilter } from "../utils/dcMatch";
+// Geteilte msgMatches-Implementierung nutzen: sie cached tokenisierte
+// Ausdrücke (tokenCache), sodass der Filter-Ausdruck NICHT pro Eintrag neu
+// tokenisiert wird. Die bisherige lokale Kopie tokenisierte den Ausdruck für
+// jeden der bis zu 300k Einträge erneut.
+import { msgMatches } from "../utils/msgFilter";
 
 // Message types
+interface SetEntriesRequest {
+  type: "setEntries";
+  entries: any[];
+}
+
+interface AppendEntriesRequest {
+  type: "appendEntries";
+  entries: any[];
+}
+
 interface FilterRequest {
   type: "filter";
-  entries: any[];
+  /**
+   * Optional: Wenn vorhanden, werden diese Einträge gefiltert (Legacy-Pfad,
+   * z.B. Tests). Fehlt das Feld, wird der im Worker gecachte Datensatz genutzt.
+   */
+  entries?: any[];
   options: FilterOptions;
   /** Optional request id used by the consumer to discard stale results. */
   requestId?: number;
 }
+
+type WorkerRequest = SetEntriesRequest | AppendEntriesRequest | FilterRequest;
 
 interface FilterOptions {
   stdFiltersEnabled: boolean;
@@ -52,230 +79,7 @@ interface FilterStats {
 }
 
 // Token types for the parser
-type TokType = "AND" | "OR" | "NOT" | "LPAREN" | "RPAREN" | "WORD";
-interface Token {
-  readonly t: TokType;
-  readonly v?: string;
-}
-
-// Full message matching with AND, OR, NOT operators and escape support
-// Syntax:
-//  - OR with '|'
-//  - AND with '&'
-//  - Negation with '!' prefix
-//  - Parentheses '(' and ')' for grouping
-//  - Escape with '\' for literal special characters: \& \| \! \( \)
-function msgMatches(message: unknown, pattern: string): boolean {
-  if (!pattern) return true;
-  const rawMsg = String(message || "");
-  const rawExpr = pattern.trim();
-
-  if (!rawExpr) return true;
-
-  const m = rawMsg.toLowerCase();
-  const q = rawExpr.toLowerCase();
-
-  // Tokenizer with escape support
-  function tokenize(s: string): Token[] {
-    const toks: Token[] = [];
-    let i = 0;
-    const N = s.length;
-    const isOp = (ch: string): boolean =>
-      ch === "&" || ch === "|" || ch === "!" || ch === "(" || ch === ")";
-
-    while (i < N) {
-      const ch = s[i]!;
-      if (ch <= " ") {
-        i++;
-        continue;
-      }
-      // Quoted string: "..." is treated as a single WORD (phrase search)
-      if (ch === '"') {
-        let j = i + 1;
-        let word = "";
-        while (j < N && s[j] !== '"') {
-          if (s[j] === "\\" && j + 1 < N) {
-            word += s[j + 1]!;
-            j += 2;
-            continue;
-          }
-          word += s[j]!;
-          j++;
-        }
-        if (j < N) j++; // skip closing quote
-        if (word) toks.push({ t: "WORD", v: word });
-        i = j;
-        continue;
-      }
-      // Escape handling
-      if (ch === "\\" && i + 1 < N) {
-        let j = i;
-        let word = "";
-        while (j < N) {
-          const c = s[j]!;
-          if (c <= " ") break;
-          if (c === "\\" && j + 1 < N) {
-            word += s[j + 1]!;
-            j += 2;
-            continue;
-          }
-          if (isOp(c)) break;
-          word += c;
-          j++;
-        }
-        if (word) toks.push({ t: "WORD", v: word });
-        i = j;
-        continue;
-      }
-      if (isOp(ch)) {
-        if (ch === "&") toks.push({ t: "AND" });
-        else if (ch === "|") toks.push({ t: "OR" });
-        else if (ch === "!") toks.push({ t: "NOT" });
-        else if (ch === "(") toks.push({ t: "LPAREN" });
-        else if (ch === ")") toks.push({ t: "RPAREN" });
-        i++;
-        continue;
-      }
-      // Collect word with escape support
-      let j = i;
-      let word = "";
-      while (j < N) {
-        const c = s[j]!;
-        if (c <= " ") break;
-        if (c === "\\" && j + 1 < N) {
-          word += s[j + 1]!;
-          j += 2;
-          continue;
-        }
-        if (isOp(c)) break;
-        word += c;
-        j++;
-      }
-      if (word) toks.push({ t: "WORD", v: word });
-      i = j;
-    }
-    return toks;
-  }
-
-  const tokens = tokenize(q);
-  if (tokens.length === 0) return true;
-
-  let pos = 0;
-  const peek = (): Token | undefined => tokens[pos];
-  const take = (): Token | undefined => tokens[pos++];
-
-  function evalPrimary(): boolean {
-    const tk = peek();
-    if (!tk) return true;
-    if (tk.t === "WORD") {
-      take();
-      return m.includes(tk.v!);
-    }
-    if (tk.t === "LPAREN") {
-      take();
-      const val = evalOr();
-      if (peek()?.t === "RPAREN") take();
-      return val;
-    }
-    take();
-    return true;
-  }
-
-  function evalNot(): boolean {
-    let neg = false;
-    while (peek()?.t === "NOT") {
-      take();
-      neg = !neg;
-    }
-    const v = evalPrimary();
-    return neg ? !v : v;
-  }
-
-  function skipPrimary(): void {
-    const tk = peek();
-    if (!tk) return;
-    if (tk.t === "WORD") {
-      take();
-      return;
-    }
-    if (tk.t === "LPAREN") {
-      take();
-      skipOr();
-      if (peek()?.t === "RPAREN") take();
-      return;
-    }
-    take();
-  }
-
-  function skipNotExpr(): void {
-    while (peek()?.t === "NOT") take();
-    skipPrimary();
-  }
-
-  function skipAnd(): void {
-    skipNotExpr();
-    while (true) {
-      const tk = peek();
-      if (!tk) break;
-      if (tk.t === "AND") {
-        take();
-        skipNotExpr();
-      } else if (tk.t === "WORD" || tk.t === "LPAREN" || tk.t === "NOT") {
-        skipNotExpr();
-      } else {
-        break;
-      }
-    }
-  }
-
-  function skipOr(): void {
-    skipAnd();
-    while (peek()?.t === "OR") {
-      take();
-      skipAnd();
-    }
-  }
-
-  function evalAnd(): boolean {
-    let left = evalNot();
-    while (true) {
-      const tk = peek();
-      if (!tk) break;
-      if (tk.t === "AND") {
-        take();
-        if (!left) {
-          skipNotExpr();
-        } else {
-          left = evalNot();
-        }
-      } else if (tk.t === "WORD" || tk.t === "LPAREN" || tk.t === "NOT") {
-        if (!left) {
-          skipNotExpr();
-        } else {
-          left = evalNot();
-        }
-      } else {
-        break;
-      }
-    }
-    return left;
-  }
-
-  function evalOr(): boolean {
-    let left = evalAnd();
-    while (peek()?.t === "OR") {
-      take();
-      if (left) {
-        skipAnd();
-      } else {
-        left = evalAnd();
-      }
-    }
-    return left;
-  }
-
-  return evalOr();
-}
+// (Die Tokenizer/Parser-Logik lebt jetzt zentral in ../utils/msgFilter.ts.)
 
 // Check if timestamp is within time range
 function matchesTimeRange(
@@ -383,7 +187,7 @@ function filterEntries(entries: any[], options: FilterOptions): FilterResponse {
 
       // Message filter
       if (options.filter.message) {
-        if (!msgMatches(e.message, options.filter.message)) {
+        if (!msgMatches(String(e.message ?? ""), options.filter.message)) {
           stats.rejectedByMessage++;
           continue;
         }
@@ -426,15 +230,47 @@ function filterEntries(entries: any[], options: FilterOptions): FilterResponse {
 }
 
 // Worker message handler
-self.onmessage = (event: MessageEvent<FilterRequest>) => {
-  const { type, entries, options, requestId } = event.data;
+//
+// Zustandsbehafteter Cache: Der Worker hält die zuletzt per setEntries/
+// appendEntries übertragenen Einträge. So muss beim Filtern (häufig, z.B. bei
+// jedem Tastendruck) der Datensatz nicht erneut geklont werden.
+let cachedEntries: any[] = [];
+
+self.onmessage = (event: MessageEvent<WorkerRequest>) => {
+  const data = event.data;
+  const type = data?.type;
+
+  if (type === "setEntries") {
+    cachedEntries = data.entries || [];
+    return;
+  }
+
+  if (type === "appendEntries") {
+    const add = data.entries;
+    if (add && add.length) {
+      // In-place anhängen, um eine erneute Allokation des Gesamt-Arrays zu
+      // vermeiden (wichtig bei Streaming-Quellen mit vielen kleinen Updates).
+      for (let i = 0; i < add.length; i++) cachedEntries.push(add[i]);
+    }
+    return;
+  }
 
   if (type === "filter") {
-    const result = filterEntries(entries, options);
-    if (requestId !== undefined) result.requestId = requestId;
+    // Legacy/Test-Pfad: Wenn entries mitgesendet werden, diese nutzen;
+    // ansonsten den gecachten Datensatz filtern.
+    const entries = data.entries !== undefined ? data.entries : cachedEntries;
+    const result = filterEntries(entries, data.options);
+    if (data.requestId !== undefined) result.requestId = data.requestId;
     self.postMessage(result);
   }
 };
 
 // Export for type checking
-export type { FilterRequest, FilterResponse, FilterOptions, FilterStats };
+export type {
+  FilterRequest,
+  FilterResponse,
+  FilterOptions,
+  FilterStats,
+  SetEntriesRequest,
+  AppendEntriesRequest,
+};

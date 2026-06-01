@@ -155,6 +155,17 @@ export function useFilterWorker(): UseFilterWorkerResult {
   const pendingRequestRef = useRef<number>(0);
   const utilityProcessAvailableRef = useRef<boolean | null>(null);
 
+  // Monoton steigender Request-Zähler. Date.now() kann bei schnellen Filtern
+  // (mehrere im selben ms) kollidieren und so gültige Ergebnisse verwerfen.
+  const requestSeqRef = useRef<number>(0);
+
+  // Tracking des zuletzt an den Worker übertragenen Datensatzes, um beim
+  // Filtern NICHT erneut den kompletten (ggf. 300k+) Datensatz zu klonen.
+  // Wir merken uns die Array-Referenz + Länge, um Anhänge (Streaming) von
+  // einem kompletten Austausch zu unterscheiden.
+  const syncedEntriesRef = useRef<unknown[] | null>(null);
+  const syncedLenRef = useRef<number>(0);
+
   // Check if UtilityProcess is available on mount
   useEffect(() => {
     const checkUtilityProcess = async (): Promise<void> => {
@@ -189,6 +200,10 @@ export function useFilterWorker(): UseFilterWorkerResult {
         { type: "module" },
       );
 
+      // Frischer Worker hat noch keinen gecachten Datensatz.
+      syncedEntriesRef.current = null;
+      syncedLenRef.current = 0;
+
       workerRef.current.onmessage = (event: MessageEvent) => {
         const {
           type,
@@ -213,6 +228,8 @@ export function useFilterWorker(): UseFilterWorkerResult {
           workerRef.current.terminate();
           workerRef.current = null;
         }
+        syncedEntriesRef.current = null;
+        syncedLenRef.current = 0;
       };
     } catch (error) {
       console.warn("[FilterWorker] Failed to initialize worker:", error);
@@ -221,6 +238,91 @@ export function useFilterWorker(): UseFilterWorkerResult {
       };
     }
   }, []);
+
+  /**
+   * Synchronisiert den Datensatz mit dem (zustandsbehafteten) Web Worker.
+   *
+   * - Bei unveränderter Array-Referenz/Länge: nichts zu tun (häufigster Fall
+   *   beim Tippen im Filter, da `entries` dann gleich bleibt).
+   * - Bei reinem Anhängen (Streaming): nur die neuen Einträge per
+   *   `appendEntries` übertragen.
+   * - Andernfalls: kompletter Austausch per `setEntries` (in Batches, um eine
+   *   einzelne riesige structured-clone-Operation zu vermeiden).
+   *
+   * @returns true, wenn der Worker den Datensatz besitzt und gefiltert werden
+   *          kann; false, wenn kein Worker verfügbar ist.
+   */
+  const syncEntriesToWorker = useCallback(
+    (
+      entries: unknown[],
+      marksMap: Record<string, string> | undefined,
+      forceFull: boolean,
+    ): boolean => {
+      const worker = workerRef.current;
+      if (!worker) return false;
+
+      const prevArr = syncedEntriesRef.current;
+      const prevLen = syncedLenRef.current;
+
+      // Unverändert → kein Re-Transfer nötig.
+      if (
+        !forceFull &&
+        prevArr === entries &&
+        prevLen === entries.length &&
+        prevArr !== null
+      ) {
+        return true;
+      }
+
+      // Append erkennen: gleiche Präfix-Objekte am Anfang und an der bisherigen
+      // Grenze deuten auf reines Anhängen hin (immutable State-Update beim
+      // Streaming erzeugt ein neues Array mit identischen vorhandenen Elementen).
+      let appendOnly = false;
+      if (
+        !forceFull &&
+        prevArr !== null &&
+        prevLen > 0 &&
+        entries.length >= prevLen &&
+        entries[0] === prevArr[0] &&
+        entries[prevLen - 1] === prevArr[prevLen - 1]
+      ) {
+        appendOnly = true;
+      }
+
+      const BATCH = MAX_ENTRIES_PER_MESSAGE;
+
+      if (appendOnly) {
+        if (entries.length > prevLen) {
+          // Nur die neuen Einträge projizieren + übertragen.
+          for (let start = prevLen; start < entries.length; start += BATCH) {
+            const end = Math.min(start + BATCH, entries.length);
+            const delta = projectToSlimEntries(
+              entries.slice(start, end),
+              marksMap,
+            );
+            worker.postMessage({ type: "appendEntries", entries: delta });
+          }
+        }
+      } else {
+        // Kompletter Austausch (erstes Laden, Filterwechsel mit Marks, Reset…).
+        const slim = projectToSlimEntries(entries, marksMap);
+        // Erste Batch ersetzt den Cache, weitere hängen an.
+        const first = slim.length <= BATCH ? slim : slim.slice(0, BATCH);
+        worker.postMessage({ type: "setEntries", entries: first });
+        for (let start = BATCH; start < slim.length; start += BATCH) {
+          worker.postMessage({
+            type: "appendEntries",
+            entries: slim.slice(start, start + BATCH),
+          });
+        }
+      }
+
+      syncedEntriesRef.current = entries;
+      syncedLenRef.current = entries.length;
+      return true;
+    },
+    [],
+  );
 
   // Synchronous filter function (fallback for small datasets)
   const filterSync = useCallback(
@@ -335,7 +437,7 @@ export function useFilterWorker(): UseFilterWorkerResult {
       options: FilterOptions,
       marksMap?: Record<string, string>,
     ) => {
-      const requestId = Date.now();
+      const requestId = ++requestSeqRef.current;
       pendingRequestRef.current = requestId;
 
       // For small datasets, use synchronous filtering (fastest for small data)
@@ -347,7 +449,47 @@ export function useFilterWorker(): UseFilterWorkerResult {
         return;
       }
 
-      // For large datasets, prefer UtilityProcess (Electron 40+)
+      // Bevorzugter Pfad für große Datensätze: zustandsbehafteter Web Worker.
+      //
+      // Der Worker hält die Einträge bereits gecached, daher übertragen wir nur
+      // (a) ggf. neue Einträge inkrementell und (b) die kleine Optionen-
+      // Nachricht. Damit blockiert das Filtern den Renderer-Hauptthread NICHT
+      // mehr – der bisherige Sync-Fallback bei >50k Einträgen war die Hauptur-
+      // sache für Einfrieren der UI bei 300k+ Einträgen.
+      if (workerRef.current) {
+        // Wenn Markierungen relevant sind (onlyMarked), muss der projizierte
+        // `_mark`-Stand aktuell sein → kompletter Re-Sync. Das ist der seltene
+        // Pfad; das häufige Tippen im Message-Filter bleibt inkrementell.
+        const forceFull =
+          !!options.onlyMarked ||
+          (!!marksMap && Object.keys(marksMap).length > 0);
+
+        try {
+          const ok = syncEntriesToWorker(entries, marksMap, forceFull);
+          if (ok) {
+            setIsFiltering(true);
+            // Nur die Optionen senden – Worker filtert den gecachten Datensatz.
+            workerRef.current.postMessage({
+              type: "filter",
+              options,
+              requestId,
+            });
+            return;
+          }
+        } catch (error) {
+          const errorMessage =
+            error instanceof Error ? error.message : String(error);
+          console.warn(
+            "[FilterWorker] Stateful worker sync failed, falling back:",
+            errorMessage,
+          );
+          // Cache als ungültig markieren, damit der nächste Versuch neu synct.
+          syncedEntriesRef.current = null;
+          syncedLenRef.current = 0;
+        }
+      }
+
+      // Fallback 1: UtilityProcess (Electron 40+), nur wenn kein Web Worker da.
       if (utilityProcessAvailableRef.current) {
         setIsFiltering(true);
 
@@ -410,54 +552,13 @@ export function useFilterWorker(): UseFilterWorkerResult {
         return;
       }
 
-      // Fall back to Web Worker
-      if (workerRef.current) {
-        setIsFiltering(true);
-
-        try {
-          // Check if dataset is too large for postMessage
-          if (entries.length > MAX_ENTRIES_PER_MESSAGE) {
-            console.warn(
-              `[FilterWorker] Dataset too large for Web Worker (${entries.length} entries), falling back to sync`,
-            );
-            const syncResult = filterSync(entries, options, marksMap);
-            setFilteredIndices(syncResult.indices);
-            setStats(syncResult.stats);
-            setIsFiltering(false);
-            return;
-          }
-
-          // Project to slim entries to prevent DataCloneError (out of memory)
-          // Only transfer fields needed for filtering, skip raw/stackTrace/etc.
-          const slimEntries = projectToSlimEntries(entries, marksMap);
-
-          workerRef.current.postMessage({
-            type: "filter",
-            entries: slimEntries,
-            options,
-            requestId,
-          });
-        } catch (error) {
-          // Handle DataCloneError (out of memory) or other postMessage errors
-          const errorMessage =
-            error instanceof Error ? error.message : String(error);
-          console.warn("[FilterWorker] postMessage failed:", errorMessage);
-
-          // Fall back to synchronous filtering
-          const syncResult = filterSync(entries, options, marksMap);
-          setFilteredIndices(syncResult.indices);
-          setStats(syncResult.stats);
-          setIsFiltering(false);
-        }
-      } else {
-        // Last resort: synchronous filtering
-        const result = filterSync(entries, options, marksMap);
-        setFilteredIndices(result.indices);
-        setStats(result.stats);
-        setIsFiltering(false);
-      }
+      // Last resort: synchronous filtering
+      const result = filterSync(entries, options, marksMap);
+      setFilteredIndices(result.indices);
+      setStats(result.stats);
+      setIsFiltering(false);
     },
-    [filterSync],
+    [filterSync, syncEntriesToWorker],
   );
 
   return {
