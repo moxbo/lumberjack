@@ -119,7 +119,7 @@ if [[ "$IS_PRERELEASE" == "false" ]]; then
 
   if [[ -n "$LAST_PRE" ]]; then
     NEW_COMMITS="$(git log "$LAST_PRE..HEAD" --pretty=format:'  - %s' \
-      | grep -vE '^\s*-\s*chore: bump version|\[skip[- ]ci\]' || true)"
+      | grep -vE '^\s*-\s*chore: (bump version|release)|\[skip[- ]ci\]' || true)"
     if [[ -n "$NEW_COMMITS" ]]; then
       yellow "  ⚠ Commits in HEAD that were NOT in the last pre-release ($LAST_PRE):"
       echo "$NEW_COMMITS"
@@ -133,7 +133,7 @@ if [[ "$IS_PRERELEASE" == "false" ]]; then
     yellow "  ⚠ No pre-release found for ${VERSION}. Going straight to stable."
     yellow "  Commits since $LAST_STABLE:"
     git log "$LAST_STABLE..HEAD" --pretty=format:'  - %s' \
-      | grep -vE '^\s*-\s*chore: bump version|\[skip[- ]ci\]' || echo "  (none)"
+      | grep -vE '^\s*-\s*chore: (bump version|release)|\[skip[- ]ci\]' || echo "  (none)"
     echo
     confirm "  Proceed without a beta/rc?"
   fi
@@ -167,7 +167,7 @@ blue "▶ Committing & tagging…"
 git add package.json package-lock.json CHANGELOG.md release/app/package.json 2>/dev/null || true
 # Only commit if there's something staged
 if ! git diff --cached --quiet; then
-  git commit -m "chore: release $VERSION [skip ci]"
+  git commit -m "chore: release $VERSION"
   green "  ✓ Commit created"
 else
   yellow "  ⚠ Nothing to commit (version/changelog already up to date)"
