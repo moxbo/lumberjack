@@ -5,6 +5,12 @@ Alle nennenswerten Änderungen an diesem Projekt werden in dieser Datei dokument
 Das Format orientiert sich an [Keep a Changelog](https://keepachangelog.com/de/1.1.0/),
 und dieses Projekt folgt [Semantic Versioning](https://semver.org/lang/de/).
 
+## [1.0.16-beta.2] - 2026-06-01 _(Pre-Release)_
+
+
+### Fixed
+- **release**: Update commit message filtering to exclude release-related chores
+
 ## [1.0.16-beta.1] - 2026-06-01 _(Pre-Release)_
 
 
