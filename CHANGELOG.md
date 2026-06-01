@@ -5,11 +5,47 @@ Alle nennenswerten Änderungen an diesem Projekt werden in dieser Datei dokument
 Das Format orientiert sich an [Keep a Changelog](https://keepachangelog.com/de/1.1.0/),
 und dieses Projekt folgt [Semantic Versioning](https://semver.org/lang/de/).
 
-## [Unreleased]
+## [1.0.16-beta.1] - 2026-06-01 _(Pre-Release)_
+
+
+### Added
+- **filters**: Optimize message filtering with precompiled patterns for improved performance
+- **vite.config**: Disable modulePreload for optimized initial load and adjust chunking strategy
+- **parsers**: Add asynchronous parsing functions for paths and enhance error handling
+
+
+### Changed
+- **dcFilter**: Extract shared DC filter logic into utility module
+
+
+### Docs
+- Update release process in CONTRIBUTING.md and add release script [skip-ci]
+
+
+### Fixed
+- **vite.config**: Remove unnecessary chunking rule for utils to improve tree-shaking
+- **electron-install**: Add script to fix common Electron installation issues on Node 24/macOS
+- Highlight all matches for OR (|) full-text search
+- **NetworkService**: Improve TCP line processing and handle trailing data without newline
+- **parsers**: Enhance timestamp handling for Elasticsearch/OpenSearch documents
+- **filterWorker**: Implement stateful caching for log filtering to improve performance
+- **enqueueAppends**: Improve handling of bulk appends and enforce buffer limits
+- **release**: Correct variable interpolation in version bump message
+
+
+### Tests
+- **measure-sync-io**: Add benchmarking tool for synchronous vs asynchronous file operations
+- **measure-sync-io**: Enhance benchmarking with strict mode and failure reporting
+
+## [1.0.15] - 2026-05-22
 
 
 ### Changed
 - Enhance empty state messages for TCP server status and actions
+
+
+### Docs
+- Update CHANGELOG
 
 
 ### Fixed
@@ -92,13 +128,6 @@ und dieses Projekt folgt [Semantic Versioning](https://semver.org/lang/de/).
 
 
 ### Added
-- Add HTTP tail stop functionality and update menu integration
-- Add release commands for macOS and Windows in package.json and update GitHub Actions workflow
-
-## [1.0.15] - 2026-04-30
-
-
-### Added
 - Add filter update functionality with confirmation prompts and success messages
 - Implement internationalization for various UI components
 - Enhance filter profiles with search mode and undo functionality
@@ -112,6 +141,8 @@ und dieses Projekt folgt [Semantic Versioning](https://semver.org/lang/de/).
 - Add platform-specific taskbar menus for quick window opening
 - Intercept page title updates to manage dynamic suffixes
 - Enhance error handling with cause property in various modules
+- Add HTTP tail stop functionality and update menu integration
+- Add release commands for macOS and Windows in package.json and update GitHub Actions workflow
 
 
 ### Changed
