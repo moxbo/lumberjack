@@ -13,6 +13,8 @@
 
 import { parentPort } from "node:worker_threads";
 
+import { matchesDcFilter as sharedMatchesDcFilter } from "../utils/dcMatch";
+
 // ============================================================================
 // Types
 // ============================================================================
@@ -366,47 +368,15 @@ function matchesTimeRange(
 
 /**
  * Prüft ob Entry den DC-Filter matched
- * Logik: OR für gleiche Keys (z.B. TraceID=A OR TraceID=B), AND über verschiedene Keys
+ * Logik: OR für gleiche Keys (z.B. TraceID=A OR TraceID=B), AND über verschiedene Keys.
+ * Unterstützt Wildcards (leerer Wert) und Trace-Key-Varianten.
+ * Implementierung: gemeinsames Modul src/utils/dcMatch.ts (Single Source of Truth).
  */
 function matchesDcFilter(
   mdc: Record<string, unknown> | undefined,
   dcEntries: Array<{ key: string; value: string; active: boolean }>,
 ): boolean {
-  if (!dcEntries || dcEntries.length === 0) return true;
-
-  const activeEntries = dcEntries.filter((e) => e.active);
-  if (activeEntries.length === 0) return true;
-
-  if (!mdc || typeof mdc !== "object") return false;
-
-  // Gruppiere Einträge nach Key (lowercase normalisiert)
-  const entriesByKey = new Map<string, string[]>();
-  for (const entry of activeEntries) {
-    const key = entry.key.toLowerCase();
-    const values = entriesByKey.get(key) || [];
-    values.push(entry.value.toLowerCase());
-    entriesByKey.set(key, values);
-  }
-
-  // Für jede Key-Gruppe: mindestens ein Value muss matchen (OR innerhalb Key)
-  // Alle Key-Gruppen müssen einen Match haben (AND über Keys)
-  for (const [key, allowedValues] of entriesByKey) {
-    let keyMatched = false;
-
-    for (const [k, v] of Object.entries(mdc)) {
-      if (k.toLowerCase() === key) {
-        const val = String(v || "").toLowerCase();
-        if (allowedValues.includes(val)) {
-          keyMatched = true;
-          break;
-        }
-      }
-    }
-
-    if (!keyMatched) return false;
-  }
-
-  return true;
+  return sharedMatchesDcFilter(mdc, dcEntries);
 }
 
 // ============================================================================

@@ -4,6 +4,8 @@
  * Wird verwendet, wenn mehr als 10.000 Einträge gefiltert werden müssen.
  */
 
+import { matchesDcFilter as sharedMatchesDcFilter } from "../utils/dcMatch";
+
 // Message types
 interface FilterRequest {
   type: "filter";
@@ -304,46 +306,14 @@ function matchesTimeRange(
 }
 
 // Check if entry matches DC filter
-// Logic: OR for same keys (e.g., TraceID=A OR TraceID=B), AND across different keys
+// Logic: OR for same keys (e.g., TraceID=A OR TraceID=B), AND across different keys.
+// Supports wildcards (empty value) and trace-key variants.
+// Implementation: shared module src/utils/dcMatch.ts (single source of truth).
 function matchesDcFilter(
   mdc: Record<string, unknown> | undefined,
   dcEntries: Array<{ key: string; value: string; active: boolean }>,
 ): boolean {
-  if (!dcEntries || dcEntries.length === 0) return true;
-
-  const activeEntries = dcEntries.filter((e) => e.active);
-  if (activeEntries.length === 0) return true;
-
-  if (!mdc || typeof mdc !== "object") return false;
-
-  // Group entries by key (normalized to lowercase)
-  const entriesByKey = new Map<string, string[]>();
-  for (const entry of activeEntries) {
-    const key = entry.key.toLowerCase();
-    const values = entriesByKey.get(key) || [];
-    values.push(entry.value.toLowerCase());
-    entriesByKey.set(key, values);
-  }
-
-  // For each key group: at least one value must match (OR within key)
-  // All key groups must have a match (AND across keys)
-  for (const [key, allowedValues] of entriesByKey) {
-    let keyMatched = false;
-
-    for (const [k, v] of Object.entries(mdc)) {
-      if (k.toLowerCase() === key) {
-        const val = String(v || "").toLowerCase();
-        if (allowedValues.includes(val)) {
-          keyMatched = true;
-          break;
-        }
-      }
-    }
-
-    if (!keyMatched) return false;
-  }
-
-  return true;
+  return sharedMatchesDcFilter(mdc, dcEntries);
 }
 
 // Main filter function

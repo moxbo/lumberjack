@@ -1,5 +1,14 @@
 // DiagnosticContextFilter: verwaltet (key,val,active)-Einträge und kann MDC-Prädikate bilden
 
+import {
+  canonicalDcKey,
+  matchesDcFilter,
+  normalizeTraceKeyName,
+} from "../utils/dcMatch";
+
+// Re-export für bestehende Konsumenten (z. B. mdcListener)
+export { canonicalDcKey };
+
 interface Listener {
   (): void;
 }
@@ -30,52 +39,6 @@ export type { DcEntry };
 function entryKey(key: string, val: string): string {
   return `${key}\u241F${val}`;
 } // UNIT SEPARATOR-like delimiter
-
-// Mappe diverse Trace-Key-Varianten auf den kanonischen Anzeigenamen
-const TRACE_KEY_VARIANTS = new Set([
-  "traceid",
-  "trace_id",
-  "trace.id",
-  "trace-id",
-  "x-trace-id",
-  "x_trace_id",
-  "x.trace.id",
-  "trace",
-]);
-
-function normalizeTraceKeyName(k: string): string | null {
-  const lk = String(k || "")
-    .trim()
-    .toLowerCase();
-  return TRACE_KEY_VARIANTS.has(lk) ? "TraceID" : null;
-}
-
-// Liefert alle Event-Key-Varianten zu einem kanonischen Key
-function eventKeyVariantsForCanonical(k: string): string[] {
-  const canon = normalizeTraceKeyName(k) || String(k || "").trim();
-  if (canon === "TraceID") {
-    return [
-      "TraceID",
-      "traceId",
-      "trace_id",
-      "trace.id",
-      "trace-id",
-      "x-trace-id",
-      "x_trace_id",
-      "x.trace.id",
-      "trace",
-    ];
-  }
-  return [canon];
-}
-
-// Export: Kanonischer DC-Key für Anzeige/Filterung
-export function canonicalDcKey(k: string): string {
-  const raw = String(k || "").trim();
-  if (!raw) return "";
-  const canonical = normalizeTraceKeyName(raw);
-  return canonical || raw;
-}
 
 class DiagnosticContextFilterImpl {
   private _map = new Map<string, DcEntry>();
@@ -205,72 +168,16 @@ class DiagnosticContextFilterImpl {
     if (!this.isEnabled()) return true;
     if (!this._hasActive()) return true;
 
-    // gruppiere aktive Einträge je Key
-    const groups = new Map<string, DcEntry[]>();
-    for (const e of this._map.values()) {
-      if (!e.active) continue;
-      const k = this._normalizeKey(e.key);
-      if (!groups.has(k)) groups.set(k, []);
-      groups.get(k)!.push(e);
-    }
-
-    const hasOwn = (obj: Record<string, unknown>, k: string): boolean =>
-      Object.prototype.hasOwnProperty.call(obj, k);
-
     const obj =
       mdc && typeof mdc === "object" ? (mdc as Record<string, unknown>) : {};
 
-    const toSafeString = (val: unknown): string => {
-      if (val == null) return "";
-      if (typeof val === "string") return val;
-      if (
-        typeof val === "number" ||
-        typeof val === "boolean" ||
-        typeof val === "bigint"
-      ) {
-        return String(val);
-      }
-      if (typeof val === "object" || typeof val === "function") {
-        try {
-          return JSON.stringify(val);
-        } catch {
-          return "";
-        }
-      }
-      // symbol/unknown
-      return "";
-    };
+    const entries = Array.from(this._map.values()).map((e) => ({
+      key: e.key,
+      value: e.val,
+      active: e.active,
+    }));
 
-    for (const [canonKey, arr] of groups) {
-      const candidates = eventKeyVariantsForCanonical(canonKey);
-      // Sammle vorhandene Event-Werte für alle Kandidaten
-      const present: string[] = [];
-      for (const k of candidates) {
-        if (hasOwn(obj, k)) {
-          const val = obj[k];
-          present.push(toSafeString(val));
-        }
-      }
-
-      let ok = false;
-      for (const it of arr) {
-        if (it.val === "") {
-          // Wildcard: Key muss vorhanden sein (mind. ein Kandidat)
-          if (present.length > 0) {
-            ok = true;
-            break;
-          }
-        } else {
-          // Match, wenn einer der vorhandenen Werte exakt gleich ist
-          if (present.includes(it.val)) {
-            ok = true;
-            break;
-          }
-        }
-      }
-      if (!ok) return false;
-    }
-    return true;
+    return matchesDcFilter(obj, entries);
   }
 }
 

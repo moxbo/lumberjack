@@ -13,6 +13,7 @@
 import { useState, useEffect, useRef, useCallback } from "preact/hooks";
 import { msgMatches } from "../utils/msgFilter";
 import { entrySignature } from "../utils/entryUtils";
+import { matchesDcFilter as sharedMatchesDcFilter } from "../utils/dcMatch";
 import {
   filterIsAvailable,
   filterEntries as typedFilterEntries,
@@ -309,29 +310,9 @@ export function useFilterWorker(): UseFilterWorkerResult {
           );
           if (activeEntries.length > 0) {
             const mdc = e.mdc as Record<string, unknown> | null | undefined;
-            if (!mdc || typeof mdc !== "object") {
-              filterStats.rejectedByDC++;
-              continue;
-            }
-            let dcMatched = true;
-            for (const entry of activeEntries) {
-              const key = entry.key.toLowerCase();
-              let found = false;
-              for (const mdcKey of Object.keys(mdc)) {
-                if (mdcKey.toLowerCase() === key) {
-                  const val = String(mdc[mdcKey] || "").toLowerCase();
-                  if (val === entry.value.toLowerCase()) {
-                    found = true;
-                    break;
-                  }
-                }
-              }
-              if (!found) {
-                dcMatched = false;
-                break;
-              }
-            }
-            if (!dcMatched) {
+            // Gemeinsame Filterlogik (Single Source of Truth):
+            // OR innerhalb eines Keys, AND über Keys, Wildcards + Trace-Varianten.
+            if (!sharedMatchesDcFilter(mdc, options.dcFilterEntries)) {
               filterStats.rejectedByDC++;
               continue;
             }
