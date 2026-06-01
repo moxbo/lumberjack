@@ -976,14 +976,17 @@ function isRendererReady(): boolean {
 }
 function enqueueAppends(entries: LogEntry[]): void {
   if (!Array.isArray(entries) || entries.length === 0) return;
-  const room = Math.max(0, MAX_PENDING_APPENDS - pendingAppends.length);
-  if (entries.length <= room) {
-    pendingAppends.push(...entries);
-  } else {
-    const take = entries.slice(entries.length - room);
-    const overflow = pendingAppends.length + take.length - MAX_PENDING_APPENDS;
-    if (overflow > 0) pendingAppends.splice(0, overflow);
-    pendingAppends.push(...take);
+  // concat (not push(...spread)) to stay safe for very large bulk batches –
+  // a spread of tens of thousands of args can overflow the call stack.
+  pendingAppends = pendingAppends.concat(entries);
+  // Backpressure: bound the buffer, but NEVER drop entries that belong to the
+  // current enqueue call. This is essential for bulk/initial loads such as the
+  // HTTP-tail "load existing content first" option, where the whole file can
+  // arrive in a single call with far more than MAX_PENDING_APPENDS entries.
+  // Only previously-buffered overflow (sustained live streaming) is dropped.
+  const cap = Math.max(MAX_PENDING_APPENDS, entries.length);
+  if (pendingAppends.length > cap) {
+    pendingAppends.splice(0, pendingAppends.length - cap);
   }
 }
 function flushPendingAppends(): void {
@@ -1034,12 +1037,14 @@ function isWindowReady(win: BrowserWindow | null | undefined): boolean {
 function enqueueAppendsFor(winId: number, entries: LogEntry[]): void {
   if (!entries || !entries.length) return;
   const list = pendingAppendsByWindow.get(winId) || [];
-  const room = Math.max(0, MAX_PENDING_APPENDS - list.length);
-  const toPush =
-    entries.length <= room ? entries : entries.slice(entries.length - room);
-  const updated = list.concat(toPush);
-  if (updated.length > MAX_PENDING_APPENDS)
-    updated.splice(0, updated.length - MAX_PENDING_APPENDS);
+  const updated = list.concat(entries);
+  // Backpressure: bound the buffer, but NEVER drop entries from the current
+  // enqueue call. Bulk/initial loads (e.g. HTTP-tail "load existing content
+  // first") can hand us the entire file in one call with more than
+  // MAX_PENDING_APPENDS entries – those must all reach the renderer. Only
+  // previously-buffered overflow from sustained live streaming is dropped.
+  const cap = Math.max(MAX_PENDING_APPENDS, entries.length);
+  if (updated.length > cap) updated.splice(0, updated.length - cap);
   pendingAppendsByWindow.set(winId, updated);
 }
 function flushPendingAppendsFor(win: BrowserWindow): void {
