@@ -38,6 +38,148 @@ const MAX_TOKEN_CACHE = 50;
 const regexFilterCache = new Map<string, RegExp | null>();
 const MAX_REGEX_FILTER_CACHE = 50;
 
+// Tokenizer: zerlegt in Operatoren und Wörter; ignoriert Whitespace
+// Escape-Mechanismus: \& \| \! \( \) werden als literale Zeichen behandelt
+// Auf Modulebene, damit er sowohl von msgMatches als auch von
+// extractSearchTerms (Highlighting) wiederverwendet werden kann.
+function tokenizeQuery(s: string): Token[] {
+  const toks: Token[] = [];
+  let i = 0;
+  const N = s.length;
+  const isOp = (ch: string): boolean =>
+    ch === "&" || ch === "|" || ch === "!" || ch === "(" || ch === ")";
+  while (i < N) {
+    const ch = s[i]!;
+    if (ch <= " ") {
+      i++;
+      continue;
+    }
+    // Quoted string: "..." wird als einzelnes WORD behandelt (Phrasensuche)
+    if (ch === '"') {
+      let j = i + 1;
+      let word = "";
+      while (j < N && s[j] !== '"') {
+        if (s[j] === "\\" && j + 1 < N) {
+          word += s[j + 1]!;
+          j += 2;
+          continue;
+        }
+        word += s[j]!;
+        j++;
+      }
+      if (j < N) j++; // schließendes " überspringen
+      if (word) toks.push({ t: "WORD", v: word });
+      i = j;
+      continue;
+    }
+    // Escape-Handling: \x behandelt x als literales Zeichen
+    if (ch === "\\" && i + 1 < N) {
+      // Escaped character wird als Teil eines Wortes behandelt
+      let j = i;
+      let word = "";
+      while (j < N) {
+        const c = s[j]!;
+        if (c <= " ") break;
+        // Handle escape sequences within words
+        if (c === "\\" && j + 1 < N) {
+          word += s[j + 1]!;
+          j += 2;
+          continue;
+        }
+        if (isOp(c)) break;
+        word += c;
+        j++;
+      }
+      if (word) toks.push({ t: "WORD", v: word });
+      i = j;
+      continue;
+    }
+    if (isOp(ch)) {
+      if (ch === "&") toks.push({ t: "AND" });
+      else if (ch === "|") toks.push({ t: "OR" });
+      else if (ch === "!") toks.push({ t: "NOT" });
+      else if (ch === "(") toks.push({ t: "LPAREN" });
+      else if (ch === ")") toks.push({ t: "RPAREN" });
+      i++;
+      continue;
+    }
+    // Wort sammeln bis nächster Operator/Whitespace, mit Escape-Support
+    let j = i;
+    let word = "";
+    while (j < N) {
+      const c = s[j]!;
+      if (c <= " ") break;
+      // Handle escape sequences within words
+      if (c === "\\" && j + 1 < N) {
+        word += s[j + 1]!;
+        j += 2;
+        continue;
+      }
+      if (isOp(c)) break;
+      word += c;
+      j++;
+    }
+    if (word) toks.push({ t: "WORD", v: word });
+    i = j;
+  }
+  return toks;
+}
+
+/**
+ * Extrahiert die hervorzuhebenden Suchbegriffe aus einem Filter-Ausdruck.
+ *
+ * Verwendet denselben Tokenizer wie {@link msgMatches}, damit das Highlighting
+ * exakt dieselbe Syntax versteht (ODER `|`, UND `&`, implizites UND, Klammern,
+ * Phrasen in Anführungszeichen, Escape mit `\`). Negierte Begriffe (`!foo`)
+ * werden ausgelassen, da Zeilen, die diese enthalten, gar nicht angezeigt
+ * werden – es gibt also nichts zu markieren.
+ *
+ * @returns Liste der literalen Begriffe (ohne Operatoren), Duplikate entfernt.
+ */
+export function extractSearchTerms(expr: string): string[] {
+  const raw = (expr ?? "").trim();
+  if (!raw) return [];
+  const tokens = tokenizeQuery(raw);
+  const terms: string[] = [];
+  const seen = new Set<string>();
+  // Negationskontext pro Klammer-Ebene (NOT wirkt auf das nächste primary).
+  const negStack: boolean[] = [false];
+  let pendingNot = false;
+  for (let k = 0; k < tokens.length; k++) {
+    const tk = tokens[k]!;
+    if (tk.t === "NOT") {
+      pendingNot = !pendingNot;
+      continue;
+    }
+    const baseNeg = negStack[negStack.length - 1]!;
+    const effectiveNeg = baseNeg !== pendingNot; // XOR
+    if (tk.t === "LPAREN") {
+      negStack.push(effectiveNeg);
+      pendingNot = false;
+      continue;
+    }
+    if (tk.t === "RPAREN") {
+      if (negStack.length > 1) negStack.pop();
+      pendingNot = false;
+      continue;
+    }
+    if (tk.t === "WORD") {
+      if (!effectiveNeg && tk.v) {
+        const key = tk.v.toLowerCase();
+        if (!seen.has(key)) {
+          seen.add(key);
+          terms.push(tk.v);
+        }
+      }
+      pendingNot = false;
+      continue;
+    }
+    // AND / OR: Negation gilt nur für ein primary, danach zurücksetzen
+    pendingNot = false;
+  }
+  return terms;
+}
+
 export function msgMatches(
   message: string,
   expr: string,
@@ -81,95 +223,10 @@ export function msgMatches(
   const q = mode === "sensitive" ? rawExpr : rawExpr.toLowerCase();
   if (!q) return true;
 
-  // Tokenizer: zerlegt in Operatoren und Wörter; ignoriert Whitespace
-  // Escape-Mechanismus: \& \| \! \( \) werden als literale Zeichen behandelt
-  function tokenize(s: string): Token[] {
-    const toks: Token[] = [];
-    let i = 0;
-    const N = s.length;
-    const isOp = (ch: string): boolean =>
-      ch === "&" || ch === "|" || ch === "!" || ch === "(" || ch === ")";
-    while (i < N) {
-      const ch = s[i]!;
-      if (ch <= " ") {
-        i++;
-        continue;
-      }
-      // Quoted string: "..." wird als einzelnes WORD behandelt (Phrasensuche)
-      if (ch === '"') {
-        let j = i + 1;
-        let word = "";
-        while (j < N && s[j] !== '"') {
-          if (s[j] === "\\" && j + 1 < N) {
-            word += s[j + 1]!;
-            j += 2;
-            continue;
-          }
-          word += s[j]!;
-          j++;
-        }
-        if (j < N) j++; // schließendes " überspringen
-        if (word) toks.push({ t: "WORD", v: word });
-        i = j;
-        continue;
-      }
-      // Escape-Handling: \x behandelt x als literales Zeichen
-      if (ch === "\\" && i + 1 < N) {
-        // Escaped character wird als Teil eines Wortes behandelt
-        let j = i;
-        let word = "";
-        while (j < N) {
-          const c = s[j]!;
-          if (c <= " ") break;
-          // Handle escape sequences within words
-          if (c === "\\" && j + 1 < N) {
-            word += s[j + 1]!;
-            j += 2;
-            continue;
-          }
-          if (isOp(c)) break;
-          word += c;
-          j++;
-        }
-        if (word) toks.push({ t: "WORD", v: word });
-        i = j;
-        continue;
-      }
-      if (isOp(ch)) {
-        if (ch === "&") toks.push({ t: "AND" });
-        else if (ch === "|") toks.push({ t: "OR" });
-        else if (ch === "!") toks.push({ t: "NOT" });
-        else if (ch === "(") toks.push({ t: "LPAREN" });
-        else if (ch === ")") toks.push({ t: "RPAREN" });
-        i++;
-        continue;
-      }
-      // Wort sammeln bis nächster Operator/Whitespace, mit Escape-Support
-      let j = i;
-      let word = "";
-      while (j < N) {
-        const c = s[j]!;
-        if (c <= " ") break;
-        // Handle escape sequences within words
-        if (c === "\\" && j + 1 < N) {
-          word += s[j + 1]!;
-          j += 2;
-          continue;
-        }
-        if (isOp(c)) break;
-        word += c;
-        j++;
-      }
-      if (word) toks.push({ t: "WORD", v: word });
-      i = j;
-    }
-    return toks;
-  }
-
   // Versuche gecachte Tokens zu verwenden
   let tokens = tokenCache.get(q);
   if (!tokens) {
-    tokens = tokenize(q);
+    tokens = tokenizeQuery(q);
     // Cache verwalten
     if (tokenCache.size >= MAX_TOKEN_CACHE) {
       const firstKey = tokenCache.keys().next().value;

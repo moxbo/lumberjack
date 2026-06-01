@@ -1,4 +1,6 @@
 // Utility: HTML escaping and full-text highlighting
+import { extractSearchTerms } from "./msgFilter";
+
 function toStringSafe(v: unknown): string {
   if (v == null) return "";
   const t = typeof v;
@@ -26,20 +28,39 @@ export function escapeHtml(s: unknown): string {
 
 // LRU-Cache für kompilierte RegExp-Objekte – verhindert wiederholtes Kompilieren
 // und bevorzugt häufig genutzte Suchbegriffe (recently-used → bleibt im Cache).
+// Ein Cache-Eintrag kann `null` sein, wenn die Suche keine markierbaren Begriffe
+// enthält (z. B. nur negierte Terme wie "!foo").
 const MAX_REGEX_CACHE = 100;
-const regexCache = new Map<string, RegExp>();
+const regexCache = new Map<string, RegExp | null>();
 
-function getCachedRegex(query: string): RegExp {
+function getCachedRegex(query: string): RegExp | null {
   const cached = regexCache.get(query);
-  if (cached) {
+  if (cached !== undefined) {
     // LRU: Eintrag durch Re-Insert ans Ende der Iteration verschieben.
     regexCache.delete(query);
     regexCache.set(query, cached);
-    cached.lastIndex = 0;
+    if (cached) cached.lastIndex = 0;
     return cached;
   }
-  const escRe = query.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  const re = new RegExp(escRe, "gi");
+
+  // Suchbegriffe gemäß Filter-Syntax zerlegen (ODER `|`, UND `&`, Klammern,
+  // Phrasen, Escapes). So werden bei "foo|bar" sowohl "foo" als auch "bar"
+  // markiert – nicht der literale String "foo|bar".
+  let terms = extractSearchTerms(query);
+  // Längere Begriffe zuerst, damit bei Überschneidungen der längere Match
+  // bevorzugt wird (z. B. "foobar" vor "foo").
+  terms = terms.filter((t) => t.length > 0).sort((a, b) => b.length - a.length);
+
+  let re: RegExp | null;
+  if (terms.length === 0) {
+    re = null;
+  } else {
+    const escRe = terms
+      .map((t) => t.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"))
+      .join("|");
+    re = new RegExp(escRe, "gi");
+  }
+
   if (regexCache.size >= MAX_REGEX_CACHE) {
     // Map iteration order = insertion order → erster Key ist Least-Recently-Used.
     const firstKey = regexCache.keys().next().value;
@@ -64,6 +85,8 @@ export function highlightAll(text: unknown, needle: unknown): string {
   }
 
   const re = getCachedRegex(q);
+  // Keine markierbaren Begriffe (z. B. nur negierte Terme): nur escapen.
+  if (!re) return escapeHtml(s);
 
   let out = "";
   let last = 0;
