@@ -89,7 +89,7 @@ export class NetworkService {
 
   // TCP batching for improved throughput
   private static readonly TCP_BATCH_SIZE = 500; // Max entries per batch
-  private static readonly TCP_BATCH_INTERVAL_MS = 50; // Flush interval in ms
+  private static readonly TCP_BATCH_INTERVAL_MS = 16; // Flush interval in ms (~1 frame at 60fps) for near-instant display
   private tcpBatchQueue: LogEntry[] = [];
   private tcpBatchTimer: NodeJS.Timeout | null = null;
 
@@ -292,6 +292,35 @@ export class NetworkService {
       // Set socket timeout to prevent hanging connections
       socket.setTimeout(NetworkService.SOCKET_TIMEOUT_MS);
 
+      // Process a single (already newline-delimited) line and queue it.
+      const processLine = (rawLine: string): void => {
+        const line = rawLine.trim();
+        if (!line) return;
+
+        // Skip lines that are too long (potential attack or malformed data)
+        if (line.length > NetworkService.MAX_LINE_LENGTH) {
+          log.warn(
+            `[tcp] Line too long on ${socketId}, skipping. Length: ${line.length} bytes`,
+          );
+          return;
+        }
+
+        // Parse JSON line, fallback to plain text
+        let obj: Record<string, unknown>;
+        try {
+          obj = JSON.parse(line) as Record<string, unknown>;
+        } catch (e) {
+          log.warn(
+            "TCP JSON parse failed, treating as plain text:",
+            e instanceof Error ? e.message : String(e),
+          );
+          obj = { message: line };
+        }
+
+        const entry = toEntry(obj, "", `tcp:${remoteAddr}:${remotePort}`);
+        this.queueTcpEntry(entry);
+      };
+
       // Cleanup function to be called on socket end/close
       const cleanup = (): void => {
         if (this.activeSockets.has(socket)) {
@@ -299,6 +328,21 @@ export class NetworkService {
           log.debug(
             `[tcp] Socket cleaned up: ${socketId} (active: ${this.activeSockets.size})`,
           );
+        }
+        // Flush any remaining buffered line that wasn't newline-terminated,
+        // otherwise the last entry of a stream would never be displayed.
+        if (buffer.length > 0) {
+          try {
+            processLine(buffer);
+          } catch (err) {
+            log.error(
+              `[tcp] Error processing trailing data on ${socketId}:`,
+              err instanceof Error ? err.message : String(err),
+            );
+          }
+          // Make sure the queued trailing entry is sent without waiting for the
+          // batch timer.
+          this.flushTcpBatch();
         }
         // Clear buffer to free memory
         buffer = "";
@@ -323,33 +367,9 @@ export class NetworkService {
           let idx: number;
 
           while ((idx = buffer.indexOf("\n")) >= 0) {
-            const line = buffer.slice(0, idx).trim();
+            const line = buffer.slice(0, idx);
             buffer = buffer.slice(idx + 1);
-
-            if (!line) continue;
-
-            // Skip lines that are too long (potential attack or malformed data)
-            if (line.length > NetworkService.MAX_LINE_LENGTH) {
-              log.warn(
-                `[tcp] Line too long on ${socketId}, skipping. Length: ${line.length} bytes`,
-              );
-              continue;
-            }
-
-            // Parse JSON line, fallback to plain text
-            let obj: Record<string, unknown>;
-            try {
-              obj = JSON.parse(line) as Record<string, unknown>;
-            } catch (e) {
-              log.warn(
-                "TCP JSON parse failed, treating as plain text:",
-                e instanceof Error ? e.message : String(e),
-              );
-              obj = { message: line };
-            }
-
-            const entry = toEntry(obj, "", `tcp:${remoteAddr}:${remotePort}`);
-            this.queueTcpEntry(entry);
+            processLine(line);
           }
         } catch (err) {
           log.error(
