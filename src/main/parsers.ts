@@ -698,10 +698,20 @@ function buildHeadersWithAuth(
   return headers;
 }
 
+/**
+ * Kandidaten-Felder für den Zeitstempel in Elasticsearch-/OpenSearch-Dokumenten.
+ * Muss mit der Reihenfolge in `toEntry` (timestamp ?? @timestamp ?? time)
+ * konsistent bleiben, damit Zeitbereichs-Filter und Sortierung unabhängig
+ * vom Index-Mapping greifen.
+ */
+const TIMESTAMP_FIELDS = ["@timestamp", "timestamp", "time"] as const;
+
 function buildSortArray(order: "asc" | "desc" | undefined): AnyMap[] {
   const ord = order ?? "desc";
   return [
-    { "@timestamp": { order: ord, unmapped_type: "boolean" } },
+    ...TIMESTAMP_FIELDS.map(
+      (field) => ({ [field]: { order: ord, unmapped_type: "date" } }) as AnyMap,
+    ),
     { _id: { order: ord } },
   ];
 }
@@ -1013,7 +1023,20 @@ function buildElasticSearchBody(opts: ElasticsearchOptions): AnyMap {
     }
   }
   if (Object.keys(range).length > 0) {
-    must.push({ range: { "@timestamp": range } } as AnyMap);
+    // Dokumente verwenden je nach Index/Anwendung unterschiedliche
+    // Zeitstempel-Felder (siehe toEntry: timestamp ?? @timestamp ?? time).
+    // Ein fest auf "@timestamp" verdrahteter Range-Filter liefert für
+    // Indizes ohne dieses Feld stillschweigend 0 Treffer. Daher den
+    // Zeitbereich gegen alle Kandidatenfelder per should/minimum_should_match
+    // prüfen, damit die Suche unabhängig vom Mapping funktioniert.
+    must.push({
+      bool: {
+        should: TIMESTAMP_FIELDS.map(
+          (field) => ({ range: { [field]: { ...range } } }) as AnyMap,
+        ),
+        minimum_should_match: 1,
+      },
+    } as AnyMap);
   }
 
   // Optional: level_value Mindestwert
@@ -1025,11 +1048,7 @@ function buildElasticSearchBody(opts: ElasticsearchOptions): AnyMap {
   return {
     version: true,
     size: opts.size ?? 1000,
-    sort: [
-      {
-        "@timestamp": { order: opts.sort ?? "desc", unmapped_type: "boolean" },
-      },
-    ],
+    sort: buildSortArray(opts.sort),
     query: {
       bool: {
         must,

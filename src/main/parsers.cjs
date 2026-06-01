@@ -502,10 +502,13 @@ function buildHeadersWithAuth(auth) {
   }
   return headers;
 }
+const TIMESTAMP_FIELDS = ["@timestamp", "timestamp", "time"];
 function buildSortArray(order) {
   const ord = order ?? "desc";
   return [
-    { "@timestamp": { order: ord, unmapped_type: "boolean" } },
+    ...TIMESTAMP_FIELDS.map(
+      (field) => ({ [field]: { order: ord, unmapped_type: "date" } })
+    ),
     { _id: { order: ord } }
   ];
 }
@@ -739,7 +742,14 @@ function buildElasticSearchBody(opts) {
     }
   }
   if (Object.keys(range).length > 0) {
-    must.push({ range: { "@timestamp": range } });
+    must.push({
+      bool: {
+        should: TIMESTAMP_FIELDS.map(
+          (field) => ({ range: { [field]: { ...range } } })
+        ),
+        minimum_should_match: 1
+      }
+    });
   }
   const lv = opts.levelValueGte;
   if (lv != null && safeString(lv).trim() !== "") {
@@ -748,11 +758,7 @@ function buildElasticSearchBody(opts) {
   return {
     version: true,
     size: opts.size ?? 1e3,
-    sort: [
-      {
-        "@timestamp": { order: opts.sort ?? "desc", unmapped_type: "boolean" }
-      }
-    ],
+    sort: buildSortArray(opts.sort),
     query: {
       bool: {
         must,
