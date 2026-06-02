@@ -32,7 +32,10 @@ class FakeServer {
         return;
       }
       const range = !this.ignoreRange ? req.headers.range : undefined;
-      const total = Buffer.byteLength(this.body);
+      // Operate on a byte buffer so Range slicing matches a real HTTP server
+      // even when the body contains multi-byte UTF-8 characters.
+      const bodyBuf = Buffer.from(this.body, "utf8");
+      const total = bodyBuf.byteLength;
       if (range && /^bytes=\d*-\d*$/.test(range)) {
         const m = /^bytes=(\d*)-(\d*)$/.exec(range)!;
         const startStr = m[1] ?? "";
@@ -44,19 +47,19 @@ class FakeServer {
           res.end();
           return;
         }
-        const slice = this.body.slice(start, Math.min(end, total - 1) + 1);
+        const slice = bodyBuf.subarray(start, Math.min(end, total - 1) + 1);
         res.statusCode = 206;
         res.setHeader(
           "Content-Range",
-          `bytes ${String(start)}-${String(start + slice.length - 1)}/${String(total)}`,
+          `bytes ${String(start)}-${String(start + slice.byteLength - 1)}/${String(total)}`,
         );
-        res.setHeader("Content-Length", String(Buffer.byteLength(slice)));
+        res.setHeader("Content-Length", String(slice.byteLength));
         res.end(slice);
         return;
       }
       res.statusCode = 200;
       res.setHeader("Content-Length", String(total));
-      res.end(this.body);
+      res.end(bodyBuf);
     });
     await new Promise<void>((resolve) =>
       this.server.listen(0, "127.0.0.1", resolve),
@@ -224,6 +227,37 @@ describe("HttpTailManager", () => {
   it("rejects invalid url", () => {
     const mgr = new HttpTailManager();
     expect(() => mgr.start("not a url", { onLines: () => {} })).toThrow();
+  });
+
+  it("tracks byte offsets correctly with multi-byte UTF-8 content", async () => {
+    // Regression: the Range header is byte-based, so the offset must advance
+    // by the UTF-8 byte length, not the UTF-16 code-unit length. With umlauts
+    // a char-length offset would drift and slice the next chunk mid-line,
+    // emitting bogus fragments like `"}`.
+    server.body = "";
+    const mgr = new HttpTailManager();
+    const received: string[] = [];
+    mgr.start(
+      url,
+      { onLines: (l) => received.push(...l) },
+      { intervalMs: 250 },
+    );
+    await delay(400); // tail starts at current end (empty)
+
+    // Append several lines containing multi-byte characters.
+    server.body += "Größe: 5 Stück\n"; // ö, ü → 2 bytes each
+    server.body += "Tür offen — fertig\n"; // ü + em-dash (3 bytes)
+    await delay(400);
+
+    server.body += "Schöne Grüße 🌲\n"; // tree emoji is 4 bytes
+    await delay(400);
+
+    mgr.stopAll();
+    expect(received).toEqual([
+      "Größe: 5 Stück",
+      "Tür offen — fertig",
+      "Schöne Grüße 🌲",
+    ]);
   });
 
   it("reports progress with offset/total", async () => {

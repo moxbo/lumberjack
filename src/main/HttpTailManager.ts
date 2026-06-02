@@ -269,30 +269,38 @@ export class HttpTailManager {
       }
 
       const total = parseTotalFromHeaders(res);
-      const text = await res.text();
+      // IMPORTANT: the `Range: bytes=` header is byte-based, so the offset we
+      // track must be measured in *bytes*, not in UTF-16 code units. Using
+      // `text.length` (from `res.text()`) drifts as soon as the body contains
+      // any multi-byte UTF-8 character (e.g. German umlauts), causing the next
+      // Range request to start mid-line and emit bogus fragments like `"}`/`}`.
+      const bytes = Buffer.from(await res.arrayBuffer());
+      const byteLen = bytes.byteLength;
+      const text = bytes.toString("utf8");
 
       // 200 OK on a Range request usually means the server ignored the
       // Range header (no Range support). In that case `text` is the full
       // body, and we have to detect rotation manually.
       const isFullResponse = res.status === 200 && fromOffset > 0;
       if (isFullResponse) {
-        if (text.length < fromOffset) {
+        if (byteLen < fromOffset) {
           // Body shrank → rotation. Emit full text from byte 0.
           if (!state.stopped) state.callbacks.onRotated?.();
           state.offset = 0;
           state.partial = "";
           this.consume(state, text);
-          state.offset = text.length;
+          state.offset = byteLen;
         } else {
-          // Body grew – emit only the slice past our offset.
-          const newPart = text.slice(fromOffset);
+          // Body grew – emit only the slice past our offset. Slice on the
+          // byte buffer (offset is byte-based) before decoding to text.
+          const newPart = bytes.subarray(fromOffset).toString("utf8");
           this.consume(state, newPart);
-          state.offset = text.length;
+          state.offset = byteLen;
         }
       } else {
         // 206 Partial Content (or initial 200 with fromOffset===0).
         this.consume(state, text);
-        state.offset = fromOffset + text.length;
+        state.offset = fromOffset + byteLen;
       }
       state.callbacks.onProgress?.({ offset: state.offset, total });
     } finally {
@@ -356,9 +364,10 @@ export class HttpTailManager {
         }
         await probe.text();
       } else if (probe.ok) {
-        // No Range support – fall back to full GET, return body length.
-        const text = await probe.text();
-        return text.length;
+        // No Range support – fall back to full GET, return body length in
+        // *bytes* (consistent with the byte-based offset tracking).
+        const buf = Buffer.from(await probe.arrayBuffer());
+        return buf.byteLength;
       }
     } finally {
       clearTimeout(timeout);
