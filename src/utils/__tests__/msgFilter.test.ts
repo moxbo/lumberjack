@@ -231,6 +231,43 @@ describe("msgFilter – msgMatches", () => {
     });
   });
 
+  describe("textual operators (AND/OR/NOT)", () => {
+    it("should treat uppercase AND as AND operator", () => {
+      expect(msgMatches("hello world", "hello AND world")).toBe(true);
+      expect(msgMatches("hello world", "hello AND foo")).toBe(false);
+    });
+
+    it("should treat uppercase OR as OR operator", () => {
+      expect(msgMatches("hello world", "foo OR world")).toBe(true);
+      expect(msgMatches("hello world", "foo OR bar")).toBe(false);
+    });
+
+    it("should treat uppercase NOT as NOT operator", () => {
+      expect(msgMatches("hello world", "hello AND NOT foo")).toBe(true);
+      expect(msgMatches("hello world", "hello AND NOT world")).toBe(false);
+    });
+
+    it("should combine textual operators with parentheses", () => {
+      expect(msgMatches("xml CB data", "xml AND (CB OR AGV)")).toBe(true);
+      expect(msgMatches("xml data", "xml AND (CB OR AGV)")).toBe(false);
+    });
+
+    it("should keep lowercase and/or as literal words (implicit AND)", () => {
+      // "and" ist hier ein normales Wort -> hello AND and AND world
+      expect(msgMatches("hello and world", "hello and world")).toBe(true);
+      expect(msgMatches("hello world", "hello and world")).toBe(false);
+    });
+
+    it("should treat quoted AND/OR as literal phrase", () => {
+      expect(msgMatches("foo AND bar", '"AND"')).toBe(true);
+      expect(msgMatches("foo bar", '"AND"')).toBe(false);
+    });
+
+    it("should treat escaped AND as literal word", () => {
+      expect(msgMatches("AND", "\\AND")).toBe(true);
+    });
+  });
+
   describe("edge cases", () => {
     it("should handle single character searches", () => {
       expect(msgMatches("a", "a")).toBe(true);

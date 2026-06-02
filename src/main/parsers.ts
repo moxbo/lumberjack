@@ -8,6 +8,7 @@ import https from "https";
 import http from "http";
 import log from "electron-log/main";
 import zlib from "zlib";
+import { buildElasticMessageQuery } from "../utils/esMessageQuery";
 
 // Keep-Alive Agents für HTTP/HTTPS (inkl. unsicherem TLS)
 const HTTP_KEEPALIVE_AGENT = new http.Agent({ keepAlive: true, maxSockets: 8 });
@@ -699,19 +700,25 @@ function buildHeadersWithAuth(
 }
 
 /**
- * Kandidaten-Felder für den Zeitstempel in Elasticsearch-/OpenSearch-Dokumenten.
- * Muss mit der Reihenfolge in `toEntry` (timestamp ?? @timestamp ?? time)
- * konsistent bleiben, damit Zeitbereichs-Filter und Sortierung unabhängig
- * vom Index-Mapping greifen.
+ * Primäres Zeitstempel-Feld für Sortierung und Zeitbereichs-Filter.
+ *
+ * Hinweis: Ein früherer Versuch (#32), zusätzlich `timestamp` und `time`
+ * gleichzeitig in Sort/Range einzubeziehen, führte zu einer Regression: Ist
+ * eines dieser generischen Felder im Index als nicht-Datums-Typ gemappt
+ * (z.B. `time` als numerischer Epoch oder Text), schlägt die Sortierung bzw.
+ * der Range *pro Shard* fehl. Da `searchWithPit` per `filter_path` die
+ * `_shards`-Sektion ausblendet, liefert Elasticsearch dann HTTP 200 mit einer
+ * *leeren* Trefferliste (ok:true, total:0) – die Suche schien also „nicht mehr
+ * zu funktionieren". Deshalb wird bewusst nur das konventionelle, robuste
+ * `@timestamp` verwendet (mit `unmapped_type`, damit Indizes ohne dieses Feld
+ * trotzdem Ergebnisse liefern, statt einen Sortierfehler zu erzeugen).
  */
-const TIMESTAMP_FIELDS = ["@timestamp", "timestamp", "time"] as const;
+const PRIMARY_TIMESTAMP_FIELD = "@timestamp";
 
 function buildSortArray(order: "asc" | "desc" | undefined): AnyMap[] {
   const ord = order ?? "desc";
   return [
-    ...TIMESTAMP_FIELDS.map(
-      (field) => ({ [field]: { order: ord, unmapped_type: "date" } }) as AnyMap,
-    ),
+    { [PRIMARY_TIMESTAMP_FIELD]: { order: ord, unmapped_type: "date" } },
     { _id: { order: ord } },
   ];
 }
@@ -983,7 +990,18 @@ function buildElasticSearchBody(opts: ElasticsearchOptions): AnyMap {
   };
   addField("logger", opts.logger);
   addField("level", opts.level);
-  addField("message", opts.message);
+
+  // Message: Boolesche Filter-Syntax (&, |, !, AND, OR, NOT, Klammern,
+  // Phrasen, implizites AND) in eine echte Elasticsearch-Query übersetzen.
+  // Zuvor wurde der gesamte Ausdruck als match_phrase gesucht, sodass z.B.
+  // "foo & bar" wörtlich als Phrase "foo & bar" gesucht wurde und nie traf.
+  const messageQuery = buildElasticMessageQuery(
+    safeString(opts.message),
+    "message",
+  );
+  if (messageQuery) {
+    must.push(messageQuery as AnyMap);
+  }
 
   // Zeitbereich – unterstütze explizites Format
   const range: AnyMap = {};
@@ -1023,19 +1041,13 @@ function buildElasticSearchBody(opts: ElasticsearchOptions): AnyMap {
     }
   }
   if (Object.keys(range).length > 0) {
-    // Dokumente verwenden je nach Index/Anwendung unterschiedliche
-    // Zeitstempel-Felder (siehe toEntry: timestamp ?? @timestamp ?? time).
-    // Ein fest auf "@timestamp" verdrahteter Range-Filter liefert für
-    // Indizes ohne dieses Feld stillschweigend 0 Treffer. Daher den
-    // Zeitbereich gegen alle Kandidatenfelder per should/minimum_should_match
-    // prüfen, damit die Suche unabhängig vom Mapping funktioniert.
+    // Range-Filter ausschließlich gegen das konventionelle `@timestamp`-Feld.
+    // Siehe ausführlichen Hinweis bei PRIMARY_TIMESTAMP_FIELD: ein `should`
+    // über mehrere Kandidatenfelder kann auf Indizes mit abweichendem
+    // Feld-Typ Shard-Fehler auslösen und damit stillschweigend 0 Treffer
+    // liefern.
     must.push({
-      bool: {
-        should: TIMESTAMP_FIELDS.map(
-          (field) => ({ range: { [field]: { ...range } } }) as AnyMap,
-        ),
-        minimum_should_match: 1,
-      },
+      range: { [PRIMARY_TIMESTAMP_FIELD]: { ...range } },
     } as AnyMap);
   }
 

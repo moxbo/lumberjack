@@ -26,6 +26,8 @@ var __toESM = (mod, isNodeMode, target) => (target = mod != null ? __create(__ge
   mod
 ));
 var __toCommonJS = (mod) => __copyProps(__defProp({}, "__esModule", { value: true }), mod);
+
+// src/main/parsers.ts
 var parsers_exports = {};
 __export(parsers_exports, {
   closeElasticPitSession: () => closeElasticPitSession,
@@ -46,16 +48,201 @@ var import_https = __toESM(require("https"), 1);
 var import_http = __toESM(require("http"), 1);
 var import_main = __toESM(require("electron-log/main"), 1);
 var import_zlib = __toESM(require("zlib"), 1);
-const HTTP_KEEPALIVE_AGENT = new import_http.default.Agent({ keepAlive: true, maxSockets: 8 });
-const HTTPS_KEEPALIVE_AGENT = new import_https.default.Agent({ keepAlive: true });
-const HTTPS_INSECURE_KEEPALIVE_AGENT = new import_https.default.Agent({
+
+// src/utils/msgFilter.ts
+function emitWord(toks, word, literal) {
+  if (!word) return;
+  if (!literal) {
+    if (word === "AND") {
+      toks.push({ t: "AND" });
+      return;
+    }
+    if (word === "OR") {
+      toks.push({ t: "OR" });
+      return;
+    }
+    if (word === "NOT") {
+      toks.push({ t: "NOT" });
+      return;
+    }
+  }
+  toks.push({ t: "WORD", v: word });
+}
+function tokenizeQuery(s) {
+  const toks = [];
+  let i = 0;
+  const N = s.length;
+  const isOp = (ch) => ch === "&" || ch === "|" || ch === "!" || ch === "(" || ch === ")";
+  while (i < N) {
+    const ch = s[i];
+    if (ch <= " ") {
+      i++;
+      continue;
+    }
+    if (ch === '"') {
+      let j2 = i + 1;
+      let word2 = "";
+      while (j2 < N && s[j2] !== '"') {
+        if (s[j2] === "\\" && j2 + 1 < N) {
+          word2 += s[j2 + 1];
+          j2 += 2;
+          continue;
+        }
+        word2 += s[j2];
+        j2++;
+      }
+      if (j2 < N) j2++;
+      if (word2) toks.push({ t: "WORD", v: word2 });
+      i = j2;
+      continue;
+    }
+    if (ch === "\\" && i + 1 < N) {
+      let j2 = i;
+      let word2 = "";
+      while (j2 < N) {
+        const c = s[j2];
+        if (c <= " ") break;
+        if (c === "\\" && j2 + 1 < N) {
+          word2 += s[j2 + 1];
+          j2 += 2;
+          continue;
+        }
+        if (isOp(c)) break;
+        word2 += c;
+        j2++;
+      }
+      emitWord(toks, word2, true);
+      i = j2;
+      continue;
+    }
+    if (isOp(ch)) {
+      if (ch === "&") toks.push({ t: "AND" });
+      else if (ch === "|") toks.push({ t: "OR" });
+      else if (ch === "!") toks.push({ t: "NOT" });
+      else if (ch === "(") toks.push({ t: "LPAREN" });
+      else if (ch === ")") toks.push({ t: "RPAREN" });
+      i++;
+      continue;
+    }
+    let j = i;
+    let word = "";
+    let hadEscape = false;
+    while (j < N) {
+      const c = s[j];
+      if (c <= " ") break;
+      if (c === "\\" && j + 1 < N) {
+        word += s[j + 1];
+        j += 2;
+        hadEscape = true;
+        continue;
+      }
+      if (isOp(c)) break;
+      word += c;
+      j++;
+    }
+    emitWord(toks, word, hadEscape);
+    i = j;
+  }
+  return toks;
+}
+
+// src/utils/esMessageQuery.ts
+function escapeWildcard(term) {
+  return term.replace(/([\\*?])/g, "\\$1");
+}
+function messageLeaf(term, field) {
+  if (/\s/.test(term)) {
+    return { match_phrase: { [field]: { query: term } } };
+  }
+  return {
+    wildcard: {
+      [field]: { value: `*${escapeWildcard(term)}*`, case_insensitive: true }
+    }
+  };
+}
+function buildElasticMessageQuery(expr, field = "message") {
+  const raw = (expr ?? "").trim();
+  if (!raw) return null;
+  const tokens = tokenizeQuery(raw);
+  if (tokens.length === 0) return null;
+  let pos = 0;
+  const peek = () => tokens[pos];
+  const take = () => tokens[pos++];
+  function parsePrimary() {
+    const tk = peek();
+    if (!tk) return null;
+    if (tk.t === "WORD") {
+      take();
+      return messageLeaf(tk.v ?? "", field);
+    }
+    if (tk.t === "LPAREN") {
+      take();
+      const val = parseOr();
+      if (peek()?.t === "RPAREN") take();
+      return val;
+    }
+    take();
+    return null;
+  }
+  function parseNot() {
+    let neg = false;
+    while (peek()?.t === "NOT") {
+      take();
+      neg = !neg;
+    }
+    const v = parsePrimary();
+    if (v == null) return null;
+    return neg ? { bool: { must_not: [v] } } : v;
+  }
+  function parseAnd() {
+    const parts = [];
+    const first = parseNot();
+    if (first) parts.push(first);
+    while (true) {
+      const tk = peek();
+      if (!tk) break;
+      if (tk.t === "AND") {
+        take();
+        const n = parseNot();
+        if (n) parts.push(n);
+      } else if (tk.t === "WORD" || tk.t === "LPAREN" || tk.t === "NOT") {
+        const n = parseNot();
+        if (n) parts.push(n);
+      } else {
+        break;
+      }
+    }
+    if (parts.length === 0) return null;
+    if (parts.length === 1) return parts[0];
+    return { bool: { must: parts } };
+  }
+  function parseOr() {
+    const parts = [];
+    const first = parseAnd();
+    if (first) parts.push(first);
+    while (peek()?.t === "OR") {
+      take();
+      const a = parseAnd();
+      if (a) parts.push(a);
+    }
+    if (parts.length === 0) return null;
+    if (parts.length === 1) return parts[0];
+    return { bool: { should: parts, minimum_should_match: 1 } };
+  }
+  return parseOr();
+}
+
+// src/main/parsers.ts
+var HTTP_KEEPALIVE_AGENT = new import_http.default.Agent({ keepAlive: true, maxSockets: 8 });
+var HTTPS_KEEPALIVE_AGENT = new import_https.default.Agent({ keepAlive: true });
+var HTTPS_INSECURE_KEEPALIVE_AGENT = new import_https.default.Agent({
   keepAlive: true,
   rejectUnauthorized: false
 });
-const MESSAGE_TRUNCATE_THRESHOLD = 100 * 1024;
-const MESSAGE_PREVIEW_LENGTH = 50 * 1024;
-const LARGE_MESSAGE_WARNING_THRESHOLD = 1024 * 1024;
-let AdmZip = null;
+var MESSAGE_TRUNCATE_THRESHOLD = 100 * 1024;
+var MESSAGE_PREVIEW_LENGTH = 50 * 1024;
+var LARGE_MESSAGE_WARNING_THRESHOLD = 1024 * 1024;
+var AdmZip = null;
 function getAdmZip() {
   if (!AdmZip) {
     try {
@@ -381,7 +568,7 @@ async function parsePathsAsync(paths) {
   for (const list of results) if (list) all.push(...list);
   return all;
 }
-const pitSessions = /* @__PURE__ */ new Map();
+var pitSessions = /* @__PURE__ */ new Map();
 async function httpJsonRequest(method, urlStr, body, headers, allowInsecureTLS, timeoutMs) {
   return new Promise((resolve, reject) => {
     try {
@@ -502,13 +689,11 @@ function buildHeadersWithAuth(auth) {
   }
   return headers;
 }
-const TIMESTAMP_FIELDS = ["@timestamp", "timestamp", "time"];
+var PRIMARY_TIMESTAMP_FIELD = "@timestamp";
 function buildSortArray(order) {
   const ord = order ?? "desc";
   return [
-    ...TIMESTAMP_FIELDS.map(
-      (field) => ({ [field]: { order: ord, unmapped_type: "date" } })
-    ),
+    { [PRIMARY_TIMESTAMP_FIELD]: { order: ord, unmapped_type: "date" } },
     { _id: { order: ord } }
   ];
 }
@@ -710,7 +895,13 @@ function buildElasticSearchBody(opts) {
   };
   addField("logger", opts.logger);
   addField("level", opts.level);
-  addField("message", opts.message);
+  const messageQuery = buildElasticMessageQuery(
+    safeString(opts.message),
+    "message"
+  );
+  if (messageQuery) {
+    must.push(messageQuery);
+  }
   const range = {};
   const dateFormat = opts.dateFormat;
   const fmt = safeString(dateFormat).trim();
@@ -743,12 +934,7 @@ function buildElasticSearchBody(opts) {
   }
   if (Object.keys(range).length > 0) {
     must.push({
-      bool: {
-        should: TIMESTAMP_FIELDS.map(
-          (field) => ({ range: { [field]: { ...range } } })
-        ),
-        minimum_should_match: 1
-      }
+      range: { [PRIMARY_TIMESTAMP_FIELD]: { ...range } }
     });
   }
   const lv = opts.levelValueGte;
@@ -863,7 +1049,6 @@ async function ensurePitOpened(sess) {
       sess.backoffBaseMs
     );
     sess.dialect = "es";
-    return;
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
     if (/unrecognized parameter|unknown url|_pit]|\[\/\/_pit|unknown|not found|illegal_argument/i.test(
@@ -897,7 +1082,6 @@ async function ensurePitOpened(sess) {
       return;
     }
     sess.dialect = "scroll";
-    return;
   }
 }
 function parseHitsResponse(data, size) {

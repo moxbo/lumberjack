@@ -24,10 +24,34 @@ export interface MsgMatchOptions {
 }
 
 // Token-Typen außerhalb der Funktion für bessere Performance
-type TokType = "AND" | "OR" | "NOT" | "LPAREN" | "RPAREN" | "WORD";
-interface Token {
+export type TokType = "AND" | "OR" | "NOT" | "LPAREN" | "RPAREN" | "WORD";
+export interface Token {
   readonly t: TokType;
   readonly v?: string;
+}
+
+// Textuelle Operatoren (nur GROSSSCHREIBUNG, analog zu Lucene/Elasticsearch).
+// Kleinschreibung (z.B. "and", "or") bleibt bewusst ein literales Wort, damit
+// normale Suchbegriffe nicht versehentlich als Operatoren interpretiert werden.
+// Für eine literale Suche nach "AND"/"OR"/"NOT" können Anführungszeichen
+// ("AND") oder ein Escape (\AND) verwendet werden.
+function emitWord(toks: Token[], word: string, literal: boolean): void {
+  if (!word) return;
+  if (!literal) {
+    if (word === "AND") {
+      toks.push({ t: "AND" });
+      return;
+    }
+    if (word === "OR") {
+      toks.push({ t: "OR" });
+      return;
+    }
+    if (word === "NOT") {
+      toks.push({ t: "NOT" });
+      return;
+    }
+  }
+  toks.push({ t: "WORD", v: word });
 }
 
 // Cache für tokenisierte Ausdrücke - vermeidet wiederholtes Parsing
@@ -42,7 +66,7 @@ const MAX_REGEX_FILTER_CACHE = 50;
 // Escape-Mechanismus: \& \| \! \( \) werden als literale Zeichen behandelt
 // Auf Modulebene, damit er sowohl von msgMatches als auch von
 // extractSearchTerms (Highlighting) wiederverwendet werden kann.
-function tokenizeQuery(s: string): Token[] {
+export function tokenizeQuery(s: string): Token[] {
   const toks: Token[] = [];
   let i = 0;
   const N = s.length;
@@ -90,7 +114,8 @@ function tokenizeQuery(s: string): Token[] {
         word += c;
         j++;
       }
-      if (word) toks.push({ t: "WORD", v: word });
+      // Wort begann mit Escape -> immer literal (kein Operator-Mapping)
+      emitWord(toks, word, true);
       i = j;
       continue;
     }
@@ -106,6 +131,7 @@ function tokenizeQuery(s: string): Token[] {
     // Wort sammeln bis nächster Operator/Whitespace, mit Escape-Support
     let j = i;
     let word = "";
+    let hadEscape = false;
     while (j < N) {
       const c = s[j]!;
       if (c <= " ") break;
@@ -113,13 +139,15 @@ function tokenizeQuery(s: string): Token[] {
       if (c === "\\" && j + 1 < N) {
         word += s[j + 1]!;
         j += 2;
+        hadEscape = true;
         continue;
       }
       if (isOp(c)) break;
       word += c;
       j++;
     }
-    if (word) toks.push({ t: "WORD", v: word });
+    // Reine Literale (ohne Escape) können textuelle Operatoren sein.
+    emitWord(toks, word, hadEscape);
     i = j;
   }
   return toks;
@@ -220,19 +248,20 @@ export function msgMatches(
 
   // Für normale Modi: case-handling anwenden
   const m = mode === "sensitive" ? rawMsg : rawMsg.toLowerCase();
-  const q = mode === "sensitive" ? rawExpr : rawExpr.toLowerCase();
-  if (!q) return true;
+  if (!rawExpr) return true;
 
-  // Versuche gecachte Tokens zu verwenden
-  let tokens = tokenCache.get(q);
+  // Wichtig: Der Ausdruck wird in *Originalschreibweise* tokenisiert, damit
+  // textuelle Operatoren (AND/OR/NOT, nur Großschreibung) erkannt werden.
+  // Die Case-Insensitivität wird erst beim Wort-Vergleich angewendet.
+  let tokens = tokenCache.get(rawExpr);
   if (!tokens) {
-    tokens = tokenizeQuery(q);
+    tokens = tokenizeQuery(rawExpr);
     // Cache verwalten
     if (tokenCache.size >= MAX_TOKEN_CACHE) {
       const firstKey = tokenCache.keys().next().value;
       if (firstKey) tokenCache.delete(firstKey);
     }
-    tokenCache.set(q, tokens);
+    tokenCache.set(rawExpr, tokens);
   }
 
   if (tokens.length === 0) return true;
@@ -248,7 +277,8 @@ export function msgMatches(
     if (!tk) return true; // leere Stelle als true behandeln
     if (tk.t === "WORD") {
       take();
-      return m.includes(tk.v!);
+      const needle = mode === "sensitive" ? tk.v! : tk.v!.toLowerCase();
+      return m.includes(needle);
     }
     if (tk.t === "LPAREN") {
       take(); // '('
