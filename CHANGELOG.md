@@ -5,6 +5,13 @@ Alle nennenswerten Änderungen an diesem Projekt werden in dieser Datei dokument
 Das Format orientiert sich an [Keep a Changelog](https://keepachangelog.com/de/1.1.0/),
 und dieses Projekt folgt [Semantic Versioning](https://semver.org/lang/de/).
 
+## [1.0.16-beta.3] - 2026-06-02 _(Pre-Release)_
+
+
+### Fixed
+- Improve byte offset tracking for multi-byte UTF-8 content in HttpTailManager
+- Remove unnecessary libc entries from package-lock.json
+
 ## [1.0.16-beta.2] - 2026-06-01 _(Pre-Release)_
 
 
