@@ -8,8 +8,15 @@
 // vollständigen Message-Text. Deshalb wird hier bewusst eine eher *großzügige*
 // Treffermenge (Superset) erzeugt, damit keine clientseitig sichtbaren
 // Ergebnisse verloren gehen:
-//   - Einzel-Token: `wildcard` *term* (case-insensitive) ~ Substring je Token
+//   - Einzel-Token: `query_string` *term* (case-insensitive) ~ Substring je Token
 //   - Phrasen (mit Leerzeichen): `match_phrase`
+//
+// Hinweis: Für Einzel-Token wird bewusst `query_string` mit `analyze_wildcard`
+// statt `wildcard` + `case_insensitive` verwendet. Die Option `case_insensitive`
+// im `wildcard`-Query gibt es erst ab Elasticsearch 7.10; ältere Cluster lehnen
+// sie mit `[wildcard] query does not support [case_insensitive]` (HTTP 400) ab.
+// `query_string` mit `analyze_wildcard` ist versionsübergreifend kompatibel und
+// case-insensitiv, weil der Feld-Analyzer auf den Wildcard-Term angewendet wird.
 //
 // Mapping der Grammatik:
 //   WORD        -> wildcard/match_phrase auf dem Message-Feld
@@ -22,9 +29,12 @@ import { tokenizeQuery, type Token } from "./msgFilter";
 
 type AnyMap = Record<string, unknown>;
 
-function escapeWildcard(term: string): string {
-  // ES-Wildcard-Sonderzeichen escapen: \ * ?
-  return term.replace(/([\\*?])/g, "\\$1");
+function escapeQueryStringTerm(term: string): string {
+  // Lucene-`query_string`-Sonderzeichen escapen. `< >` lassen sich nicht
+  // escapen und führen zu Parse-Fehlern – daher durch Leerzeichen ersetzen.
+  return term
+    .replace(/[<>]/g, " ")
+    .replace(/([+\-=&|!(){}[\]^"~*?:\\/])/g, "\\$1");
 }
 
 function messageLeaf(term: string, field: string): AnyMap {
@@ -35,9 +45,13 @@ function messageLeaf(term: string, field: string): AnyMap {
   }
   // Einzel-Token: Substring je Token via Wildcard (case-insensitive),
   // damit z.B. "err" auch "error" findet (analog zum clientseitigen includes).
+  // `query_string` + `analyze_wildcard` ist auf allen ES-Versionen verfügbar,
+  // anders als `wildcard` + `case_insensitive` (erst ab ES 7.10).
   return {
-    wildcard: {
-      [field]: { value: `*${escapeWildcard(term)}*`, case_insensitive: true },
+    query_string: {
+      query: `${field}:*${escapeQueryStringTerm(term)}*`,
+      analyze_wildcard: true,
+      allow_leading_wildcard: true,
     },
   };
 }

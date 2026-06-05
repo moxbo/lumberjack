@@ -5,18 +5,23 @@
 import { describe, it, expect } from "vitest";
 import { buildElasticMessageQuery } from "../esMessageQuery";
 
+// Hilfsfunktion: erzeugt den erwarteten query_string-Leaf für ein Einzel-Token.
+const leaf = (value: string, field = "message"): Record<string, unknown> => ({
+  query_string: {
+    query: `${field}:*${value}*`,
+    analyze_wildcard: true,
+    allow_leading_wildcard: true,
+  },
+});
+
 describe("buildElasticMessageQuery", () => {
   it("returns null for empty / whitespace expressions", () => {
     expect(buildElasticMessageQuery("")).toBeNull();
     expect(buildElasticMessageQuery("   ")).toBeNull();
   });
 
-  it("builds a wildcard query for a single token", () => {
-    expect(buildElasticMessageQuery("error")).toEqual({
-      wildcard: {
-        message: { value: "*error*", case_insensitive: true },
-      },
-    });
+  it("builds a query_string query for a single token", () => {
+    expect(buildElasticMessageQuery("error")).toEqual(leaf("error"));
   });
 
   it("uses match_phrase for quoted phrases (with whitespace)", () => {
@@ -29,10 +34,7 @@ describe("buildElasticMessageQuery", () => {
     const q = buildElasticMessageQuery("foo & bar");
     expect(q).toEqual({
       bool: {
-        must: [
-          { wildcard: { message: { value: "*foo*", case_insensitive: true } } },
-          { wildcard: { message: { value: "*bar*", case_insensitive: true } } },
-        ],
+        must: [leaf("foo"), leaf("bar")],
       },
     });
     // Textuelles AND ergibt dieselbe Struktur
@@ -43,10 +45,7 @@ describe("buildElasticMessageQuery", () => {
     const q = buildElasticMessageQuery("foo | bar");
     expect(q).toEqual({
       bool: {
-        should: [
-          { wildcard: { message: { value: "*foo*", case_insensitive: true } } },
-          { wildcard: { message: { value: "*bar*", case_insensitive: true } } },
-        ],
+        should: [leaf("foo"), leaf("bar")],
         minimum_should_match: 1,
       },
     });
@@ -56,9 +55,7 @@ describe("buildElasticMessageQuery", () => {
   it("maps ! / NOT to bool.must_not", () => {
     expect(buildElasticMessageQuery("!foo")).toEqual({
       bool: {
-        must_not: [
-          { wildcard: { message: { value: "*foo*", case_insensitive: true } } },
-        ],
+        must_not: [leaf("foo")],
       },
     });
   });
@@ -67,10 +64,7 @@ describe("buildElasticMessageQuery", () => {
     const q = buildElasticMessageQuery("foo bar");
     expect(q).toEqual({
       bool: {
-        must: [
-          { wildcard: { message: { value: "*foo*", case_insensitive: true } } },
-          { wildcard: { message: { value: "*bar*", case_insensitive: true } } },
-        ],
+        must: [leaf("foo"), leaf("bar")],
       },
     });
   });
@@ -79,21 +73,10 @@ describe("buildElasticMessageQuery", () => {
     expect(buildElasticMessageQuery("xml&(CB|AGV)")).toEqual({
       bool: {
         must: [
-          { wildcard: { message: { value: "*xml*", case_insensitive: true } } },
+          leaf("xml"),
           {
             bool: {
-              should: [
-                {
-                  wildcard: {
-                    message: { value: "*CB*", case_insensitive: true },
-                  },
-                },
-                {
-                  wildcard: {
-                    message: { value: "*AGV*", case_insensitive: true },
-                  },
-                },
-              ],
+              should: [leaf("CB"), leaf("AGV")],
               minimum_should_match: 1,
             },
           },
@@ -102,26 +85,18 @@ describe("buildElasticMessageQuery", () => {
     });
   });
 
-  it("escapes wildcard special characters in tokens", () => {
-    expect(buildElasticMessageQuery("a*b?")).toEqual({
-      wildcard: { message: { value: "*a\\*b\\?*", case_insensitive: true } },
-    });
+  it("escapes query_string special characters in tokens", () => {
+    expect(buildElasticMessageQuery("a*b?")).toEqual(leaf("a\\*b\\?"));
   });
 
   it("combines NOT with AND", () => {
     expect(buildElasticMessageQuery("foo & !bar")).toEqual({
       bool: {
         must: [
-          { wildcard: { message: { value: "*foo*", case_insensitive: true } } },
+          leaf("foo"),
           {
             bool: {
-              must_not: [
-                {
-                  wildcard: {
-                    message: { value: "*bar*", case_insensitive: true },
-                  },
-                },
-              ],
+              must_not: [leaf("bar")],
             },
           },
         ],
@@ -130,9 +105,7 @@ describe("buildElasticMessageQuery", () => {
   });
 
   it("allows overriding the target field name", () => {
-    expect(buildElasticMessageQuery("foo", "msg")).toEqual({
-      wildcard: { msg: { value: "*foo*", case_insensitive: true } },
-    });
+    expect(buildElasticMessageQuery("foo", "msg")).toEqual(leaf("foo", "msg"));
   });
 
   it("does not throw on operator-only expressions", () => {
