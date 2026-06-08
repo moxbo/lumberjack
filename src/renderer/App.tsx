@@ -1622,19 +1622,23 @@ export default function App(): JSX.Element {
 
   // Entry management functions (appendEntries, processIpcQueue) are now in useEntryManagement2 hook
 
-  // Hilfsfunktion: Anhängen mit Kappung auf verfügbare Slots
-  // WICHTIG: Alle ES-Einträge werden in den State geladen (kein Filtern vor dem Speichern).
-  // Die Anzeige-Filterung (Filter-Worker) steuert, welche Einträge sichtbar sind.
+  // Hilfsfunktion: Anhängen mit Kappung auf das verbleibende Budget.
+  // WICHTIG: Alle ES-Einträge werden in den State geladen (kein Filtern vor dem
+  // Speichern). Die Anzeige-Filterung (Filter-Worker) steuert die Sichtbarkeit.
+  //
+  // Der Rückgabewert ist die Anzahl der ABGERUFENEN Einträge (vor Deduplizierung).
+  // Ein bereits vorhandener (deduplizierter) Eintrag gilt als erfolgreich geladen –
+  // er ist ja bereits in der Ansicht. Dadurch stimmen "geladen" und "gefunden"
+  // überein und es wird nicht über das Ziel (elasticSize) hinaus nachgeladen.
   function appendElasticCapped(
     batch: any[],
     available: number,
     options?: { ignoreExistingForElastic?: boolean; messageFilter?: string },
   ): number {
-    const entries = Array.isArray(batch) ? batch : [];
-
-    const take = Math.max(0, Math.min(available, entries.length));
+    const list = Array.isArray(batch) ? batch : [];
+    const take = Math.max(0, Math.min(available, list.length));
     if (take <= 0) return 0;
-    appendEntries(entries.slice(0, take), options);
+    appendEntries(take === list.length ? list : list.slice(0, take), options);
     return take;
   }
 
@@ -2363,7 +2367,11 @@ export default function App(): JSX.Element {
   > | null>(null);
   const [lastEsForm, setLastEsForm] = useState<ElasticFormState | null>(null);
   const [esTotal, setEsTotal] = useState<number | null>(null);
-  const [esBaseline, setEsBaseline] = useState<number>(0);
+  // Anzahl der im aktuellen Suchvorgang ABGERUFENEN ES-Einträge (inkl. bereits
+  // vorhandener/deduplizierter). Wird bei jeder neuen Suche zurückgesetzt und
+  // beim Nachladen ("Weitere laden") fortgeschrieben. Dient als "geladen"-Anzeige,
+  // damit deduplizierte Einträge mitzählen und keine Abweichung zu "gefunden" entsteht.
+  const [esLoadedCount, setEsLoadedCount] = useState<number>(0);
   const [esPitSessionId, setEsPitSessionId] = useState<string | null>(null);
   const esElasticCountAll = useMemo(() => {
     let cnt = 0;
@@ -2399,7 +2407,7 @@ export default function App(): JSX.Element {
     }
     return { firstTs: minRaw, lastTs: maxRaw };
   }, [entries]);
-  const esLoaded = Math.max(0, esElasticCountAll - esBaseline);
+  const esLoaded = esLoadedCount;
   const esTarget = Math.max(1, Number(elasticSize || 0));
   const esPct =
     esTotal && esTotal > 0
@@ -2408,7 +2416,13 @@ export default function App(): JSX.Element {
 
   /** Load next page of Elasticsearch results (invoked by ElasticStatusBar "load more" button) */
   async function esLoadMore(): Promise<void> {
-    if (!esHasMore || !lastEsForm || !esNextSearchAfter) return;
+    if (!esHasMore || !lastEsForm) return;
+    // Fortsetzung benötigt entweder einen search_after-Token (PIT) ODER eine
+    // aktive Session-ID (Scroll-Dialekt liefert KEIN nextSearchAfter und wird
+    // ausschließlich über die pitSessionId fortgesetzt).
+    const hasToken =
+      Array.isArray(esNextSearchAfter) && esNextSearchAfter.length > 0;
+    if (!esPitSessionId && !hasToken) return;
     setEsBusy(true);
     try {
       let available = Math.max(0, elasticSize || 0);
@@ -2419,7 +2433,7 @@ export default function App(): JSX.Element {
       while (available > 0 && hasMore) {
         const opts: ElasticSearchOptions = {
           url: elasticUrl || undefined,
-          size: elasticSize || undefined,
+          size: Math.max(1, available),
           index: lastEsForm.index,
           sort: lastEsForm.sort,
           duration:
@@ -2455,6 +2469,7 @@ export default function App(): JSX.Element {
             messageFilter: lastEsForm.message || "",
           });
           available = Math.max(0, available - used);
+          setEsLoadedCount((c) => c + used);
         }
         if (!hasMore) break;
       }
@@ -2493,7 +2508,7 @@ export default function App(): JSX.Element {
     setEsNextSearchAfter(null);
     setLastEsForm(null);
     setEsTotal(null);
-    setEsBaseline(0);
+    setEsLoadedCount(0);
     // Clear marksMap (session-only, not persisted)
     setMarksMap({});
     // Datei-Dedupe-Cache leeren
@@ -3188,9 +3203,8 @@ export default function App(): JSX.Element {
                     logger.info("[Elastic] Search started", {
                       hasResponse: false,
                     });
-                    setEsBaseline(
-                      loadMode === "replace" ? 0 : esElasticCountAll,
-                    );
+                    // Geladen-Zähler für diesen Suchvorgang zurücksetzen.
+                    setEsLoadedCount(0);
                     // Jede neue Suche bekommt immer die vollen elasticSize Slots,
                     // damit Einträge auch bei aktivem Filter vollständig geladen werden.
                     let available = Math.max(0, elasticSize || 0);
@@ -3253,12 +3267,16 @@ export default function App(): JSX.Element {
                           },
                         );
                         available = Math.max(0, available - used);
+                        setEsLoadedCount((c) => c + used);
                       }
 
                       // Auto-Nachladen bis Cap erreicht oder keine weiteren Seiten
                       while (available > 0 && hasMore) {
                         const moreOpts: ElasticSearchOptions = {
                           ...opts,
+                          // Seite auf verbleibendes Budget begrenzen, damit nach
+                          // Dedup-bedingtem Nachladen kein großes Overshoot entsteht.
+                          size: Math.max(1, available),
                           // Für PIT: nextSearchAfter übergeben; für Scroll bleibt es undefiniert
                           ...(nextToken &&
                           Array.isArray(nextToken) &&
@@ -3282,6 +3300,7 @@ export default function App(): JSX.Element {
                             { messageFilter },
                           );
                           available = Math.max(0, available - used2);
+                          setEsLoadedCount((c) => c + used2);
                         }
                         if (!hasMore) break;
                       }
