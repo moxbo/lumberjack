@@ -5,6 +5,17 @@ Alle nennenswerten Änderungen an diesem Projekt werden in dieser Datei dokument
 Das Format orientiert sich an [Keep a Changelog](https://keepachangelog.com/de/1.1.0/),
 und dieses Projekt folgt [Semantic Versioning](https://semver.org/lang/de/).
 
+## [1.0.16-beta.4] - 2026-06-09 _(Pre-Release)_
+
+
+### Added
+- Add timestamp field support for Elasticsearch filtering and sorting
+
+
+### Fixed
+- Implement boolean query syntax for message filtering in Elasticsearch
+- Enhance elastic entry loading logic and improve loaded count tracking
+
 ## [1.0.16-beta.3] - 2026-06-02 _(Pre-Release)_
 
 
