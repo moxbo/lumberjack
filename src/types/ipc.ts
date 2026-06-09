@@ -65,6 +65,8 @@ export interface Settings {
   histIndex?: string[];
   // NEW: persist last chosen Environment-Case across sessions
   lastEnvironmentCase?: "original" | "lower" | "upper" | "case-sensitive";
+  // NEW: persist last used timestamp field for the ES time-range filter
+  lastTimestampField?: string;
 
   // HTTP
   httpUrl?: string;
@@ -197,6 +199,11 @@ export interface ElasticSearchOptions {
   environment?: string;
   // NEW: case handling for environment
   environmentCase?: "original" | "lower" | "upper" | "case-sensitive";
+  /**
+   * Timestamp field used for the time-range filter AND sorting (default `@timestamp`).
+   * Must match the index's time field (like Kibana's data-view time field).
+   */
+  timestampField?: string;
 
   // auth and TLS
   auth?: ElasticAuth;

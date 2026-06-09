@@ -39,6 +39,8 @@ const DEFAULT_SETTINGS: Settings = {
   histIndex: [],
   // NEW: last environment-case used in Elastic dialog
   lastEnvironmentCase: "original",
+  // NEW: last used timestamp field for the ES time-range filter (empty => @timestamp)
+  lastTimestampField: "",
   httpUrl: "",
   httpPollInterval: 5, // Interval in seconds
   elasticMaxParallel: 1,

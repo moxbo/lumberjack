@@ -508,6 +508,13 @@ export interface ElasticsearchOptions {
   // Zusätze für ES6-kompatiblen Query-Body
   dateFormat?: string; // z.B. 'yyyy-MM-dd HH:mm:ss'
   levelValueGte?: number | string; // mappt auf range level_value.gte
+  /**
+   * Zeitstempel-Feld für Range-Filter UND Sortierung. Default: `@timestamp`.
+   * Muss zum Zeitfeld des Index passen (wie in Kibana die Data-View-Zeitfeld-
+   * Auswahl). Ein abweichendes Feld (z. B. `timestamp`) führt sonst dazu, dass
+   * der Zeitbereich nur Dokumente mit `@timestamp` matcht und viele Treffer fehlen.
+   */
+  timestampField?: string;
 }
 export interface ElasticsearchPitOptions extends ElasticsearchOptions {
   keepAlive?: string;
@@ -715,10 +722,22 @@ function buildHeadersWithAuth(
  */
 const PRIMARY_TIMESTAMP_FIELD = "@timestamp";
 
-function buildSortArray(order: "asc" | "desc" | undefined): AnyMap[] {
+/**
+ * Ermittelt das zu verwendende Zeitstempel-Feld. Bevorzugt das vom Nutzer im
+ * ES-Dialog gesetzte Feld (`timestampField`), fällt sonst auf `@timestamp` zurück.
+ */
+function resolveTimestampField(opts: { timestampField?: string }): string {
+  const f = safeString(opts?.timestampField).trim();
+  return f || PRIMARY_TIMESTAMP_FIELD;
+}
+
+function buildSortArray(
+  order: "asc" | "desc" | undefined,
+  field: string = PRIMARY_TIMESTAMP_FIELD,
+): AnyMap[] {
   const ord = order ?? "desc";
   return [
-    { [PRIMARY_TIMESTAMP_FIELD]: { order: ord, unmapped_type: "date" } },
+    { [field]: { order: ord, unmapped_type: "date" } },
     { _id: { order: ord } },
   ];
 }
@@ -1041,13 +1060,13 @@ function buildElasticSearchBody(opts: ElasticsearchOptions): AnyMap {
     }
   }
   if (Object.keys(range).length > 0) {
-    // Range-Filter ausschließlich gegen das konventionelle `@timestamp`-Feld.
-    // Siehe ausführlichen Hinweis bei PRIMARY_TIMESTAMP_FIELD: ein `should`
-    // über mehrere Kandidatenfelder kann auf Indizes mit abweichendem
-    // Feld-Typ Shard-Fehler auslösen und damit stillschweigend 0 Treffer
-    // liefern.
+    // Range-Filter gegen das konfigurierte Zeitstempel-Feld (Default `@timestamp`).
+    // Siehe Hinweis bei PRIMARY_TIMESTAMP_FIELD: ein `should` über mehrere
+    // Kandidatenfelder kann auf Indizes mit abweichendem Feld-Typ Shard-Fehler
+    // auslösen und damit stillschweigend 0 Treffer liefern – deshalb genau EIN
+    // Feld, das der Nutzer bei Bedarf im ES-Dialog überschreiben kann.
     must.push({
-      range: { [PRIMARY_TIMESTAMP_FIELD]: { ...range } },
+      range: { [resolveTimestampField(opts)]: { ...range } },
     } as AnyMap);
   }
 
@@ -1060,7 +1079,7 @@ function buildElasticSearchBody(opts: ElasticsearchOptions): AnyMap {
   return {
     version: true,
     size: opts.size ?? 1000,
-    sort: buildSortArray(opts.sort),
+    sort: buildSortArray(opts.sort, resolveTimestampField(opts)),
     query: {
       bool: {
         must,
@@ -1083,7 +1102,7 @@ function buildQueryBodyWithPit(
     searchAfter: opts.searchAfter,
   });
   baseBody.size = opts.size ?? 1000;
-  baseBody.sort = buildSortArray(opts.sort);
+  baseBody.sort = buildSortArray(opts.sort, resolveTimestampField(opts));
   baseBody.pit = { id: pitId, keep_alive: opts.keepAlive ?? "1m" } as AnyMap;
   const inc = Array.isArray(opts.sourceIncludes)
     ? opts.sourceIncludes

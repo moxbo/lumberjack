@@ -87,6 +87,7 @@ export default function ElasticSearchDialog(props: any) {
         loadMode: (base as any).loadMode || "append", // geändert: Default beim Öffnen
         index: (base as any).index || "",
         sort: (base as any).sort || "asc",
+        timestampField: (base as any).timestampField || "",
         allowInsecureTLS: !!(base as any).allowInsecureTLS,
       });
     }
@@ -781,6 +782,25 @@ export default function ElasticSearchDialog(props: any) {
                   {t("elasticDialog.envCaseSensitive")}
                 </option>
               </select>
+            </div>
+
+            {/* Zeitstempel-Feld (Default @timestamp) */}
+            <div className="kv">
+              <span title={t("elasticDialog.timestampFieldTooltip")}>
+                {t("elasticDialog.timestampField")}
+              </span>
+              <input
+                type="text"
+                value={form.timestampField || ""}
+                placeholder="@timestamp"
+                title={t("elasticDialog.timestampFieldTooltip")}
+                onInput={(e) =>
+                  setForm({
+                    ...form,
+                    timestampField: e.currentTarget.value,
+                  })
+                }
+              />
             </div>
 
             {/* Sort */}

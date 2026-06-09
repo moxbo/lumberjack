@@ -438,6 +438,7 @@ export default function App(): JSX.Element {
       lastEnv: string;
       lastIndex: string;
       lastEnvCase: string | undefined;
+      lastTimestampField: string;
     }> => {
       let lastApp =
         (histAppName && histAppName.length > 0 ? String(histAppName[0]) : "") ||
@@ -449,6 +450,7 @@ export default function App(): JSX.Element {
       let lastIndex =
         (histIndex && histIndex.length > 0 ? String(histIndex[0]) : "") || "";
       let lastEnvCase: string | undefined;
+      let lastTimestampField = "";
       try {
         const r = await getSettings();
         if (!lastApp && Array.isArray(r?.histAppName) && r.histAppName.length)
@@ -463,10 +465,12 @@ export default function App(): JSX.Element {
           lastIndex = String(r.histIndex[0] || "");
         if (r && typeof r.lastEnvironmentCase === "string")
           lastEnvCase = r.lastEnvironmentCase;
+        if (r && typeof r.lastTimestampField === "string")
+          lastTimestampField = r.lastTimestampField;
       } catch {
         // ignore
       }
-      return { lastApp, lastEnv, lastIndex, lastEnvCase };
+      return { lastApp, lastEnv, lastIndex, lastEnvCase, lastTimestampField };
     };
 
     try {
@@ -484,7 +488,8 @@ export default function App(): JSX.Element {
         const mm = pad(d.getMinutes());
         return `${y}-${m}-${da}T${hh}:${mm}`;
       };
-      const { lastApp, lastEnv, lastIndex, lastEnvCase } = await getLasts();
+      const { lastApp, lastEnv, lastIndex, lastEnvCase, lastTimestampField } =
+        await getLasts();
       // Bestimme zuletzt verwendete Werte aus der letzten Suche (falls vorhanden)
       const prev: Partial<ElasticFormState> = lastEsForm || {};
       const initIndex = String(prev.index || lastIndex || "");
@@ -493,6 +498,12 @@ export default function App(): JSX.Element {
           lastEnvCase ||
           timeForm.environmentCase ||
           "original",
+      );
+      const initTsField = String(
+        prev.timestampField ||
+          lastTimestampField ||
+          timeForm.timestampField ||
+          "",
       );
       setTimeForm({
         enabled: true,
@@ -506,9 +517,11 @@ export default function App(): JSX.Element {
         environment: lastEnv,
         index: initIndex,
         environmentCase: initEnvCase,
+        timestampField: initTsField,
       });
     } catch {
-      const { lastApp, lastEnv, lastIndex, lastEnvCase } = await getLasts();
+      const { lastApp, lastEnv, lastIndex, lastEnvCase, lastTimestampField } =
+        await getLasts();
       const prev: Partial<ElasticFormState> = lastEsForm || {};
       const initIndex = String(prev.index || lastIndex || "");
       const initEnvCase = String(
@@ -516,6 +529,12 @@ export default function App(): JSX.Element {
           lastEnvCase ||
           timeForm.environmentCase ||
           "original",
+      );
+      const initTsField = String(
+        prev.timestampField ||
+          lastTimestampField ||
+          timeForm.timestampField ||
+          "",
       );
       setTimeForm({
         enabled: true,
@@ -529,6 +548,7 @@ export default function App(): JSX.Element {
         environment: lastEnv,
         index: initIndex,
         environmentCase: initEnvCase,
+        timestampField: initTsField,
       });
     }
     setShowTimeDialog(true);
@@ -2425,7 +2445,11 @@ export default function App(): JSX.Element {
     if (!esPitSessionId && !hasToken) return;
     setEsBusy(true);
     try {
-      let available = Math.max(0, elasticSize || 0);
+      // "Weitere laden" lädt den verbleibenden Rest der Treffermenge in EINEM
+      // Schwung nach (so wie vor dem Refactoring). Budget großzügig – mindestens
+      // 50.000 Einträge pro Klick –, damit nicht mehrfach geklickt werden muss,
+      // um alle Treffer zu laden. Sicherheitsobergrenze gegen Speicherüberlauf.
+      let available = Math.max(elasticSize || 0, 50000);
       let hasMore: boolean = esHasMore;
       let nextToken = esNextSearchAfter;
       let carriedPit = esPitSessionId;
@@ -2446,6 +2470,7 @@ export default function App(): JSX.Element {
           environment: lastEsForm.environment,
           message: lastEsForm.message,
           environmentCase: lastEsForm.environmentCase || "original",
+          timestampField: lastEsForm.timestampField || undefined,
           allowInsecureTLS: !!lastEsForm.allowInsecureTLS,
           keepAlive: "5m",
           trackTotalHits: false,
@@ -3089,6 +3114,8 @@ export default function App(): JSX.Element {
                     | "case-sensitive";
                   await patchSettings({
                     lastEnvironmentCase: envCase,
+                    // Zuletzt genutztes Zeitstempel-Feld als Default merken.
+                    lastTimestampField: String(formVals?.timestampField || ""),
                   });
                 } catch (e) {
                   logger.warn(
@@ -3198,7 +3225,11 @@ export default function App(): JSX.Element {
                       allowInsecureTLS: !!formVals.allowInsecureTLS,
                       // optionale PIT-Optimierungen
                       keepAlive: "5m",
-                      trackTotalHits: false,
+                      // Beim ersten Request die echte Gesamtzahl ermitteln, damit
+                      // die UI die tatsächlich vorhandenen Treffer (z. B. 15766)
+                      // anzeigt – nicht nur die geladene Menge. Folgeseiten setzen
+                      // das aus Performancegründen wieder auf false.
+                      trackTotalHits: true,
                     } as any;
                     logger.info("[Elastic] Search started", {
                       hasResponse: false,
@@ -3207,6 +3238,8 @@ export default function App(): JSX.Element {
                     setEsLoadedCount(0);
                     // Jede neue Suche bekommt immer die vollen elasticSize Slots,
                     // damit Einträge auch bei aktivem Filter vollständig geladen werden.
+                    // Mehr als elasticSize wird bei Bedarf über den
+                    // "Nachladen"-Button (esLoadMore) geladen.
                     let available = Math.max(0, elasticSize || 0);
                     let carriedPit: string | null = null;
                     let nextToken: Array<string | number> | null = null;
@@ -3277,6 +3310,8 @@ export default function App(): JSX.Element {
                           // Seite auf verbleibendes Budget begrenzen, damit nach
                           // Dedup-bedingtem Nachladen kein großes Overshoot entsteht.
                           size: Math.max(1, available),
+                          // Gesamtzahl nur einmal (erster Request) ermitteln.
+                          trackTotalHits: false,
                           // Für PIT: nextSearchAfter übergeben; für Scroll bleibt es undefiniert
                           ...(nextToken &&
                           Array.isArray(nextToken) &&

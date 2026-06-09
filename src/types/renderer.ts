@@ -52,6 +52,8 @@ export interface ElasticFormState {
   environmentCase: "original" | "lower" | "upper" | "case-sensitive";
   message?: string;
   sort?: "asc" | "desc";
+  /** Timestamp field for time-range filter and sorting (default `@timestamp`) */
+  timestampField?: string;
   /** Allow insecure TLS connections */
   allowInsecureTLS?: boolean;
 }
@@ -144,4 +146,5 @@ export interface TimeFormState {
   environment: string;
   index: string;
   environmentCase: string;
+  timestampField?: string;
 }
