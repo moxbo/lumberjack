@@ -129,6 +129,38 @@ describe("HttpTailManager", () => {
     expect(received).toEqual(["first", "second"]);
   });
 
+  it("emits large initial content in multiple batches without losing lines", async () => {
+    const LINES = 2500; // > INITIAL_EMIT_BATCH_SIZE (1000)
+    const expected = Array.from(
+      { length: LINES },
+      (_, i) => `line${String(i)}`,
+    );
+    server.body = expected.join("\n") + "\n";
+
+    const mgr = new HttpTailManager();
+    const received: string[] = [];
+    const batchSizes: number[] = [];
+    mgr.start(
+      url,
+      {
+        onLines: (l) => {
+          batchSizes.push(l.length);
+          received.push(...l);
+        },
+      },
+      { intervalMs: 5000, emitInitial: true },
+    );
+
+    // Allow the batched emission (with setImmediate yields) to drain.
+    await delay(500);
+    mgr.stopAll();
+
+    // All lines delivered, in order, and split across more than one batch.
+    expect(received).toEqual(expected);
+    expect(batchSizes.length).toBeGreaterThan(1);
+    expect(Math.max(...batchSizes)).toBeLessThanOrEqual(1000);
+  });
+
   it("buffers partial last line across ticks", async () => {
     server.body = "";
     const mgr = new HttpTailManager();
