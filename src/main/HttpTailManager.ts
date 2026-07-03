@@ -23,8 +23,15 @@
  */
 
 export interface HttpTailCallbacks {
-  /** Called whenever new complete lines are available. */
-  onLines: (lines: string[]) => void;
+  /**
+   * Called whenever new complete lines are available.
+   *
+   * May return a promise. The manager awaits it before scheduling the next
+   * tick, so a consumer that parses large initial payloads in chunks (with
+   * event-loop yields) can keep the manager from re-fetching mid-parse and
+   * guarantees ordered, complete delivery.
+   */
+  onLines: (lines: string[]) => void | Promise<void>;
   /** Called when the tail detected a rotation (offset reset to 0). */
   onRotated?: () => void;
   /** Called on transport-level errors (network failure, parse failure). */
@@ -58,18 +65,6 @@ export interface HttpTailOptions {
   /** Override fetch impl (for tests). Defaults to globalThis.fetch. */
   fetchImpl?: typeof fetch;
 }
-
-/**
- * Maximum number of lines handed to `onLines` per batch when emitting the
- * *existing* content of a file on the initial tick (`emitInitial`).
- *
- * Without batching, a multi-MB log file would be delivered as a single huge
- * array, parsed synchronously in the main process and pushed into the
- * renderer append pipeline in one shot – freezing the UI. Emitting in bounded
- * batches (yielding to the event loop between them) keeps both the main
- * process and the renderer responsive.
- */
-const INITIAL_EMIT_BATCH_SIZE = 1000;
 
 interface TailState {
   id: number;
@@ -183,9 +178,13 @@ export class HttpTailManager {
   ): Promise<void> {
     try {
       if (emitInitial) {
-        // Fetch the full body and emit it in bounded batches (yielding to the
-        // event loop between them) so a large file does not freeze the UI.
-        await this.fetchInitialAndEmit(state);
+        // Fetch the full body and emit the existing content in a single
+        // onLines call. Keeping it as one call preserves the downstream
+        // backpressure invariant (the whole payload is enqueued in one go and
+        // therefore never partially dropped). Responsiveness during the heavy
+        // parse is handled by the consumer, which parses in chunks and yields
+        // to the event loop – the manager awaits that work via consume().
+        await this.fetchAndEmit(state, /*fromOffset=*/ 0);
       } else {
         // Discover size only: HEAD request. If HEAD is not supported,
         // fall back to a tiny range GET (bytes=0-0) – every Range-aware
@@ -229,82 +228,6 @@ export class HttpTailManager {
       }
     } finally {
       this.scheduleNext(state);
-    }
-  }
-
-  /**
-   * Initial full-body fetch used when `emitInitial` is set. Unlike
-   * {@link fetchAndEmit}, the existing content is delivered in bounded batches
-   * (see {@link INITIAL_EMIT_BATCH_SIZE}) with a yield to the event loop
-   * between batches. This prevents a large log file from being parsed and
-   * pushed into the renderer in a single synchronous burst, which would freeze
-   * the application.
-   */
-  private async fetchInitialAndEmit(state: TailState): Promise<void> {
-    const ac = new AbortController();
-    state.abort = ac;
-    const timeout = setTimeout(() => ac.abort(), state.timeoutMs);
-    try {
-      const headers: Record<string, string> = {
-        ...state.headers,
-        Accept: state.headers.Accept ?? "text/plain, */*",
-      };
-      const res = await state.fetchImpl(state.url, {
-        method: "GET",
-        headers,
-        signal: ac.signal,
-        // @ts-expect-error – Node's undici accepts this dispatcher option for
-        // self-signed certs; ignored in browser environments / tests.
-        rejectUnauthorized: state.allowInsecureSSL ? false : undefined,
-      });
-      if (!res.ok && res.status !== 206) {
-        throw new Error(`HTTP ${String(res.status)} ${res.statusText}`);
-      }
-      const total = parseTotalFromHeaders(res);
-      // Byte-based offset tracking (see fetchAndEmit for the rationale).
-      const bytes = Buffer.from(await res.arrayBuffer());
-      const byteLen = bytes.byteLength;
-      const text = bytes.toString("utf8");
-      // Advance the offset up front so a subsequent stop() before all batches
-      // are flushed still leaves us pointing past the consumed bytes.
-      state.offset = byteLen;
-      await this.consumeInBatches(state, text);
-      state.callbacks.onProgress?.({ offset: state.offset, total });
-    } finally {
-      clearTimeout(timeout);
-      state.abort = null;
-    }
-  }
-
-  /**
-   * Like {@link consume}, but emits the resulting lines in chunks of
-   * {@link INITIAL_EMIT_BATCH_SIZE}, yielding to the event loop between
-   * chunks so the main process stays responsive and the renderer can ingest
-   * the backlog incrementally.
-   */
-  private async consumeInBatches(
-    state: TailState,
-    chunk: string,
-  ): Promise<void> {
-    if (chunk.length === 0) return;
-    const combined = state.partial + chunk;
-    const lastNl = combined.lastIndexOf("\n");
-    if (lastNl < 0) {
-      // No complete line yet – buffer.
-      state.partial = combined;
-      return;
-    }
-    const complete = combined.slice(0, lastNl + 1);
-    state.partial = combined.slice(lastNl + 1);
-    const lines = splitTailLines(complete);
-    for (let i = 0; i < lines.length; i += INITIAL_EMIT_BATCH_SIZE) {
-      if (state.stopped) return;
-      const batch = lines.slice(i, i + INITIAL_EMIT_BATCH_SIZE);
-      if (batch.length > 0) state.callbacks.onLines(batch);
-      // Yield between batches (but not after the last one).
-      if (i + INITIAL_EMIT_BATCH_SIZE < lines.length) {
-        await new Promise<void>((resolve) => setImmediate(resolve));
-      }
     }
   }
 
@@ -377,18 +300,18 @@ export class HttpTailManager {
           if (!state.stopped) state.callbacks.onRotated?.();
           state.offset = 0;
           state.partial = "";
-          this.consume(state, text);
+          await this.consume(state, text);
           state.offset = byteLen;
         } else {
           // Body grew – emit only the slice past our offset. Slice on the
           // byte buffer (offset is byte-based) before decoding to text.
           const newPart = bytes.subarray(fromOffset).toString("utf8");
-          this.consume(state, newPart);
+          await this.consume(state, newPart);
           state.offset = byteLen;
         }
       } else {
         // 206 Partial Content (or initial 200 with fromOffset===0).
-        this.consume(state, text);
+        await this.consume(state, text);
         state.offset = fromOffset + byteLen;
       }
       state.callbacks.onProgress?.({ offset: state.offset, total });
@@ -465,8 +388,8 @@ export class HttpTailManager {
     return undefined;
   }
 
-  /** Buffer + line-split + emit. */
-  private consume(state: TailState, chunk: string): void {
+  /** Buffer + line-split + emit. Awaits the (possibly async) onLines sink. */
+  private async consume(state: TailState, chunk: string): Promise<void> {
     if (chunk.length === 0) return;
     const combined = state.partial + chunk;
     const lastNl = combined.lastIndexOf("\n");
@@ -478,7 +401,7 @@ export class HttpTailManager {
     const complete = combined.slice(0, lastNl + 1);
     state.partial = combined.slice(lastNl + 1);
     const lines = splitTailLines(complete);
-    if (lines.length > 0) state.callbacks.onLines(lines);
+    if (lines.length > 0) await state.callbacks.onLines(lines);
   }
 }
 

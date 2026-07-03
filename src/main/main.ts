@@ -2420,9 +2420,19 @@ try {
         );
         if (win && !win.isDestroyed()) {
           enqueueAppendsFor(win.id, entries);
+          // Flush this window's buffer right away instead of waiting for the
+          // periodic 100ms timer. This delivers tail/watch entries with lower
+          // latency and – crucially – lets large initial loads (HTTP-tail
+          // "load existing content") stream chunk-by-chunk: each chunk is
+          // drained immediately, so the buffer never accumulates beyond the
+          // backpressure cap (which would otherwise drop earlier chunks).
+          flushPendingAppendsFor(win);
         } else {
           // Fallback: route to main window queue
           enqueueAppends(entries);
+          if (mainWindow && !mainWindow.isDestroyed()) {
+            flushPendingAppends();
+          }
         }
       } catch (err) {
         log.warn(

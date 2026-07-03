@@ -475,6 +475,12 @@ export function registerIpcHandlers(
   const yieldToEventLoop = (): Promise<void> =>
     new Promise((resolve) => setImmediate(resolve));
 
+  // Number of log lines parsed per chunk when ingesting a large HTTP-tail
+  // initial payload ("load existing content first"). parseTextLines is
+  // per-line, so chunking is lossless; yielding between chunks keeps the main
+  // process responsive instead of freezing on one giant synchronous parse.
+  const HTTP_TAIL_PARSE_CHUNK_LINES = 5000;
+
   ipcMain.handle(
     "logs:parsePaths",
     async (_event, filePaths: string[]): Promise<ParseResult> => {
@@ -1473,19 +1479,74 @@ export function registerIpcHandlers(
         const tail = httpTailManager.start(
           args.url,
           {
-            onLines: (lines: string[]) => {
+            onLines: async (lines: string[]) => {
               if (lines.length === 0) return;
               try {
                 const data = lines.join("\n");
-                // Try JSON first if the chunk smells like JSON, otherwise text.
+                // Decide JSON vs text once on the whole chunk.
                 const trimmed = data.trim();
-                const isJson =
-                  trimmed.startsWith("{") || trimmed.startsWith("[");
-                const entries = isJson
-                  ? parseJsonFile(source, data)
-                  : parseTextLines(source, data);
-                if (entries.length > 0 && enqueueWatchEntries) {
-                  enqueueWatchEntries(entries, senderId);
+                // Only a single JSON *array* must be parsed as one unit – it
+                // cannot be split by lines. NDJSON (one JSON object per line,
+                // starts with "{") is handled by parseTextLines, which tries
+                // JSON per line, so it can be chunked exactly like plain text
+                // and must NOT take the single-parse path (that would block the
+                // main process and freeze the app on large initial loads).
+                const isJsonArray = trimmed.startsWith("[");
+
+                if (
+                  isJsonArray ||
+                  lines.length <= HTTP_TAIL_PARSE_CHUNK_LINES
+                ) {
+                  // Small chunk (normal tailing tick) or a JSON array document
+                  // that must be parsed as a single unit.
+                  const entries = isJsonArray
+                    ? parseJsonFile(source, data)
+                    : parseTextLines(source, data);
+                  if (entries.length > 0 && enqueueWatchEntries) {
+                    enqueueWatchEntries(entries, senderId);
+                  }
+                } else {
+                  // Large initial payload ("load existing content first") of
+                  // plain text OR NDJSON. parseTextLines treats every line
+                  // independently (and parses per-line JSON), so we can safely
+                  // split the work into line-chunks and yield to the event loop
+                  // between them. This keeps the main process responsive (so the
+                  // user can still open files/zips while a tail is active)
+                  // instead of freezing on one giant parse.
+                  //
+                  // Each parsed chunk is enqueued (and flushed by main.ts)
+                  // immediately, so the content streams into the renderer
+                  // progressively instead of appearing all at once after a
+                  // multi-second parse. Because main.ts drains the buffer right
+                  // after every enqueue, the per-call backpressure invariant
+                  // still holds and no chunk is ever dropped.
+                  for (
+                    let i = 0;
+                    i < lines.length;
+                    i += HTTP_TAIL_PARSE_CHUNK_LINES
+                  ) {
+                    const slice = lines.slice(
+                      i,
+                      i + HTTP_TAIL_PARSE_CHUNK_LINES,
+                    );
+                    const part = parseTextLines(source, slice.join("\n"));
+                    if (part.length > 0 && enqueueWatchEntries) {
+                      enqueueWatchEntries(part, senderId);
+                    }
+                    // Report incremental progress so the UI status reflects the
+                    // streaming load rather than a single end-of-parse jump.
+                    emitHttpTailStatus(senderId, {
+                      type: "lines",
+                      id: tail.id,
+                      url: args.url,
+                      lineCount: slice.length,
+                    });
+                    // Yield between chunks (but not after the last one).
+                    if (i + HTTP_TAIL_PARSE_CHUNK_LINES < lines.length) {
+                      await yieldToEventLoop();
+                    }
+                  }
+                  return;
                 }
                 emitHttpTailStatus(senderId, {
                   type: "lines",

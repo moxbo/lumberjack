@@ -11,6 +11,7 @@
  */
 
 import * as fs from "fs";
+import { StringDecoder } from "string_decoder";
 
 export interface WatcherCallbacks {
   /** Called with newly-arrived raw text lines (without trailing \n). */
@@ -43,6 +44,8 @@ export interface ActiveWatcher {
   lastSize: number;
   /** Buffer for an incomplete trailing line across reads. */
   carry: string;
+  /** Decoder that preserves multi-byte UTF-8 chars split across read chunks. */
+  decoder: StringDecoder;
   stop: () => void;
 }
 
@@ -76,6 +79,7 @@ export class WatchManager {
       offset: initialOffset,
       lastSize: stat.size,
       carry: "",
+      decoder: new StringDecoder("utf8"),
       stop: () => {
         /* will be replaced below */
       },
@@ -143,38 +147,46 @@ export class WatchManager {
     if (curr.size < w.lastSize) {
       w.offset = 0;
       w.carry = "";
+      w.decoder = new StringDecoder("utf8");
       cbs.onRotated?.();
     }
     w.lastSize = curr.size;
 
     if (curr.size <= w.offset) return;
 
-    const start = w.offset;
-    const end = Math.min(curr.size, start + maxRead);
-    const length = end - start;
     const fd = await fs.promises.open(w.filePath, "r");
     try {
-      const buf = Buffer.alloc(length);
-      const { bytesRead } = await fd.read(buf, 0, length, start);
-      if (bytesRead <= 0) return;
-      w.offset = start + bytesRead;
-      const text = w.carry + buf.subarray(0, bytesRead).toString("utf8");
-      const newlineIdx = text.lastIndexOf("\n");
-      if (newlineIdx === -1) {
-        // No newline yet → keep buffering. Cap the carry size to avoid OOM
-        // for pathological inputs without line breaks.
-        const MAX_CARRY = 1024 * 1024;
-        w.carry = text.length > MAX_CARRY ? text.slice(-MAX_CARRY) : text;
-        return;
+      // Drain ALL currently-available bytes in maxRead-sized chunks. A single
+      // change event (or the initial emit) must fully catch up to curr.size –
+      // otherwise large existing files or big appends would only be partially
+      // read, because fs.watchFile does not fire again while the size is stable.
+      while (w.offset < curr.size) {
+        const start = w.offset;
+        const end = Math.min(curr.size, start + maxRead);
+        const length = end - start;
+        const buf = Buffer.alloc(length);
+        const { bytesRead } = await fd.read(buf, 0, length, start);
+        if (bytesRead <= 0) break;
+        w.offset = start + bytesRead;
+        // Decoder keeps any incomplete multi-byte sequence at the chunk boundary.
+        const text = w.carry + w.decoder.write(buf.subarray(0, bytesRead));
+        const newlineIdx = text.lastIndexOf("\n");
+        if (newlineIdx === -1) {
+          // No newline yet → keep buffering. Cap the carry size to avoid OOM
+          // for pathological inputs without line breaks.
+          const MAX_CARRY = 1024 * 1024;
+          w.carry = text.length > MAX_CARRY ? text.slice(-MAX_CARRY) : text;
+          continue;
+        }
+        const completePart = text.slice(0, newlineIdx);
+        w.carry = text.slice(newlineIdx + 1);
+        const lines = completePart
+          .split("\n")
+          .map((s) => (s.endsWith("\r") ? s.slice(0, -1) : s));
+        // Drop empty last item from a trailing newline
+        if (lines.length > 0 && lines[lines.length - 1] === "") lines.pop();
+        if (lines.length > 0) cbs.onLines(lines);
       }
-      const completePart = text.slice(0, newlineIdx);
-      w.carry = text.slice(newlineIdx + 1);
-      const lines = completePart
-        .split("\n")
-        .map((s) => (s.endsWith("\r") ? s.slice(0, -1) : s));
-      // Drop empty last item from a trailing newline
-      if (lines.length > 0 && lines[lines.length - 1] === "") lines.pop();
-      if (lines.length > 0) cbs.onLines(lines);
     } finally {
       await fd.close().catch(() => undefined);
     }
