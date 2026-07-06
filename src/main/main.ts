@@ -138,8 +138,7 @@ if (process.platform === "win32") {
 // Lazy import for AutoUpdaterService to avoid loading electron-updater at startup
 // This significantly improves startup time for portable versions
 let _autoUpdaterServiceModule:
-  | typeof import("../services/AutoUpdaterService")
-  | null = null;
+  typeof import("../services/AutoUpdaterService") | null = null;
 function getAutoUpdaterServiceModule(): typeof import("../services/AutoUpdaterService") {
   if (!_autoUpdaterServiceModule) {
     _autoUpdaterServiceModule =

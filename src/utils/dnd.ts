@@ -16,8 +16,7 @@ export class DragAndDropManager {
   private onFiles: (paths: string[]) => void | Promise<void>;
   private onActiveChange: (active: boolean) => void;
   private onRawFiles:
-    | ((files: RawFilePayload[]) => void | Promise<void>)
-    | null;
+    ((files: RawFilePayload[]) => void | Promise<void>) | null;
   private _dragCounter: number;
   private _handlers: {
     onDragOverBlockAll: (e: DragEvent) => void;

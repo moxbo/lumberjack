@@ -18,12 +18,7 @@ import type { Settings } from "../types/ipc";
 
 export type ThemeMode = "system" | "light" | "dark";
 export type SettingsTab =
-  | "tcp"
-  | "http"
-  | "elastic"
-  | "logging"
-  | "appearance"
-  | "features";
+  "tcp" | "http" | "elastic" | "logging" | "appearance" | "features";
 
 export interface SettingsForm {
   tcpPort: number;

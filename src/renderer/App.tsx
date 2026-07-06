@@ -3108,10 +3108,7 @@ export default function App(): JSX.Element {
                 setLastEsForm(formVals);
                 try {
                   const envCase = (formVals?.environmentCase || "original") as
-                    | "original"
-                    | "lower"
-                    | "upper"
-                    | "case-sensitive";
+                    "original" | "lower" | "upper" | "case-sensitive";
                   await patchSettings({
                     lastEnvironmentCase: envCase,
                     // Zuletzt genutztes Zeitstempel-Feld als Default merken.
