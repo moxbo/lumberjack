@@ -5,6 +5,21 @@ Alle nennenswerten Änderungen an diesem Projekt werden in dieser Datei dokument
 Das Format orientiert sich an [Keep a Changelog](https://keepachangelog.com/de/1.1.0/),
 und dieses Projekt folgt [Semantic Versioning](https://semver.org/lang/de/).
 
+## [1.1.1] - 2026-07-07
+
+
+### Added
+- Enhance file reading in WatchManager to handle large files and preserve multi-byte UTF-8 characters across read chunks
+
+
+### Changed
+- Simplify type definitions by removing unnecessary line breaks
+- Implement useDebouncedValueWithFlush hook for immediate filter application on Enter key press
+
+
+### Fixed
+- Improve request handling in useFilterWorker to ensure timely updates of filtered results
+
 ## [1.1.0] - 2026-06-18
 
 
