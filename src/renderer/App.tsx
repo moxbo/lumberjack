@@ -77,7 +77,7 @@ import { nativeConfirm } from "../utils/nativeDialog";
 
 // Import refactored hooks
 import {
-  useDebounce,
+  useDebouncedValueWithFlush,
   useFilterState,
   useHistoryPopovers,
   useAlerts,
@@ -355,9 +355,17 @@ export default function App(): JSX.Element {
     setFiltersExpanded,
   } = filterState;
 
-  // Debounced Filter-Werte für bessere Performance beim Tippen (200ms Verzögerung)
-  const debouncedSearch = useDebounce(search, 200);
-  const debouncedFilter = useDebounce(filter, 200);
+  // Debounced Filter-Werte für bessere Performance beim Tippen.
+  // Etwas höhere Verzögerung (350ms) als komfortabler "type-to-filter"-Fallback;
+  // Enter (flush) wendet die Eingabe sofort an, ohne auf den Timer zu warten.
+  const [debouncedSearch, flushSearch] = useDebouncedValueWithFlush(
+    search,
+    350,
+  );
+  const [debouncedFilter, flushFilter] = useDebouncedValueWithFlush(
+    filter,
+    350,
+  );
 
   // History popovers - using extracted hook
   const {
@@ -3665,6 +3673,7 @@ export default function App(): JSX.Element {
           selectedOneIdx={selectedOneIdx}
           filteredIdx={filteredIdx}
           gotoSearchMatch={gotoSearchMatch}
+          onSubmitSearch={flushSearch}
           t={t}
         />
         <StatusSection
@@ -3723,6 +3732,7 @@ export default function App(): JSX.Element {
           messagePopRef={messagePopRef}
           onStdFiltersEnabledChange={setStdFiltersEnabled}
           onFilterChange={setFilter}
+          onSubmitFilter={flushFilter}
           onOnlyMarkedChange={(nv) => {
             setOnlyMarked(nv);
             try {
@@ -3790,7 +3800,7 @@ export default function App(): JSX.Element {
                   DiagnosticContextFilter.addMdcEntry(mdc.key, mdc.value);
                   // addMdcEntry setzt active=true. Falls ein Profil dennoch
                   // einen inaktiven Eintrag enthält (Altdaten), korrigieren.
-                  if (mdc.active === false) {
+                  if (!mdc.active) {
                     DiagnosticContextFilter.deactivateMdcEntry(
                       mdc.key,
                       mdc.value,
