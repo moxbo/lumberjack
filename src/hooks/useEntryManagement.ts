@@ -266,11 +266,23 @@ export function useEntryManagement({ marksMap }: UseEntryManagementOptions) {
         }
       }
 
-      // Add to LoggingStore
+      // Add to LoggingStore (this computes each entry's `mdc` from `raw`).
       try {
         (LoggingStore as any).addEvents(toAdd);
       } catch (e) {
         logger.error("LoggingStore.addEvents error:", e);
+      }
+
+      // Memory: release the (potentially large) raw payload after MDC has been
+      // derived. The renderer never reads `entry.raw` again – neither the log
+      // table, the detail panel (uses `mdc`) nor any export format serialises
+      // it. Keeping the full parsed object per entry roughly doubled the heap
+      // footprint and caused Out-of-Memory renderer crashes ("app restarts")
+      // around 200k–300k entries. `addEvents` above runs synchronously and all
+      // listeners have already consumed `raw` by this point, so it is safe to
+      // free it here.
+      for (let i = 0; i < toAdd.length; i++) {
+        toAdd[i].raw = null;
       }
 
       // Update state

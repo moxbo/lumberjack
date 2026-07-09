@@ -108,7 +108,7 @@ export interface Settings {
   allowPrerelease?: boolean;
 
   // Performance / Memory
-  /** V8 heap size in MB (default: 2048, min: 512, max: 8192). Requires restart. */
+  /** V8 heap size in MB (default: 4096, min: 512, max: 8192). Requires restart. */
   heapSizeMB?: number;
 }
 

@@ -656,10 +656,10 @@ export default function App(): JSX.Element {
     elasticPassClear: false,
     elasticMaxParallel: 1,
     allowPrerelease: false,
-    heapSizeMB: 2048,
+    heapSizeMB: 4096,
   });
   // Store original heap size to detect changes requiring restart
-  const [originalHeapSizeMB, setOriginalHeapSizeMB] = useState<number>(2048);
+  const [originalHeapSizeMB, setOriginalHeapSizeMB] = useState<number>(4096);
   // NEU: hält das tatsächlich beim Start verwendete Poll-Intervall (für stabilen Countdown)
   const [currentPollInterval, setCurrentPollInterval] = useState<number | null>(
     null,
@@ -1886,7 +1886,7 @@ export default function App(): JSX.Element {
     let curElasticUser = elasticUser;
     let curElasticMaxParallel = elasticMaxParallel;
     let curAllowPrerelease = false;
-    let curHeapSizeMB = 2048;
+    let curHeapSizeMB = 4096;
 
     try {
       const r = await getSettings();
@@ -2024,7 +2024,7 @@ export default function App(): JSX.Element {
       allowPrerelease: form.allowPrerelease,
       heapSizeMB: Math.max(
         512,
-        Math.min(8192, Number(form.heapSizeMB || 2048)),
+        Math.min(8192, Number(form.heapSizeMB || 4096)),
       ),
     };
     const newPass = String(form.elasticPassNew || "").trim();
@@ -2067,7 +2067,7 @@ export default function App(): JSX.Element {
       // Check if heap size changed and ask for restart
       const newHeapSize = Math.max(
         512,
-        Math.min(8192, Number(form.heapSizeMB || 2048)),
+        Math.min(8192, Number(form.heapSizeMB || 4096)),
       );
       if (newHeapSize !== originalHeapSizeMB) {
         // Use setTimeout to allow the modal to close first

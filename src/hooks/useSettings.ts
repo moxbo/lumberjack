@@ -55,7 +55,7 @@ const INITIAL_FORM: SettingsForm = {
   elasticPassClear: false,
   elasticMaxParallel: 1,
   allowPrerelease: false,
-  heapSizeMB: 2048,
+  heapSizeMB: 4096,
 };
 
 function applyThemeMode(mode: string | null | undefined): void {
@@ -253,7 +253,7 @@ export function useSettings() {
       let curElasticUser = elasticUser;
       let curElasticMaxParallel = elasticMaxParallel;
       let curAllowPrerelease = allowPrerelease;
-      let curHeapSizeMB = 2048; // Default 2GB
+      let curHeapSizeMB = 4096; // Default 4GB
 
       try {
         const r = await getSettings();

@@ -47,7 +47,7 @@ const DEFAULT_SETTINGS: Settings = {
   // Auto-Update
   allowPrerelease: false,
   // Performance / Memory - heap size in MB (requires restart)
-  heapSizeMB: 2048,
+  heapSizeMB: 4096,
 };
 
 /**
