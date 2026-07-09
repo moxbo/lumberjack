@@ -282,7 +282,8 @@ export function useEntryManagement({ marksMap }: UseEntryManagementOptions) {
       // listeners have already consumed `raw` by this point, so it is safe to
       // free it here.
       for (let i = 0; i < toAdd.length; i++) {
-        toAdd[i].raw = null;
+        const entry = toAdd[i];
+        if (entry) entry.raw = null;
       }
 
       // Update state
@@ -370,11 +371,24 @@ export function useEntryManagement({ marksMap }: UseEntryManagementOptions) {
       ) {
         appendEntriesInternal(newEntries, options);
       } else {
+        // Bounded imports (file loads) deliver the complete, finite set of
+        // entries in a single call. They are already fully materialised in
+        // memory, so queuing them adds no extra pressure – and discarding any
+        // of them would silently drop log lines. The lossy overflow guard
+        // below only makes sense for *unbounded* live streams (TCP/HTTP) where
+        // a fast producer could outpace the consumer and exhaust memory.
+        const isBoundedBatch = newEntries.some((e) => isFileSource(e));
+
         // Large batch: queue for controlled processing
         ipcQueueRef.current.push(...newEntries);
 
-        // Limit queue size
-        if (ipcQueueRef.current.length > IPC_MAX_QUEUE_SIZE) {
+        // Limit queue size – but never drop entries from a bounded file import.
+        // The final-state trim (TRIM_THRESHOLD_ENTRIES) still guards against
+        // true out-of-memory situations after the entries are merged.
+        if (
+          !isBoundedBatch &&
+          ipcQueueRef.current.length > IPC_MAX_QUEUE_SIZE
+        ) {
           const overflow = ipcQueueRef.current.length - IPC_MAX_QUEUE_SIZE;
           ipcQueueRef.current.splice(0, overflow);
           console.warn(
