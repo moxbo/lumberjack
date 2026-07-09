@@ -5,6 +5,13 @@ Alle nennenswerten Änderungen an diesem Projekt werden in dieser Datei dokument
 Das Format orientiert sich an [Keep a Changelog](https://keepachangelog.com/de/1.1.0/),
 und dieses Projekt folgt [Semantic Versioning](https://semver.org/lang/de/).
 
+## [1.1.2-beta.1] - 2026-07-09 _(Pre-Release)_
+
+
+### Changed
+- Increase default heap size to 4096 MB for improved performance
+- Enhance entry management logic to prevent dropping bounded file imports
+
 ## [1.1.1] - 2026-07-07
 
 
@@ -24,13 +31,41 @@ und dieses Projekt folgt [Semantic Versioning](https://semver.org/lang/de/).
 
 
 ### Added
-- **filters**: Optimize message filtering with precompiled patterns for improved performance
-- **vite.config**: Disable modulePreload for optimized initial load and adjust chunking strategy
-- **parsers**: Add asynchronous parsing functions for paths and enhance error handling
-- Add timestamp field support for Elasticsearch filtering and sorting
 - Implement batched emission for large initial content in HttpTailManager
 - Enhance release notes rendering with HTML sanitization and Markdown support
 - Enhance CHANGELOG generation for stable releases by aggregating pre-release tags
+
+## [1.0.16-beta.4] - 2026-06-09 _(Pre-Release)_
+
+
+### Added
+- Add timestamp field support for Elasticsearch filtering and sorting
+
+
+### Fixed
+- Implement boolean query syntax for message filtering in Elasticsearch
+- Enhance elastic entry loading logic and improve loaded count tracking
+
+## [1.0.16-beta.3] - 2026-06-02 _(Pre-Release)_
+
+
+### Fixed
+- Improve byte offset tracking for multi-byte UTF-8 content in HttpTailManager
+- Remove unnecessary libc entries from package-lock.json
+
+## [1.0.16-beta.2] - 2026-06-01 _(Pre-Release)_
+
+
+### Fixed
+- **release**: Update commit message filtering to exclude release-related chores
+
+## [1.0.16-beta.1] - 2026-06-01 _(Pre-Release)_
+
+
+### Added
+- **filters**: Optimize message filtering with precompiled patterns for improved performance
+- **vite.config**: Disable modulePreload for optimized initial load and adjust chunking strategy
+- **parsers**: Add asynchronous parsing functions for paths and enhance error handling
 
 
 ### Changed
@@ -50,11 +85,6 @@ und dieses Projekt folgt [Semantic Versioning](https://semver.org/lang/de/).
 - **filterWorker**: Implement stateful caching for log filtering to improve performance
 - **enqueueAppends**: Improve handling of bulk appends and enforce buffer limits
 - **release**: Correct variable interpolation in version bump message
-- **release**: Update commit message filtering to exclude release-related chores
-- Improve byte offset tracking for multi-byte UTF-8 content in HttpTailManager
-- Remove unnecessary libc entries from package-lock.json
-- Implement boolean query syntax for message filtering in Elasticsearch
-- Enhance elastic entry loading logic and improve loaded count tracking
 
 
 ### Tests
@@ -62,6 +92,93 @@ und dieses Projekt folgt [Semantic Versioning](https://semver.org/lang/de/).
 - **measure-sync-io**: Enhance benchmarking with strict mode and failure reporting
 
 ## [1.0.15] - 2026-05-22
+
+
+### Changed
+- Enhance empty state messages for TCP server status and actions
+
+
+### Docs
+- Update CHANGELOG
+
+
+### Fixed
+- **LogRow**: Adjust background color handling for selected rows
+- **filters**: Ensure only active MDC entries are persisted in profiles
+
+## [1.0.15-beta.4] - 2026-05-10 _(Pre-Release)_
+
+
+### Added
+- Add manual update check feature in settings with status feedback
+- **export**: Enhance export functionality to support structured formats with correct mark colors
+
+
+### Changed
+- Convert LoggingStore to a pure event-bus and update event counting logic
+
+
+### Docs
+- Add HTTP and file tailing features to README [skip-ci]
+
+
+### Fixed
+- Enforce Node.js 24 for JavaScript actions in CI/CD workflows
+- Update Electron version in README and enhance features listc [skip-ci]
+- Enhance version comparison logic to support semantic versioning with prereleases
+- Implement Markdown rendering for update release notes
+- Safely dispose AutoUpdaterService if instantiated and handle errors
+- Update CSS variable for settings update availability color
+- **export**: NDJSON/CSV/MD save real content + restore mark colors on import
+- **export**: Remove hardcoded HTML extension from default filename to prevent format mismatch
+- **export**: Set NDJSON as default format and update save dialog filters
+- **import**: Add NDJSON support to file filters in IPC handlers and parsers
+
+
+### Performance
+- Silence hot-path diagnostic logs in production
+
+
+### Tests
+- **perf**: Extend baseline benchmark with filter, IPC payload and heap
+
+## [1.0.15-beta.3] - 2026-05-06 _(Pre-Release)_
+
+
+### Added
+- Implement in-app confirm dialog to replace native window.confirm for improved focus handling
+
+
+### Fixed
+- Adjust CSS selector for dark mode to improve styling of modal settings and warnings
+- Adjust settings navigation styles for improved layout and icon sizing
+- Add development CSP plugin to allow inline styles during Vite development
+- Expose setTcpOwnerWindowId method in shared API for improved window management
+- Refactor CI/CD workflows for improved organization and clarity
+- Update build workflow to restrict execution to version tags and manual triggers
+- Update Qodana workflow to support multiple branches and upgrade action version
+- Standardize quotes in Qodana workflow configuration
+
+## [1.0.15-beta.2] - 2026-05-05 _(Pre-Release)_
+
+
+### Added
+- Add HTTP tail count display in status indicators and translations
+- Add aggregated aria-live announcements for incoming logs and enhance accessibility
+
+
+### Changed
+- Calculate min/max timestamps for all entries to improve quick-select functionality in Elastic-Search-Dialog
+
+
+### Fixed
+- Add up and down arrow icons to navigation buttons in toolbar
+- Enhance focus management for native dialogs and improve keyboard input restoration
+- Update font-family variables in styles and improve toast import path
+- Enhance empty state UI with additional actions and icons for better user interaction
+- Update search URLs to include document IDs and indices for improved data retrieval
+
+## [1.0.15-beta.1] - 2026-05-04 _(Pre-Release)_
 
 
 ### Added
@@ -80,11 +197,6 @@ und dieses Projekt folgt [Semantic Versioning](https://semver.org/lang/de/).
 - Enhance error handling with cause property in various modules
 - Add HTTP tail stop functionality and update menu integration
 - Add release commands for macOS and Windows in package.json and update GitHub Actions workflow
-- Add HTTP tail count display in status indicators and translations
-- Add aggregated aria-live announcements for incoming logs and enhance accessibility
-- Implement in-app confirm dialog to replace native window.confirm for improved focus handling
-- Add manual update check feature in settings with status feedback
-- **export**: Enhance export functionality to support structured formats with correct mark colors
 
 
 ### Changed
@@ -94,15 +206,10 @@ und dieses Projekt folgt [Semantic Versioning](https://semver.org/lang/de/).
 - Improve dropdown positioning and styling for better visibility and usability
 - Enhance CI configuration to include test coverage and support macOS
 - Implement placeholder menu during app bootstrapping and install real menu on settings load
-- Calculate min/max timestamps for all entries to improve quick-select functionality in Elastic-Search-Dialog
-- Convert LoggingStore to a pure event-bus and update event counting logic
-- Enhance empty state messages for TCP server status and actions
 
 
 ### Docs
 - Update deployment and security guidelines for code signing and notarization
-- Add HTTP and file tailing features to README [skip-ci]
-- Update CHANGELOG
 
 
 ### Fixed
@@ -110,39 +217,6 @@ und dieses Projekt folgt [Semantic Versioning](https://semver.org/lang/de/).
 - Enhance profile import functionality with improved data normalization and error handling
 - Refine dialog filtering logic in Vite configuration
 - Add initialization promise and waitForInit method for filter profiles store
-- Add up and down arrow icons to navigation buttons in toolbar
-- Enhance focus management for native dialogs and improve keyboard input restoration
-- Update font-family variables in styles and improve toast import path
-- Enhance empty state UI with additional actions and icons for better user interaction
-- Update search URLs to include document IDs and indices for improved data retrieval
-- Adjust CSS selector for dark mode to improve styling of modal settings and warnings
-- Adjust settings navigation styles for improved layout and icon sizing
-- Add development CSP plugin to allow inline styles during Vite development
-- Expose setTcpOwnerWindowId method in shared API for improved window management
-- Refactor CI/CD workflows for improved organization and clarity
-- Update build workflow to restrict execution to version tags and manual triggers
-- Update Qodana workflow to support multiple branches and upgrade action version
-- Standardize quotes in Qodana workflow configuration
-- Enforce Node.js 24 for JavaScript actions in CI/CD workflows
-- Update Electron version in README and enhance features listc [skip-ci]
-- Enhance version comparison logic to support semantic versioning with prereleases
-- Implement Markdown rendering for update release notes
-- Safely dispose AutoUpdaterService if instantiated and handle errors
-- Update CSS variable for settings update availability color
-- **export**: NDJSON/CSV/MD save real content + restore mark colors on import
-- **export**: Remove hardcoded HTML extension from default filename to prevent format mismatch
-- **export**: Set NDJSON as default format and update save dialog filters
-- **import**: Add NDJSON support to file filters in IPC handlers and parsers
-- **LogRow**: Adjust background color handling for selected rows
-- **filters**: Ensure only active MDC entries are persisted in profiles
-
-
-### Performance
-- Silence hot-path diagnostic logs in production
-
-
-### Tests
-- **perf**: Extend baseline benchmark with filter, IPC payload and heap
 
 ## [1.0.14] - 2026-04-01
 
