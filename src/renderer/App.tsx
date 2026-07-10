@@ -78,6 +78,7 @@ import { nativeConfirm } from "../utils/nativeDialog";
 // Import refactored hooks
 import {
   useDebouncedValueWithFlush,
+  useDebounce,
   useFilterState,
   useHistoryPopovers,
   useAlerts,
@@ -366,6 +367,16 @@ export default function App(): JSX.Element {
     filter,
     350,
   );
+
+  // Koalesziertes `entries`-Snapshot als Filter-Trigger.
+  // Beim Streaming wird `entries` bis zu ~60×/Sekunde aktualisiert. Ohne
+  // Koaleszenz würde jeder Append (a) einen Worker-Filterlauf UND (b) die
+  // O(n)-Neuberechnung von `markedIdx`/`searchMatchIdx` auf dem Main-Thread
+  // auslösen → bei 100k–300k Einträgen friert die Oberfläche beim gleichzeitigen
+  // Tippen/Einstellen ein. Ein kurzes Debounce (120ms) bündelt Append-Bursts
+  // zu wenigen Filterläufen. Für statische Datensätze (reines Tippen im Filter)
+  // ist `entries` stabil, daher entsteht KEINE zusätzliche Latenz.
+  const debouncedEntries = useDebounce(entries, 120);
 
   // History popovers - using extracted hook
   const {
@@ -1047,7 +1058,7 @@ export default function App(): JSX.Element {
 
     hasTriggeredFilterRef.current = true;
     filterEntries(
-      entries,
+      debouncedEntries,
       {
         stdFiltersEnabled,
         filter: {
@@ -1068,13 +1079,12 @@ export default function App(): JSX.Element {
       onlyMarked ? marksMap : undefined,
     );
   }, [
-    entries,
+    debouncedEntries,
     stdFiltersEnabled,
     debouncedFilter,
     dcVersion,
     timeVersion,
     onlyMarked,
-    searchMode,
     filterEntries,
     // marksMap wirkt sich nur auf das Ergebnis aus, wenn `onlyMarked` aktiv
     // ist. Anderfalls wäre eine Aufnahme in die Deps eine unnötige
@@ -1498,13 +1508,16 @@ export default function App(): JSX.Element {
     const searchLimit = Math.min(len, 100_000);
     for (let vi = 0; vi < searchLimit; vi++) {
       const idx = filteredIdx[vi]!;
-      const e = entries[idx];
+      const e = debouncedEntries[idx];
       if (!e) continue;
       // #2: Markierung kommt aus marksMap, nicht mehr aus e._mark.
       if (marksMap[entrySignature(e)]) out.push(vi);
     }
     return out;
-  }, [filteredIdx, entries, marksMap]);
+    // `debouncedEntries` statt `entries`: `filteredIdx` wurde ebenfalls aus dem
+    // koaleszierten Snapshot berechnet. So läuft diese O(n)-Schleife beim
+    // Streaming nur gebündelt statt bei jedem einzelnen Append.
+  }, [filteredIdx, debouncedEntries, marksMap]);
 
   const searchMatchIdx = useMemo(() => {
     const s = String(debouncedSearch || "").trim();
@@ -1516,11 +1529,11 @@ export default function App(): JSX.Element {
     const searchLimit = Math.min(len, 50_000);
     for (let vi = 0; vi < searchLimit; vi++) {
       const idx = filteredIdx[vi]!;
-      const e = entries[idx];
+      const e = debouncedEntries[idx];
       if (msgMatches(e?.message ?? "", s, { mode: searchMode })) out.push(vi);
     }
     return out;
-  }, [debouncedSearch, filteredIdx, entries, searchMode]);
+  }, [debouncedSearch, filteredIdx, debouncedEntries, searchMode]);
 
   function gotoMarked(dir: number) {
     if (!markedIdx.length) return;
@@ -1736,7 +1749,12 @@ export default function App(): JSX.Element {
     setTimeout(() => {
       scrollToIndexCenter(filteredIdx.length - 1);
     }, 0);
-  }, [entries, follow, stdFiltersEnabled, filter, dcVersion, timeVersion]);
+    // Abhängigkeit nur auf das tatsächliche Filterergebnis `filteredIdx`:
+    // dieses spiegelt bereits neue Einträge UND jede Filteränderung wider.
+    // Vorher hing der Effekt am rohen `filter`-Objekt und lief so bei JEDEM
+    // Tastendruck im Filterfeld (setSelected + Scroll) – auch während das
+    // eigentliche Filtern noch debounced war.
+  }, [filteredIdx, follow]);
 
   function addMdcToFilter(k: string, v: string) {
     try {
