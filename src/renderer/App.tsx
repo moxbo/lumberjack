@@ -57,6 +57,7 @@ import type {
 import { MDCListener } from "../store/mdcListener";
 import { clearHighlightCache, LogRow } from "./LogRow";
 import { clearTimestampCache, fmtTimestamp } from "../utils/format";
+import { heavyFieldStore } from "../store/heavyFieldStore";
 import {
   exportToCsv,
   exportToMarkdown,
@@ -2569,6 +2570,9 @@ export default function App(): JSX.Element {
     // Caches leeren für bessere Speicherfreigabe
     clearHighlightCache();
     clearTimestampCache();
+    // Phase 2: ausgelagerte Detail-Felder (stackTrace/_fullMessage) verwerfen.
+    // Muss hier passieren, weil setNextId(1) die _id-Vergabe zurücksetzt.
+    void heavyFieldStore.clear();
     // PIT-Session schließen (best effort)
     (async () => {
       try {
@@ -2618,11 +2622,37 @@ export default function App(): JSX.Element {
         (idx) => currentEntries[idx],
       );
 
+      // Phase 2: ausgelagerte Detail-Felder (stackTrace/_fullMessage) für den
+      // Export nachladen. Nur JSON/NDJSON serialisieren stackTrace – für alle
+      // anderen Formate sparen wir uns den IndexedDB-Roundtrip.
+      let exportEntriesHydrated = exportEntries;
+      if (format === "json" || format === "ndjson") {
+        const offloadedIds: number[] = [];
+        for (const e of exportEntries) {
+          if (e && e._offloaded && typeof e._id === "number") {
+            offloadedIds.push(e._id);
+          }
+        }
+        if (offloadedIds.length > 0) {
+          const heavy = await heavyFieldStore.getMany(offloadedIds);
+          exportEntriesHydrated = exportEntries.map((e) => {
+            if (!e || !e._offloaded || typeof e._id !== "number") return e;
+            const rec = heavy.get(e._id);
+            if (!rec) return e;
+            return {
+              ...e,
+              stackTrace: rec.stackTrace ?? e.stackTrace ?? null,
+              _fullMessage: rec._fullMessage ?? e._fullMessage,
+            };
+          });
+        }
+      }
+
       let content: string;
 
       if (format === "json") {
         // JSON export - include mark color explicitly
-        const jsonEntries = exportEntries.map((e) => ({
+        const jsonEntries = exportEntriesHydrated.map((e) => ({
           timestamp: e?.timestamp,
           level: e?.level,
           logger: e?.logger,
@@ -2656,7 +2686,7 @@ export default function App(): JSX.Element {
         // aus marksMap (Single-Source-of-Truth), damit auch in der aktuellen
         // Session manuell gesetzte Marks (die nicht mehr direkt in `e._mark`
         // landen) korrekt exportiert werden.
-        const enriched = exportEntries.map((e) => {
+        const enriched = exportEntriesHydrated.map((e) => {
           const mark = e
             ? currentMarksMap[entrySignature(e)] ||
               (e._mark as string | undefined)

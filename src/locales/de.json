@@ -166,7 +166,8 @@
     "traceId": "Trace ID",
     "service": "Service",
     "emptyValue": "(leer)",
-    "addFilterButton": "+ Filter"
+    "addFilterButton": "+ Filter",
+    "loading": "Wird geladen …"
   },
   "contextMenu": {
     "removeMark": "Markierung löschen",

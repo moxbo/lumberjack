@@ -23,6 +23,11 @@ import {
   TRIM_THRESHOLD_ENTRIES,
 } from "../constants";
 import { getRendererLogEntryPool } from "../store/RendererLogEntryPool";
+import {
+  heavyFieldStore,
+  OFFLOAD_MIN_CHARS,
+  type HeavyRecord,
+} from "../store/heavyFieldStore";
 
 interface UseEntryManagementOptions {
   marksMap: Record<string, string>;
@@ -286,6 +291,46 @@ export function useEntryManagement({ marksMap }: UseEntryManagementOptions) {
         if (entry) entry.raw = null;
       }
 
+      // Phase 2: Große Detail-Felder (stackTrace, _fullMessage) auslagern.
+      //
+      // Diese Felder werden ausschließlich in der Detailansicht bzw. beim
+      // Export benötigt – die Log-Tabelle, die Filterung und die Suche lesen
+      // sie NIE. Wir schreiben sie (ab einer Mindestgröße) in den
+      // heavyFieldStore (IndexedDB) und entfernen sie aus dem In-Memory-Eintrag.
+      // Die Detailansicht lädt sie bei Bedarf per `_id` nach. So bleibt der
+      // Renderer-Heap bei großen Stacktraces / sehr langen Nachrichten klein,
+      // während Scrollen/Filtern/Suchen vollständig synchron bleiben.
+      const offloadRecords: HeavyRecord[] = [];
+      for (let i = 0; i < toAdd.length; i++) {
+        const entry = toAdd[i];
+        if (!entry || typeof entry._id !== "number") continue;
+        const stack =
+          typeof entry.stackTrace === "string" ? entry.stackTrace : "";
+        const full =
+          typeof entry._fullMessage === "string" ? entry._fullMessage : "";
+        const stackBig = stack.length > OFFLOAD_MIN_CHARS;
+        const fullBig = full.length > OFFLOAD_MIN_CHARS;
+        if (!stackBig && !fullBig) continue;
+
+        const rec: HeavyRecord = { _id: entry._id };
+        if (stackBig) {
+          rec.stackTrace = stack;
+          entry._hasStack = true; // Header in der Detailansicht anzeigen
+          entry.stackTrace = null; // aus dem Speicher entfernen
+        }
+        if (fullBig) {
+          rec._fullMessage = full;
+          rec._messageSize = entry._messageSize;
+          entry._fullMessage = undefined; // aus dem Speicher entfernen
+        }
+        entry._offloaded = true;
+        offloadRecords.push(rec);
+      }
+      if (offloadRecords.length > 0) {
+        // Best-effort, asynchron – blockiert das Append nie.
+        void heavyFieldStore.putMany(offloadRecords);
+      }
+
       // Update state
       setEntries((prev) => {
         const sortedNew = toAdd.slice().sort(compareByTimestampId as any);
@@ -423,6 +468,11 @@ export function useEntryManagement({ marksMap }: UseEntryManagementOptions) {
     clearTimestampCache();
     clearTimestampParseCache();
     clearRegexCache();
+
+    // Phase 2: ausgelagerte Detail-Felder verwerfen. Wichtig, weil `_id`s
+    // nach dem Reset wieder bei 1 beginnen und sonst Alt-Records fälschlich
+    // für neue Einträge geladen würden.
+    void heavyFieldStore.clear();
 
     try {
       (LoggingStore as any).reset();
