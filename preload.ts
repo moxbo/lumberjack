@@ -456,6 +456,12 @@ const api: ElectronAPI = {
     tails: Array<{ id: number; url: string; offset: number }>;
   }> => ipcRenderer.invoke("httpTail:list"),
 
+  httpTailGetAuthHeader: (): Promise<{
+    ok: boolean;
+    authHeader: string;
+    error?: string;
+  }> => ipcRenderer.invoke("httpTail:getAuthHeader"),
+
   onHttpTailStatus: (
     callback: (payload: {
       type: "started" | "stopped" | "rotated" | "error" | "lines" | "progress";
@@ -471,12 +477,7 @@ const api: ElectronAPI = {
       _e: IpcRendererEvent,
       payload: {
         type:
-          | "started"
-          | "stopped"
-          | "rotated"
-          | "error"
-          | "lines"
-          | "progress";
+          "started" | "stopped" | "rotated" | "error" | "lines" | "progress";
         id: number;
         url: string;
         lineCount?: number;

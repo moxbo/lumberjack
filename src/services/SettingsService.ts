@@ -43,6 +43,9 @@ const DEFAULT_SETTINGS: Settings = {
   lastTimestampField: "",
   httpUrl: "",
   httpPollInterval: 5, // Interval in seconds
+  httpTailEmitInitial: false,
+  httpTailAllowInsecureSSL: false,
+  httpAuthHeaderEnc: "",
   elasticMaxParallel: 1,
   // Auto-Update
   allowPrerelease: false,

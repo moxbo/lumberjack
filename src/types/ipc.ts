@@ -71,6 +71,16 @@ export interface Settings {
   // HTTP
   httpUrl?: string;
   httpPollInterval?: number;
+  /** Last used "emit initial content" flag for the HTTP tail dialog */
+  httpTailEmitInitial?: boolean;
+  /** Last used "allow insecure SSL" flag for the HTTP tail dialog */
+  httpTailAllowInsecureSSL?: boolean;
+  /** Encrypted HTTP auth header (never returned in plaintext by settingsGet) */
+  httpAuthHeaderEnc?: string;
+  /** Plaintext auth header to encrypt and store (write-only, used during settingsSet) */
+  httpAuthHeaderPlain?: string;
+  /** Set to true to clear the stored encrypted auth header */
+  httpAuthHeaderClear?: boolean;
 
   // UI runtime prefs (persisted)
   follow?: boolean;
@@ -496,6 +506,15 @@ export type ElectronAPI = {
   httpTailList: () => Promise<{
     ok: boolean;
     tails: Array<{ id: number; url: string; offset: number }>;
+  }>;
+  /**
+   * Return the decrypted HTTP auth header stored in settings so the tail
+   * dialog can be pre-filled after a restart. Never exposed via settingsGet.
+   */
+  httpTailGetAuthHeader: () => Promise<{
+    ok: boolean;
+    authHeader: string;
+    error?: string;
   }>;
   onHttpTailStatus: (
     callback: (payload: {

@@ -1630,6 +1630,20 @@ export function registerIpcHandlers(
     return { ok: true, tails: httpTailManager.list() };
   });
 
+  ipcMain.handle("httpTail:getAuthHeader", () => {
+    try {
+      const settings = settingsService.get();
+      return {
+        ok: true,
+        authHeader: settingsService.decryptSecret(
+          settings.httpAuthHeaderEnc || "",
+        ),
+      };
+    } catch (e) {
+      return { ok: false, authHeader: "", error: String(e) };
+    }
+  });
+
   app.on("before-quit", () => {
     try {
       httpTailManager.stopAll();

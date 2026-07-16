@@ -650,6 +650,13 @@ export default function App(): JSX.Element {
 
   const [httpUrl, setHttpUrl] = useState<string>("");
   const [httpInterval, setHttpInterval] = useState<number>(5000);
+  // HTTP-Tail-Dialog: zuletzt verwendete Optionen (werden persistiert und beim
+  // Öffnen des Dialogs vorbelegt, damit nach einem Neustart nichts verloren geht).
+  const [httpTailEmitInitial, setHttpTailEmitInitial] =
+    useState<boolean>(false);
+  const [httpTailAllowInsecureSSL, setHttpTailAllowInsecureSSL] =
+    useState<boolean>(false);
+  const [httpTailAuthHeader, setHttpTailAuthHeader] = useState<string>("");
   const [showSettings, setShowSettings] = useState<boolean>(false);
   const [settingsTab, setSettingsTab] = useState<SettingsTab>("tcp");
   const [form, setForm] = useState<SettingsFormState>({
@@ -725,6 +732,42 @@ export default function App(): JSX.Element {
       interval: Number(interval || 5),
     });
     setShowHttpPollDlg(true);
+  }
+
+  // Öffnet den HTTP-Tail-Dialog und belegt ihn mit den zuletzt verwendeten
+  // Werten vor (URL, Intervall, Optionen und – falls hinterlegt – dem
+  // verschlüsselt gespeicherten Auth-Header). So geht nach einem Neustart
+  // die zuletzt genutzte Tail-Konfiguration nicht verloren.
+  async function openHttpTailDialog() {
+    try {
+      const r = await getSettings();
+      if (r) {
+        if (typeof r.httpUrl === "string") setHttpUrl(r.httpUrl);
+        const int = r.httpPollInterval ?? httpInterval;
+        if (int != null) setHttpInterval(Number(int) || 5);
+        setHttpTailEmitInitial(!!r.httpTailEmitInitial);
+        setHttpTailAllowInsecureSSL(!!r.httpTailAllowInsecureSSL);
+      }
+      // Der Auth-Header wird nie im Klartext über settingsGet ausgeliefert –
+      // separat (entschlüsselt) abrufen.
+      const api = (
+        window as unknown as {
+          api?: {
+            httpTailGetAuthHeader?: () => Promise<{
+              ok: boolean;
+              authHeader: string;
+            }>;
+          };
+        }
+      ).api;
+      if (api?.httpTailGetAuthHeader) {
+        const auth = await api.httpTailGetAuthHeader();
+        setHttpTailAuthHeader(auth?.ok ? auth.authHeader || "" : "");
+      }
+    } catch (e) {
+      logger.warn("Failed to load settings for HTTP tail dialog:", e);
+    }
+    setShowHttpTailDialog(true);
   }
 
   // Logging-Settings
@@ -1814,6 +1857,11 @@ export default function App(): JSX.Element {
         // Support both httpPollInterval (persisted) and httpInterval (legacy)
         const interval = r.httpPollInterval;
         if (interval != null) setHttpInterval(Number(interval) || 5);
+        // HTTP-Tail-Optionen für die Dialog-Vorbelegung übernehmen
+        if (typeof r.httpTailEmitInitial === "boolean")
+          setHttpTailEmitInitial(r.httpTailEmitInitial);
+        if (typeof r.httpTailAllowInsecureSSL === "boolean")
+          setHttpTailAllowInsecureSSL(r.httpTailAllowInsecureSSL);
         // Entfernt: Laden einer persistierten Logger-Historie, damit Verlauf nur temporär ist
         // if (Array.isArray(r.histLogger)) setHistLogger(r.histLogger);
         if (Array.isArray(r.histAppName)) setHistAppName(r.histAppName);
@@ -2202,7 +2250,7 @@ export default function App(): JSX.Element {
                 break;
               }
               case "http-tail-start": {
-                setShowHttpTailDialog(true);
+                void openHttpTailDialog();
                 break;
               }
               case "http-tail-stop-all": {
@@ -3027,7 +3075,7 @@ export default function App(): JSX.Element {
       }
     },
     hasActiveWatchers: fileWatcher.watchers.length > 0,
-    onOpenHttpTail: () => setShowHttpTailDialog(true),
+    onOpenHttpTail: () => void openHttpTailDialog(),
     onStopAllHttpTails: async () => {
       try {
         for (const t2 of httpTail.tails) {
@@ -3518,17 +3566,35 @@ export default function App(): JSX.Element {
           open={showHttpTailDialog}
           initialUrl={httpUrl}
           initialIntervalSec={Math.max(1, Math.round(httpInterval || 2))}
-          initialEmitInitial={false}
-          initialAllowInsecureSSL={false}
-          initialAuthHeader=""
+          initialEmitInitial={httpTailEmitInitial}
+          initialAllowInsecureSSL={httpTailAllowInsecureSSL}
+          initialAuthHeader={httpTailAuthHeader}
           isAnyTailActive={httpTail.tails.length > 0}
           onClose={() => setShowHttpTailDialog(false)}
           onStart={async (args) => {
             try {
+              // Zuletzt verwendete Werte merken, damit der Dialog nach einem
+              // Neustart wieder vorbelegt werden kann (Auth-Header wird im
+              // Hauptprozess verschlüsselt abgelegt).
+              const intervalSec = Math.max(1, Math.round(args.intervalSec));
+              setHttpUrl(args.url);
+              setHttpInterval(intervalSec);
+              setHttpTailEmitInitial(args.emitInitial);
+              setHttpTailAllowInsecureSSL(args.allowInsecureSSL);
+              setHttpTailAuthHeader(args.authHeader);
+              void patchSettings({
+                httpUrl: args.url,
+                httpPollInterval: intervalSec,
+                httpTailEmitInitial: args.emitInitial,
+                httpTailAllowInsecureSSL: args.allowInsecureSSL,
+                ...(args.authHeader
+                  ? { httpAuthHeaderPlain: args.authHeader }
+                  : { httpAuthHeaderClear: true }),
+              });
               const headers: Record<string, string> = {};
               if (args.authHeader) headers.Authorization = args.authHeader;
               const r = await httpTail.start(args.url, {
-                intervalMs: args.intervalSec * 1000,
+                intervalMs: intervalSec * 1000,
                 emitInitial: args.emitInitial,
                 headers: Object.keys(headers).length ? headers : undefined,
                 allowInsecureSSL: args.allowInsecureSSL,
