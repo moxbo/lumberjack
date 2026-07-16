@@ -46,7 +46,6 @@ import {
 import type {
   RendererLogEntry,
   ElasticFormState,
-  ContextMenuState,
   HttpPollFormState,
   ThemeMode,
   SettingsTab,
@@ -69,9 +68,6 @@ import {
   setDebugFilteredIdxRef,
 } from "../utils/debugFunctions";
 
-// Import refactored constants
-import { BASE_MARK_COLORS } from "../constants";
-
 // Import refactored utilities
 import { entrySignature } from "../utils/entryUtils";
 import { nativeConfirm } from "../utils/nativeDialog";
@@ -93,6 +89,9 @@ import {
   useEntryManagement,
   useCommands,
   useFilterWorker,
+  useA11yAnnouncer,
+  useHttpPollCountdown,
+  useContextMenuActions,
 } from "../hooks";
 
 // Import refactored components - core components loaded eagerly
@@ -203,33 +202,7 @@ export default function App(): JSX.Element {
 
   // QW-11 / A11Y-3: aggregated aria-live announcement for incoming logs.
   // Screen readers receive a debounced summary like "+12 INFO, +1 ERROR" every ~2s.
-  const [a11yAnnouncement, setA11yAnnouncement] = useState<string>("");
-  const a11yPendingRef = useRef<Record<string, number>>({});
-  const a11yTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const announceAppend = useCallback(
-    (newEntries: ReadonlyArray<{ level?: string | null }> | undefined) => {
-      if (!newEntries || newEntries.length === 0) return;
-      const pend = a11yPendingRef.current;
-      for (const e of newEntries) {
-        const lvl = (e?.level || "OTHER").toString().toUpperCase();
-        pend[lvl] = (pend[lvl] || 0) + 1;
-      }
-      if (a11yTimerRef.current) return;
-      a11yTimerRef.current = setTimeout(() => {
-        a11yTimerRef.current = null;
-        const counts = a11yPendingRef.current;
-        a11yPendingRef.current = {};
-        const total = Object.values(counts).reduce((a, b) => a + b, 0);
-        if (total === 0) return;
-        const summary = Object.entries(counts)
-          .sort((a, b) => b[1] - a[1])
-          .map(([lvl, n]) => `+${n} ${lvl}`)
-          .join(", ");
-        setA11yAnnouncement(`${total} – ${summary}`);
-      }, 2000);
-    },
-    [],
-  );
+  const { a11yAnnouncement, announceAppend } = useA11yAnnouncer();
   // Alert rules (persisted via IPC) + evaluator hooked into the append-pipeline.
   const alertRulesHook = useAlertRules();
   const alertRunner = useAlertRunner({
@@ -783,117 +756,6 @@ export default function App(): JSX.Element {
   const [elasticHasPass, setElasticHasPass] = useState<boolean>(false);
   const [elasticMaxParallel, setElasticMaxParallel] = useState<number>(1);
 
-  // Kontextmenü + Farbpalette
-  const [ctxMenu, setCtxMenu] = useState<ContextMenuState>({
-    open: false,
-    x: 0,
-    y: 0,
-  });
-  const ctxRef = useRef<HTMLDivElement | null>(null);
-  const [customColors, setCustomColors] = useState<string[]>([]);
-  const [pickerColor, setPickerColor] = useState<string>("#ffcc00");
-  const palette = useMemo(
-    () => [...BASE_MARK_COLORS, ...customColors],
-    [customColors],
-  );
-  function addCustomColor(c: string) {
-    const color = String(c || "").trim();
-    if (!color) return;
-    setCustomColors((prev) => {
-      const list = prev.includes(color) ? prev : [...prev, color];
-      try {
-        patchSettingsQuiet({ customMarkColors: list });
-      } catch (e) {
-        logger.error("Failed to save customMarkColors settings:", e);
-      }
-      return list;
-    });
-  }
-  function closeContextMenu() {
-    setCtxMenu({ open: false, x: 0, y: 0 });
-  }
-  useEffect(() => {
-    if (!ctxMenu.open) return;
-    const onMouseDown = (e: MouseEvent) => {
-      try {
-        if (!ctxRef.current) return closeContextMenu();
-        if (!ctxRef.current.contains(e.target as Node)) closeContextMenu();
-      } catch {
-        closeContextMenu();
-      }
-    };
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") closeContextMenu();
-    };
-    window.addEventListener("mousedown", onMouseDown, true);
-    window.addEventListener("keydown", onKey);
-    return () => {
-      window.removeEventListener("mousedown", onMouseDown, true);
-      window.removeEventListener("keydown", onKey);
-    };
-  }, [ctxMenu.open]);
-  function openContextMenu(ev: MouseEvent, idx: number) {
-    try {
-      ev.preventDefault();
-      setSelected((prev) => {
-        if (prev && prev.has(idx)) return prev;
-        return new Set([idx]);
-      });
-      setCtxMenu({ open: true, x: ev.clientX, y: ev.clientY });
-      // Stelle sicher, dass die Liste fokussiert bleibt auch nach Kontextmenü
-      try {
-        setTimeout(() => {
-          if (
-            parentRef.current &&
-            !parentRef.current.contains(document.activeElement || null)
-          ) {
-            parentRef.current?.focus({ preventScroll: true });
-          }
-        }, 0);
-      } catch (err) {
-        logger.warn("Failed to restore focus after context menu:", err);
-      }
-    } catch (err) {
-      logger.error("openContextMenu error:", err);
-    }
-  }
-
-  // Markierung anwenden/entfernen + Persistenz.
-  // Performance-Quick-Win #2: Es wird KEIN `_mark`-Feld mehr in die
-  // Entry-Objekte geschrieben. Stattdessen ist die `marksMap` (signature
-  // → color) die Single-Source-of-Truth. LogRow, DetailPanel, Filter
-  // (`onlyMarked`) und Bookmarks lesen die Markierung über die Map.
-  // Vorteil: kein Vollscan über `entries` + kein Re-Filter pro Mark-Change.
-  function applyMarkColor(color?: string) {
-    if (!entries.length) {
-      closeContextMenu();
-      return;
-    }
-    const newMap: Record<string, string> = { ...marksMap };
-    for (const i of selected) {
-      if (i >= 0 && i < entries.length) {
-        const e = entries[i];
-        if (!e) continue;
-        const sig = entrySignature(e);
-        if (color) {
-          newMap[sig] = color;
-        } else {
-          delete newMap[sig];
-        }
-      }
-    }
-    setMarksMap(newMap);
-    try {
-      patchSettingsQuiet({ marksMap: newMap });
-    } catch {}
-    closeContextMenu();
-  }
-  // Hinweis: Der frühere Sync-Effect, der bei jeder marksMap-Änderung das
-  // gesamte `entries`-Array via setEntries(prev.map(...)) rebuildete, ist
-  // entfernt. Er triggerte einen Vollscan + Re-Filter im UtilityProcess.
-  // Markierungen werden nun direkt aus `marksMap` zur Render-Zeit
-  // aufgelöst (siehe LogRow/DetailPanel-Aufrufe weiter unten).
-
   /**
    * Hydratisiert `marksMap` aus frisch importierten Einträgen, die bereits
    * eine Mark-Farbe (z. B. aus einem JSON/NDJSON-Re-Import einer früheren
@@ -930,68 +792,6 @@ export default function App(): JSX.Element {
     [marksMap],
   );
 
-  function adoptTraceIds() {
-    try {
-      const variants = [
-        "TraceID",
-        "traceId",
-        "trace_id",
-        "trace.id",
-        "trace-id",
-        "x-trace-id",
-        "x_trace_id",
-        "x.trace.id",
-        "trace",
-      ];
-      const added = new Set<string>();
-      for (const i of selected) {
-        const e = entries[i];
-        const m = e && e.mdc;
-        if (!m || typeof m !== "object") continue;
-        for (const k of variants) {
-          if (Object.prototype.hasOwnProperty.call(m, k)) {
-            const v = String(m[k] ?? "");
-            if (v && !added.has(v)) {
-              DiagnosticContextFilter.addMdcEntry("TraceID", v);
-              added.add(v);
-            }
-          }
-        }
-      }
-      if (added.size) DiagnosticContextFilter.setEnabled(true);
-    } catch (e) {
-      logger.warn("adoptTraceIds failed:", e);
-    }
-    closeContextMenu();
-  }
-  async function copyTsMsg(): Promise<void> {
-    const list = Array.from(selected).sort((a, b) => a - b);
-    const lines = list.map((i) => {
-      const e: RendererLogEntry | undefined = entries[i];
-      if (!e) return "";
-      return `${fmtTimestamp(e.timestamp)}\n${String(e.message ?? "")}`;
-    });
-    const text = lines.join("\n");
-    try {
-      if ((navigator as any)?.clipboard?.writeText)
-        await (navigator as any).clipboard.writeText(text);
-      else {
-        const ta = document.createElement("textarea");
-        ta.value = text;
-        ta.style.position = "fixed";
-        ta.style.left = "-9999px";
-        document.body.appendChild(ta);
-        ta.select();
-        document.execCommand("copy");
-        document.body.removeChild(ta);
-      }
-    } catch (e) {
-      logger.error("Failed to copy to clipboard:", e);
-      showAlert(t("errors.copyFailed"));
-    }
-    closeContextMenu();
-  }
-
   // Busy helper
   const [busy, setBusy] = useState<boolean>(false);
   const [esBusy, setEsBusy] = useState<boolean>(false);
@@ -1004,45 +804,11 @@ export default function App(): JSX.Element {
     }
   };
 
-  // HTTP polling helper state
-  const [nextPollDueAt, setNextPollDueAt] = useState<number | null>(null);
-  const [nextPollIn, setNextPollIn] = useState<string>("");
-  useEffect(() => {
-    if (!nextPollDueAt) {
-      setNextPollIn("");
-      return;
-    }
-    let t = 0 as unknown as number;
-    const tick = () => {
-      const ms = Math.max(0, Number(nextPollDueAt) - Date.now());
-      const active = httpPollId != null && currentPollInterval != null;
-      setNextPollIn(ms > 0 ? `${Math.ceil(ms / 1000)}s` : active ? "0s" : "");
-    };
-    tick();
-    t = window.setInterval(tick, 250) as unknown as number;
-    return () => clearInterval(t as unknown as number);
-  }, [nextPollDueAt, httpPollId, currentPollInterval]);
-
-  // NEU: Halte den Countdown am Laufen, selbst wenn einzelne Ticks keine Events liefern
-  useEffect(() => {
-    // Nur aktiv, wenn ein Poll läuft und wir das reale Intervall kennen
-    const interval =
-      currentPollInterval != null ? Math.max(500, currentPollInterval) : null;
-    if (httpPollId == null || interval == null) {
-      return;
-    }
-    // Beim (Re-)Start sofort DueAt setzen
-    setNextPollDueAt(Date.now() + interval);
-
-    // Danach in diesem Intervall immer wieder neu setzen
-    const h = window.setInterval(() => {
-      setNextPollDueAt(Date.now() + interval);
-    }, interval) as unknown as number;
-
-    return () => {
-      clearInterval(h as unknown as number);
-    };
-  }, [httpPollId, currentPollInterval]);
+  // HTTP polling helper state – countdown extracted into useHttpPollCountdown.
+  const { nextPollIn, setNextPollDueAt } = useHttpPollCountdown({
+    httpPollId,
+    currentPollInterval,
+  });
 
   // Filter statistics for debugging why entries are filtered out
   const [lastFilterStats, setLastFilterStats] = useState<FilterStats | null>(
@@ -1052,6 +818,30 @@ export default function App(): JSX.Element {
   // Refs/Layout/Virtualizer
   const parentRef = useRef<HTMLDivElement | null>(null);
   const [isParentMounted, setIsParentMounted] = useState(false);
+
+  // Log-list context menu (state, mark colors, clipboard, trace-id adoption)
+  const {
+    ctxMenu,
+    ctxRef,
+    openContextMenu,
+    setCustomColors,
+    pickerColor,
+    setPickerColor,
+    palette,
+    addCustomColor,
+    applyMarkColor,
+    copyTsMsg,
+    adoptTraceIds,
+  } = useContextMenuActions({
+    entries,
+    selected,
+    setSelected,
+    marksMap,
+    setMarksMap,
+    parentRef,
+    showAlert,
+    t,
+  });
 
   // Track when parent element is mounted - use a layout effect to set this ASAP
   useEffect(() => {
@@ -2918,7 +2708,6 @@ export default function App(): JSX.Element {
     if (r.ok) {
       setHttpStatus(t("status.httpPollStopped"));
       setHttpPollId(null);
-      setNextPollIn("");
       setNextPollDueAt(null);
       setCurrentPollInterval(null);
     }
@@ -3154,6 +2943,367 @@ export default function App(): JSX.Element {
     }, 100);
   }, []);
 
+  // Handler for the Elasticsearch dialog "Apply/Search" action. Extracted from
+  // the inline JSX to keep the render tree readable. Behaviour is unchanged.
+  const handleElasticApply = async (formVals: any) => {
+    try {
+      setShowTimeDialog(false);
+      addToHistory("app", formVals?.application_name || "");
+      addToHistory("env", formVals?.environment || "");
+      addToHistory("index", formVals?.index || ""); // NEW: save index to history
+      setLastEsForm(formVals);
+      try {
+        const envCase = (formVals?.environmentCase || "original") as
+          "original" | "lower" | "upper" | "case-sensitive";
+        await patchSettings({
+          lastEnvironmentCase: envCase,
+          // Zuletzt genutztes Zeitstempel-Feld als Default merken.
+          lastTimestampField: String(formVals?.timestampField || ""),
+        });
+      } catch (e) {
+        logger.warn("Persisting lastEnvironmentCase failed:", e as any);
+      }
+
+      // Bestimme Load-Mode gleich zu Beginn
+      const loadMode = String(formVals.loadMode || "append");
+
+      // Falls wir ersetzen: offene PIT-Session vorher schließen
+      if (loadMode === "replace" && esPitSessionId) {
+        try {
+          await typedElasticClosePit(esPitSessionId);
+        } catch (e) {
+          logger.warn("elasticClosePit before new search failed:", e as any);
+        }
+        setEsPitSessionId(null);
+      }
+
+      // Zeitfilter-Anpassung abhängig von loadMode
+      try {
+        if (loadMode === "replace") {
+          if (formVals.mode === "relative" && formVals.duration) {
+            TimeFilter.setRelative(formVals.duration);
+            TimeFilter.setEnabled(true);
+          } else if (formVals.mode === "absolute") {
+            const from = formVals.from || undefined;
+            const to = formVals.to || undefined;
+            TimeFilter.setAbsolute(from, to);
+            TimeFilter.setEnabled(true);
+          }
+        } else {
+          const state = TimeFilter.getState();
+          const wasEnabled = state && state.enabled;
+          if (formVals.mode === "absolute" && wasEnabled) {
+            const curFrom: string | null = state.from ?? null;
+            const curTo: string | null = state.to ?? null;
+            const newFrom: string | null = (formVals.from || "").trim() || null;
+            const newTo: string | null = (formVals.to || "").trim() || null;
+            const parseMs = (s: string | null) => {
+              if (!s) return NaN;
+              const ms = Date.parse(s);
+              return isNaN(ms) ? NaN : ms;
+            };
+            const minIso = (
+              a: string | null,
+              b: string | null,
+            ): string | undefined => {
+              const am = parseMs(a);
+              const bm = parseMs(b);
+              if (isNaN(am)) return b || undefined;
+              if (isNaN(bm)) return a || undefined;
+              return am <= bm ? a || undefined : b || undefined;
+            };
+            const maxIso = (
+              a: string | null,
+              b: string | null,
+            ): string | undefined => {
+              const am = parseMs(a);
+              const bm = parseMs(b);
+              if (isNaN(am)) return b || undefined;
+              if (isNaN(bm)) return a || undefined;
+              return am >= bm ? a || undefined : b || undefined;
+            };
+            const unionFrom = minIso(curFrom, newFrom);
+            const unionTo = maxIso(curTo, newTo);
+            TimeFilter.setAbsolute(unionFrom, unionTo);
+            TimeFilter.setEnabled(true);
+          }
+        }
+      } catch (e) {
+        logger.warn("TimeFilter update (Elastic) failed:", e);
+      }
+
+      await withBusy(async () => {
+        setEsBusy(true);
+        setEsTotal(null);
+        try {
+          const opts: ElasticSearchOptions = {
+            url: elasticUrl || undefined,
+            size: elasticSize || undefined,
+            index: formVals.index,
+            sort: formVals.sort,
+            duration:
+              formVals.mode === "relative" ? formVals.duration : undefined,
+            from: formVals.mode === "absolute" ? formVals.from : undefined,
+            to: formVals.mode === "absolute" ? formVals.to : undefined,
+            application_name: formVals.application_name,
+            logger: formVals.logger,
+            level: formVals.level,
+            environment: formVals.environment,
+            message: formVals.message,
+            environmentCase: formVals.environmentCase || "original",
+            allowInsecureTLS: !!formVals.allowInsecureTLS,
+            // optionale PIT-Optimierungen
+            keepAlive: "5m",
+            // Beim ersten Request die echte Gesamtzahl ermitteln, damit
+            // die UI die tatsächlich vorhandenen Treffer (z. B. 15766)
+            // anzeigt – nicht nur die geladene Menge. Folgeseiten setzen
+            // das aus Performancegründen wieder auf false.
+            trackTotalHits: true,
+          } as any;
+          logger.info("[Elastic] Search started", {
+            hasResponse: false,
+          });
+          // Geladen-Zähler für diesen Suchvorgang zurücksetzen.
+          setEsLoadedCount(0);
+          // Jede neue Suche bekommt immer die vollen elasticSize Slots,
+          // damit Einträge auch bei aktivem Filter vollständig geladen werden.
+          // Mehr als elasticSize wird bei Bedarf über den
+          // "Nachladen"-Button (esLoadMore) geladen.
+          let available = Math.max(0, elasticSize || 0);
+          let carriedPit: string | null = null;
+          let nextToken: Array<string | number> | null = null;
+          let hasMore = false;
+
+          // Erste Seite holen
+          const res = await typedElasticSearch(opts);
+          const total = Array.isArray(res?.entries) ? res.entries.length : 0;
+          logger.info("[Elastic] Search finished", {
+            ok: res?.ok,
+            total,
+            hasResponse: true,
+          });
+          if (res?.ok) {
+            hasMore = !!res.hasMore;
+            nextToken = (res.nextSearchAfter as any) || null;
+            carriedPit = res.pitSessionId || null;
+            setEsHasMore(hasMore);
+            setEsNextSearchAfter(nextToken);
+            setEsPitSessionId(carriedPit);
+            setEsTotal(
+              typeof res?.total === "number" ? Number(res.total) : null,
+            );
+
+            if (loadMode === "replace") {
+              // Vollständiges Zurücksetzen: alle vorhandenen Einträge entfernen
+              setEntries([]);
+              setSelected(new Set());
+              setNextId(1);
+              // Datei-Dedupe-Cache leeren, damit Files erneut geladen werden können
+              fileSigCacheRef.current = new Map();
+              // HTTP-Dedupe-Cache leeren
+              httpSigCacheRef.current = new Map();
+              // LoggingStore zurücksetzen (MDC etc.)
+              try {
+                LoggingStore.reset();
+              } catch (e) {
+                logger.error("LoggingStore.reset error (Elastic replace)", e);
+              }
+            }
+
+            // Anhängen mit Kappung
+            const messageFilter = formVals.message || "";
+            if (Array.isArray(res.entries) && res.entries.length) {
+              const used = appendElasticCapped(
+                res.entries as any[],
+                available,
+                {
+                  ignoreExistingForElastic: loadMode === "replace",
+                  messageFilter,
+                },
+              );
+              available = Math.max(0, available - used);
+              setEsLoadedCount((c) => c + used);
+            }
+
+            // Auto-Nachladen bis Cap erreicht oder keine weiteren Seiten
+            while (available > 0 && hasMore) {
+              const moreOpts: ElasticSearchOptions = {
+                ...opts,
+                // Seite auf verbleibendes Budget begrenzen, damit nach
+                // Dedup-bedingtem Nachladen kein großes Overshoot entsteht.
+                size: Math.max(1, available),
+                // Gesamtzahl nur einmal (erster Request) ermitteln.
+                trackTotalHits: false,
+                // Für PIT: nextSearchAfter übergeben; für Scroll bleibt es undefiniert
+                ...(nextToken &&
+                Array.isArray(nextToken) &&
+                nextToken.length > 0
+                  ? { searchAfter: nextToken as any }
+                  : {}),
+                pitSessionId: carriedPit || undefined,
+              } as any;
+              const r2 = await typedElasticSearch(moreOpts);
+              if (!r2?.ok) break;
+              hasMore = !!r2.hasMore;
+              nextToken = (r2.nextSearchAfter as any) || null;
+              carriedPit = r2.pitSessionId || carriedPit;
+              setEsHasMore(hasMore);
+              setEsNextSearchAfter(nextToken);
+              setEsPitSessionId(carriedPit);
+              if (Array.isArray(r2.entries) && r2.entries.length) {
+                const used2 = appendElasticCapped(
+                  r2.entries as any[],
+                  available,
+                  {
+                    messageFilter,
+                  },
+                );
+                available = Math.max(0, available - used2);
+                setEsLoadedCount((c) => c + used2);
+              }
+              if (!hasMore) break;
+            }
+
+            // Session nur beenden, wenn wirklich keine weiteren Ergebnisse mehr verfügbar
+            if (!hasMore) {
+              setEsPitSessionId(null);
+            }
+            // esHasMore bleibt true, wenn noch Ergebnisse existieren (auch bei Cap erreicht)
+          } else {
+            // Check if this is a feature-disabled error
+            const errorMsg = res?.error || t("status.errorUnknown");
+            if (!handleFeatureError(errorMsg)) {
+              showAlert(t("status.elasticError", { message: errorMsg }));
+            }
+          }
+        } finally {
+          setEsBusy(false);
+        }
+      });
+    } catch (e) {
+      logger.error("[Elastic] Search failed", e);
+      const errorMsg = e instanceof Error ? e.message : String(e);
+      if (!handleFeatureError(errorMsg)) {
+        showAlert(t("status.elasticError", { message: errorMsg }));
+      }
+    }
+  };
+
+  // Handler for the one-shot HTTP load dialog. Extracted from inline JSX.
+  const handleHttpLoad = async (url: string) => {
+    await withBusy(async () => {
+      try {
+        setHttpUrl(url);
+        await patchSettings({ httpUrl: url });
+        const res = await typedHttpLoadOnce(url);
+        if (res.ok) {
+          appendEntries((res.entries || []) as any[]);
+          setHttpStatus(""); // Clear error status on success
+        } else {
+          // Check if this is a feature-disabled error
+          if (!handleFeatureError(res.error)) {
+            setHttpStatus(
+              t("status.error", {
+                message: res.error || t("status.errorUnknown"),
+              }),
+            );
+          }
+        }
+      } catch (e) {
+        setHttpStatus(
+          t("status.error", {
+            message: e instanceof Error ? e.message : String(e),
+          }),
+        );
+      }
+    });
+  };
+
+  // Handler for starting HTTP polling. Extracted from inline JSX.
+  const handleHttpPollStart = async (url: string, sec: number) => {
+    try {
+      setHttpUrl(url);
+      setHttpInterval(sec);
+      await patchSettings({
+        httpUrl: url,
+        httpPollInterval: sec,
+      });
+      const r = await typedHttpStartPoll({
+        url,
+        intervalSec: sec,
+      });
+      if (r.ok) {
+        setHttpPollId(r.id!);
+        setHttpStatus(t("status.httpPolling", { id: String(r.id) }));
+        // Convert to ms for internal timer tracking
+        setNextPollDueAt(Date.now() + sec * 1000);
+        setCurrentPollInterval(sec * 1000);
+      } else {
+        // Check if this is a feature-disabled error
+        if (!handleFeatureError(r.error)) {
+          setHttpStatus(
+            t("status.error", {
+              message: r.error || t("status.errorUnknown"),
+            }),
+          );
+        }
+      }
+    } catch (e) {
+      setHttpStatus(
+        t("status.error", {
+          message: e instanceof Error ? e.message : String(e),
+        }),
+      );
+    }
+  };
+
+  // Handler for starting an incremental HTTP tail. Extracted from inline JSX.
+  const handleHttpTailStart = async (args: {
+    url: string;
+    intervalSec: number;
+    emitInitial: boolean;
+    allowInsecureSSL: boolean;
+    authHeader: string;
+  }) => {
+    try {
+      // Zuletzt verwendete Werte merken, damit der Dialog nach einem
+      // Neustart wieder vorbelegt werden kann (Auth-Header wird im
+      // Hauptprozess verschlüsselt abgelegt).
+      const intervalSec = Math.max(1, Math.round(args.intervalSec));
+      setHttpUrl(args.url);
+      setHttpInterval(intervalSec);
+      setHttpTailEmitInitial(args.emitInitial);
+      setHttpTailAllowInsecureSSL(args.allowInsecureSSL);
+      setHttpTailAuthHeader(args.authHeader);
+      void patchSettings({
+        httpUrl: args.url,
+        httpPollInterval: intervalSec,
+        httpTailEmitInitial: args.emitInitial,
+        httpTailAllowInsecureSSL: args.allowInsecureSSL,
+        ...(args.authHeader
+          ? { httpAuthHeaderPlain: args.authHeader }
+          : { httpAuthHeaderClear: true }),
+      });
+      const headers: Record<string, string> = {};
+      if (args.authHeader) headers.Authorization = args.authHeader;
+      const r = await httpTail.start(args.url, {
+        intervalMs: intervalSec * 1000,
+        emitInitial: args.emitInitial,
+        headers: Object.keys(headers).length ? headers : undefined,
+        allowInsecureSSL: args.allowInsecureSSL,
+      });
+      if (!r.ok) {
+        showAlert(t("httpTail.startFailed", { message: r.error || "" }));
+      }
+    } catch (e) {
+      showAlert(
+        t("httpTail.startFailed", {
+          message: e instanceof Error ? e.message : String(e),
+        }),
+      );
+    }
+  };
+
   return (
     <div style="height:100%; display:flex; flex-direction:column;">
       {/* Skeleton loader während Settings geladen werden */}
@@ -3203,270 +3353,7 @@ export default function App(): JSX.Element {
             histIndex={histIndex} // NEW: pass histIndex to dialog
             firstTs={entriesTsRange.firstTs}
             lastTs={entriesTsRange.lastTs}
-            onApply={async (formVals: any) => {
-              try {
-                setShowTimeDialog(false);
-                addToHistory("app", formVals?.application_name || "");
-                addToHistory("env", formVals?.environment || "");
-                addToHistory("index", formVals?.index || ""); // NEW: save index to history
-                setLastEsForm(formVals);
-                try {
-                  const envCase = (formVals?.environmentCase || "original") as
-                    "original" | "lower" | "upper" | "case-sensitive";
-                  await patchSettings({
-                    lastEnvironmentCase: envCase,
-                    // Zuletzt genutztes Zeitstempel-Feld als Default merken.
-                    lastTimestampField: String(formVals?.timestampField || ""),
-                  });
-                } catch (e) {
-                  logger.warn(
-                    "Persisting lastEnvironmentCase failed:",
-                    e as any,
-                  );
-                }
-
-                // Bestimme Load-Mode gleich zu Beginn
-                const loadMode = String(formVals.loadMode || "append");
-
-                // Falls wir ersetzen: offene PIT-Session vorher schließen
-                if (loadMode === "replace" && esPitSessionId) {
-                  try {
-                    await typedElasticClosePit(esPitSessionId);
-                  } catch (e) {
-                    logger.warn(
-                      "elasticClosePit before new search failed:",
-                      e as any,
-                    );
-                  }
-                  setEsPitSessionId(null);
-                }
-
-                // Zeitfilter-Anpassung abhängig von loadMode
-                try {
-                  if (loadMode === "replace") {
-                    if (formVals.mode === "relative" && formVals.duration) {
-                      TimeFilter.setRelative(formVals.duration);
-                      TimeFilter.setEnabled(true);
-                    } else if (formVals.mode === "absolute") {
-                      const from = formVals.from || undefined;
-                      const to = formVals.to || undefined;
-                      TimeFilter.setAbsolute(from, to);
-                      TimeFilter.setEnabled(true);
-                    }
-                  } else {
-                    const state = TimeFilter.getState();
-                    const wasEnabled = state && state.enabled;
-                    if (formVals.mode === "absolute" && wasEnabled) {
-                      const curFrom: string | null = state.from ?? null;
-                      const curTo: string | null = state.to ?? null;
-                      const newFrom: string | null =
-                        (formVals.from || "").trim() || null;
-                      const newTo: string | null =
-                        (formVals.to || "").trim() || null;
-                      const parseMs = (s: string | null) => {
-                        if (!s) return NaN;
-                        const ms = Date.parse(s);
-                        return isNaN(ms) ? NaN : ms;
-                      };
-                      const minIso = (
-                        a: string | null,
-                        b: string | null,
-                      ): string | undefined => {
-                        const am = parseMs(a);
-                        const bm = parseMs(b);
-                        if (isNaN(am)) return b || undefined;
-                        if (isNaN(bm)) return a || undefined;
-                        return am <= bm ? a || undefined : b || undefined;
-                      };
-                      const maxIso = (
-                        a: string | null,
-                        b: string | null,
-                      ): string | undefined => {
-                        const am = parseMs(a);
-                        const bm = parseMs(b);
-                        if (isNaN(am)) return b || undefined;
-                        if (isNaN(bm)) return a || undefined;
-                        return am >= bm ? a || undefined : b || undefined;
-                      };
-                      const unionFrom = minIso(curFrom, newFrom);
-                      const unionTo = maxIso(curTo, newTo);
-                      TimeFilter.setAbsolute(unionFrom, unionTo);
-                      TimeFilter.setEnabled(true);
-                    }
-                  }
-                } catch (e) {
-                  logger.warn("TimeFilter update (Elastic) failed:", e);
-                }
-
-                await withBusy(async () => {
-                  setEsBusy(true);
-                  setEsTotal(null);
-                  try {
-                    const opts: ElasticSearchOptions = {
-                      url: elasticUrl || undefined,
-                      size: elasticSize || undefined,
-                      index: formVals.index,
-                      sort: formVals.sort,
-                      duration:
-                        formVals.mode === "relative"
-                          ? formVals.duration
-                          : undefined,
-                      from:
-                        formVals.mode === "absolute"
-                          ? formVals.from
-                          : undefined,
-                      to:
-                        formVals.mode === "absolute" ? formVals.to : undefined,
-                      application_name: formVals.application_name,
-                      logger: formVals.logger,
-                      level: formVals.level,
-                      environment: formVals.environment,
-                      message: formVals.message,
-                      environmentCase: formVals.environmentCase || "original",
-                      allowInsecureTLS: !!formVals.allowInsecureTLS,
-                      // optionale PIT-Optimierungen
-                      keepAlive: "5m",
-                      // Beim ersten Request die echte Gesamtzahl ermitteln, damit
-                      // die UI die tatsächlich vorhandenen Treffer (z. B. 15766)
-                      // anzeigt – nicht nur die geladene Menge. Folgeseiten setzen
-                      // das aus Performancegründen wieder auf false.
-                      trackTotalHits: true,
-                    } as any;
-                    logger.info("[Elastic] Search started", {
-                      hasResponse: false,
-                    });
-                    // Geladen-Zähler für diesen Suchvorgang zurücksetzen.
-                    setEsLoadedCount(0);
-                    // Jede neue Suche bekommt immer die vollen elasticSize Slots,
-                    // damit Einträge auch bei aktivem Filter vollständig geladen werden.
-                    // Mehr als elasticSize wird bei Bedarf über den
-                    // "Nachladen"-Button (esLoadMore) geladen.
-                    let available = Math.max(0, elasticSize || 0);
-                    let carriedPit: string | null = null;
-                    let nextToken: Array<string | number> | null = null;
-                    let hasMore = false;
-
-                    // Erste Seite holen
-                    const res = await typedElasticSearch(opts);
-                    const total = Array.isArray(res?.entries)
-                      ? res.entries.length
-                      : 0;
-                    logger.info("[Elastic] Search finished", {
-                      ok: res?.ok,
-                      total,
-                      hasResponse: true,
-                    });
-                    if (res?.ok) {
-                      hasMore = !!res.hasMore;
-                      nextToken = (res.nextSearchAfter as any) || null;
-                      carriedPit = res.pitSessionId || null;
-                      setEsHasMore(hasMore);
-                      setEsNextSearchAfter(nextToken);
-                      setEsPitSessionId(carriedPit);
-                      setEsTotal(
-                        typeof res?.total === "number"
-                          ? Number(res.total)
-                          : null,
-                      );
-
-                      if (loadMode === "replace") {
-                        // Vollständiges Zurücksetzen: alle vorhandenen Einträge entfernen
-                        setEntries([]);
-                        setSelected(new Set());
-                        setNextId(1);
-                        // Datei-Dedupe-Cache leeren, damit Files erneut geladen werden können
-                        fileSigCacheRef.current = new Map();
-                        // HTTP-Dedupe-Cache leeren
-                        httpSigCacheRef.current = new Map();
-                        // LoggingStore zurücksetzen (MDC etc.)
-                        try {
-                          LoggingStore.reset();
-                        } catch (e) {
-                          logger.error(
-                            "LoggingStore.reset error (Elastic replace)",
-                            e,
-                          );
-                        }
-                      }
-
-                      // Anhängen mit Kappung
-                      const messageFilter = formVals.message || "";
-                      if (Array.isArray(res.entries) && res.entries.length) {
-                        const used = appendElasticCapped(
-                          res.entries as any[],
-                          available,
-                          {
-                            ignoreExistingForElastic: loadMode === "replace",
-                            messageFilter,
-                          },
-                        );
-                        available = Math.max(0, available - used);
-                        setEsLoadedCount((c) => c + used);
-                      }
-
-                      // Auto-Nachladen bis Cap erreicht oder keine weiteren Seiten
-                      while (available > 0 && hasMore) {
-                        const moreOpts: ElasticSearchOptions = {
-                          ...opts,
-                          // Seite auf verbleibendes Budget begrenzen, damit nach
-                          // Dedup-bedingtem Nachladen kein großes Overshoot entsteht.
-                          size: Math.max(1, available),
-                          // Gesamtzahl nur einmal (erster Request) ermitteln.
-                          trackTotalHits: false,
-                          // Für PIT: nextSearchAfter übergeben; für Scroll bleibt es undefiniert
-                          ...(nextToken &&
-                          Array.isArray(nextToken) &&
-                          nextToken.length > 0
-                            ? { searchAfter: nextToken as any }
-                            : {}),
-                          pitSessionId: carriedPit || undefined,
-                        } as any;
-                        const r2 = await typedElasticSearch(moreOpts);
-                        if (!r2?.ok) break;
-                        hasMore = !!r2.hasMore;
-                        nextToken = (r2.nextSearchAfter as any) || null;
-                        carriedPit = r2.pitSessionId || carriedPit;
-                        setEsHasMore(hasMore);
-                        setEsNextSearchAfter(nextToken);
-                        setEsPitSessionId(carriedPit);
-                        if (Array.isArray(r2.entries) && r2.entries.length) {
-                          const used2 = appendElasticCapped(
-                            r2.entries as any[],
-                            available,
-                            { messageFilter },
-                          );
-                          available = Math.max(0, available - used2);
-                          setEsLoadedCount((c) => c + used2);
-                        }
-                        if (!hasMore) break;
-                      }
-
-                      // Session nur beenden, wenn wirklich keine weiteren Ergebnisse mehr verfügbar
-                      if (!hasMore) {
-                        setEsPitSessionId(null);
-                      }
-                      // esHasMore bleibt true, wenn noch Ergebnisse existieren (auch bei Cap erreicht)
-                    } else {
-                      // Check if this is a feature-disabled error
-                      const errorMsg = res?.error || t("status.errorUnknown");
-                      if (!handleFeatureError(errorMsg)) {
-                        showAlert(
-                          t("status.elasticError", { message: errorMsg }),
-                        );
-                      }
-                    }
-                  } finally {
-                    setEsBusy(false);
-                  }
-                });
-              } catch (e) {
-                logger.error("[Elastic] Search failed", e);
-                const errorMsg = e instanceof Error ? e.message : String(e);
-                if (!handleFeatureError(errorMsg)) {
-                  showAlert(t("status.elasticError", { message: errorMsg }));
-                }
-              }
-            }}
+            onApply={handleElasticApply}
             onClear={() => {
               clearTimeFilter();
               TimeFilter.reset();
@@ -3482,34 +3369,7 @@ export default function App(): JSX.Element {
           open={showHttpLoadDlg}
           initialUrl={httpLoadUrl}
           onClose={() => setShowHttpLoadDlg(false)}
-          onLoad={async (url) => {
-            await withBusy(async () => {
-              try {
-                setHttpUrl(url);
-                await patchSettings({ httpUrl: url });
-                const res = await typedHttpLoadOnce(url);
-                if (res.ok) {
-                  appendEntries((res.entries || []) as any[]);
-                  setHttpStatus(""); // Clear error status on success
-                } else {
-                  // Check if this is a feature-disabled error
-                  if (!handleFeatureError(res.error)) {
-                    setHttpStatus(
-                      t("status.error", {
-                        message: res.error || t("status.errorUnknown"),
-                      }),
-                    );
-                  }
-                }
-              } catch (e) {
-                setHttpStatus(
-                  t("status.error", {
-                    message: e instanceof Error ? e.message : String(e),
-                  }),
-                );
-              }
-            });
-          }}
+          onLoad={handleHttpLoad}
         />
       </Suspense>
 
@@ -3521,42 +3381,7 @@ export default function App(): JSX.Element {
           initialInterval={httpPollForm.interval}
           isPollActive={httpPollId != null}
           onClose={() => setShowHttpPollDlg(false)}
-          onStart={async (url, sec) => {
-            try {
-              setHttpUrl(url);
-              setHttpInterval(sec);
-              await patchSettings({
-                httpUrl: url,
-                httpPollInterval: sec,
-              });
-              const r = await typedHttpStartPoll({
-                url,
-                intervalSec: sec,
-              });
-              if (r.ok) {
-                setHttpPollId(r.id!);
-                setHttpStatus(t("status.httpPolling", { id: String(r.id) }));
-                // Convert to ms for internal timer tracking
-                setNextPollDueAt(Date.now() + sec * 1000);
-                setCurrentPollInterval(sec * 1000);
-              } else {
-                // Check if this is a feature-disabled error
-                if (!handleFeatureError(r.error)) {
-                  setHttpStatus(
-                    t("status.error", {
-                      message: r.error || t("status.errorUnknown"),
-                    }),
-                  );
-                }
-              }
-            } catch (e) {
-              setHttpStatus(
-                t("status.error", {
-                  message: e instanceof Error ? e.message : String(e),
-                }),
-              );
-            }
-          }}
+          onStart={handleHttpPollStart}
         />
       </Suspense>
 
@@ -3571,47 +3396,7 @@ export default function App(): JSX.Element {
           initialAuthHeader={httpTailAuthHeader}
           isAnyTailActive={httpTail.tails.length > 0}
           onClose={() => setShowHttpTailDialog(false)}
-          onStart={async (args) => {
-            try {
-              // Zuletzt verwendete Werte merken, damit der Dialog nach einem
-              // Neustart wieder vorbelegt werden kann (Auth-Header wird im
-              // Hauptprozess verschlüsselt abgelegt).
-              const intervalSec = Math.max(1, Math.round(args.intervalSec));
-              setHttpUrl(args.url);
-              setHttpInterval(intervalSec);
-              setHttpTailEmitInitial(args.emitInitial);
-              setHttpTailAllowInsecureSSL(args.allowInsecureSSL);
-              setHttpTailAuthHeader(args.authHeader);
-              void patchSettings({
-                httpUrl: args.url,
-                httpPollInterval: intervalSec,
-                httpTailEmitInitial: args.emitInitial,
-                httpTailAllowInsecureSSL: args.allowInsecureSSL,
-                ...(args.authHeader
-                  ? { httpAuthHeaderPlain: args.authHeader }
-                  : { httpAuthHeaderClear: true }),
-              });
-              const headers: Record<string, string> = {};
-              if (args.authHeader) headers.Authorization = args.authHeader;
-              const r = await httpTail.start(args.url, {
-                intervalMs: intervalSec * 1000,
-                emitInitial: args.emitInitial,
-                headers: Object.keys(headers).length ? headers : undefined,
-                allowInsecureSSL: args.allowInsecureSSL,
-              });
-              if (!r.ok) {
-                showAlert(
-                  t("httpTail.startFailed", { message: r.error || "" }),
-                );
-              }
-            } catch (e) {
-              showAlert(
-                t("httpTail.startFailed", {
-                  message: e instanceof Error ? e.message : String(e),
-                }),
-              );
-            }
-          }}
+          onStart={handleHttpTailStart}
         />
       </Suspense>
 

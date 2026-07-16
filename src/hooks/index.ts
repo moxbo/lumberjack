@@ -46,3 +46,10 @@ export type {
 } from "./useResizeHandlers";
 export { useCommands } from "./useCommands";
 export { useFilterWorker } from "./useFilterWorker";
+export { useA11yAnnouncer } from "./useA11yAnnouncer";
+export type { UseA11yAnnouncerReturn } from "./useA11yAnnouncer";
+export { useHttpPollCountdown } from "./useHttpPollCountdown";
+export type {
+  UseHttpPollCountdownOptions,
+  UseHttpPollCountdownReturn,
+} from "./useHttpPollCountdown";
