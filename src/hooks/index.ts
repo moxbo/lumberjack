@@ -53,3 +53,8 @@ export type {
   UseHttpPollCountdownOptions,
   UseHttpPollCountdownReturn,
 } from "./useHttpPollCountdown";
+export { useTimeFilterDialog } from "./useTimeFilterDialog";
+export type {
+  UseTimeFilterDialogOptions,
+  UseTimeFilterDialogReturn,
+} from "./useTimeFilterDialog";
