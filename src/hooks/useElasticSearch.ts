@@ -23,6 +23,7 @@ import {
   patchSettings,
 } from "../utils/typedApi";
 import { TimeFilter } from "../store/timeFilter";
+import { executeElasticSearch } from "../utils/elasticSearchEngine";
 
 export interface UseElasticSearchOptions {
   entries: any[];
@@ -275,136 +276,25 @@ export function useElasticSearch({
         setEsBusy(true);
         setEsTotal(null);
         try {
-          const opts: ElasticSearchOptions = {
-            url: elasticUrl || undefined,
-            size: elasticSize || undefined,
-            index: formVals.index,
-            sort: formVals.sort,
-            duration:
-              formVals.mode === "relative" ? formVals.duration : undefined,
-            from: formVals.mode === "absolute" ? formVals.from : undefined,
-            to: formVals.mode === "absolute" ? formVals.to : undefined,
-            application_name: formVals.application_name,
-            logger: formVals.logger,
-            level: formVals.level,
-            environment: formVals.environment,
-            message: formVals.message,
-            environmentCase: formVals.environmentCase || "original",
-            allowInsecureTLS: !!formVals.allowInsecureTLS,
-            // optionale PIT-Optimierungen
-            keepAlive: "5m",
-            // Beim ersten Request die echte Gesamtzahl ermitteln, damit
-            // die UI die tatsächlich vorhandenen Treffer (z. B. 15766)
-            // anzeigt – nicht nur die geladene Menge. Folgeseiten setzen
-            // das aus Performancegründen wieder auf false.
-            trackTotalHits: true,
-          } as any;
-          logger.info("[Elastic] Search started", {
-            hasResponse: false,
-          });
-          // Geladen-Zähler für diesen Suchvorgang zurücksetzen.
-          setEsLoadedCount(0);
-          // Jede neue Suche bekommt immer die vollen elasticSize Slots,
-          // damit Einträge auch bei aktivem Filter vollständig geladen werden.
-          // Mehr als elasticSize wird bei Bedarf über den
-          // "Nachladen"-Button (esLoadMore) geladen.
-          let available = Math.max(0, elasticSize || 0);
-          let carriedPit: string | null = null;
-          let nextToken: Array<string | number> | null = null;
-          let hasMore = false;
-
-          // Erste Seite holen
-          const res = await typedElasticSearch(opts);
-          const total = Array.isArray(res?.entries) ? res.entries.length : 0;
-          logger.info("[Elastic] Search finished", {
-            ok: res?.ok,
-            total,
-            hasResponse: true,
-          });
-          if (res?.ok) {
-            hasMore = !!res.hasMore;
-            nextToken = (res.nextSearchAfter as any) || null;
-            carriedPit = res.pitSessionId || null;
-            setEsHasMore(hasMore);
-            setEsNextSearchAfter(nextToken);
-            setEsPitSessionId(carriedPit);
-            setEsTotal(
-              typeof res?.total === "number" ? Number(res.total) : null,
-            );
-
-            if (loadMode === "replace") {
-              // Vollständiges Zurücksetzen: alle vorhandenen Einträge entfernen,
-              // Dedupe-Caches und LoggingStore leeren (App-seitig, damit dieser
-              // Hook keine Entry-Management-Interna besitzen muss).
-              onReplaceReset();
-            }
-
-            // Anhängen mit Kappung
-            const messageFilter = formVals.message || "";
-            if (Array.isArray(res.entries) && res.entries.length) {
-              const used = appendElasticCapped(
-                res.entries as any[],
-                available,
-                {
-                  ignoreExistingForElastic: loadMode === "replace",
-                  messageFilter,
-                },
-              );
-              available = Math.max(0, available - used);
-              setEsLoadedCount((c) => c + used);
-            }
-
-            // Auto-Nachladen bis Cap erreicht oder keine weiteren Seiten
-            while (available > 0 && hasMore) {
-              const moreOpts: ElasticSearchOptions = {
-                ...opts,
-                // Seite auf verbleibendes Budget begrenzen, damit nach
-                // Dedup-bedingtem Nachladen kein großes Overshoot entsteht.
-                size: Math.max(1, available),
-                // Gesamtzahl nur einmal (erster Request) ermitteln.
-                trackTotalHits: false,
-                // Für PIT: nextSearchAfter übergeben; für Scroll bleibt es undefiniert
-                ...(nextToken &&
-                Array.isArray(nextToken) &&
-                nextToken.length > 0
-                  ? { searchAfter: nextToken as any }
-                  : {}),
-                pitSessionId: carriedPit || undefined,
-              } as any;
-              const r2 = await typedElasticSearch(moreOpts);
-              if (!r2?.ok) break;
-              hasMore = !!r2.hasMore;
-              nextToken = (r2.nextSearchAfter as any) || null;
-              carriedPit = r2.pitSessionId || carriedPit;
-              setEsHasMore(hasMore);
-              setEsNextSearchAfter(nextToken);
-              setEsPitSessionId(carriedPit);
-              if (Array.isArray(r2.entries) && r2.entries.length) {
-                const used2 = appendElasticCapped(
-                  r2.entries as any[],
-                  available,
-                  {
-                    messageFilter,
-                  },
-                );
-                available = Math.max(0, available - used2);
-                setEsLoadedCount((c) => c + used2);
+          await executeElasticSearch(formVals, loadMode, {
+            elasticUrl,
+            elasticSize,
+            search: typedElasticSearch,
+            appendCapped: appendElasticCapped,
+            onReplaceReset,
+            setHasMore: setEsHasMore,
+            setNextSearchAfter: setEsNextSearchAfter,
+            setPitSessionId: setEsPitSessionId,
+            setTotal: setEsTotal,
+            resetLoaded: () => setEsLoadedCount(0),
+            addLoaded: (n) => setEsLoadedCount((c) => c + n),
+            onError: (msg) => {
+              if (!handleFeatureError(msg)) {
+                showAlert(t("status.elasticError", { message: msg }));
               }
-              if (!hasMore) break;
-            }
-
-            // Session nur beenden, wenn wirklich keine weiteren Ergebnisse mehr verfügbar
-            if (!hasMore) {
-              setEsPitSessionId(null);
-            }
-            // esHasMore bleibt true, wenn noch Ergebnisse existieren (auch bei Cap erreicht)
-          } else {
-            // Check if this is a feature-disabled error
-            const errorMsg = res?.error || t("status.errorUnknown");
-            if (!handleFeatureError(errorMsg)) {
-              showAlert(t("status.elasticError", { message: errorMsg }));
-            }
-          }
+            },
+            errorUnknownText: t("status.errorUnknown"),
+          });
         } finally {
           setEsBusy(false);
         }

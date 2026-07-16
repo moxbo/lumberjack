@@ -21,7 +21,7 @@
     "test": "vitest run",
     "test:unit": "vitest run",
     "test:watch": "vitest",
-    "test:smoke": "tsx ./scripts/smoke-parse.ts && tsx ./scripts/test-msg-filter.ts && node ./scripts/verify-mdc-flow.mjs && tsx ./scripts/test-elastic-indexer.ts && tsx ./scripts/test-log-data-store.ts && tsx ./scripts/test-tcp-socket-cleanup.ts && tsx ./scripts/test-http-poller-memory.ts && tsx ./scripts/test-robustness-features.ts && tsx ./scripts/test-adaptive-batch.ts && tsx ./scripts/test-stability-services.ts && tsx ./scripts/test-new-services.ts && tsx ./scripts/test-checkpoint.ts && tsx ./scripts/test-http-poller-stop.ts && tsx ./scripts/test-window-ready.ts && tsx ./scripts/test-performance.ts && tsx ./scripts/measure-sync-io.ts",
+    "test:smoke": "tsx ./scripts/smoke-parse.ts && tsx ./scripts/test-msg-filter.ts && node ./scripts/verify-mdc-flow.mjs && tsx ./scripts/test-elastic-indexer.ts && tsx ./scripts/test-elastic-search-flow.ts && tsx ./scripts/test-log-data-store.ts && tsx ./scripts/test-tcp-socket-cleanup.ts && tsx ./scripts/test-http-poller-memory.ts && tsx ./scripts/test-robustness-features.ts && tsx ./scripts/test-adaptive-batch.ts && tsx ./scripts/test-stability-services.ts && tsx ./scripts/test-new-services.ts && tsx ./scripts/test-checkpoint.ts && tsx ./scripts/test-http-poller-stop.ts && tsx ./scripts/test-window-ready.ts && tsx ./scripts/test-performance.ts && tsx ./scripts/measure-sync-io.ts",
     "test:coverage": "vitest run --coverage",
     "test:e2e": "npm run prebuild && npx playwright test",
     "test:e2e:headed": "npm run prebuild && npx playwright test --headed",
