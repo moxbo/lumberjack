@@ -18,7 +18,7 @@ import { canonicalDcKey, DiagnosticContextFilter } from "../store/dcFilter";
 import { DragAndDropManager } from "../utils/dnd";
 import { TimeFilter } from "../store/timeFilter";
 import { lazy, Suspense } from "preact/compat";
-import type { ElasticSearchOptions, Settings } from "../types/ipc";
+import type { Settings } from "../types/ipc";
 import {
   getSettings,
   patchSettings,
@@ -32,8 +32,6 @@ import {
   httpLoadOnce as typedHttpLoadOnce,
   httpStartPoll as typedHttpStartPoll,
   httpStopPoll as typedHttpStopPoll,
-  elasticSearch as typedElasticSearch,
-  elasticClosePit as typedElasticClosePit,
   chooseExportPath as typedChooseExportPath,
   saveExportFile as typedSaveExportFile,
   autoUpdaterSetAllowPrerelease as typedAutoUpdaterSetAllowPrerelease,
@@ -92,6 +90,7 @@ import {
   useA11yAnnouncer,
   useHttpPollCountdown,
   useContextMenuActions,
+  useElasticSearch,
 } from "../hooks";
 
 // Import refactored components - core components loaded eagerly
@@ -794,7 +793,6 @@ export default function App(): JSX.Element {
 
   // Busy helper
   const [busy, setBusy] = useState<boolean>(false);
-  const [esBusy, setEsBusy] = useState<boolean>(false);
   const withBusy = async (fn: () => Promise<void>) => {
     setBusy(true);
     try {
@@ -803,6 +801,50 @@ export default function App(): JSX.Element {
       setBusy(false);
     }
   };
+
+  // Elasticsearch search state + flow (search, pagination, "load more").
+  const {
+    esBusy,
+    esHasMore,
+    esTotal,
+    esPitSessionId,
+    lastEsForm,
+    esElasticCountAll,
+    esLoaded,
+    esTarget,
+    esPct,
+    esLoadMore,
+    handleElasticApply,
+    resetElasticSearchState,
+    closePitQuiet,
+  } = useElasticSearch({
+    entries,
+    appendEntries,
+    elasticUrl,
+    elasticSize,
+    withBusy,
+    showAlert,
+    handleFeatureError,
+    t,
+    addToHistory,
+    closeTimeDialog: () => setShowTimeDialog(false),
+    onReplaceReset: () => {
+      // Vollständiges Zurücksetzen: alle vorhandenen Einträge entfernen
+      setEntries([]);
+      setSelected(new Set());
+      setNextId(1);
+      // Datei-Dedupe-Cache leeren, damit Files erneut geladen werden können
+      fileSigCacheRef.current = new Map();
+      // HTTP-Dedupe-Cache leeren
+      httpSigCacheRef.current = new Map();
+      // LoggingStore zurücksetzen (MDC etc.)
+      try {
+        LoggingStore.reset();
+      } catch (e) {
+        logger.error("LoggingStore.reset error (Elastic replace)", e);
+      }
+    },
+  });
 
   // HTTP polling helper state – countdown extracted into useHttpPollCountdown.
   const { nextPollIn, setNextPollDueAt } = useHttpPollCountdown({
@@ -1496,26 +1538,6 @@ export default function App(): JSX.Element {
   }
 
   // Entry management functions (appendEntries, processIpcQueue) are now in useEntryManagement2 hook
-
-  // Hilfsfunktion: Anhängen mit Kappung auf das verbleibende Budget.
-  // WICHTIG: Alle ES-Einträge werden in den State geladen (kein Filtern vor dem
-  // Speichern). Die Anzeige-Filterung (Filter-Worker) steuert die Sichtbarkeit.
-  //
-  // Der Rückgabewert ist die Anzahl der ABGERUFENEN Einträge (vor Deduplizierung).
-  // Ein bereits vorhandener (deduplizierter) Eintrag gilt als erfolgreich geladen –
-  // er ist ja bereits in der Ansicht. Dadurch stimmen "geladen" und "gefunden"
-  // überein und es wird nicht über das Ziel (elasticSize) hinaus nachgeladen.
-  function appendElasticCapped(
-    batch: any[],
-    available: number,
-    options?: { ignoreExistingForElastic?: boolean; messageFilter?: string },
-  ): number {
-    const list = Array.isArray(batch) ? batch : [];
-    const take = Math.max(0, Math.min(available, list.length));
-    if (take <= 0) return 0;
-    appendEntries(take === list.length ? list : list.slice(0, take), options);
-    return take;
-  }
 
   const onListKeyDown = (e: KeyboardEvent) => {
     if (!filteredIdx.length) return;
@@ -2246,27 +2268,6 @@ export default function App(): JSX.Element {
     return () => mgr.detach();
   }, []);
 
-  const [esHasMore, setEsHasMore] = useState<boolean>(false);
-  const [esNextSearchAfter, setEsNextSearchAfter] = useState<Array<
-    string | number
-  > | null>(null);
-  const [lastEsForm, setLastEsForm] = useState<ElasticFormState | null>(null);
-  const [esTotal, setEsTotal] = useState<number | null>(null);
-  // Anzahl der im aktuellen Suchvorgang ABGERUFENEN ES-Einträge (inkl. bereits
-  // vorhandener/deduplizierter). Wird bei jeder neuen Suche zurückgesetzt und
-  // beim Nachladen ("Weitere laden") fortgeschrieben. Dient als "geladen"-Anzeige,
-  // damit deduplizierte Einträge mitzählen und keine Abweichung zu "gefunden" entsteht.
-  const [esLoadedCount, setEsLoadedCount] = useState<number>(0);
-  const [esPitSessionId, setEsPitSessionId] = useState<string | null>(null);
-  const esElasticCountAll = useMemo(() => {
-    let cnt = 0;
-    for (const e of entries) {
-      const src = e?.source;
-      if (typeof src === "string" && src.startsWith("elastic://")) cnt++;
-    }
-    return cnt;
-  }, [entries]);
-
   // Min/Max timestamps across ALL entries (ignoring active filters), used by
   // the Elastic-Search-Dialog quick-select buttons ("older than" / "newer than").
   // Filters must NOT influence these values, otherwise the user cannot easily
@@ -2292,90 +2293,6 @@ export default function App(): JSX.Element {
     }
     return { firstTs: minRaw, lastTs: maxRaw };
   }, [entries]);
-  const esLoaded = esLoadedCount;
-  const esTarget = Math.max(1, Number(elasticSize || 0));
-  const esPct =
-    esTotal && esTotal > 0
-      ? Math.min(100, Math.round((esLoaded / esTarget) * 100))
-      : Math.round((esLoaded / esTarget) * 100) || 0;
-
-  /** Load next page of Elasticsearch results (invoked by ElasticStatusBar "load more" button) */
-  async function esLoadMore(): Promise<void> {
-    if (!esHasMore || !lastEsForm) return;
-    // Fortsetzung benötigt entweder einen search_after-Token (PIT) ODER eine
-    // aktive Session-ID (Scroll-Dialekt liefert KEIN nextSearchAfter und wird
-    // ausschließlich über die pitSessionId fortgesetzt).
-    const hasToken =
-      Array.isArray(esNextSearchAfter) && esNextSearchAfter.length > 0;
-    if (!esPitSessionId && !hasToken) return;
-    setEsBusy(true);
-    try {
-      // "Weitere laden" lädt den verbleibenden Rest der Treffermenge in EINEM
-      // Schwung nach (so wie vor dem Refactoring). Budget großzügig – mindestens
-      // 50.000 Einträge pro Klick –, damit nicht mehrfach geklickt werden muss,
-      // um alle Treffer zu laden. Sicherheitsobergrenze gegen Speicherüberlauf.
-      let available = Math.max(elasticSize || 0, 50000);
-      let hasMore: boolean = esHasMore;
-      let nextToken = esNextSearchAfter;
-      let carriedPit = esPitSessionId;
-
-      while (available > 0 && hasMore) {
-        const opts: ElasticSearchOptions = {
-          url: elasticUrl || undefined,
-          size: Math.max(1, available),
-          index: lastEsForm.index,
-          sort: lastEsForm.sort,
-          duration:
-            lastEsForm.mode === "relative" ? lastEsForm.duration : undefined,
-          from: lastEsForm.mode === "absolute" ? lastEsForm.from : undefined,
-          to: lastEsForm.mode === "absolute" ? lastEsForm.to : undefined,
-          application_name: lastEsForm.application_name,
-          logger: lastEsForm.logger,
-          level: lastEsForm.level,
-          environment: lastEsForm.environment,
-          message: lastEsForm.message,
-          environmentCase: lastEsForm.environmentCase || "original",
-          timestampField: lastEsForm.timestampField || undefined,
-          allowInsecureTLS: !!lastEsForm.allowInsecureTLS,
-          keepAlive: "5m",
-          trackTotalHits: false,
-          ...(nextToken && Array.isArray(nextToken) && nextToken.length > 0
-            ? { searchAfter: nextToken as any }
-            : {}),
-          pitSessionId: carriedPit || undefined,
-        } as any;
-
-        const r = await typedElasticSearch(opts);
-        if (!r?.ok) break;
-        hasMore = !!r.hasMore;
-        nextToken = (r.nextSearchAfter as any) || null;
-        carriedPit = r.pitSessionId || carriedPit;
-        setEsHasMore(hasMore);
-        setEsNextSearchAfter(nextToken);
-        setEsPitSessionId(carriedPit);
-
-        if (Array.isArray(r.entries) && r.entries.length) {
-          const used = appendElasticCapped(r.entries as any[], available, {
-            messageFilter: lastEsForm.message || "",
-          });
-          available = Math.max(0, available - used);
-          setEsLoadedCount((c) => c + used);
-        }
-        if (!hasMore) break;
-      }
-      if (!hasMore) {
-        setEsPitSessionId(null);
-      }
-    } catch (e) {
-      logger.error("[Elastic] Load more failed:", e);
-      const errorMsg = e instanceof Error ? e.message : String(e);
-      if (!handleFeatureError(errorMsg)) {
-        showAlert(t("status.elasticError", { message: errorMsg }));
-      }
-    } finally {
-      setEsBusy(false);
-    }
-  }
 
   function clearLogs() {
     // Sicherheitsabfrage über In-App-Dialog (keine native Dialog-Fokus-Bugs).
@@ -2394,11 +2311,7 @@ export default function App(): JSX.Element {
     setEntries([]);
     setSelected(new Set());
     setNextId(1);
-    setEsHasMore(false);
-    setEsNextSearchAfter(null);
-    setLastEsForm(null);
-    setEsTotal(null);
-    setEsLoadedCount(0);
+    resetElasticSearchState();
     // Clear marksMap (session-only, not persisted)
     setMarksMap({});
     // Datei-Dedupe-Cache leeren
@@ -2412,12 +2325,7 @@ export default function App(): JSX.Element {
     // Muss hier passieren, weil setNextId(1) die _id-Vergabe zurücksetzt.
     void heavyFieldStore.clear();
     // PIT-Session schließen (best effort)
-    (async () => {
-      try {
-        if (esPitSessionId) await typedElasticClosePit(esPitSessionId);
-      } catch {}
-      setEsPitSessionId(null);
-    })().catch(() => {});
+    void closePitQuiet();
     try {
       LoggingStore.reset();
     } catch (e) {
@@ -2942,252 +2850,6 @@ export default function App(): JSX.Element {
       logger.log(`[App] Fully initialized in ${Math.round(elapsed)}ms`);
     }, 100);
   }, []);
-
-  // Handler for the Elasticsearch dialog "Apply/Search" action. Extracted from
-  // the inline JSX to keep the render tree readable. Behaviour is unchanged.
-  const handleElasticApply = async (formVals: any) => {
-    try {
-      setShowTimeDialog(false);
-      addToHistory("app", formVals?.application_name || "");
-      addToHistory("env", formVals?.environment || "");
-      addToHistory("index", formVals?.index || ""); // NEW: save index to history
-      setLastEsForm(formVals);
-      try {
-        const envCase = (formVals?.environmentCase || "original") as
-          "original" | "lower" | "upper" | "case-sensitive";
-        await patchSettings({
-          lastEnvironmentCase: envCase,
-          // Zuletzt genutztes Zeitstempel-Feld als Default merken.
-          lastTimestampField: String(formVals?.timestampField || ""),
-        });
-      } catch (e) {
-        logger.warn("Persisting lastEnvironmentCase failed:", e as any);
-      }
-
-      // Bestimme Load-Mode gleich zu Beginn
-      const loadMode = String(formVals.loadMode || "append");
-
-      // Falls wir ersetzen: offene PIT-Session vorher schließen
-      if (loadMode === "replace" && esPitSessionId) {
-        try {
-          await typedElasticClosePit(esPitSessionId);
-        } catch (e) {
-          logger.warn("elasticClosePit before new search failed:", e as any);
-        }
-        setEsPitSessionId(null);
-      }
-
-      // Zeitfilter-Anpassung abhängig von loadMode
-      try {
-        if (loadMode === "replace") {
-          if (formVals.mode === "relative" && formVals.duration) {
-            TimeFilter.setRelative(formVals.duration);
-            TimeFilter.setEnabled(true);
-          } else if (formVals.mode === "absolute") {
-            const from = formVals.from || undefined;
-            const to = formVals.to || undefined;
-            TimeFilter.setAbsolute(from, to);
-            TimeFilter.setEnabled(true);
-          }
-        } else {
-          const state = TimeFilter.getState();
-          const wasEnabled = state && state.enabled;
-          if (formVals.mode === "absolute" && wasEnabled) {
-            const curFrom: string | null = state.from ?? null;
-            const curTo: string | null = state.to ?? null;
-            const newFrom: string | null = (formVals.from || "").trim() || null;
-            const newTo: string | null = (formVals.to || "").trim() || null;
-            const parseMs = (s: string | null) => {
-              if (!s) return NaN;
-              const ms = Date.parse(s);
-              return isNaN(ms) ? NaN : ms;
-            };
-            const minIso = (
-              a: string | null,
-              b: string | null,
-            ): string | undefined => {
-              const am = parseMs(a);
-              const bm = parseMs(b);
-              if (isNaN(am)) return b || undefined;
-              if (isNaN(bm)) return a || undefined;
-              return am <= bm ? a || undefined : b || undefined;
-            };
-            const maxIso = (
-              a: string | null,
-              b: string | null,
-            ): string | undefined => {
-              const am = parseMs(a);
-              const bm = parseMs(b);
-              if (isNaN(am)) return b || undefined;
-              if (isNaN(bm)) return a || undefined;
-              return am >= bm ? a || undefined : b || undefined;
-            };
-            const unionFrom = minIso(curFrom, newFrom);
-            const unionTo = maxIso(curTo, newTo);
-            TimeFilter.setAbsolute(unionFrom, unionTo);
-            TimeFilter.setEnabled(true);
-          }
-        }
-      } catch (e) {
-        logger.warn("TimeFilter update (Elastic) failed:", e);
-      }
-
-      await withBusy(async () => {
-        setEsBusy(true);
-        setEsTotal(null);
-        try {
-          const opts: ElasticSearchOptions = {
-            url: elasticUrl || undefined,
-            size: elasticSize || undefined,
-            index: formVals.index,
-            sort: formVals.sort,
-            duration:
-              formVals.mode === "relative" ? formVals.duration : undefined,
-            from: formVals.mode === "absolute" ? formVals.from : undefined,
-            to: formVals.mode === "absolute" ? formVals.to : undefined,
-            application_name: formVals.application_name,
-            logger: formVals.logger,
-            level: formVals.level,
-            environment: formVals.environment,
-            message: formVals.message,
-            environmentCase: formVals.environmentCase || "original",
-            allowInsecureTLS: !!formVals.allowInsecureTLS,
-            // optionale PIT-Optimierungen
-            keepAlive: "5m",
-            // Beim ersten Request die echte Gesamtzahl ermitteln, damit
-            // die UI die tatsächlich vorhandenen Treffer (z. B. 15766)
-            // anzeigt – nicht nur die geladene Menge. Folgeseiten setzen
-            // das aus Performancegründen wieder auf false.
-            trackTotalHits: true,
-          } as any;
-          logger.info("[Elastic] Search started", {
-            hasResponse: false,
-          });
-          // Geladen-Zähler für diesen Suchvorgang zurücksetzen.
-          setEsLoadedCount(0);
-          // Jede neue Suche bekommt immer die vollen elasticSize Slots,
-          // damit Einträge auch bei aktivem Filter vollständig geladen werden.
-          // Mehr als elasticSize wird bei Bedarf über den
-          // "Nachladen"-Button (esLoadMore) geladen.
-          let available = Math.max(0, elasticSize || 0);
-          let carriedPit: string | null = null;
-          let nextToken: Array<string | number> | null = null;
-          let hasMore = false;
-
-          // Erste Seite holen
-          const res = await typedElasticSearch(opts);
-          const total = Array.isArray(res?.entries) ? res.entries.length : 0;
-          logger.info("[Elastic] Search finished", {
-            ok: res?.ok,
-            total,
-            hasResponse: true,
-          });
-          if (res?.ok) {
-            hasMore = !!res.hasMore;
-            nextToken = (res.nextSearchAfter as any) || null;
-            carriedPit = res.pitSessionId || null;
-            setEsHasMore(hasMore);
-            setEsNextSearchAfter(nextToken);
-            setEsPitSessionId(carriedPit);
-            setEsTotal(
-              typeof res?.total === "number" ? Number(res.total) : null,
-            );
-
-            if (loadMode === "replace") {
-              // Vollständiges Zurücksetzen: alle vorhandenen Einträge entfernen
-              setEntries([]);
-              setSelected(new Set());
-              setNextId(1);
-              // Datei-Dedupe-Cache leeren, damit Files erneut geladen werden können
-              fileSigCacheRef.current = new Map();
-              // HTTP-Dedupe-Cache leeren
-              httpSigCacheRef.current = new Map();
-              // LoggingStore zurücksetzen (MDC etc.)
-              try {
-                LoggingStore.reset();
-              } catch (e) {
-                logger.error("LoggingStore.reset error (Elastic replace)", e);
-              }
-            }
-
-            // Anhängen mit Kappung
-            const messageFilter = formVals.message || "";
-            if (Array.isArray(res.entries) && res.entries.length) {
-              const used = appendElasticCapped(
-                res.entries as any[],
-                available,
-                {
-                  ignoreExistingForElastic: loadMode === "replace",
-                  messageFilter,
-                },
-              );
-              available = Math.max(0, available - used);
-              setEsLoadedCount((c) => c + used);
-            }
-
-            // Auto-Nachladen bis Cap erreicht oder keine weiteren Seiten
-            while (available > 0 && hasMore) {
-              const moreOpts: ElasticSearchOptions = {
-                ...opts,
-                // Seite auf verbleibendes Budget begrenzen, damit nach
-                // Dedup-bedingtem Nachladen kein großes Overshoot entsteht.
-                size: Math.max(1, available),
-                // Gesamtzahl nur einmal (erster Request) ermitteln.
-                trackTotalHits: false,
-                // Für PIT: nextSearchAfter übergeben; für Scroll bleibt es undefiniert
-                ...(nextToken &&
-                Array.isArray(nextToken) &&
-                nextToken.length > 0
-                  ? { searchAfter: nextToken as any }
-                  : {}),
-                pitSessionId: carriedPit || undefined,
-              } as any;
-              const r2 = await typedElasticSearch(moreOpts);
-              if (!r2?.ok) break;
-              hasMore = !!r2.hasMore;
-              nextToken = (r2.nextSearchAfter as any) || null;
-              carriedPit = r2.pitSessionId || carriedPit;
-              setEsHasMore(hasMore);
-              setEsNextSearchAfter(nextToken);
-              setEsPitSessionId(carriedPit);
-              if (Array.isArray(r2.entries) && r2.entries.length) {
-                const used2 = appendElasticCapped(
-                  r2.entries as any[],
-                  available,
-                  {
-                    messageFilter,
-                  },
-                );
-                available = Math.max(0, available - used2);
-                setEsLoadedCount((c) => c + used2);
-              }
-              if (!hasMore) break;
-            }
-
-            // Session nur beenden, wenn wirklich keine weiteren Ergebnisse mehr verfügbar
-            if (!hasMore) {
-              setEsPitSessionId(null);
-            }
-            // esHasMore bleibt true, wenn noch Ergebnisse existieren (auch bei Cap erreicht)
-          } else {
-            // Check if this is a feature-disabled error
-            const errorMsg = res?.error || t("status.errorUnknown");
-            if (!handleFeatureError(errorMsg)) {
-              showAlert(t("status.elasticError", { message: errorMsg }));
-            }
-          }
-        } finally {
-          setEsBusy(false);
-        }
-      });
-    } catch (e) {
-      logger.error("[Elastic] Search failed", e);
-      const errorMsg = e instanceof Error ? e.message : String(e);
-      if (!handleFeatureError(errorMsg)) {
-        showAlert(t("status.elasticError", { message: errorMsg }));
-      }
-    }
-  };
 
   // Handler for the one-shot HTTP load dialog. Extracted from inline JSX.
   const handleHttpLoad = async (url: string) => {

@@ -12,7 +12,7 @@ export { useSettings } from "./useSettings";
 export type { ThemeMode, SettingsTab, SettingsForm } from "./useSettings";
 export { useHttpPolling } from "./useHttpPolling";
 export { useElasticSearch } from "./useElasticSearch";
-export type { TimeFormState } from "./useElasticSearch";
+export type { UseElasticSearchOptions } from "./useElasticSearch";
 export { useEntryManagement } from "./useEntryManagement";
 export { useKeyboardNavigation } from "./useKeyboardNavigation";
 export { useResizable } from "./useResizable";
