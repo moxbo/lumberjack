@@ -5,6 +5,17 @@ Alle nennenswerten Änderungen an diesem Projekt werden in dieser Datei dokument
 Das Format orientiert sich an [Keep a Changelog](https://keepachangelog.com/de/1.1.0/),
 und dieses Projekt folgt [Semantic Versioning](https://semver.org/lang/de/).
 
+## [1.1.2-beta.2] - 2026-07-20 _(Pre-Release)_
+
+
+### Changed
+- Implement debounced entries for improved filter performance during streaming
+- Remove raw payload from log entries to reduce memory footprint and prevent crashes
+- Implement heavy field offloading to IndexedDB for improved memory management
+- Enhance HTTP tail dialog settings persistence and initialization
+- Integrate accessibility announcer and HTTP poll countdown hooks
+- Extract Elasticsearch logic into useElasticSearch hook for improved modularity
+
 ## [1.1.2-beta.1] - 2026-07-09 _(Pre-Release)_
 
 
