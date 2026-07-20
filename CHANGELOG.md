@@ -5,6 +5,12 @@ Alle nennenswerten Änderungen an diesem Projekt werden in dieser Datei dokument
 Das Format orientiert sich an [Keep a Changelog](https://keepachangelog.com/de/1.1.0/),
 und dieses Projekt folgt [Semantic Versioning](https://semver.org/lang/de/).
 
+## [1.1.2-beta.3] - 2026-07-20 _(Pre-Release)_
+
+
+### Added
+- Implement Elasticsearch dialect detection and caching for improved pagination handling
+
 ## [1.1.2-beta.2] - 2026-07-20 _(Pre-Release)_
 
 
