@@ -113,6 +113,19 @@ export function FilterSection({
   const threadInputRef = useRef<HTMLInputElement>(null);
   const messageInputRef = useRef<HTMLInputElement>(null);
 
+  // Local (uncommitted) input values. Typing only updates these; the filter is
+  // applied to `filter`/`onFilterChange` when the user presses Enter. This
+  // avoids "filter while typing" – the filter only triggers on Enter.
+  const [loggerVal, setLoggerVal] = useState(filter.logger);
+  const [threadVal, setThreadVal] = useState(filter.thread);
+  const [messageVal, setMessageVal] = useState(filter.message);
+
+  // Keep local input values in sync when the filter changes from outside
+  // (e.g. applying a profile, clearing all filters, or picking a history entry).
+  useEffect(() => setLoggerVal(filter.logger), [filter.logger]);
+  useEffect(() => setThreadVal(filter.thread), [filter.thread]);
+  useEffect(() => setMessageVal(filter.message), [filter.message]);
+
   return (
     <div className={`filter-section ${expanded ? "expanded" : "collapsed"}`}>
       <div className="section" style={{ paddingTop: 0 }}>
@@ -156,13 +169,12 @@ export function FilterSection({
             id="filterLogger"
             ref={loggerInputRef as any}
             type="text"
-            value={filter.logger}
-            onInput={(e) =>
-              onFilterChange({ ...filter, logger: e.currentTarget.value })
-            }
+            value={loggerVal}
+            onInput={(e) => setLoggerVal(e.currentTarget.value)}
             onKeyDown={(e) => {
               if (e.key === "Enter") {
                 addFilterHistory("logger", e.currentTarget.value);
+                onFilterChange({ ...filter, logger: e.currentTarget.value });
                 onSubmitFilter?.({ ...filter, logger: e.currentTarget.value });
               }
               if (e.key === "ArrowDown") onShowLoggerHistChange(true);
@@ -195,6 +207,7 @@ export function FilterSection({
                 onFilterChange({ ...filter, logger: v });
                 addFilterHistory("logger", v);
                 onShowLoggerHistChange(false);
+                onSubmitFilter?.({ ...filter, logger: v });
               }}
               onClose={() => onShowLoggerHistChange(false)}
               inputRef={loggerInputRef}
@@ -215,13 +228,12 @@ export function FilterSection({
             id="filterThread"
             ref={threadInputRef as any}
             type="text"
-            value={filter.thread}
-            onInput={(e) =>
-              onFilterChange({ ...filter, thread: e.currentTarget.value })
-            }
+            value={threadVal}
+            onInput={(e) => setThreadVal(e.currentTarget.value)}
             onKeyDown={(e) => {
               if (e.key === "Enter") {
                 addFilterHistory("thread", e.currentTarget.value);
+                onFilterChange({ ...filter, thread: e.currentTarget.value });
                 onSubmitFilter?.({ ...filter, thread: e.currentTarget.value });
               }
               if (e.key === "ArrowDown") onShowThreadHistChange(true);
@@ -254,6 +266,7 @@ export function FilterSection({
                 onFilterChange({ ...filter, thread: v });
                 addFilterHistory("thread", v);
                 onShowThreadHistChange(false);
+                onSubmitFilter?.({ ...filter, thread: v });
               }}
               onClose={() => onShowThreadHistChange(false)}
               inputRef={threadInputRef}
@@ -274,13 +287,12 @@ export function FilterSection({
             id="filterMessage"
             ref={messageInputRef as any}
             type="text"
-            value={filter.message}
-            onInput={(e) =>
-              onFilterChange({ ...filter, message: e.currentTarget.value })
-            }
+            value={messageVal}
+            onInput={(e) => setMessageVal(e.currentTarget.value)}
             onKeyDown={(e) => {
               if (e.key === "Enter") {
                 addFilterHistory("message", e.currentTarget.value);
+                onFilterChange({ ...filter, message: e.currentTarget.value });
                 onSubmitFilter?.({ ...filter, message: e.currentTarget.value });
               }
               if (e.key === "ArrowDown") onShowMessageHistChange(true);

@@ -6,7 +6,7 @@
  * and prev/next match navigation buttons.
  */
 import { createPortal } from "preact/compat";
-import { useRef, useState } from "preact/hooks";
+import { useEffect, useRef, useState } from "preact/hooks";
 import type { RefObject } from "preact";
 import type { JSX } from "preact/jsx-runtime";
 import { useI18n } from "../../utils/i18n";
@@ -79,6 +79,15 @@ export function SearchBar({
 }: SearchBarProps): JSX.Element {
   const [showSyntaxHelp, setShowSyntaxHelp] = useState(false);
   const syntaxHelpBtnRef = useRef<HTMLButtonElement | null>(null);
+
+  // Local (uncommitted) search text. Typing only updates this; the search is
+  // applied (via setSearch/onSubmitSearch) when the user presses Enter. This
+  // avoids "search while typing" – the search only triggers on Enter.
+  const [searchVal, setSearchVal] = useState(search);
+  // Keep local value in sync when `search` changes from outside (history pick,
+  // clearing the search, applying a profile, etc.).
+  useEffect(() => setSearchVal(search), [search]);
+
   return (
     <div className="section">
       <div className="search-wrapper" style={{ position: "relative" }}>
@@ -86,8 +95,8 @@ export function SearchBar({
           id="searchText"
           ref={searchInputRef as any}
           type="search"
-          value={search}
-          onInput={(e) => setSearch(e.currentTarget.value)}
+          value={searchVal}
+          onInput={(e) => setSearchVal(e.currentTarget.value)}
           onKeyDown={(e) => {
             const key = (e as any).key;
             // Handle Enter: select highlighted item or go to next match
@@ -107,11 +116,10 @@ export function SearchBar({
                   onSubmitSearch?.(selectedItem);
                 }
               } else {
-                addFilterHistory(
-                  "search",
-                  (e.currentTarget as any).value as string,
-                );
-                onSubmitSearch?.((e.currentTarget as any).value as string);
+                const val = (e.currentTarget as any).value as string;
+                setSearch(val);
+                addFilterHistory("search", val);
+                onSubmitSearch?.(val);
                 gotoSearchMatch(1);
               }
               return;
