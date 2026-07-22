@@ -15,6 +15,14 @@
 //   the canonical "TraceID" so a single filter entry matches all spellings.
 
 export type DcFilterEntry = { key: string; value: string; active: boolean };
+export interface CompiledDcFilterGroup {
+  key: string;
+  allowedValues: string[];
+  candidates: string[];
+  hasWildcard: boolean;
+}
+
+export type CompiledDcFilter = CompiledDcFilterGroup[];
 
 // Map diverse trace-key spellings to the canonical display/filter name.
 const TRACE_KEY_VARIANTS = new Set([
@@ -83,6 +91,73 @@ export function toSafeString(val: unknown): string {
   return "";
 }
 
+export function compileDcFilter(
+  dcEntries: ReadonlyArray<DcFilterEntry>,
+): CompiledDcFilter {
+  if (!dcEntries || dcEntries.length === 0) return [];
+
+  const entriesByKey = new Map<string, string[]>();
+  for (const entry of dcEntries) {
+    if (!entry.active) continue;
+    const key = canonicalDcKey(entry.key).toLowerCase();
+    if (!key) continue;
+    const values = entriesByKey.get(key) || [];
+    values.push(String(entry.value ?? "").toLowerCase());
+    entriesByKey.set(key, values);
+  }
+
+  const compiled: CompiledDcFilter = [];
+  for (const [key, allowedValues] of entriesByKey) {
+    compiled.push({
+      key,
+      allowedValues,
+      candidates: eventKeyVariantsForCanonical(key),
+      hasWildcard: allowedValues.includes(""),
+    });
+  }
+  return compiled;
+}
+
+export function matchesCompiledDcFilter(
+  mdc: Record<string, unknown> | null | undefined,
+  compiled: CompiledDcFilter,
+): boolean {
+  if (compiled.length === 0) return true;
+  if (!mdc || typeof mdc !== "object") return false;
+
+  const hasOwn = (obj: Record<string, unknown>, k: string): boolean =>
+    Object.prototype.hasOwnProperty.call(obj, k);
+
+  for (const group of compiled) {
+    const present: string[] = [];
+    for (const candidate of group.candidates) {
+      if (hasOwn(mdc, candidate)) {
+        present.push(toSafeString(mdc[candidate]).toLowerCase());
+      }
+    }
+    if (present.length === 0) {
+      for (const key of Object.keys(mdc)) {
+        if (key.toLowerCase() === group.key) {
+          present.push(toSafeString(mdc[key]).toLowerCase());
+        }
+      }
+    }
+
+    if (group.hasWildcard && present.length > 0) continue;
+
+    let keyMatched = false;
+    for (const value of present) {
+      if (group.allowedValues.includes(value)) {
+        keyMatched = true;
+        break;
+      }
+    }
+    if (!keyMatched) return false;
+  }
+
+  return true;
+}
+
 /**
  * Returns true if the given MDC matches the (active) DC filter entries.
  *
@@ -94,61 +169,5 @@ export function matchesDcFilter(
   mdc: Record<string, unknown> | null | undefined,
   dcEntries: ReadonlyArray<DcFilterEntry>,
 ): boolean {
-  if (!dcEntries || dcEntries.length === 0) return true;
-
-  const activeEntries = dcEntries.filter((e) => e.active);
-  if (activeEntries.length === 0) return true;
-
-  if (!mdc || typeof mdc !== "object") return false;
-
-  // Group entry values by canonical key (lowercased for comparison).
-  const entriesByKey = new Map<string, string[]>();
-  for (const entry of activeEntries) {
-    const key = canonicalDcKey(entry.key).toLowerCase();
-    if (!key) continue;
-    const values = entriesByKey.get(key) || [];
-    values.push(String(entry.value ?? "").toLowerCase());
-    entriesByKey.set(key, values);
-  }
-
-  const hasOwn = (obj: Record<string, unknown>, k: string): boolean =>
-    Object.prototype.hasOwnProperty.call(obj, k);
-
-  // For each key group: at least one value (or a wildcard) must match.
-  for (const [key, allowedValues] of entriesByKey) {
-    // Collect all present event values across canonical key variants.
-    const present: string[] = [];
-    const candidates = eventKeyVariantsForCanonical(key);
-    for (const cand of candidates) {
-      if (hasOwn(mdc, cand)) {
-        present.push(toSafeString(mdc[cand]).toLowerCase());
-      }
-    }
-    // Fallback: also match by case-insensitive key comparison so that
-    // arbitrary spellings (e.g. differing case) still work.
-    if (present.length === 0) {
-      for (const k of Object.keys(mdc)) {
-        if (k.toLowerCase() === key) {
-          present.push(toSafeString(mdc[k]).toLowerCase());
-        }
-      }
-    }
-
-    const hasWildcard = allowedValues.includes("");
-    let keyMatched = false;
-    if (hasWildcard && present.length > 0) {
-      keyMatched = true;
-    } else {
-      for (const val of present) {
-        if (allowedValues.includes(val)) {
-          keyMatched = true;
-          break;
-        }
-      }
-    }
-
-    if (!keyMatched) return false;
-  }
-
-  return true;
+  return matchesCompiledDcFilter(mdc, compileDcFilter(dcEntries));
 }

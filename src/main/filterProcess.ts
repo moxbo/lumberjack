@@ -13,7 +13,7 @@
 
 import { parentPort } from "node:worker_threads";
 
-import { matchesDcFilter as sharedMatchesDcFilter } from "../utils/dcMatch";
+import { compileDcFilter, matchesCompiledDcFilter } from "../utils/dcMatch";
 
 // ============================================================================
 // Types
@@ -372,12 +372,6 @@ function matchesTimeRange(
  * Unterstützt Wildcards (leerer Wert) und Trace-Key-Varianten.
  * Implementierung: gemeinsames Modul src/utils/dcMatch.ts (Single Source of Truth).
  */
-function matchesDcFilter(
-  mdc: Record<string, unknown> | undefined,
-  dcEntries: Array<{ key: string; value: string; active: boolean }>,
-): boolean {
-  return sharedMatchesDcFilter(mdc, dcEntries);
-}
 
 // ============================================================================
 // Haupt-Filter-Funktion
@@ -416,6 +410,9 @@ function filterEntries(
   // Vorkompilieren des Message-Filters → spart bei N Entries
   // (N-1) Tokenize-Operationen. Bei 100k Entries ein massiver Speedup.
   const compiledMessageFilter = compileMessageFilter(messageFilter);
+  const compiledDcFilter = options.dcFilterEnabled
+    ? compileDcFilter(options.dcFilterEntries)
+    : [];
 
   for (let i = 0; i < entries.length; i++) {
     const e = entries[i];
@@ -491,7 +488,7 @@ function filterEntries(
 
     // DC filter
     if (options.dcFilterEnabled) {
-      if (!matchesDcFilter(e.mdc, options.dcFilterEntries)) {
+      if (!matchesCompiledDcFilter(e.mdc, compiledDcFilter)) {
         stats.rejectedByDC++;
         continue;
       }

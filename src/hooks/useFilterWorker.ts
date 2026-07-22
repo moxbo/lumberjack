@@ -11,9 +11,9 @@
  * - Bessere Performance bei großen Datensätzen (>5000 Entries)
  */
 import { useState, useEffect, useRef, useCallback } from "preact/hooks";
-import { msgMatches } from "../utils/msgFilter";
+import { msgMatches, type SearchMode } from "../utils/msgFilter";
 import { entrySignature } from "../utils/entryUtils";
-import { matchesDcFilter as sharedMatchesDcFilter } from "../utils/dcMatch";
+import { compileDcFilter, matchesCompiledDcFilter } from "../utils/dcMatch";
 import {
   filterIsAvailable,
   filterEntries as typedFilterEntries,
@@ -33,6 +33,8 @@ interface FilterOptions {
   timeFilterEnabled: boolean;
   timeFilterFrom?: string;
   timeFilterTo?: string;
+  navigationSearch?: string;
+  navigationSearchMode?: SearchMode;
 }
 
 interface FilterStats {
@@ -49,6 +51,7 @@ interface FilterStats {
 
 interface UseFilterWorkerResult {
   filteredIndices: number[];
+  searchMatchIndices: number[];
   isFiltering: boolean;
   stats: FilterStats | null;
   /**
@@ -136,6 +139,32 @@ function projectToSlimEntries(
   return result;
 }
 
+function computeSearchMatchIndices(
+  entries: unknown[],
+  filteredIndices: number[],
+  options: FilterOptions,
+): number[] {
+  const search = String(options.navigationSearch || "").trim();
+  if (!search) return [];
+
+  const matches: number[] = [];
+  const limit = Math.min(filteredIndices.length, 50_000);
+  for (let visualIndex = 0; visualIndex < limit; visualIndex++) {
+    const entry = entries[filteredIndices[visualIndex]!] as Record<
+      string,
+      unknown
+    > | null;
+    if (
+      msgMatches(String(entry?.message ?? ""), search, {
+        mode: options.navigationSearchMode,
+      })
+    ) {
+      matches.push(visualIndex);
+    }
+  }
+  return matches;
+}
+
 /**
  * Hook that uses UtilityProcess (Electron 40+) or Web Worker for filtering large datasets.
  * Falls back to synchronous filtering for kleinere Datensätze oder wenn UtilityProcess nicht verfügbar ist.
@@ -147,6 +176,7 @@ function projectToSlimEntries(
  */
 export function useFilterWorker(): UseFilterWorkerResult {
   const [filteredIndices, setFilteredIndices] = useState<number[]>([]);
+  const [searchMatchIndices, setSearchMatchIndices] = useState<number[]>([]);
   const [isFiltering, setIsFiltering] = useState(false);
   const [stats, setStats] = useState<FilterStats | null>(null);
   const [useUtilityProcess, setUseUtilityProcess] = useState(false);
@@ -221,6 +251,7 @@ export function useFilterWorker(): UseFilterWorkerResult {
         const {
           type,
           filteredIndices: indices,
+          searchMatchIndices: workerSearchMatchIndices,
           stats: workerStats,
           requestId,
         } = event.data;
@@ -235,6 +266,7 @@ export function useFilterWorker(): UseFilterWorkerResult {
         ) {
           lastAppliedRequestRef.current = requestId;
           setFilteredIndices(indices);
+          setSearchMatchIndices(workerSearchMatchIndices || []);
           setStats(workerStats);
           // isFiltering erst zurücksetzen, wenn das aktuell jüngste Ergebnis da
           // ist – sonst würde der Ladeindikator bei jedem Zwischenergebnis
@@ -358,7 +390,11 @@ export function useFilterWorker(): UseFilterWorkerResult {
       entries: unknown[],
       options: FilterOptions,
       marksMap?: Record<string, string>,
-    ): { indices: number[]; stats: FilterStats } => {
+    ): {
+      indices: number[];
+      searchMatchIndices: number[];
+      stats: FilterStats;
+    } => {
       const filterStats: FilterStats = {
         total: 0,
         passed: 0,
@@ -372,7 +408,15 @@ export function useFilterWorker(): UseFilterWorkerResult {
       };
 
       const indices: number[] = [];
+      const searchMatchIndices: number[] = [];
+      const navigationSearch = String(options.navigationSearch || "").trim();
       const hasMarks = !!marksMap && Object.keys(marksMap).length > 0;
+      const levelFilter = options.filter.level.toUpperCase();
+      const loggerFilter = options.filter.logger.toLowerCase();
+      const threadFilter = options.filter.thread.toLowerCase();
+      const compiledDcFilter = options.dcFilterEnabled
+        ? compileDcFilter(options.dcFilterEntries)
+        : [];
 
       for (let i = 0; i < entries.length; i++) {
         const e = entries[i] as Record<string, unknown> | null;
@@ -395,30 +439,28 @@ export function useFilterWorker(): UseFilterWorkerResult {
         }
 
         if (options.stdFiltersEnabled) {
-          if (options.filter.level) {
+          if (levelFilter) {
             const lev = String(e.level || "").toUpperCase();
-            if (lev !== options.filter.level.toUpperCase()) {
+            if (lev !== levelFilter) {
               filterStats.rejectedByLevel++;
               continue;
             }
           }
-          if (options.filter.logger) {
-            const q = options.filter.logger.toLowerCase();
+          if (loggerFilter) {
             if (
               !String(e.logger || "")
                 .toLowerCase()
-                .includes(q)
+                .includes(loggerFilter)
             ) {
               filterStats.rejectedByLogger++;
               continue;
             }
           }
-          if (options.filter.thread) {
-            const q = options.filter.thread.toLowerCase();
+          if (threadFilter) {
             if (
               !String(e.thread || "")
                 .toLowerCase()
-                .includes(q)
+                .includes(threadFilter)
             ) {
               filterStats.rejectedByThread++;
               continue;
@@ -434,26 +476,29 @@ export function useFilterWorker(): UseFilterWorkerResult {
         }
 
         // DC Filter support for synchronous filtering
-        if (options.dcFilterEnabled && options.dcFilterEntries) {
-          const activeEntries = options.dcFilterEntries.filter(
-            (entry) => entry.active,
-          );
-          if (activeEntries.length > 0) {
-            const mdc = e.mdc as Record<string, unknown> | null | undefined;
-            // Gemeinsame Filterlogik (Single Source of Truth):
-            // OR innerhalb eines Keys, AND über Keys, Wildcards + Trace-Varianten.
-            if (!sharedMatchesDcFilter(mdc, options.dcFilterEntries)) {
-              filterStats.rejectedByDC++;
-              continue;
-            }
+        if (options.dcFilterEnabled) {
+          const mdc = e.mdc as Record<string, unknown> | null | undefined;
+          if (!matchesCompiledDcFilter(mdc, compiledDcFilter)) {
+            filterStats.rejectedByDC++;
+            continue;
           }
         }
 
         filterStats.passed++;
+        const visualIndex = indices.length;
         indices.push(i);
+        if (
+          navigationSearch &&
+          visualIndex < 50_000 &&
+          msgMatches(String(e.message ?? ""), navigationSearch, {
+            mode: options.navigationSearchMode,
+          })
+        ) {
+          searchMatchIndices.push(visualIndex);
+        }
       }
 
-      return { indices, stats: filterStats };
+      return { indices, searchMatchIndices, stats: filterStats };
     },
     [],
   );
@@ -476,6 +521,7 @@ export function useFilterWorker(): UseFilterWorkerResult {
         // nicht überschreibt.
         lastAppliedRequestRef.current = requestId;
         setFilteredIndices(result.indices);
+        setSearchMatchIndices(result.searchMatchIndices);
         setStats(result.stats);
         setIsFiltering(false);
         return;
@@ -489,12 +535,14 @@ export function useFilterWorker(): UseFilterWorkerResult {
       // mehr – der bisherige Sync-Fallback bei >50k Einträgen war die Hauptur-
       // sache für Einfrieren der UI bei 300k+ Einträgen.
       if (workerRef.current) {
-        // Wenn Markierungen relevant sind (onlyMarked), muss der projizierte
-        // `_mark`-Stand aktuell sein → kompletter Re-Sync. Das ist der seltene
-        // Pfad; das häufige Tippen im Message-Filter bleibt inkrementell.
-        const forceFull =
-          !!options.onlyMarked ||
-          (!!marksMap && Object.keys(marksMap).length > 0);
+        // Der Worker wertet `_mark` ausschließlich bei aktivem `onlyMarked` aus
+        // (siehe filterWorker.ts). Nur dann muss der projizierte `_mark`-Stand
+        // aktuell sein → kompletter Re-Sync. Solange die markierte Ansicht NICHT
+        // aktiv ist, beeinflussen Markierungen das Filterergebnis nicht, also
+        // genügt der inkrementelle Sync. Das vermeidet einen teuren Komplett-
+        // Transfer aller Einträge pro Filterlauf, sobald überhaupt Marks
+        // existieren (häufiger Fall bei großen Datenmengen).
+        const forceFull = !!options.onlyMarked;
 
         try {
           const ok = syncEntriesToWorker(entries, marksMap, forceFull);
@@ -534,6 +582,7 @@ export function useFilterWorker(): UseFilterWorkerResult {
             const syncResult = filterSync(entries, options, marksMap);
             lastAppliedRequestRef.current = requestId;
             setFilteredIndices(syncResult.indices);
+            setSearchMatchIndices(syncResult.searchMatchIndices);
             setStats(syncResult.stats);
             setIsFiltering(false);
             return;
@@ -550,6 +599,13 @@ export function useFilterWorker(): UseFilterWorkerResult {
                 lastAppliedRequestRef.current = requestId;
                 if (result.ok) {
                   setFilteredIndices(result.filteredIndices);
+                  setSearchMatchIndices(
+                    computeSearchMatchIndices(
+                      entries,
+                      result.filteredIndices,
+                      options,
+                    ),
+                  );
                   setStats(result.stats);
                 } else {
                   // UtilityProcess failed, fall back to sync
@@ -559,6 +615,7 @@ export function useFilterWorker(): UseFilterWorkerResult {
                   );
                   const syncResult = filterSync(entries, options, marksMap);
                   setFilteredIndices(syncResult.indices);
+                  setSearchMatchIndices(syncResult.searchMatchIndices);
                   setStats(syncResult.stats);
                 }
                 if (requestId >= pendingRequestRef.current) {
@@ -573,6 +630,7 @@ export function useFilterWorker(): UseFilterWorkerResult {
                 lastAppliedRequestRef.current = requestId;
                 const syncResult = filterSync(entries, options, marksMap);
                 setFilteredIndices(syncResult.indices);
+                setSearchMatchIndices(syncResult.searchMatchIndices);
                 setStats(syncResult.stats);
                 if (requestId >= pendingRequestRef.current) {
                   setIsFiltering(false);
@@ -587,6 +645,7 @@ export function useFilterWorker(): UseFilterWorkerResult {
           const syncResult = filterSync(entries, options, marksMap);
           lastAppliedRequestRef.current = requestId;
           setFilteredIndices(syncResult.indices);
+          setSearchMatchIndices(syncResult.searchMatchIndices);
           setStats(syncResult.stats);
           setIsFiltering(false);
         }
@@ -597,6 +656,7 @@ export function useFilterWorker(): UseFilterWorkerResult {
       const result = filterSync(entries, options, marksMap);
       lastAppliedRequestRef.current = requestId;
       setFilteredIndices(result.indices);
+      setSearchMatchIndices(result.searchMatchIndices);
       setStats(result.stats);
       setIsFiltering(false);
     },
@@ -605,6 +665,7 @@ export function useFilterWorker(): UseFilterWorkerResult {
 
   return {
     filteredIndices,
+    searchMatchIndices,
     isFiltering,
     stats,
     filterEntries,

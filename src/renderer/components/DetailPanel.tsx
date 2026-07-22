@@ -3,6 +3,7 @@
  * Detail Panel Component - Zeigt Details zum ausgewählten Log-Eintrag
  */
 import { Fragment } from "preact";
+import { memo } from "preact/compat";
 import { useState } from "preact/hooks";
 import { useI18n } from "../../utils/i18n";
 import { highlightAll } from "../../utils/highlight";
@@ -48,7 +49,7 @@ interface DetailPanelProps {
   markColor?: string | null;
 }
 
-export function DetailPanel({
+function DetailPanelComponent({
   selectedEntry,
   mdcPairs,
   search,
@@ -295,3 +296,24 @@ export function DetailPanel({
     </div>
   );
 }
+
+/**
+ * Performance: Das Detail-Panel ist dauerhaft gemountet und wird deshalb bei
+ * JEDEM Re-Render von App neu gerendert – u.a. bei jedem Scroll-Frame des
+ * virtualisierten Listen-Renderers und bei jedem Streaming-Append. Da der
+ * Render synchron `highlightAll(...)` (Regex-Highlighting der Nachricht)
+ * ausführt, ist das bei großen Datenmengen ein spürbarer Bremsklotz.
+ *
+ * Der Custom-Comparator vergleicht nur die datenrelevanten Props (wie LogRow).
+ * Die Callback-Props werden bei jedem App-Render neu erzeugt, verhalten sich
+ * aber stabil – sie werden daher bewusst ignoriert, damit Scrollen/Streaming
+ * keinen Detail-Panel-Re-Render (inkl. Highlighting) auslösen.
+ */
+export const DetailPanel = memo(
+  DetailPanelComponent,
+  (prev, next) =>
+    prev.selectedEntry === next.selectedEntry &&
+    prev.mdcPairs === next.mdcPairs &&
+    prev.search === next.search &&
+    prev.markColor === next.markColor,
+);

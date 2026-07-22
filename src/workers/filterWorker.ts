@@ -10,12 +10,12 @@
  * Objekte über die postMessage-Grenze geklont werden (Haupt-Thread-Blocker).
  */
 
-import { matchesDcFilter as sharedMatchesDcFilter } from "../utils/dcMatch";
+import { compileDcFilter, matchesCompiledDcFilter } from "../utils/dcMatch";
 // Geteilte msgMatches-Implementierung nutzen: sie cached tokenisierte
 // Ausdrücke (tokenCache), sodass der Filter-Ausdruck NICHT pro Eintrag neu
 // tokenisiert wird. Die bisherige lokale Kopie tokenisierte den Ausdruck für
 // jeden der bis zu 300k Einträge erneut.
-import { msgMatches } from "../utils/msgFilter";
+import { msgMatches, type SearchMode } from "../utils/msgFilter";
 
 // Message types
 interface SetEntriesRequest {
@@ -56,11 +56,14 @@ interface FilterOptions {
   timeFilterEnabled: boolean;
   timeFilterFrom?: string;
   timeFilterTo?: string;
+  navigationSearch?: string;
+  navigationSearchMode?: SearchMode;
 }
 
 interface FilterResponse {
   type: "result";
   filteredIndices: number[];
+  searchMatchIndices: number[];
   stats: FilterStats;
   /** Echoed back from the request so the caller can drop stale results. */
   requestId?: number;
@@ -84,40 +87,21 @@ interface FilterStats {
 // Check if timestamp is within time range
 function matchesTimeRange(
   timestamp: unknown,
-  from?: string,
-  to?: string,
+  fromTs: number | null,
+  toTs: number | null,
 ): boolean {
-  if (!from && !to) return true;
-
+  if (fromTs === null && toTs === null) return true;
   try {
     const ts = new Date(timestamp as string).getTime();
     if (isNaN(ts)) return true; // Invalid timestamps pass through
 
-    if (from) {
-      const fromTs = new Date(from).getTime();
-      if (!isNaN(fromTs) && ts < fromTs) return false;
-    }
-
-    if (to) {
-      const toTs = new Date(to).getTime();
-      if (!isNaN(toTs) && ts > toTs) return false;
-    }
+    if (fromTs !== null && ts < fromTs) return false;
+    if (toTs !== null && ts > toTs) return false;
 
     return true;
   } catch {
     return true;
   }
-}
-
-// Check if entry matches DC filter
-// Logic: OR for same keys (e.g., TraceID=A OR TraceID=B), AND across different keys.
-// Supports wildcards (empty value) and trace-key variants.
-// Implementation: shared module src/utils/dcMatch.ts (single source of truth).
-function matchesDcFilter(
-  mdc: Record<string, unknown> | undefined,
-  dcEntries: Array<{ key: string; value: string; active: boolean }>,
-): boolean {
-  return sharedMatchesDcFilter(mdc, dcEntries);
 }
 
 // Main filter function
@@ -135,6 +119,22 @@ function filterEntries(entries: any[], options: FilterOptions): FilterResponse {
   };
 
   const filteredIndices: number[] = [];
+  const searchMatchIndices: number[] = [];
+  const navigationSearch = String(options.navigationSearch || "").trim();
+  const levelFilter = options.filter.level.toUpperCase();
+  const loggerFilter = options.filter.logger.toLowerCase();
+  const threadFilter = options.filter.thread.toLowerCase();
+  const parsedFrom = options.timeFilterFrom
+    ? new Date(options.timeFilterFrom).getTime()
+    : NaN;
+  const parsedTo = options.timeFilterTo
+    ? new Date(options.timeFilterTo).getTime()
+    : NaN;
+  const fromTs = Number.isNaN(parsedFrom) ? null : parsedFrom;
+  const toTs = Number.isNaN(parsedTo) ? null : parsedTo;
+  const compiledDcFilter = options.dcFilterEnabled
+    ? compileDcFilter(options.dcFilterEntries)
+    : [];
 
   for (let i = 0; i < entries.length; i++) {
     const e = entries[i];
@@ -151,21 +151,20 @@ function filterEntries(entries: any[], options: FilterOptions): FilterResponse {
     // Standard filters
     if (options.stdFiltersEnabled) {
       // Level filter
-      if (options.filter.level) {
+      if (levelFilter) {
         const lev = String(e.level || "").toUpperCase();
-        if (lev !== options.filter.level.toUpperCase()) {
+        if (lev !== levelFilter) {
           stats.rejectedByLevel++;
           continue;
         }
       }
 
       // Logger filter
-      if (options.filter.logger) {
-        const q = options.filter.logger.toLowerCase();
+      if (loggerFilter) {
         if (
           !String(e.logger || "")
             .toLowerCase()
-            .includes(q)
+            .includes(loggerFilter)
         ) {
           stats.rejectedByLogger++;
           continue;
@@ -173,12 +172,11 @@ function filterEntries(entries: any[], options: FilterOptions): FilterResponse {
       }
 
       // Thread filter
-      if (options.filter.thread) {
-        const q = options.filter.thread.toLowerCase();
+      if (threadFilter) {
         if (
           !String(e.thread || "")
             .toLowerCase()
-            .includes(q)
+            .includes(threadFilter)
         ) {
           stats.rejectedByThread++;
           continue;
@@ -198,13 +196,7 @@ function filterEntries(entries: any[], options: FilterOptions): FilterResponse {
     const isElasticSrc =
       typeof e?.source === "string" && e.source.startsWith("elastic://");
     if (isElasticSrc && options.timeFilterEnabled) {
-      if (
-        !matchesTimeRange(
-          e.timestamp,
-          options.timeFilterFrom,
-          options.timeFilterTo,
-        )
-      ) {
+      if (!matchesTimeRange(e.timestamp, fromTs, toTs)) {
         stats.rejectedByTime++;
         continue;
       }
@@ -212,19 +204,30 @@ function filterEntries(entries: any[], options: FilterOptions): FilterResponse {
 
     // DC filter
     if (options.dcFilterEnabled) {
-      if (!matchesDcFilter(e.mdc, options.dcFilterEntries)) {
+      if (!matchesCompiledDcFilter(e.mdc, compiledDcFilter)) {
         stats.rejectedByDC++;
         continue;
       }
     }
 
     stats.passed++;
+    const visualIndex = filteredIndices.length;
     filteredIndices.push(i);
+    if (
+      navigationSearch &&
+      visualIndex < 50_000 &&
+      msgMatches(String(e.message ?? ""), navigationSearch, {
+        mode: options.navigationSearchMode,
+      })
+    ) {
+      searchMatchIndices.push(visualIndex);
+    }
   }
 
   return {
     type: "result",
     filteredIndices,
+    searchMatchIndices,
     stats,
   };
 }

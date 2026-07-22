@@ -19,6 +19,20 @@ function computePosFor(el: HTMLElement | null): PopoverPosition | null {
   };
 }
 
+function positionsEqual(
+  a: PopoverPosition | null,
+  b: PopoverPosition | null,
+): boolean {
+  return (
+    a === b ||
+    (a !== null &&
+      b !== null &&
+      a.left === b.left &&
+      a.top === b.top &&
+      a.width === b.width)
+  );
+}
+
 export function usePopover<T extends string>(popoverKeys: T[]) {
   type VisibilityState = Record<T, boolean>;
   type PositionState = Record<T, PopoverPosition | null>;
@@ -86,7 +100,7 @@ export function usePopover<T extends string>(popoverKeys: T[]) {
     for (const key of popoverKeys) {
       if (visibility[key]) {
         const newPos = computePosFor(refs.current[key]);
-        if (JSON.stringify(newPos) !== JSON.stringify(newPositions[key])) {
+        if (!positionsEqual(newPos, newPositions[key])) {
           newPositions[key] = newPos;
           changed = true;
         }

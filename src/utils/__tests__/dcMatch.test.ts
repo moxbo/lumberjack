@@ -4,6 +4,8 @@
 import { describe, it, expect } from "vitest";
 import {
   matchesDcFilter,
+  compileDcFilter,
+  matchesCompiledDcFilter,
   canonicalDcKey,
   type DcFilterEntry,
 } from "../dcMatch";
@@ -15,6 +17,29 @@ const entry = (key: string, value: string, active = true): DcFilterEntry => ({
 });
 
 describe("dcMatch – matchesDcFilter", () => {
+  it("keeps compiled matching equivalent to direct matching", () => {
+    const filter = [
+      entry("TraceID", "abc"),
+      entry("TraceID", "def"),
+      entry("userId", "u1"),
+      entry("ignored", "x", false),
+    ];
+    const compiled = compileDcFilter(filter);
+    const samples = [
+      { trace_id: "ABC", userId: "u1" },
+      { TraceID: "def", userId: "u1" },
+      { traceId: "abc", userId: "other" },
+      { userId: "u1" },
+      undefined,
+    ];
+
+    for (const mdc of samples) {
+      expect(matchesCompiledDcFilter(mdc, compiled)).toBe(
+        matchesDcFilter(mdc, filter),
+      );
+    }
+  });
+
   it("returns true when there are no entries", () => {
     expect(matchesDcFilter({ TraceID: "a" }, [])).toBe(true);
   });

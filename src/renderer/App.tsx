@@ -9,7 +9,6 @@ import {
 } from "preact/hooks";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { highlightAll } from "../utils/highlight";
-import { msgMatches } from "../utils/msgFilter";
 import logger from "../utils/logger";
 import { rendererPerf } from "../utils/rendererPerf";
 import { useI18n } from "../utils/i18n";
@@ -727,6 +726,7 @@ export default function App(): JSX.Element {
   // Use Filter Worker for large datasets (>10,000 entries)
   const {
     filteredIndices: workerFilteredIdx,
+    searchMatchIndices: workerSearchMatchIdx,
     stats: workerFilterStats,
     filterEntries,
   } = useFilterWorker();
@@ -770,6 +770,8 @@ export default function App(): JSX.Element {
         timeFilterEnabled,
         timeFilterFrom,
         timeFilterTo,
+        navigationSearch: debouncedSearch,
+        navigationSearchMode: searchMode,
       },
       // marksMap nur für `onlyMarked` relevant – sonst wird es im Worker
       // ohnehin ignoriert. Übergabe ist zustandslos und billig.
@@ -782,6 +784,8 @@ export default function App(): JSX.Element {
     dcVersion,
     timeVersion,
     onlyMarked,
+    debouncedSearch,
+    searchMode,
     filterEntries,
     // marksMap wirkt sich nur auf das Ergebnis aus, wenn `onlyMarked` aktiv
     // ist. Anderfalls wäre eine Aufnahme in die Deps eine unnötige
@@ -792,24 +796,24 @@ export default function App(): JSX.Element {
   // Use worker results for filtered indices
   const filteredIdx = workerFilteredIdx;
 
-  // Reverse-Index globalIdx → vi für O(1)-Lookup statt O(n) `indexOf`.
-  // Performance-Quick-Win #7: Bisher verursachte jeder Tastendruck
-  // (moveSelectionBy/gotoMarked/gotoSearchMatch/Range-Selection) einen
-  // linearen Scan über bis zu 300k Einträge.
-  const filteredIdxLookup = useMemo(() => {
-    const m = new Map<number, number>();
-    for (let vi = 0; vi < filteredIdx.length; vi++) {
-      m.set(filteredIdx[vi]!, vi);
-    }
-    return m;
-  }, [filteredIdx]);
+  // `filteredIdx` ist aufsteigend sortiert (alle Filterpfade laufen in
+  // Entry-Reihenfolge). Eine binäre Suche vermeidet die große Reverse-Map mit
+  // bis zu 500k Einträgen und deren O(n)-Neuaufbau bei jedem Filterergebnis.
   const viOfGlobal = useCallback(
     (g: number | null | undefined): number => {
       if (g == null) return -1;
-      const v = filteredIdxLookup.get(g);
-      return v === undefined ? -1 : v;
+      let lo = 0;
+      let hi = filteredIdx.length - 1;
+      while (lo <= hi) {
+        const mid = (lo + hi) >>> 1;
+        const value = filteredIdx[mid]!;
+        if (value === g) return mid;
+        if (value < g) lo = mid + 1;
+        else hi = mid - 1;
+      }
+      return -1;
     },
-    [filteredIdxLookup],
+    [filteredIdx],
   );
 
   // Update filter stats from worker
@@ -1135,7 +1139,10 @@ export default function App(): JSX.Element {
             const b = viOfGlobal(idx);
             if (a >= 0 && b >= 0) {
               const [lo, hi] = a < b ? [a, b] : [b, a];
-              next = new Set(filteredIdx.slice(lo, hi + 1).map((i) => i));
+              next = new Set<number>();
+              for (let vi = lo; vi <= hi; vi++) {
+                next.add(filteredIdx[vi]!);
+              }
             } else next = new Set([idx]);
           } else if (meta) {
             if (next.has(idx)) next.delete(idx);
@@ -1216,21 +1223,10 @@ export default function App(): JSX.Element {
     // Streaming nur gebündelt statt bei jedem einzelnen Append.
   }, [filteredIdx, debouncedEntries, marksMap]);
 
-  const searchMatchIdx = useMemo(() => {
-    const s = String(debouncedSearch || "").trim();
-    if (!s) return [] as number[];
-    const out: number[] = [];
-    const len = filteredIdx.length;
-    // Performance: Bei sehr großen Listen nur die ersten 50k durchsuchen
-    // für Search-Navigation, um UI-Freezes zu vermeiden
-    const searchLimit = Math.min(len, 50_000);
-    for (let vi = 0; vi < searchLimit; vi++) {
-      const idx = filteredIdx[vi]!;
-      const e = debouncedEntries[idx];
-      if (msgMatches(e?.message ?? "", s, { mode: searchMode })) out.push(vi);
-    }
-    return out;
-  }, [debouncedSearch, filteredIdx, debouncedEntries, searchMode]);
+  // Der Filter-Worker ermittelt dieselben, auf 50k begrenzten visuellen
+  // Trefferindizes im selben Durchlauf wie `filteredIdx`. Dadurch entfällt der
+  // zusätzliche O(n)-Scan mit `msgMatches` im Renderer-Hauptthread.
+  const searchMatchIdx = workerSearchMatchIdx;
 
   function gotoMarked(dir: number) {
     if (!markedIdx.length) return;
@@ -2094,6 +2090,14 @@ export default function App(): JSX.Element {
   // Filters must NOT influence these values, otherwise the user cannot easily
   // load entries outside the current filter window.
   const entriesTsRange = useMemo(() => {
+    // O(n)-Scan über ALLE Einträge (inkl. Date-Parsing). Diese Werte werden
+    // ausschließlich vom Elastic-Search-Dialog benötigt. Beim Streaming würde
+    // die Berechnung sonst bei jedem `entries`-Append (bis ~mehrmals/Sekunde)
+    // erneut über den kompletten Datensatz laufen und die UI ausbremsen.
+    // Daher nur berechnen, wenn der Dialog tatsächlich geöffnet ist.
+    if (!showTimeDialog) {
+      return { firstTs: null as unknown, lastTs: null as unknown };
+    }
     let minTs: number | null = null;
     let maxTs: number | null = null;
     let minRaw: unknown = null;
@@ -2113,7 +2117,17 @@ export default function App(): JSX.Element {
       }
     }
     return { firstTs: minRaw, lastTs: maxRaw };
-  }, [entries]);
+  }, [entries, showTimeDialog]);
+
+  const filteredDialogEntries = useMemo(() => {
+    if (!showStatsDialog && !showTraceTimeline) return [] as any[];
+    const projected: any[] = [];
+    for (let i = 0; i < filteredIdx.length; i++) {
+      const entry = entries[filteredIdx[i]!];
+      if (entry) projected.push(entry);
+    }
+    return projected;
+  }, [entries, filteredIdx, showStatsDialog, showTraceTimeline]);
 
   function clearLogs() {
     // Sicherheitsabfrage über In-App-Dialog (keine native Dialog-Fokus-Bugs).
@@ -3619,9 +3633,7 @@ export default function App(): JSX.Element {
         <Suspense fallback={null}>
           <StatsDialog
             open={showStatsDialog}
-            entries={
-              filteredIdx.map((i) => entries[i]).filter(Boolean) as any[]
-            }
+            entries={filteredDialogEntries}
             totalEntries={entries.length}
             onClose={() => setShowStatsDialog(false)}
             t={t}
@@ -3634,7 +3646,7 @@ export default function App(): JSX.Element {
       {showTraceTimeline && traceTimelineId && (
         <Suspense fallback={null}>
           <TraceTimeline
-            entries={filteredIdx.map((i) => entries[i]).filter(Boolean)}
+            entries={filteredDialogEntries}
             traceId={traceTimelineId}
             onClose={() => setShowTraceTimeline(false)}
             onEntryClick={(entry) => {
