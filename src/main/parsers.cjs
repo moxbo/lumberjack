@@ -147,16 +147,18 @@ function tokenizeQuery(s) {
 }
 
 // src/utils/esMessageQuery.ts
-function escapeWildcard(term) {
-  return term.replace(/([\\*?])/g, "\\$1");
+function escapeQueryStringTerm(term) {
+  return term.replace(/[<>]/g, " ").replace(/([+\-=&|!(){}[\]^"~*?:\\/])/g, "\\$1");
 }
 function messageLeaf(term, field) {
   if (/\s/.test(term)) {
     return { match_phrase: { [field]: { query: term } } };
   }
   return {
-    wildcard: {
-      [field]: { value: `*${escapeWildcard(term)}*`, case_insensitive: true }
+    query_string: {
+      query: `${field}:*${escapeQueryStringTerm(term)}*`,
+      analyze_wildcard: true,
+      allow_leading_wildcard: true
     }
   };
 }
@@ -569,6 +571,8 @@ async function parsePathsAsync(paths) {
   return all;
 }
 var pitSessions = /* @__PURE__ */ new Map();
+var dialectCache = /* @__PURE__ */ new Map();
+var DIALECT_CACHE_TTL_MS = 60 * 60 * 1e3;
 async function httpJsonRequest(method, urlStr, body, headers, allowInsecureTLS, timeoutMs) {
   return new Promise((resolve, reject) => {
     try {
@@ -641,7 +645,7 @@ async function httpJsonRequest(method, urlStr, body, headers, allowInsecureTLS, 
         if (timer) clearTimeout(timer);
         reject(err);
       });
-      const payload = body ? JSON.stringify(body) : "";
+      const payload = method === "GET" ? "" : body ? JSON.stringify(body) : "";
       if (payload) req.write(payload);
       req.end();
     } catch (err) {
@@ -946,7 +950,6 @@ function buildElasticSearchBody(opts) {
     must.push({ range: { level_value: { gte: lv } } });
   }
   return {
-    version: true,
     size: opts.size ?? 1e3,
     sort: buildSortArray(opts.sort, resolveTimestampField(opts)),
     query: {
@@ -960,6 +963,43 @@ function buildElasticSearchBody(opts) {
     _source: { excludes: [] },
     timeout: "30s"
   };
+}
+async function detectElasticDialect(sess) {
+  const cached = dialectCache.get(sess.baseUrl);
+  if (cached && cached.expiresAt > Date.now()) return cached.dialect;
+  if (cached) dialectCache.delete(sess.baseUrl);
+  try {
+    const url = `${sess.baseUrl}/?filter_path=version.number,version.distribution`;
+    const res = await httpJsonRequest(
+      "GET",
+      url,
+      void 0,
+      sess.headers,
+      sess.allowInsecureTLS,
+      Math.min(sess.timeoutMs, 5e3)
+    );
+    if (!(res.status >= 200 && res.status < 300)) return void 0;
+    const version = res.json && typeof res.json === "object" ? res.json.version : void 0;
+    const distribution = safeString(version?.distribution).toLowerCase();
+    const number = safeString(version?.number);
+    const match = /^(\d+)(?:\.(\d+))?/.exec(number);
+    const major = match ? Number(match[1]) : NaN;
+    const minor = match ? Number(match[2] || 0) : NaN;
+    const dialect = distribution === "opensearch" ? "opensearch" : Number.isFinite(major) && (major < 7 || major === 7 && minor < 10) ? "scroll" : Number.isFinite(major) ? "es" : void 0;
+    if (dialect) {
+      dialectCache.set(sess.baseUrl, {
+        dialect,
+        expiresAt: Date.now() + DIALECT_CACHE_TTL_MS
+      });
+    }
+    return dialect;
+  } catch (e) {
+    import_main.default.debug(
+      "Elasticsearch version detection failed, probing pagination APIs:",
+      e instanceof Error ? e.message : String(e)
+    );
+    return void 0;
+  }
 }
 function buildQueryBodyWithPit(opts, pitId) {
   const baseBody = buildElasticSearchBody({
@@ -1041,6 +1081,30 @@ function getOrCreateSessionSyncState(opts) {
 }
 async function ensurePitOpened(sess) {
   if (sess.pitId) return;
+  sess.dialect = sess.dialect || await detectElasticDialect(sess);
+  if (sess.dialect === "scroll") return;
+  if (sess.dialect === "opensearch") {
+    try {
+      sess.pitId = await tryOpenPitOs(
+        sess.baseUrl,
+        sess.index,
+        sess.keepAlive,
+        sess.headers,
+        sess.allowInsecureTLS,
+        sess.timeoutMs,
+        sess.maxRetries,
+        sess.backoffBaseMs
+      );
+      return;
+    } catch {
+      sess.dialect = "scroll";
+      dialectCache.set(sess.baseUrl, {
+        dialect: "scroll",
+        expiresAt: Date.now() + DIALECT_CACHE_TTL_MS
+      });
+      return;
+    }
+  }
   try {
     sess.pitId = await tryOpenPitEs(
       sess.baseUrl,
@@ -1053,6 +1117,10 @@ async function ensurePitOpened(sess) {
       sess.backoffBaseMs
     );
     sess.dialect = "es";
+    dialectCache.set(sess.baseUrl, {
+      dialect: "es",
+      expiresAt: Date.now() + DIALECT_CACHE_TTL_MS
+    });
     return;
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
@@ -1071,22 +1139,42 @@ async function ensurePitOpened(sess) {
           sess.backoffBaseMs
         );
         sess.dialect = "opensearch";
+        dialectCache.set(sess.baseUrl, {
+          dialect: "opensearch",
+          expiresAt: Date.now() + DIALECT_CACHE_TTL_MS
+        });
         return;
       } catch (e2) {
         const m2 = e2 instanceof Error ? e2.message : String(e2);
         if (/security_exception|unauthorized|forbidden|403/.test(m2)) {
           sess.dialect = "scroll";
+          dialectCache.set(sess.baseUrl, {
+            dialect: "scroll",
+            expiresAt: Date.now() + DIALECT_CACHE_TTL_MS
+          });
           return;
         }
         sess.dialect = "scroll";
+        dialectCache.set(sess.baseUrl, {
+          dialect: "scroll",
+          expiresAt: Date.now() + DIALECT_CACHE_TTL_MS
+        });
         return;
       }
     }
     if (/security_exception|unauthorized|forbidden|403/.test(msg)) {
       sess.dialect = "scroll";
+      dialectCache.set(sess.baseUrl, {
+        dialect: "scroll",
+        expiresAt: Date.now() + DIALECT_CACHE_TTL_MS
+      });
       return;
     }
     sess.dialect = "scroll";
+    dialectCache.set(sess.baseUrl, {
+      dialect: "scroll",
+      expiresAt: Date.now() + DIALECT_CACHE_TTL_MS
+    });
     return;
   }
 }
@@ -1206,11 +1294,12 @@ async function fetchElasticPitPage(opts) {
     let entries2;
     let total2 = null;
     if (!sess.pitId) {
+      const pageSize = opts.size ?? 1e3;
       const first = await openScroll(
         sess.baseUrl,
         sess.index,
         sess.keepAlive,
-        opts.size ?? 1e3,
+        pageSize,
         opts.sort,
         sess.headers,
         sess.allowInsecureTLS,
@@ -1222,6 +1311,9 @@ async function fetchElasticPitPage(opts) {
       sess.pitId = first.scrollId;
       entries2 = first.entries;
       total2 = first.total;
+      sess.scrollPageSize = pageSize;
+      sess.scrollFetched = entries2.length;
+      sess.scrollTotal = total2;
     } else {
       try {
         const next = await scrollNext(
@@ -1236,6 +1328,7 @@ async function fetchElasticPitPage(opts) {
         );
         sess.pitId = next.scrollId;
         entries2 = next.entries;
+        sess.scrollFetched = (sess.scrollFetched || 0) + entries2.length;
       } catch (scrollErr) {
         import_main.default.warn(
           "scrollNext failed (scroll context likely expired), cleaning up session:",
@@ -1248,7 +1341,9 @@ async function fetchElasticPitPage(opts) {
         );
       }
     }
-    const hasMore2 = entries2.length > 0;
+    const fetched = sess.scrollFetched || 0;
+    const knownTotal = sess.scrollTotal;
+    const hasMore2 = entries2.length > 0 && (typeof knownTotal === "number" ? fetched < knownTotal : entries2.length >= (sess.scrollPageSize || opts.size || 1e3));
     sess.lastUsed = Date.now();
     if (!hasMore2) {
       try {
