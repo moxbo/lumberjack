@@ -2,7 +2,7 @@
  * Re-export all custom hooks
  */
 
-export { useDebounce } from "./useDebounce";
+export { useDebounce, useDebouncedValueWithFlush } from "./useDebounce";
 export { useSelection } from "./useSelection";
 export { useFilterState, INITIAL_FILTER_STATE } from "./useFilterState";
 export type { FilterState, FilterStateReturn } from "./useFilterState";
@@ -12,7 +12,7 @@ export { useSettings } from "./useSettings";
 export type { ThemeMode, SettingsTab, SettingsForm } from "./useSettings";
 export { useHttpPolling } from "./useHttpPolling";
 export { useElasticSearch } from "./useElasticSearch";
-export type { TimeFormState } from "./useElasticSearch";
+export type { UseElasticSearchOptions } from "./useElasticSearch";
 export { useEntryManagement } from "./useEntryManagement";
 export { useKeyboardNavigation } from "./useKeyboardNavigation";
 export { useResizable } from "./useResizable";
@@ -46,3 +46,15 @@ export type {
 } from "./useResizeHandlers";
 export { useCommands } from "./useCommands";
 export { useFilterWorker } from "./useFilterWorker";
+export { useA11yAnnouncer } from "./useA11yAnnouncer";
+export type { UseA11yAnnouncerReturn } from "./useA11yAnnouncer";
+export { useHttpPollCountdown } from "./useHttpPollCountdown";
+export type {
+  UseHttpPollCountdownOptions,
+  UseHttpPollCountdownReturn,
+} from "./useHttpPollCountdown";
+export { useTimeFilterDialog } from "./useTimeFilterDialog";
+export type {
+  UseTimeFilterDialogOptions,
+  UseTimeFilterDialogReturn,
+} from "./useTimeFilterDialog";

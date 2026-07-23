@@ -18,7 +18,7 @@ import { canonicalDcKey, DiagnosticContextFilter } from "../store/dcFilter";
 import { DragAndDropManager } from "../utils/dnd";
 import { TimeFilter } from "../store/timeFilter";
 import { lazy, Suspense } from "preact/compat";
-import type { ElasticSearchOptions, Settings } from "../types/ipc";
+import type { Settings } from "../types/ipc";
 import {
   getSettings,
   patchSettings,
@@ -32,8 +32,6 @@ import {
   httpLoadOnce as typedHttpLoadOnce,
   httpStartPoll as typedHttpStartPoll,
   httpStopPoll as typedHttpStopPoll,
-  elasticSearch as typedElasticSearch,
-  elasticClosePit as typedElasticClosePit,
   chooseExportPath as typedChooseExportPath,
   saveExportFile as typedSaveExportFile,
   autoUpdaterSetAllowPrerelease as typedAutoUpdaterSetAllowPrerelease,
@@ -46,17 +44,16 @@ import {
 import type {
   RendererLogEntry,
   ElasticFormState,
-  ContextMenuState,
   HttpPollFormState,
   ThemeMode,
   SettingsTab,
   SettingsFormState,
-  TimeFormState,
   FilterStats,
 } from "../types/renderer";
 import { MDCListener } from "../store/mdcListener";
 import { clearHighlightCache, LogRow } from "./LogRow";
 import { clearTimestampCache, fmtTimestamp } from "../utils/format";
+import { heavyFieldStore } from "../store/heavyFieldStore";
 import {
   exportToCsv,
   exportToMarkdown,
@@ -68,15 +65,13 @@ import {
   setDebugFilteredIdxRef,
 } from "../utils/debugFunctions";
 
-// Import refactored constants
-import { BASE_MARK_COLORS } from "../constants";
-
 // Import refactored utilities
 import { entrySignature } from "../utils/entryUtils";
 import { nativeConfirm } from "../utils/nativeDialog";
 
 // Import refactored hooks
 import {
+  useDebouncedValueWithFlush,
   useDebounce,
   useFilterState,
   useHistoryPopovers,
@@ -91,6 +86,11 @@ import {
   useEntryManagement,
   useCommands,
   useFilterWorker,
+  useA11yAnnouncer,
+  useHttpPollCountdown,
+  useContextMenuActions,
+  useElasticSearch,
+  useTimeFilterDialog,
 } from "../hooks";
 
 // Import refactored components - core components loaded eagerly
@@ -201,33 +201,7 @@ export default function App(): JSX.Element {
 
   // QW-11 / A11Y-3: aggregated aria-live announcement for incoming logs.
   // Screen readers receive a debounced summary like "+12 INFO, +1 ERROR" every ~2s.
-  const [a11yAnnouncement, setA11yAnnouncement] = useState<string>("");
-  const a11yPendingRef = useRef<Record<string, number>>({});
-  const a11yTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const announceAppend = useCallback(
-    (newEntries: ReadonlyArray<{ level?: string | null }> | undefined) => {
-      if (!newEntries || newEntries.length === 0) return;
-      const pend = a11yPendingRef.current;
-      for (const e of newEntries) {
-        const lvl = (e?.level || "OTHER").toString().toUpperCase();
-        pend[lvl] = (pend[lvl] || 0) + 1;
-      }
-      if (a11yTimerRef.current) return;
-      a11yTimerRef.current = setTimeout(() => {
-        a11yTimerRef.current = null;
-        const counts = a11yPendingRef.current;
-        a11yPendingRef.current = {};
-        const total = Object.values(counts).reduce((a, b) => a + b, 0);
-        if (total === 0) return;
-        const summary = Object.entries(counts)
-          .sort((a, b) => b[1] - a[1])
-          .map(([lvl, n]) => `+${n} ${lvl}`)
-          .join(", ");
-        setA11yAnnouncement(`${total} – ${summary}`);
-      }, 2000);
-    },
-    [],
-  );
+  const { a11yAnnouncement, announceAppend } = useA11yAnnouncer();
   // Alert rules (persisted via IPC) + evaluator hooked into the append-pipeline.
   const alertRulesHook = useAlertRules();
   const alertRunner = useAlertRunner({
@@ -355,9 +329,27 @@ export default function App(): JSX.Element {
     setFiltersExpanded,
   } = filterState;
 
-  // Debounced Filter-Werte für bessere Performance beim Tippen (200ms Verzögerung)
-  const debouncedSearch = useDebounce(search, 200);
-  const debouncedFilter = useDebounce(filter, 200);
+  // Debounced Filter-Werte für bessere Performance beim Tippen.
+  // Etwas höhere Verzögerung (350ms) als komfortabler "type-to-filter"-Fallback;
+  // Enter (flush) wendet die Eingabe sofort an, ohne auf den Timer zu warten.
+  const [debouncedSearch, flushSearch] = useDebouncedValueWithFlush(
+    search,
+    350,
+  );
+  const [debouncedFilter, flushFilter] = useDebouncedValueWithFlush(
+    filter,
+    350,
+  );
+
+  // Koalesziertes `entries`-Snapshot als Filter-Trigger.
+  // Beim Streaming wird `entries` bis zu ~60×/Sekunde aktualisiert. Ohne
+  // Koaleszenz würde jeder Append (a) einen Worker-Filterlauf UND (b) die
+  // O(n)-Neuberechnung von `markedIdx`/`searchMatchIdx` auf dem Main-Thread
+  // auslösen → bei 100k–300k Einträgen friert die Oberfläche beim gleichzeitigen
+  // Tippen/Einstellen ein. Ein kurzes Debounce (120ms) bündelt Append-Bursts
+  // zu wenigen Filterläufen. Für statische Datensätze (reines Tippen im Filter)
+  // ist `entries` stabil, daher entsteht KEINE zusätzliche Latenz.
+  const debouncedEntries = useDebounce(entries, 120);
 
   // History popovers - using extracted hook
   const {
@@ -411,195 +403,33 @@ export default function App(): JSX.Element {
 
   // Neuer Dialog-State für DC-Filter
   const [showDcDialog, setShowDcDialog] = useState<boolean>(false);
-  // Zeit-Filter Dialog-State
-  const [showTimeDialog, setShowTimeDialog] = useState<boolean>(false);
   // TraceTimeline Dialog-State
   const [showTraceTimeline, setShowTraceTimeline] = useState<boolean>(false);
   const [traceTimelineId, setTraceTimelineId] = useState<string>("");
-  const [timeForm, setTimeForm] = useState<TimeFormState>({
-    enabled: true,
-    mode: "relative",
-    duration: "15m",
-    from: "",
-    to: "",
-    application_name: "",
-    logger: "",
-    level: "",
-    environment: "",
-    index: "",
-    environmentCase: "original",
+
+  // Zeit-Filter Dialog + Filter-Historien (extrahiert in useTimeFilterDialog).
+  // getLastEsForm liest die letzte Elastic-Suche (Eigentum von useElasticSearch)
+  // lazy über einen Ref, damit dieser Hook vor useElasticSearch laufen kann.
+  const lastEsFormRef = useRef<ElasticFormState | null>(null);
+  const {
+    showTimeDialog,
+    setShowTimeDialog,
+    timeForm,
+    setTimeForm,
+    openTimeFilterDialog,
+    clearTimeFilter,
+    histAppName,
+    setHistAppName,
+    histEnvironment,
+    setHistEnvironment,
+    histIndex,
+    setHistIndex,
+    addToHistory,
+  } = useTimeFilterDialog({
+    showAlert,
+    t,
+    getLastEsForm: () => lastEsFormRef.current,
   });
-
-  // Öffnet den Elastic-Search-Dialog und befüllt Formular aus TimeFilter-State
-  async function openTimeFilterDialog(): Promise<void> {
-    // Helper: get last used values from in-memory history or settings as fallback
-    const getLasts = async (): Promise<{
-      lastApp: string;
-      lastEnv: string;
-      lastIndex: string;
-      lastEnvCase: string | undefined;
-    }> => {
-      let lastApp =
-        (histAppName && histAppName.length > 0 ? String(histAppName[0]) : "") ||
-        "";
-      let lastEnv =
-        (histEnvironment && histEnvironment.length > 0
-          ? String(histEnvironment[0])
-          : "") || "";
-      let lastIndex =
-        (histIndex && histIndex.length > 0 ? String(histIndex[0]) : "") || "";
-      let lastEnvCase: string | undefined;
-      try {
-        const r = await getSettings();
-        if (!lastApp && Array.isArray(r?.histAppName) && r.histAppName.length)
-          lastApp = String(r.histAppName[0] || "");
-        if (
-          !lastEnv &&
-          Array.isArray(r?.histEnvironment) &&
-          r.histEnvironment.length
-        )
-          lastEnv = String(r.histEnvironment[0] || "");
-        if (!lastIndex && Array.isArray(r?.histIndex) && r.histIndex.length)
-          lastIndex = String(r.histIndex[0] || "");
-        if (r && typeof r.lastEnvironmentCase === "string")
-          lastEnvCase = r.lastEnvironmentCase;
-      } catch {
-        // ignore
-      }
-      return { lastApp, lastEnv, lastIndex, lastEnvCase };
-    };
-
-    try {
-      const s = TimeFilter.getState();
-      const toLocal = (iso: unknown): string => {
-        const t = String(iso || "").trim();
-        if (!t) return "";
-        const d = new Date(t);
-        if (isNaN(d.getTime())) return "";
-        const pad = (n: number): string => String(n).padStart(2, "0");
-        const y = d.getFullYear();
-        const m = pad(d.getMonth() + 1);
-        const da = pad(d.getDate());
-        const hh = pad(d.getHours());
-        const mm = pad(d.getMinutes());
-        return `${y}-${m}-${da}T${hh}:${mm}`;
-      };
-      const { lastApp, lastEnv, lastIndex, lastEnvCase } = await getLasts();
-      // Bestimme zuletzt verwendete Werte aus der letzten Suche (falls vorhanden)
-      const prev: Partial<ElasticFormState> = lastEsForm || {};
-      const initIndex = String(prev.index || lastIndex || "");
-      const initEnvCase = String(
-        prev.environmentCase ||
-          lastEnvCase ||
-          timeForm.environmentCase ||
-          "original",
-      );
-      setTimeForm({
-        enabled: true,
-        mode: (s && s.mode) || "relative",
-        duration: (s && s.duration) || "15m",
-        from: toLocal(s?.from),
-        to: toLocal(s?.to),
-        application_name: lastApp,
-        logger: "",
-        level: "",
-        environment: lastEnv,
-        index: initIndex,
-        environmentCase: initEnvCase,
-      });
-    } catch {
-      const { lastApp, lastEnv, lastIndex, lastEnvCase } = await getLasts();
-      const prev: Partial<ElasticFormState> = lastEsForm || {};
-      const initIndex = String(prev.index || lastIndex || "");
-      const initEnvCase = String(
-        prev.environmentCase ||
-          lastEnvCase ||
-          timeForm.environmentCase ||
-          "original",
-      );
-      setTimeForm({
-        enabled: true,
-        mode: "relative",
-        duration: "15m",
-        from: "",
-        to: "",
-        application_name: lastApp,
-        logger: "",
-        level: "",
-        environment: lastEnv,
-        index: initIndex,
-        environmentCase: initEnvCase,
-      });
-    }
-    setShowTimeDialog(true);
-  }
-
-  // Setzt das lokale Formular zurück und schließt den Dialog
-  function clearTimeFilter() {
-    setTimeForm({
-      enabled: true,
-      mode: "relative",
-      duration: "15m",
-      from: "",
-      to: "",
-      application_name: "",
-      logger: "",
-      level: "",
-      environment: "",
-      index: "",
-      environmentCase: "original",
-    });
-    setShowTimeDialog(false);
-  }
-
-  // Filter-Historien
-  // Entfernt: persistente Logger-Historie; stattdessen flüchtige Verlaufslisten
-  // const [histLogger, setHistLogger] = useState<string[]>([]);
-  const [histAppName, setHistAppName] = useState<string[]>([]);
-  const [histEnvironment, setHistEnvironment] = useState<string[]>([]);
-  // NEW: Index history
-  const [histIndex, setHistIndex] = useState<string[]>([]);
-
-  // History-Pflege für Elastic-Dialog
-  function addToHistory(kind: "app" | "env" | "index", val: string): void {
-    const v = String(val || "").trim();
-    if (!v) return;
-    if (kind === "app") {
-      setHistAppName((prev) => {
-        const list = [v, ...prev.filter((x) => x !== v)].slice(0, 10);
-        try {
-          patchSettingsQuiet({ histAppName: list });
-        } catch (e) {
-          logger.error("Failed to save histAppName settings:", e);
-          showAlert(t("errors.histAppNameSaveFailed"));
-        }
-        return list;
-      });
-    } else if (kind === "env") {
-      setHistEnvironment((prev) => {
-        const list = [v, ...prev.filter((x) => x !== v)].slice(0, 10);
-        try {
-          patchSettingsQuiet({ histEnvironment: list });
-        } catch (e) {
-          logger.error("Failed to save histEnvironment settings:", e);
-          showAlert(t("errors.histEnvironmentSaveFailed"));
-        }
-        return list;
-      });
-    } else if (kind === "index") {
-      setHistIndex((prev) => {
-        const list = [v, ...prev.filter((x) => x !== v)].slice(0, 10);
-        try {
-          patchSettingsQuiet({ histIndex: list });
-        } catch (e) {
-          logger.error("Failed to save histIndex settings:", e);
-          showAlert(t("errors.histIndexSaveFailed"));
-        }
-        return list;
-      });
-    }
-  }
-
   const [tcpStatus, setTcpStatus] = useState<string>(t("status.tcpStopped"));
   const [httpStatus, setHttpStatus] = useState<string>(
     t("status.httpPollStopped"),
@@ -610,6 +440,13 @@ export default function App(): JSX.Element {
 
   const [httpUrl, setHttpUrl] = useState<string>("");
   const [httpInterval, setHttpInterval] = useState<number>(5000);
+  // HTTP-Tail-Dialog: zuletzt verwendete Optionen (werden persistiert und beim
+  // Öffnen des Dialogs vorbelegt, damit nach einem Neustart nichts verloren geht).
+  const [httpTailEmitInitial, setHttpTailEmitInitial] =
+    useState<boolean>(false);
+  const [httpTailAllowInsecureSSL, setHttpTailAllowInsecureSSL] =
+    useState<boolean>(false);
+  const [httpTailAuthHeader, setHttpTailAuthHeader] = useState<string>("");
   const [showSettings, setShowSettings] = useState<boolean>(false);
   const [settingsTab, setSettingsTab] = useState<SettingsTab>("tcp");
   const [form, setForm] = useState<SettingsFormState>({
@@ -628,10 +465,10 @@ export default function App(): JSX.Element {
     elasticPassClear: false,
     elasticMaxParallel: 1,
     allowPrerelease: false,
-    heapSizeMB: 2048,
+    heapSizeMB: 4096,
   });
   // Store original heap size to detect changes requiring restart
-  const [originalHeapSizeMB, setOriginalHeapSizeMB] = useState<number>(2048);
+  const [originalHeapSizeMB, setOriginalHeapSizeMB] = useState<number>(4096);
   // NEU: hält das tatsächlich beim Start verwendete Poll-Intervall (für stabilen Countdown)
   const [currentPollInterval, setCurrentPollInterval] = useState<number | null>(
     null,
@@ -687,6 +524,42 @@ export default function App(): JSX.Element {
     setShowHttpPollDlg(true);
   }
 
+  // Öffnet den HTTP-Tail-Dialog und belegt ihn mit den zuletzt verwendeten
+  // Werten vor (URL, Intervall, Optionen und – falls hinterlegt – dem
+  // verschlüsselt gespeicherten Auth-Header). So geht nach einem Neustart
+  // die zuletzt genutzte Tail-Konfiguration nicht verloren.
+  async function openHttpTailDialog() {
+    try {
+      const r = await getSettings();
+      if (r) {
+        if (typeof r.httpUrl === "string") setHttpUrl(r.httpUrl);
+        const int = r.httpPollInterval ?? httpInterval;
+        if (int != null) setHttpInterval(Number(int) || 5);
+        setHttpTailEmitInitial(!!r.httpTailEmitInitial);
+        setHttpTailAllowInsecureSSL(!!r.httpTailAllowInsecureSSL);
+      }
+      // Der Auth-Header wird nie im Klartext über settingsGet ausgeliefert –
+      // separat (entschlüsselt) abrufen.
+      const api = (
+        window as unknown as {
+          api?: {
+            httpTailGetAuthHeader?: () => Promise<{
+              ok: boolean;
+              authHeader: string;
+            }>;
+          };
+        }
+      ).api;
+      if (api?.httpTailGetAuthHeader) {
+        const auth = await api.httpTailGetAuthHeader();
+        setHttpTailAuthHeader(auth?.ok ? auth.authHeader || "" : "");
+      }
+    } catch (e) {
+      logger.warn("Failed to load settings for HTTP tail dialog:", e);
+    }
+    setShowHttpTailDialog(true);
+  }
+
   // Logging-Settings
   const [logToFile, setLogToFile] = useState<boolean>(false);
   const [logFilePath, setLogFilePath] = useState<string>("");
@@ -699,117 +572,6 @@ export default function App(): JSX.Element {
   const [elasticUser, setElasticUser] = useState<string>("");
   const [elasticHasPass, setElasticHasPass] = useState<boolean>(false);
   const [elasticMaxParallel, setElasticMaxParallel] = useState<number>(1);
-
-  // Kontextmenü + Farbpalette
-  const [ctxMenu, setCtxMenu] = useState<ContextMenuState>({
-    open: false,
-    x: 0,
-    y: 0,
-  });
-  const ctxRef = useRef<HTMLDivElement | null>(null);
-  const [customColors, setCustomColors] = useState<string[]>([]);
-  const [pickerColor, setPickerColor] = useState<string>("#ffcc00");
-  const palette = useMemo(
-    () => [...BASE_MARK_COLORS, ...customColors],
-    [customColors],
-  );
-  function addCustomColor(c: string) {
-    const color = String(c || "").trim();
-    if (!color) return;
-    setCustomColors((prev) => {
-      const list = prev.includes(color) ? prev : [...prev, color];
-      try {
-        patchSettingsQuiet({ customMarkColors: list });
-      } catch (e) {
-        logger.error("Failed to save customMarkColors settings:", e);
-      }
-      return list;
-    });
-  }
-  function closeContextMenu() {
-    setCtxMenu({ open: false, x: 0, y: 0 });
-  }
-  useEffect(() => {
-    if (!ctxMenu.open) return;
-    const onMouseDown = (e: MouseEvent) => {
-      try {
-        if (!ctxRef.current) return closeContextMenu();
-        if (!ctxRef.current.contains(e.target as Node)) closeContextMenu();
-      } catch {
-        closeContextMenu();
-      }
-    };
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") closeContextMenu();
-    };
-    window.addEventListener("mousedown", onMouseDown, true);
-    window.addEventListener("keydown", onKey);
-    return () => {
-      window.removeEventListener("mousedown", onMouseDown, true);
-      window.removeEventListener("keydown", onKey);
-    };
-  }, [ctxMenu.open]);
-  function openContextMenu(ev: MouseEvent, idx: number) {
-    try {
-      ev.preventDefault();
-      setSelected((prev) => {
-        if (prev && prev.has(idx)) return prev;
-        return new Set([idx]);
-      });
-      setCtxMenu({ open: true, x: ev.clientX, y: ev.clientY });
-      // Stelle sicher, dass die Liste fokussiert bleibt auch nach Kontextmenü
-      try {
-        setTimeout(() => {
-          if (
-            parentRef.current &&
-            !parentRef.current.contains(document.activeElement || null)
-          ) {
-            parentRef.current?.focus({ preventScroll: true });
-          }
-        }, 0);
-      } catch (err) {
-        logger.warn("Failed to restore focus after context menu:", err);
-      }
-    } catch (err) {
-      logger.error("openContextMenu error:", err);
-    }
-  }
-
-  // Markierung anwenden/entfernen + Persistenz.
-  // Performance-Quick-Win #2: Es wird KEIN `_mark`-Feld mehr in die
-  // Entry-Objekte geschrieben. Stattdessen ist die `marksMap` (signature
-  // → color) die Single-Source-of-Truth. LogRow, DetailPanel, Filter
-  // (`onlyMarked`) und Bookmarks lesen die Markierung über die Map.
-  // Vorteil: kein Vollscan über `entries` + kein Re-Filter pro Mark-Change.
-  function applyMarkColor(color?: string) {
-    if (!entries.length) {
-      closeContextMenu();
-      return;
-    }
-    const newMap: Record<string, string> = { ...marksMap };
-    for (const i of selected) {
-      if (i >= 0 && i < entries.length) {
-        const e = entries[i];
-        if (!e) continue;
-        const sig = entrySignature(e);
-        if (color) {
-          newMap[sig] = color;
-        } else {
-          delete newMap[sig];
-        }
-      }
-    }
-    setMarksMap(newMap);
-    try {
-      patchSettingsQuiet({ marksMap: newMap });
-    } catch {}
-    closeContextMenu();
-  }
-  // Hinweis: Der frühere Sync-Effect, der bei jeder marksMap-Änderung das
-  // gesamte `entries`-Array via setEntries(prev.map(...)) rebuildete, ist
-  // entfernt. Er triggerte einen Vollscan + Re-Filter im UtilityProcess.
-  // Markierungen werden nun direkt aus `marksMap` zur Render-Zeit
-  // aufgelöst (siehe LogRow/DetailPanel-Aufrufe weiter unten).
 
   /**
    * Hydratisiert `marksMap` aus frisch importierten Einträgen, die bereits
@@ -847,71 +609,8 @@ export default function App(): JSX.Element {
     [marksMap],
   );
 
-  function adoptTraceIds() {
-    try {
-      const variants = [
-        "TraceID",
-        "traceId",
-        "trace_id",
-        "trace.id",
-        "trace-id",
-        "x-trace-id",
-        "x_trace_id",
-        "x.trace.id",
-        "trace",
-      ];
-      const added = new Set<string>();
-      for (const i of selected) {
-        const e = entries[i];
-        const m = e && e.mdc;
-        if (!m || typeof m !== "object") continue;
-        for (const k of variants) {
-          if (Object.prototype.hasOwnProperty.call(m, k)) {
-            const v = String(m[k] ?? "");
-            if (v && !added.has(v)) {
-              DiagnosticContextFilter.addMdcEntry("TraceID", v);
-              added.add(v);
-            }
-          }
-        }
-      }
-      if (added.size) DiagnosticContextFilter.setEnabled(true);
-    } catch (e) {
-      logger.warn("adoptTraceIds failed:", e);
-    }
-    closeContextMenu();
-  }
-  async function copyTsMsg(): Promise<void> {
-    const list = Array.from(selected).sort((a, b) => a - b);
-    const lines = list.map((i) => {
-      const e: RendererLogEntry | undefined = entries[i];
-      if (!e) return "";
-      return `${fmtTimestamp(e.timestamp)}\n${String(e.message ?? "")}`;
-    });
-    const text = lines.join("\n");
-    try {
-      if ((navigator as any)?.clipboard?.writeText)
-        await (navigator as any).clipboard.writeText(text);
-      else {
-        const ta = document.createElement("textarea");
-        ta.value = text;
-        ta.style.position = "fixed";
-        ta.style.left = "-9999px";
-        document.body.appendChild(ta);
-        ta.select();
-        document.execCommand("copy");
-        document.body.removeChild(ta);
-      }
-    } catch (e) {
-      logger.error("Failed to copy to clipboard:", e);
-      showAlert(t("errors.copyFailed"));
-    }
-    closeContextMenu();
-  }
-
   // Busy helper
   const [busy, setBusy] = useState<boolean>(false);
-  const [esBusy, setEsBusy] = useState<boolean>(false);
   const withBusy = async (fn: () => Promise<void>) => {
     setBusy(true);
     try {
@@ -921,45 +620,58 @@ export default function App(): JSX.Element {
     }
   };
 
-  // HTTP polling helper state
-  const [nextPollDueAt, setNextPollDueAt] = useState<number | null>(null);
-  const [nextPollIn, setNextPollIn] = useState<string>("");
-  useEffect(() => {
-    if (!nextPollDueAt) {
-      setNextPollIn("");
-      return;
-    }
-    let t = 0 as unknown as number;
-    const tick = () => {
-      const ms = Math.max(0, Number(nextPollDueAt) - Date.now());
-      const active = httpPollId != null && currentPollInterval != null;
-      setNextPollIn(ms > 0 ? `${Math.ceil(ms / 1000)}s` : active ? "0s" : "");
-    };
-    tick();
-    t = window.setInterval(tick, 250) as unknown as number;
-    return () => clearInterval(t as unknown as number);
-  }, [nextPollDueAt, httpPollId, currentPollInterval]);
+  // Elasticsearch search state + flow (search, pagination, "load more").
+  const {
+    esBusy,
+    esHasMore,
+    esTotal,
+    esPitSessionId,
+    lastEsForm,
+    esElasticCountAll,
+    esLoaded,
+    esTarget,
+    esPct,
+    esLoadMore,
+    handleElasticApply,
+    resetElasticSearchState,
+    closePitQuiet,
+  } = useElasticSearch({
+    entries,
+    appendEntries,
+    elasticUrl,
+    elasticSize,
+    withBusy,
+    showAlert,
+    handleFeatureError,
+    t,
+    addToHistory,
+    closeTimeDialog: () => setShowTimeDialog(false),
+    onReplaceReset: () => {
+      // Vollständiges Zurücksetzen: alle vorhandenen Einträge entfernen
+      setEntries([]);
+      setSelected(new Set());
+      setNextId(1);
+      // Datei-Dedupe-Cache leeren, damit Files erneut geladen werden können
+      fileSigCacheRef.current = new Map();
+      // HTTP-Dedupe-Cache leeren
+      httpSigCacheRef.current = new Map();
+      // LoggingStore zurücksetzen (MDC etc.)
+      try {
+        LoggingStore.reset();
+      } catch (e) {
+        logger.error("LoggingStore.reset error (Elastic replace)", e);
+      }
+    },
+  });
 
-  // NEU: Halte den Countdown am Laufen, selbst wenn einzelne Ticks keine Events liefern
-  useEffect(() => {
-    // Nur aktiv, wenn ein Poll läuft und wir das reale Intervall kennen
-    const interval =
-      currentPollInterval != null ? Math.max(500, currentPollInterval) : null;
-    if (httpPollId == null || interval == null) {
-      return;
-    }
-    // Beim (Re-)Start sofort DueAt setzen
-    setNextPollDueAt(Date.now() + interval);
+  // Letzte Elastic-Suche für useTimeFilterDialog (lazy) verfügbar machen.
+  lastEsFormRef.current = lastEsForm;
 
-    // Danach in diesem Intervall immer wieder neu setzen
-    const h = window.setInterval(() => {
-      setNextPollDueAt(Date.now() + interval);
-    }, interval) as unknown as number;
-
-    return () => {
-      clearInterval(h as unknown as number);
-    };
-  }, [httpPollId, currentPollInterval]);
+  // HTTP polling helper state – countdown extracted into useHttpPollCountdown.
+  const { nextPollIn, setNextPollDueAt } = useHttpPollCountdown({
+    httpPollId,
+    currentPollInterval,
+  });
 
   // Filter statistics for debugging why entries are filtered out
   const [lastFilterStats, setLastFilterStats] = useState<FilterStats | null>(
@@ -969,6 +681,30 @@ export default function App(): JSX.Element {
   // Refs/Layout/Virtualizer
   const parentRef = useRef<HTMLDivElement | null>(null);
   const [isParentMounted, setIsParentMounted] = useState(false);
+
+  // Log-list context menu (state, mark colors, clipboard, trace-id adoption)
+  const {
+    ctxMenu,
+    ctxRef,
+    openContextMenu,
+    setCustomColors,
+    pickerColor,
+    setPickerColor,
+    palette,
+    addCustomColor,
+    applyMarkColor,
+    copyTsMsg,
+    adoptTraceIds,
+  } = useContextMenuActions({
+    entries,
+    selected,
+    setSelected,
+    marksMap,
+    setMarksMap,
+    parentRef,
+    showAlert,
+    t,
+  });
 
   // Track when parent element is mounted - use a layout effect to set this ASAP
   useEffect(() => {
@@ -1019,7 +755,7 @@ export default function App(): JSX.Element {
 
     hasTriggeredFilterRef.current = true;
     filterEntries(
-      entries,
+      debouncedEntries,
       {
         stdFiltersEnabled,
         filter: {
@@ -1040,13 +776,12 @@ export default function App(): JSX.Element {
       onlyMarked ? marksMap : undefined,
     );
   }, [
-    entries,
+    debouncedEntries,
     stdFiltersEnabled,
     debouncedFilter,
     dcVersion,
     timeVersion,
     onlyMarked,
-    searchMode,
     filterEntries,
     // marksMap wirkt sich nur auf das Ergebnis aus, wenn `onlyMarked` aktiv
     // ist. Anderfalls wäre eine Aufnahme in die Deps eine unnötige
@@ -1470,13 +1205,16 @@ export default function App(): JSX.Element {
     const searchLimit = Math.min(len, 100_000);
     for (let vi = 0; vi < searchLimit; vi++) {
       const idx = filteredIdx[vi]!;
-      const e = entries[idx];
+      const e = debouncedEntries[idx];
       if (!e) continue;
       // #2: Markierung kommt aus marksMap, nicht mehr aus e._mark.
       if (marksMap[entrySignature(e)]) out.push(vi);
     }
     return out;
-  }, [filteredIdx, entries, marksMap]);
+    // `debouncedEntries` statt `entries`: `filteredIdx` wurde ebenfalls aus dem
+    // koaleszierten Snapshot berechnet. So läuft diese O(n)-Schleife beim
+    // Streaming nur gebündelt statt bei jedem einzelnen Append.
+  }, [filteredIdx, debouncedEntries, marksMap]);
 
   const searchMatchIdx = useMemo(() => {
     const s = String(debouncedSearch || "").trim();
@@ -1488,11 +1226,11 @@ export default function App(): JSX.Element {
     const searchLimit = Math.min(len, 50_000);
     for (let vi = 0; vi < searchLimit; vi++) {
       const idx = filteredIdx[vi]!;
-      const e = entries[idx];
+      const e = debouncedEntries[idx];
       if (msgMatches(e?.message ?? "", s, { mode: searchMode })) out.push(vi);
     }
     return out;
-  }, [debouncedSearch, filteredIdx, entries, searchMode]);
+  }, [debouncedSearch, filteredIdx, debouncedEntries, searchMode]);
 
   function gotoMarked(dir: number) {
     if (!markedIdx.length) return;
@@ -1622,22 +1360,6 @@ export default function App(): JSX.Element {
 
   // Entry management functions (appendEntries, processIpcQueue) are now in useEntryManagement2 hook
 
-  // Hilfsfunktion: Anhängen mit Kappung auf verfügbare Slots
-  // WICHTIG: Alle ES-Einträge werden in den State geladen (kein Filtern vor dem Speichern).
-  // Die Anzeige-Filterung (Filter-Worker) steuert, welche Einträge sichtbar sind.
-  function appendElasticCapped(
-    batch: any[],
-    available: number,
-    options?: { ignoreExistingForElastic?: boolean; messageFilter?: string },
-  ): number {
-    const entries = Array.isArray(batch) ? batch : [];
-
-    const take = Math.max(0, Math.min(available, entries.length));
-    if (take <= 0) return 0;
-    appendEntries(entries.slice(0, take), options);
-    return take;
-  }
-
   const onListKeyDown = (e: KeyboardEvent) => {
     if (!filteredIdx.length) return;
     // Nur reagieren, wenn Fokus auf der Liste liegt
@@ -1704,7 +1426,12 @@ export default function App(): JSX.Element {
     setTimeout(() => {
       scrollToIndexCenter(filteredIdx.length - 1);
     }, 0);
-  }, [entries, follow, stdFiltersEnabled, filter, dcVersion, timeVersion]);
+    // Abhängigkeit nur auf das tatsächliche Filterergebnis `filteredIdx`:
+    // dieses spiegelt bereits neue Einträge UND jede Filteränderung wider.
+    // Vorher hing der Effekt am rohen `filter`-Objekt und lief so bei JEDEM
+    // Tastendruck im Filterfeld (setSelected + Scroll) – auch während das
+    // eigentliche Filtern noch debounced war.
+  }, [filteredIdx, follow]);
 
   function addMdcToFilter(k: string, v: string) {
     try {
@@ -1763,6 +1490,11 @@ export default function App(): JSX.Element {
         // Support both httpPollInterval (persisted) and httpInterval (legacy)
         const interval = r.httpPollInterval;
         if (interval != null) setHttpInterval(Number(interval) || 5);
+        // HTTP-Tail-Optionen für die Dialog-Vorbelegung übernehmen
+        if (typeof r.httpTailEmitInitial === "boolean")
+          setHttpTailEmitInitial(r.httpTailEmitInitial);
+        if (typeof r.httpTailAllowInsecureSSL === "boolean")
+          setHttpTailAllowInsecureSSL(r.httpTailAllowInsecureSSL);
         // Entfernt: Laden einer persistierten Logger-Historie, damit Verlauf nur temporär ist
         // if (Array.isArray(r.histLogger)) setHistLogger(r.histLogger);
         if (Array.isArray(r.histAppName)) setHistAppName(r.histAppName);
@@ -1854,7 +1586,7 @@ export default function App(): JSX.Element {
     let curElasticUser = elasticUser;
     let curElasticMaxParallel = elasticMaxParallel;
     let curAllowPrerelease = false;
-    let curHeapSizeMB = 2048;
+    let curHeapSizeMB = 4096;
 
     try {
       const r = await getSettings();
@@ -1992,7 +1724,7 @@ export default function App(): JSX.Element {
       allowPrerelease: form.allowPrerelease,
       heapSizeMB: Math.max(
         512,
-        Math.min(8192, Number(form.heapSizeMB || 2048)),
+        Math.min(8192, Number(form.heapSizeMB || 4096)),
       ),
     };
     const newPass = String(form.elasticPassNew || "").trim();
@@ -2035,7 +1767,7 @@ export default function App(): JSX.Element {
       // Check if heap size changed and ask for restart
       const newHeapSize = Math.max(
         512,
-        Math.min(8192, Number(form.heapSizeMB || 2048)),
+        Math.min(8192, Number(form.heapSizeMB || 4096)),
       );
       if (newHeapSize !== originalHeapSizeMB) {
         // Use setTimeout to allow the modal to close first
@@ -2151,7 +1883,7 @@ export default function App(): JSX.Element {
                 break;
               }
               case "http-tail-start": {
-                setShowHttpTailDialog(true);
+                void openHttpTailDialog();
                 break;
               }
               case "http-tail-stop-all": {
@@ -2357,23 +2089,6 @@ export default function App(): JSX.Element {
     return () => mgr.detach();
   }, []);
 
-  const [esHasMore, setEsHasMore] = useState<boolean>(false);
-  const [esNextSearchAfter, setEsNextSearchAfter] = useState<Array<
-    string | number
-  > | null>(null);
-  const [lastEsForm, setLastEsForm] = useState<ElasticFormState | null>(null);
-  const [esTotal, setEsTotal] = useState<number | null>(null);
-  const [esBaseline, setEsBaseline] = useState<number>(0);
-  const [esPitSessionId, setEsPitSessionId] = useState<string | null>(null);
-  const esElasticCountAll = useMemo(() => {
-    let cnt = 0;
-    for (const e of entries) {
-      const src = e?.source;
-      if (typeof src === "string" && src.startsWith("elastic://")) cnt++;
-    }
-    return cnt;
-  }, [entries]);
-
   // Min/Max timestamps across ALL entries (ignoring active filters), used by
   // the Elastic-Search-Dialog quick-select buttons ("older than" / "newer than").
   // Filters must NOT influence these values, otherwise the user cannot easily
@@ -2399,78 +2114,6 @@ export default function App(): JSX.Element {
     }
     return { firstTs: minRaw, lastTs: maxRaw };
   }, [entries]);
-  const esLoaded = Math.max(0, esElasticCountAll - esBaseline);
-  const esTarget = Math.max(1, Number(elasticSize || 0));
-  const esPct =
-    esTotal && esTotal > 0
-      ? Math.min(100, Math.round((esLoaded / esTarget) * 100))
-      : Math.round((esLoaded / esTarget) * 100) || 0;
-
-  /** Load next page of Elasticsearch results (invoked by ElasticStatusBar "load more" button) */
-  async function esLoadMore(): Promise<void> {
-    if (!esHasMore || !lastEsForm || !esNextSearchAfter) return;
-    setEsBusy(true);
-    try {
-      let available = Math.max(0, elasticSize || 0);
-      let hasMore: boolean = esHasMore;
-      let nextToken = esNextSearchAfter;
-      let carriedPit = esPitSessionId;
-
-      while (available > 0 && hasMore) {
-        const opts: ElasticSearchOptions = {
-          url: elasticUrl || undefined,
-          size: elasticSize || undefined,
-          index: lastEsForm.index,
-          sort: lastEsForm.sort,
-          duration:
-            lastEsForm.mode === "relative" ? lastEsForm.duration : undefined,
-          from: lastEsForm.mode === "absolute" ? lastEsForm.from : undefined,
-          to: lastEsForm.mode === "absolute" ? lastEsForm.to : undefined,
-          application_name: lastEsForm.application_name,
-          logger: lastEsForm.logger,
-          level: lastEsForm.level,
-          environment: lastEsForm.environment,
-          message: lastEsForm.message,
-          environmentCase: lastEsForm.environmentCase || "original",
-          allowInsecureTLS: !!lastEsForm.allowInsecureTLS,
-          keepAlive: "5m",
-          trackTotalHits: false,
-          ...(nextToken && Array.isArray(nextToken) && nextToken.length > 0
-            ? { searchAfter: nextToken as any }
-            : {}),
-          pitSessionId: carriedPit || undefined,
-        } as any;
-
-        const r = await typedElasticSearch(opts);
-        if (!r?.ok) break;
-        hasMore = !!r.hasMore;
-        nextToken = (r.nextSearchAfter as any) || null;
-        carriedPit = r.pitSessionId || carriedPit;
-        setEsHasMore(hasMore);
-        setEsNextSearchAfter(nextToken);
-        setEsPitSessionId(carriedPit);
-
-        if (Array.isArray(r.entries) && r.entries.length) {
-          const used = appendElasticCapped(r.entries as any[], available, {
-            messageFilter: lastEsForm.message || "",
-          });
-          available = Math.max(0, available - used);
-        }
-        if (!hasMore) break;
-      }
-      if (!hasMore) {
-        setEsPitSessionId(null);
-      }
-    } catch (e) {
-      logger.error("[Elastic] Load more failed:", e);
-      const errorMsg = e instanceof Error ? e.message : String(e);
-      if (!handleFeatureError(errorMsg)) {
-        showAlert(t("status.elasticError", { message: errorMsg }));
-      }
-    } finally {
-      setEsBusy(false);
-    }
-  }
 
   function clearLogs() {
     // Sicherheitsabfrage über In-App-Dialog (keine native Dialog-Fokus-Bugs).
@@ -2489,11 +2132,7 @@ export default function App(): JSX.Element {
     setEntries([]);
     setSelected(new Set());
     setNextId(1);
-    setEsHasMore(false);
-    setEsNextSearchAfter(null);
-    setLastEsForm(null);
-    setEsTotal(null);
-    setEsBaseline(0);
+    resetElasticSearchState();
     // Clear marksMap (session-only, not persisted)
     setMarksMap({});
     // Datei-Dedupe-Cache leeren
@@ -2503,13 +2142,11 @@ export default function App(): JSX.Element {
     // Caches leeren für bessere Speicherfreigabe
     clearHighlightCache();
     clearTimestampCache();
+    // Phase 2: ausgelagerte Detail-Felder (stackTrace/_fullMessage) verwerfen.
+    // Muss hier passieren, weil setNextId(1) die _id-Vergabe zurücksetzt.
+    void heavyFieldStore.clear();
     // PIT-Session schließen (best effort)
-    (async () => {
-      try {
-        if (esPitSessionId) await typedElasticClosePit(esPitSessionId);
-      } catch {}
-      setEsPitSessionId(null);
-    })().catch(() => {});
+    void closePitQuiet();
     try {
       LoggingStore.reset();
     } catch (e) {
@@ -2552,11 +2189,37 @@ export default function App(): JSX.Element {
         (idx) => currentEntries[idx],
       );
 
+      // Phase 2: ausgelagerte Detail-Felder (stackTrace/_fullMessage) für den
+      // Export nachladen. Nur JSON/NDJSON serialisieren stackTrace – für alle
+      // anderen Formate sparen wir uns den IndexedDB-Roundtrip.
+      let exportEntriesHydrated = exportEntries;
+      if (format === "json" || format === "ndjson") {
+        const offloadedIds: number[] = [];
+        for (const e of exportEntries) {
+          if (e && e._offloaded && typeof e._id === "number") {
+            offloadedIds.push(e._id);
+          }
+        }
+        if (offloadedIds.length > 0) {
+          const heavy = await heavyFieldStore.getMany(offloadedIds);
+          exportEntriesHydrated = exportEntries.map((e) => {
+            if (!e || !e._offloaded || typeof e._id !== "number") return e;
+            const rec = heavy.get(e._id);
+            if (!rec) return e;
+            return {
+              ...e,
+              stackTrace: rec.stackTrace ?? e.stackTrace ?? null,
+              _fullMessage: rec._fullMessage ?? e._fullMessage,
+            };
+          });
+        }
+      }
+
       let content: string;
 
       if (format === "json") {
         // JSON export - include mark color explicitly
-        const jsonEntries = exportEntries.map((e) => ({
+        const jsonEntries = exportEntriesHydrated.map((e) => ({
           timestamp: e?.timestamp,
           level: e?.level,
           logger: e?.logger,
@@ -2590,7 +2253,7 @@ export default function App(): JSX.Element {
         // aus marksMap (Single-Source-of-Truth), damit auch in der aktuellen
         // Session manuell gesetzte Marks (die nicht mehr direkt in `e._mark`
         // landen) korrekt exportiert werden.
-        const enriched = exportEntries.map((e) => {
+        const enriched = exportEntriesHydrated.map((e) => {
           const mark = e
             ? currentMarksMap[entrySignature(e)] ||
               (e._mark as string | undefined)
@@ -2774,7 +2437,6 @@ export default function App(): JSX.Element {
     if (r.ok) {
       setHttpStatus(t("status.httpPollStopped"));
       setHttpPollId(null);
-      setNextPollIn("");
       setNextPollDueAt(null);
       setCurrentPollInterval(null);
     }
@@ -2931,7 +2593,7 @@ export default function App(): JSX.Element {
       }
     },
     hasActiveWatchers: fileWatcher.watchers.length > 0,
-    onOpenHttpTail: () => setShowHttpTailDialog(true),
+    onOpenHttpTail: () => void openHttpTailDialog(),
     onStopAllHttpTails: async () => {
       try {
         for (const t2 of httpTail.tails) {
@@ -3010,6 +2672,121 @@ export default function App(): JSX.Element {
     }, 100);
   }, []);
 
+  // Handler for the one-shot HTTP load dialog. Extracted from inline JSX.
+  const handleHttpLoad = async (url: string) => {
+    await withBusy(async () => {
+      try {
+        setHttpUrl(url);
+        await patchSettings({ httpUrl: url });
+        const res = await typedHttpLoadOnce(url);
+        if (res.ok) {
+          appendEntries((res.entries || []) as any[]);
+          setHttpStatus(""); // Clear error status on success
+        } else {
+          // Check if this is a feature-disabled error
+          if (!handleFeatureError(res.error)) {
+            setHttpStatus(
+              t("status.error", {
+                message: res.error || t("status.errorUnknown"),
+              }),
+            );
+          }
+        }
+      } catch (e) {
+        setHttpStatus(
+          t("status.error", {
+            message: e instanceof Error ? e.message : String(e),
+          }),
+        );
+      }
+    });
+  };
+
+  // Handler for starting HTTP polling. Extracted from inline JSX.
+  const handleHttpPollStart = async (url: string, sec: number) => {
+    try {
+      setHttpUrl(url);
+      setHttpInterval(sec);
+      await patchSettings({
+        httpUrl: url,
+        httpPollInterval: sec,
+      });
+      const r = await typedHttpStartPoll({
+        url,
+        intervalSec: sec,
+      });
+      if (r.ok) {
+        setHttpPollId(r.id!);
+        setHttpStatus(t("status.httpPolling", { id: String(r.id) }));
+        // Convert to ms for internal timer tracking
+        setNextPollDueAt(Date.now() + sec * 1000);
+        setCurrentPollInterval(sec * 1000);
+      } else {
+        // Check if this is a feature-disabled error
+        if (!handleFeatureError(r.error)) {
+          setHttpStatus(
+            t("status.error", {
+              message: r.error || t("status.errorUnknown"),
+            }),
+          );
+        }
+      }
+    } catch (e) {
+      setHttpStatus(
+        t("status.error", {
+          message: e instanceof Error ? e.message : String(e),
+        }),
+      );
+    }
+  };
+
+  // Handler for starting an incremental HTTP tail. Extracted from inline JSX.
+  const handleHttpTailStart = async (args: {
+    url: string;
+    intervalSec: number;
+    emitInitial: boolean;
+    allowInsecureSSL: boolean;
+    authHeader: string;
+  }) => {
+    try {
+      // Zuletzt verwendete Werte merken, damit der Dialog nach einem
+      // Neustart wieder vorbelegt werden kann (Auth-Header wird im
+      // Hauptprozess verschlüsselt abgelegt).
+      const intervalSec = Math.max(1, Math.round(args.intervalSec));
+      setHttpUrl(args.url);
+      setHttpInterval(intervalSec);
+      setHttpTailEmitInitial(args.emitInitial);
+      setHttpTailAllowInsecureSSL(args.allowInsecureSSL);
+      setHttpTailAuthHeader(args.authHeader);
+      void patchSettings({
+        httpUrl: args.url,
+        httpPollInterval: intervalSec,
+        httpTailEmitInitial: args.emitInitial,
+        httpTailAllowInsecureSSL: args.allowInsecureSSL,
+        ...(args.authHeader
+          ? { httpAuthHeaderPlain: args.authHeader }
+          : { httpAuthHeaderClear: true }),
+      });
+      const headers: Record<string, string> = {};
+      if (args.authHeader) headers.Authorization = args.authHeader;
+      const r = await httpTail.start(args.url, {
+        intervalMs: intervalSec * 1000,
+        emitInitial: args.emitInitial,
+        headers: Object.keys(headers).length ? headers : undefined,
+        allowInsecureSSL: args.allowInsecureSSL,
+      });
+      if (!r.ok) {
+        showAlert(t("httpTail.startFailed", { message: r.error || "" }));
+      }
+    } catch (e) {
+      showAlert(
+        t("httpTail.startFailed", {
+          message: e instanceof Error ? e.message : String(e),
+        }),
+      );
+    }
+  };
+
   return (
     <div style="height:100%; display:flex; flex-direction:column;">
       {/* Skeleton loader während Settings geladen werden */}
@@ -3059,259 +2836,7 @@ export default function App(): JSX.Element {
             histIndex={histIndex} // NEW: pass histIndex to dialog
             firstTs={entriesTsRange.firstTs}
             lastTs={entriesTsRange.lastTs}
-            onApply={async (formVals: any) => {
-              try {
-                setShowTimeDialog(false);
-                addToHistory("app", formVals?.application_name || "");
-                addToHistory("env", formVals?.environment || "");
-                addToHistory("index", formVals?.index || ""); // NEW: save index to history
-                setLastEsForm(formVals);
-                try {
-                  const envCase = (formVals?.environmentCase || "original") as
-                    | "original"
-                    | "lower"
-                    | "upper"
-                    | "case-sensitive";
-                  await patchSettings({
-                    lastEnvironmentCase: envCase,
-                  });
-                } catch (e) {
-                  logger.warn(
-                    "Persisting lastEnvironmentCase failed:",
-                    e as any,
-                  );
-                }
-
-                // Bestimme Load-Mode gleich zu Beginn
-                const loadMode = String(formVals.loadMode || "append");
-
-                // Falls wir ersetzen: offene PIT-Session vorher schließen
-                if (loadMode === "replace" && esPitSessionId) {
-                  try {
-                    await typedElasticClosePit(esPitSessionId);
-                  } catch (e) {
-                    logger.warn(
-                      "elasticClosePit before new search failed:",
-                      e as any,
-                    );
-                  }
-                  setEsPitSessionId(null);
-                }
-
-                // Zeitfilter-Anpassung abhängig von loadMode
-                try {
-                  if (loadMode === "replace") {
-                    if (formVals.mode === "relative" && formVals.duration) {
-                      TimeFilter.setRelative(formVals.duration);
-                      TimeFilter.setEnabled(true);
-                    } else if (formVals.mode === "absolute") {
-                      const from = formVals.from || undefined;
-                      const to = formVals.to || undefined;
-                      TimeFilter.setAbsolute(from, to);
-                      TimeFilter.setEnabled(true);
-                    }
-                  } else {
-                    const state = TimeFilter.getState();
-                    const wasEnabled = state && state.enabled;
-                    if (formVals.mode === "absolute" && wasEnabled) {
-                      const curFrom: string | null = state.from ?? null;
-                      const curTo: string | null = state.to ?? null;
-                      const newFrom: string | null =
-                        (formVals.from || "").trim() || null;
-                      const newTo: string | null =
-                        (formVals.to || "").trim() || null;
-                      const parseMs = (s: string | null) => {
-                        if (!s) return NaN;
-                        const ms = Date.parse(s);
-                        return isNaN(ms) ? NaN : ms;
-                      };
-                      const minIso = (
-                        a: string | null,
-                        b: string | null,
-                      ): string | undefined => {
-                        const am = parseMs(a);
-                        const bm = parseMs(b);
-                        if (isNaN(am)) return b || undefined;
-                        if (isNaN(bm)) return a || undefined;
-                        return am <= bm ? a || undefined : b || undefined;
-                      };
-                      const maxIso = (
-                        a: string | null,
-                        b: string | null,
-                      ): string | undefined => {
-                        const am = parseMs(a);
-                        const bm = parseMs(b);
-                        if (isNaN(am)) return b || undefined;
-                        if (isNaN(bm)) return a || undefined;
-                        return am >= bm ? a || undefined : b || undefined;
-                      };
-                      const unionFrom = minIso(curFrom, newFrom);
-                      const unionTo = maxIso(curTo, newTo);
-                      TimeFilter.setAbsolute(unionFrom, unionTo);
-                      TimeFilter.setEnabled(true);
-                    }
-                  }
-                } catch (e) {
-                  logger.warn("TimeFilter update (Elastic) failed:", e);
-                }
-
-                await withBusy(async () => {
-                  setEsBusy(true);
-                  setEsTotal(null);
-                  try {
-                    const opts: ElasticSearchOptions = {
-                      url: elasticUrl || undefined,
-                      size: elasticSize || undefined,
-                      index: formVals.index,
-                      sort: formVals.sort,
-                      duration:
-                        formVals.mode === "relative"
-                          ? formVals.duration
-                          : undefined,
-                      from:
-                        formVals.mode === "absolute"
-                          ? formVals.from
-                          : undefined,
-                      to:
-                        formVals.mode === "absolute" ? formVals.to : undefined,
-                      application_name: formVals.application_name,
-                      logger: formVals.logger,
-                      level: formVals.level,
-                      environment: formVals.environment,
-                      message: formVals.message,
-                      environmentCase: formVals.environmentCase || "original",
-                      allowInsecureTLS: !!formVals.allowInsecureTLS,
-                      // optionale PIT-Optimierungen
-                      keepAlive: "5m",
-                      trackTotalHits: false,
-                    } as any;
-                    logger.info("[Elastic] Search started", {
-                      hasResponse: false,
-                    });
-                    setEsBaseline(
-                      loadMode === "replace" ? 0 : esElasticCountAll,
-                    );
-                    // Jede neue Suche bekommt immer die vollen elasticSize Slots,
-                    // damit Einträge auch bei aktivem Filter vollständig geladen werden.
-                    let available = Math.max(0, elasticSize || 0);
-                    let carriedPit: string | null = null;
-                    let nextToken: Array<string | number> | null = null;
-                    let hasMore = false;
-
-                    // Erste Seite holen
-                    const res = await typedElasticSearch(opts);
-                    const total = Array.isArray(res?.entries)
-                      ? res.entries.length
-                      : 0;
-                    logger.info("[Elastic] Search finished", {
-                      ok: res?.ok,
-                      total,
-                      hasResponse: true,
-                    });
-                    if (res?.ok) {
-                      hasMore = !!res.hasMore;
-                      nextToken = (res.nextSearchAfter as any) || null;
-                      carriedPit = res.pitSessionId || null;
-                      setEsHasMore(hasMore);
-                      setEsNextSearchAfter(nextToken);
-                      setEsPitSessionId(carriedPit);
-                      setEsTotal(
-                        typeof res?.total === "number"
-                          ? Number(res.total)
-                          : null,
-                      );
-
-                      if (loadMode === "replace") {
-                        // Vollständiges Zurücksetzen: alle vorhandenen Einträge entfernen
-                        setEntries([]);
-                        setSelected(new Set());
-                        setNextId(1);
-                        // Datei-Dedupe-Cache leeren, damit Files erneut geladen werden können
-                        fileSigCacheRef.current = new Map();
-                        // HTTP-Dedupe-Cache leeren
-                        httpSigCacheRef.current = new Map();
-                        // LoggingStore zurücksetzen (MDC etc.)
-                        try {
-                          LoggingStore.reset();
-                        } catch (e) {
-                          logger.error(
-                            "LoggingStore.reset error (Elastic replace)",
-                            e,
-                          );
-                        }
-                      }
-
-                      // Anhängen mit Kappung
-                      const messageFilter = formVals.message || "";
-                      if (Array.isArray(res.entries) && res.entries.length) {
-                        const used = appendElasticCapped(
-                          res.entries as any[],
-                          available,
-                          {
-                            ignoreExistingForElastic: loadMode === "replace",
-                            messageFilter,
-                          },
-                        );
-                        available = Math.max(0, available - used);
-                      }
-
-                      // Auto-Nachladen bis Cap erreicht oder keine weiteren Seiten
-                      while (available > 0 && hasMore) {
-                        const moreOpts: ElasticSearchOptions = {
-                          ...opts,
-                          // Für PIT: nextSearchAfter übergeben; für Scroll bleibt es undefiniert
-                          ...(nextToken &&
-                          Array.isArray(nextToken) &&
-                          nextToken.length > 0
-                            ? { searchAfter: nextToken as any }
-                            : {}),
-                          pitSessionId: carriedPit || undefined,
-                        } as any;
-                        const r2 = await typedElasticSearch(moreOpts);
-                        if (!r2?.ok) break;
-                        hasMore = !!r2.hasMore;
-                        nextToken = (r2.nextSearchAfter as any) || null;
-                        carriedPit = r2.pitSessionId || carriedPit;
-                        setEsHasMore(hasMore);
-                        setEsNextSearchAfter(nextToken);
-                        setEsPitSessionId(carriedPit);
-                        if (Array.isArray(r2.entries) && r2.entries.length) {
-                          const used2 = appendElasticCapped(
-                            r2.entries as any[],
-                            available,
-                            { messageFilter },
-                          );
-                          available = Math.max(0, available - used2);
-                        }
-                        if (!hasMore) break;
-                      }
-
-                      // Session nur beenden, wenn wirklich keine weiteren Ergebnisse mehr verfügbar
-                      if (!hasMore) {
-                        setEsPitSessionId(null);
-                      }
-                      // esHasMore bleibt true, wenn noch Ergebnisse existieren (auch bei Cap erreicht)
-                    } else {
-                      // Check if this is a feature-disabled error
-                      const errorMsg = res?.error || t("status.errorUnknown");
-                      if (!handleFeatureError(errorMsg)) {
-                        showAlert(
-                          t("status.elasticError", { message: errorMsg }),
-                        );
-                      }
-                    }
-                  } finally {
-                    setEsBusy(false);
-                  }
-                });
-              } catch (e) {
-                logger.error("[Elastic] Search failed", e);
-                const errorMsg = e instanceof Error ? e.message : String(e);
-                if (!handleFeatureError(errorMsg)) {
-                  showAlert(t("status.elasticError", { message: errorMsg }));
-                }
-              }
-            }}
+            onApply={handleElasticApply}
             onClear={() => {
               clearTimeFilter();
               TimeFilter.reset();
@@ -3327,34 +2852,7 @@ export default function App(): JSX.Element {
           open={showHttpLoadDlg}
           initialUrl={httpLoadUrl}
           onClose={() => setShowHttpLoadDlg(false)}
-          onLoad={async (url) => {
-            await withBusy(async () => {
-              try {
-                setHttpUrl(url);
-                await patchSettings({ httpUrl: url });
-                const res = await typedHttpLoadOnce(url);
-                if (res.ok) {
-                  appendEntries((res.entries || []) as any[]);
-                  setHttpStatus(""); // Clear error status on success
-                } else {
-                  // Check if this is a feature-disabled error
-                  if (!handleFeatureError(res.error)) {
-                    setHttpStatus(
-                      t("status.error", {
-                        message: res.error || t("status.errorUnknown"),
-                      }),
-                    );
-                  }
-                }
-              } catch (e) {
-                setHttpStatus(
-                  t("status.error", {
-                    message: e instanceof Error ? e.message : String(e),
-                  }),
-                );
-              }
-            });
-          }}
+          onLoad={handleHttpLoad}
         />
       </Suspense>
 
@@ -3366,42 +2864,7 @@ export default function App(): JSX.Element {
           initialInterval={httpPollForm.interval}
           isPollActive={httpPollId != null}
           onClose={() => setShowHttpPollDlg(false)}
-          onStart={async (url, sec) => {
-            try {
-              setHttpUrl(url);
-              setHttpInterval(sec);
-              await patchSettings({
-                httpUrl: url,
-                httpPollInterval: sec,
-              });
-              const r = await typedHttpStartPoll({
-                url,
-                intervalSec: sec,
-              });
-              if (r.ok) {
-                setHttpPollId(r.id!);
-                setHttpStatus(t("status.httpPolling", { id: String(r.id) }));
-                // Convert to ms for internal timer tracking
-                setNextPollDueAt(Date.now() + sec * 1000);
-                setCurrentPollInterval(sec * 1000);
-              } else {
-                // Check if this is a feature-disabled error
-                if (!handleFeatureError(r.error)) {
-                  setHttpStatus(
-                    t("status.error", {
-                      message: r.error || t("status.errorUnknown"),
-                    }),
-                  );
-                }
-              }
-            } catch (e) {
-              setHttpStatus(
-                t("status.error", {
-                  message: e instanceof Error ? e.message : String(e),
-                }),
-              );
-            }
-          }}
+          onStart={handleHttpPollStart}
         />
       </Suspense>
 
@@ -3411,34 +2874,12 @@ export default function App(): JSX.Element {
           open={showHttpTailDialog}
           initialUrl={httpUrl}
           initialIntervalSec={Math.max(1, Math.round(httpInterval || 2))}
-          initialEmitInitial={false}
-          initialAllowInsecureSSL={false}
-          initialAuthHeader=""
+          initialEmitInitial={httpTailEmitInitial}
+          initialAllowInsecureSSL={httpTailAllowInsecureSSL}
+          initialAuthHeader={httpTailAuthHeader}
           isAnyTailActive={httpTail.tails.length > 0}
           onClose={() => setShowHttpTailDialog(false)}
-          onStart={async (args) => {
-            try {
-              const headers: Record<string, string> = {};
-              if (args.authHeader) headers.Authorization = args.authHeader;
-              const r = await httpTail.start(args.url, {
-                intervalMs: args.intervalSec * 1000,
-                emitInitial: args.emitInitial,
-                headers: Object.keys(headers).length ? headers : undefined,
-                allowInsecureSSL: args.allowInsecureSSL,
-              });
-              if (!r.ok) {
-                showAlert(
-                  t("httpTail.startFailed", { message: r.error || "" }),
-                );
-              }
-            } catch (e) {
-              showAlert(
-                t("httpTail.startFailed", {
-                  message: e instanceof Error ? e.message : String(e),
-                }),
-              );
-            }
-          }}
+          onStart={handleHttpTailStart}
         />
       </Suspense>
 
@@ -3614,6 +3055,7 @@ export default function App(): JSX.Element {
           selectedOneIdx={selectedOneIdx}
           filteredIdx={filteredIdx}
           gotoSearchMatch={gotoSearchMatch}
+          onSubmitSearch={flushSearch}
           t={t}
         />
         <StatusSection
@@ -3672,6 +3114,7 @@ export default function App(): JSX.Element {
           messagePopRef={messagePopRef}
           onStdFiltersEnabledChange={setStdFiltersEnabled}
           onFilterChange={setFilter}
+          onSubmitFilter={flushFilter}
           onOnlyMarkedChange={(nv) => {
             setOnlyMarked(nv);
             try {
@@ -3739,7 +3182,7 @@ export default function App(): JSX.Element {
                   DiagnosticContextFilter.addMdcEntry(mdc.key, mdc.value);
                   // addMdcEntry setzt active=true. Falls ein Profil dennoch
                   // einen inaktiven Eintrag enthält (Altdaten), korrigieren.
-                  if (mdc.active === false) {
+                  if (!mdc.active) {
                     DiagnosticContextFilter.deactivateMdcEntry(
                       mdc.key,
                       mdc.value,

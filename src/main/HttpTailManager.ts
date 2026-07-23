@@ -23,8 +23,15 @@
  */
 
 export interface HttpTailCallbacks {
-  /** Called whenever new complete lines are available. */
-  onLines: (lines: string[]) => void;
+  /**
+   * Called whenever new complete lines are available.
+   *
+   * May return a promise. The manager awaits it before scheduling the next
+   * tick, so a consumer that parses large initial payloads in chunks (with
+   * event-loop yields) can keep the manager from re-fetching mid-parse and
+   * guarantees ordered, complete delivery.
+   */
+  onLines: (lines: string[]) => void | Promise<void>;
   /** Called when the tail detected a rotation (offset reset to 0). */
   onRotated?: () => void;
   /** Called on transport-level errors (network failure, parse failure). */
@@ -171,7 +178,12 @@ export class HttpTailManager {
   ): Promise<void> {
     try {
       if (emitInitial) {
-        // Fetch the full body, emit everything, then advance offset.
+        // Fetch the full body and emit the existing content in a single
+        // onLines call. Keeping it as one call preserves the downstream
+        // backpressure invariant (the whole payload is enqueued in one go and
+        // therefore never partially dropped). Responsiveness during the heavy
+        // parse is handled by the consumer, which parses in chunks and yields
+        // to the event loop – the manager awaits that work via consume().
         await this.fetchAndEmit(state, /*fromOffset=*/ 0);
       } else {
         // Discover size only: HEAD request. If HEAD is not supported,
@@ -288,18 +300,18 @@ export class HttpTailManager {
           if (!state.stopped) state.callbacks.onRotated?.();
           state.offset = 0;
           state.partial = "";
-          this.consume(state, text);
+          await this.consume(state, text);
           state.offset = byteLen;
         } else {
           // Body grew – emit only the slice past our offset. Slice on the
           // byte buffer (offset is byte-based) before decoding to text.
           const newPart = bytes.subarray(fromOffset).toString("utf8");
-          this.consume(state, newPart);
+          await this.consume(state, newPart);
           state.offset = byteLen;
         }
       } else {
         // 206 Partial Content (or initial 200 with fromOffset===0).
-        this.consume(state, text);
+        await this.consume(state, text);
         state.offset = fromOffset + byteLen;
       }
       state.callbacks.onProgress?.({ offset: state.offset, total });
@@ -376,8 +388,8 @@ export class HttpTailManager {
     return undefined;
   }
 
-  /** Buffer + line-split + emit. */
-  private consume(state: TailState, chunk: string): void {
+  /** Buffer + line-split + emit. Awaits the (possibly async) onLines sink. */
+  private async consume(state: TailState, chunk: string): Promise<void> {
     if (chunk.length === 0) return;
     const combined = state.partial + chunk;
     const lastNl = combined.lastIndexOf("\n");
@@ -389,7 +401,7 @@ export class HttpTailManager {
     const complete = combined.slice(0, lastNl + 1);
     state.partial = combined.slice(lastNl + 1);
     const lines = splitTailLines(complete);
-    if (lines.length > 0) state.callbacks.onLines(lines);
+    if (lines.length > 0) await state.callbacks.onLines(lines);
   }
 }
 

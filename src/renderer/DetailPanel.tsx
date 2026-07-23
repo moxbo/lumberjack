@@ -1,5 +1,5 @@
 // Detail panel with progressive disclosure for stack traces and MDC
-import { useState } from "preact/hooks";
+import { useState, useEffect } from "preact/hooks";
 import { JSX } from "preact/jsx-runtime";
 import {
   computeTint,
@@ -8,6 +8,7 @@ import {
   getTs,
   levelClass,
 } from "../utils/format";
+import { heavyFieldStore } from "../store/heavyFieldStore";
 
 interface DetailPanelProps {
   entry: Record<string, unknown> | null;
@@ -57,6 +58,42 @@ export function DetailPanel({
   const [mdcExpanded, setMdcExpanded] = useState(false);
   const [messageExpanded, setMessageExpanded] = useState(false);
 
+  // Phase 2: On-Demand-Nachladen der ausgelagerten Detail-Felder
+  // (stackTrace/_fullMessage). Diese liegen bei großen Werten nicht mehr im
+  // Eintrag selbst, sondern im heavyFieldStore (IndexedDB) und werden erst
+  // beim Öffnen der Detailansicht per `_id` geholt.
+  const [heavy, setHeavy] = useState<{
+    stackTrace?: string | null;
+    _fullMessage?: string;
+  } | null>(null);
+  const [heavyLoading, setHeavyLoading] = useState(false);
+
+  const entryId =
+    entry && typeof entry._id === "number" ? (entry._id as number) : undefined;
+  const offloaded = entry ? entry._offloaded === true : false;
+
+  useEffect(() => {
+    let cancelled = false;
+    setHeavy(null);
+    if (offloaded && typeof entryId === "number") {
+      setHeavyLoading(true);
+      void heavyFieldStore.get(entryId).then((rec) => {
+        if (cancelled) return;
+        setHeavy(
+          rec
+            ? { stackTrace: rec.stackTrace, _fullMessage: rec._fullMessage }
+            : null,
+        );
+        setHeavyLoading(false);
+      });
+    } else {
+      setHeavyLoading(false);
+    }
+    return () => {
+      cancelled = true;
+    };
+  }, [entryId, offloaded]);
+
   if (!entry) {
     return (
       <div className="details-empty">
@@ -67,9 +104,21 @@ export function DetailPanel({
     );
   }
 
-  const hasStackTrace = !!(
-    getStr(entry, "stack_trace") || getStr(entry, "stackTrace")
-  );
+  // Effektive Werte: bevorzugt die (ggf. nachgeladenen) ausgelagerten Felder,
+  // sonst die im Eintrag verbliebenen.
+  const inMemStack =
+    getStr(entry, "stack_trace") || getStr(entry, "stackTrace");
+  const heavyStack =
+    typeof heavy?.stackTrace === "string" ? heavy.stackTrace : "";
+  const effectiveStack = heavyStack || inMemStack;
+  // `_hasStack` markiert einen ausgelagerten Stacktrace, dessen Inhalt evtl.
+  // noch lädt – die Sektion soll trotzdem angezeigt werden.
+  const hasStackTrace = !!effectiveStack || entry._hasStack === true;
+
+  const heavyFull =
+    typeof heavy?._fullMessage === "string" ? heavy._fullMessage : "";
+  const effectiveFullMessage = heavyFull || getFullMessage(entry);
+
   const mdcRaw = entry["mdc" as keyof typeof entry];
   const mdc =
     mdcRaw && typeof mdcRaw === "object"
@@ -125,8 +174,7 @@ export function DetailPanel({
             }}
             title={t("details.messageSize")}
           >
-            (
-            {formatSize(new TextEncoder().encode(getFullMessage(entry)).length)}
+            ({formatSize(new TextEncoder().encode(effectiveFullMessage).length)}
             )
           </span>
           {isTruncated(entry) && (
@@ -162,9 +210,7 @@ export function DetailPanel({
           }}
           dangerouslySetInnerHTML={{
             __html: highlightFn(
-              messageExpanded
-                ? getFullMessage(entry)
-                : getStr(entry, "message"),
+              messageExpanded ? effectiveFullMessage : getStr(entry, "message"),
               search,
             ),
           }}
@@ -182,9 +228,7 @@ export function DetailPanel({
           </span>
           {stackExpanded && (
             <pre className="stack-trace">
-              {String(
-                getStr(entry, "stack_trace") || getStr(entry, "stackTrace"),
-              )}
+              {effectiveStack || (heavyLoading ? t("details.loading") : "")}
             </pre>
           )}
         </div>

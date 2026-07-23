@@ -92,10 +92,7 @@ export class AutoUpdaterService {
   // Whether the cached info represents an actually-available update,
   // a "not-available" response, or (portable) something fetched from GitHub.
   private cachedStatus:
-    | "available"
-    | "not-available"
-    | "available-portable"
-    | null = null;
+    "available" | "not-available" | "available-portable" | null = null;
   private lastUpdateCheck = 0;
   private readonly updateCheckCacheMs = 60000; // Cache for 1 minute
 

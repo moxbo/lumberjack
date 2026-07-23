@@ -15,6 +15,7 @@
 #      shipped in a prior beta/rc
 #   3. Bumps version in package.json + release/app/package.json
 #   4. Regenerates CHANGELOG.md via git-cliff
+#      (stable releases aggregate all intermediate beta/rc tags into one block)
 #   5. Commits the bump + changelog
 #   6. Creates an annotated tag vX.Y.Z[-pre.N]
 #   7. Pushes main and the tag explicitly
@@ -158,9 +159,19 @@ fi
 
 # ---------- changelog -------------------------------------------------------
 blue "▶ Regenerating CHANGELOG.md (git-cliff)…"
-# Tag the upcoming version so git-cliff renders the next block as $TAG
-npx --no-install git-cliff --config cliff.toml --tag "$TAG" --output CHANGELOG.md
-green "  ✓ CHANGELOG.md generated"
+# Tag the upcoming version so git-cliff renders the next block as $TAG.
+if [[ "$IS_PRERELEASE" == "false" ]]; then
+  # Stable release: collapse all intermediate pre-release tags (beta/rc/alpha)
+  # into a single combined block so the changelog shows ALL changes since the
+  # previous full release — not just the commits since the last beta/rc.
+  npx --no-install git-cliff --config cliff.toml --tag "$TAG" \
+    --ignore-tags '.*-(alpha|beta|rc)\.' --output CHANGELOG.md
+  green "  ✓ CHANGELOG.md generated (pre-releases aggregated into $TAG)"
+else
+  # Pre-release: keep its own dedicated changelog block.
+  npx --no-install git-cliff --config cliff.toml --tag "$TAG" --output CHANGELOG.md
+  green "  ✓ CHANGELOG.md generated"
+fi
 
 # ---------- commit + tag ----------------------------------------------------
 blue "▶ Committing & tagging…"

@@ -103,7 +103,7 @@ describe("HttpTailManager", () => {
     const received: string[] = [];
     mgr.start(
       url,
-      { onLines: (l) => received.push(...l) },
+      { onLines: (l) => void received.push(...l) },
       { intervalMs: 250 },
     );
 
@@ -121,12 +121,73 @@ describe("HttpTailManager", () => {
     const received: string[] = [];
     mgr.start(
       url,
-      { onLines: (l) => received.push(...l) },
+      { onLines: (l) => void received.push(...l) },
       { intervalMs: 1000, emitInitial: true },
     );
     await delay(300);
     mgr.stopAll();
     expect(received).toEqual(["first", "second"]);
+  });
+
+  it("emits all initial content as one ordered onLines call (no loss)", async () => {
+    const LINES = 2500;
+    const expected = Array.from(
+      { length: LINES },
+      (_, i) => `line${String(i)}`,
+    );
+    server.body = expected.join("\n") + "\n";
+
+    const mgr = new HttpTailManager();
+    const received: string[] = [];
+    const callSizes: number[] = [];
+    mgr.start(
+      url,
+      {
+        onLines: (l) => {
+          callSizes.push(l.length);
+          received.push(...l);
+        },
+      },
+      { intervalMs: 5000, emitInitial: true },
+    );
+
+    await delay(400);
+    mgr.stopAll();
+
+    // The whole existing payload is delivered complete and in order in a
+    // single onLines call. Chunked parsing/yielding happens in the IPC
+    // consumer, not the manager, so the downstream single-enqueue
+    // backpressure invariant is preserved (no dropped lines).
+    expect(received).toEqual(expected);
+    expect(callSizes).toEqual([LINES]);
+  });
+
+  it("awaits an async onLines sink before scheduling the next tick", async () => {
+    server.body = "a\nb\nc\n";
+    const mgr = new HttpTailManager();
+    const received: string[] = [];
+    let inFlight = 0;
+    let maxConcurrent = 0;
+    mgr.start(
+      url,
+      {
+        onLines: async (l) => {
+          inFlight++;
+          maxConcurrent = Math.max(maxConcurrent, inFlight);
+          await delay(20);
+          received.push(...l);
+          inFlight--;
+        },
+      },
+      { intervalMs: 250, emitInitial: true },
+    );
+
+    await delay(700);
+    mgr.stopAll();
+
+    // onLines is awaited, so the manager never invokes it concurrently.
+    expect(maxConcurrent).toBe(1);
+    expect(received).toContain("a");
   });
 
   it("buffers partial last line across ticks", async () => {
@@ -135,7 +196,7 @@ describe("HttpTailManager", () => {
     const received: string[] = [];
     mgr.start(
       url,
-      { onLines: (l) => received.push(...l) },
+      { onLines: (l) => void received.push(...l) },
       { intervalMs: 250 },
     );
     await delay(300);
@@ -159,7 +220,7 @@ describe("HttpTailManager", () => {
     mgr.start(
       url,
       {
-        onLines: (l) => received.push(...l),
+        onLines: (l) => void received.push(...l),
         onRotated: () => {
           rotated++;
         },
@@ -183,7 +244,7 @@ describe("HttpTailManager", () => {
     const received: string[] = [];
     mgr.start(
       url,
-      { onLines: (l) => received.push(...l) },
+      { onLines: (l) => void received.push(...l) },
       { intervalMs: 250 },
     );
 
@@ -203,7 +264,7 @@ describe("HttpTailManager", () => {
     const received: string[] = [];
     mgr.start(
       url,
-      { onLines: (l) => received.push(...l) },
+      { onLines: (l) => void received.push(...l) },
       { intervalMs: 250 },
     );
     await delay(400);
@@ -239,7 +300,7 @@ describe("HttpTailManager", () => {
     const received: string[] = [];
     mgr.start(
       url,
-      { onLines: (l) => received.push(...l) },
+      { onLines: (l) => void received.push(...l) },
       { intervalMs: 250 },
     );
     await delay(400); // tail starts at current end (empty)

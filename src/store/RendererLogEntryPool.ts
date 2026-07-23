@@ -33,6 +33,10 @@ export interface PoolableLogEntry {
   _id?: number;
   color?: string; // Legacy support
   _processed?: boolean;
+  /** Phase 2: true if this entry has a stack trace that was offloaded to IndexedDB. */
+  _hasStack?: boolean;
+  /** Phase 2: true if heavy fields (stackTrace/_fullMessage) were moved to the heavyFieldStore. */
+  _offloaded?: boolean;
   // Pool tracking (internal)
   __pooled?: boolean;
 }
@@ -129,6 +133,8 @@ class RendererLogEntryPool {
       _id: undefined,
       color: undefined,
       _processed: undefined,
+      _hasStack: undefined,
+      _offloaded: undefined,
       __pooled: true,
     };
   }
@@ -152,6 +158,8 @@ class RendererLogEntryPool {
     entry._id = undefined;
     entry.color = undefined;
     entry._processed = undefined;
+    entry._hasStack = undefined;
+    entry._offloaded = undefined;
     entry.__pooled = true;
   }
 

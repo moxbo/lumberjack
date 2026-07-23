@@ -153,6 +153,18 @@ export function useFilterWorker(): UseFilterWorkerResult {
 
   const workerRef = useRef<Worker | null>(null);
   const pendingRequestRef = useRef<number>(0);
+  // ID des zuletzt tatsächlich angewendeten Ergebnisses. Der (Single-Thread-)
+  // Worker beantwortet Requests strikt in Reihenfolge, daher kommen Ergebnisse
+  // mit monoton steigender requestId zurück. Wir wenden jedes Ergebnis an, das
+  // NEUER als das zuletzt angewendete ist – nicht nur exakt das allerletzte.
+  //
+  // Vorher wurde nur `requestId === pendingRequestRef.current` angewendet. Bei
+  // kontinuierlichem/schnellem Datenzufluss (Streaming, große Bulk-Ladungen)
+  // liegt jedoch immer schon ein neuerer Request an, während der Worker noch
+  // ein älteres Ergebnis zurückliefert → JEDES Ergebnis wurde als "veraltet"
+  // verworfen. Folge: "Gesamt" stieg, "Gefiltert" blieb stehen und es wurden
+  // keine Einträge angezeigt (auch ohne aktiven Filter).
+  const lastAppliedRequestRef = useRef<number>(0);
   const utilityProcessAvailableRef = useRef<boolean | null>(null);
 
   // Monoton steigender Request-Zähler. Date.now() kann bei schnellen Filtern
@@ -203,6 +215,7 @@ export function useFilterWorker(): UseFilterWorkerResult {
       // Frischer Worker hat noch keinen gecachten Datensatz.
       syncedEntriesRef.current = null;
       syncedLenRef.current = 0;
+      lastAppliedRequestRef.current = 0;
 
       workerRef.current.onmessage = (event: MessageEvent) => {
         const {
@@ -211,10 +224,24 @@ export function useFilterWorker(): UseFilterWorkerResult {
           stats: workerStats,
           requestId,
         } = event.data;
-        if (type === "result" && requestId === pendingRequestRef.current) {
+        // Monoton anwenden: jedes Ergebnis, das neuer ist als das zuletzt
+        // angewendete, übernehmen. So bleibt die gefilterte Ansicht auch bei
+        // kontinuierlichem Datenzufluss live, statt einzufrieren, weil ein
+        // noch neuerer Request bereits aussteht.
+        if (
+          type === "result" &&
+          typeof requestId === "number" &&
+          requestId > lastAppliedRequestRef.current
+        ) {
+          lastAppliedRequestRef.current = requestId;
           setFilteredIndices(indices);
           setStats(workerStats);
-          setIsFiltering(false);
+          // isFiltering erst zurücksetzen, wenn das aktuell jüngste Ergebnis da
+          // ist – sonst würde der Ladeindikator bei jedem Zwischenergebnis
+          // flackern, obwohl noch Requests ausstehen.
+          if (requestId >= pendingRequestRef.current) {
+            setIsFiltering(false);
+          }
         }
       };
 
@@ -230,6 +257,7 @@ export function useFilterWorker(): UseFilterWorkerResult {
         }
         syncedEntriesRef.current = null;
         syncedLenRef.current = 0;
+        lastAppliedRequestRef.current = 0;
       };
     } catch (error) {
       console.warn("[FilterWorker] Failed to initialize worker:", error);
@@ -443,6 +471,10 @@ export function useFilterWorker(): UseFilterWorkerResult {
       // For small datasets, use synchronous filtering (fastest for small data)
       if (entries.length <= WORKER_THRESHOLD) {
         const result = filterSync(entries, options, marksMap);
+        // Monotonie wahren: als angewendete Request-ID markieren, damit ein
+        // spät eintreffendes älteres Worker-Ergebnis dieses frischere Resultat
+        // nicht überschreibt.
+        lastAppliedRequestRef.current = requestId;
         setFilteredIndices(result.indices);
         setStats(result.stats);
         setIsFiltering(false);
@@ -500,6 +532,7 @@ export function useFilterWorker(): UseFilterWorkerResult {
               `[FilterWorker] Dataset too large for UtilityProcess (${entries.length} entries), falling back to sync`,
             );
             const syncResult = filterSync(entries, options, marksMap);
+            lastAppliedRequestRef.current = requestId;
             setFilteredIndices(syncResult.indices);
             setStats(syncResult.stats);
             setIsFiltering(false);
@@ -511,8 +544,10 @@ export function useFilterWorker(): UseFilterWorkerResult {
 
           typedFilterEntries(slimEntries, options)
             .then((result: import("../types/ipc").FilterResult) => {
-              // Only apply if this is still the current request
-              if (pendingRequestRef.current === requestId) {
+              // Nur anwenden, wenn dieses Ergebnis neuer ist als das zuletzt
+              // angewendete (Promises können out-of-order auflösen).
+              if (requestId > lastAppliedRequestRef.current) {
+                lastAppliedRequestRef.current = requestId;
                 if (result.ok) {
                   setFilteredIndices(result.filteredIndices);
                   setStats(result.stats);
@@ -526,17 +561,22 @@ export function useFilterWorker(): UseFilterWorkerResult {
                   setFilteredIndices(syncResult.indices);
                   setStats(syncResult.stats);
                 }
-                setIsFiltering(false);
+                if (requestId >= pendingRequestRef.current) {
+                  setIsFiltering(false);
+                }
               }
             })
             .catch((error: unknown) => {
               console.warn("[FilterWorker] UtilityProcess error:", error);
               // Fall back to sync on error
-              if (pendingRequestRef.current === requestId) {
+              if (requestId > lastAppliedRequestRef.current) {
+                lastAppliedRequestRef.current = requestId;
                 const syncResult = filterSync(entries, options, marksMap);
                 setFilteredIndices(syncResult.indices);
                 setStats(syncResult.stats);
-                setIsFiltering(false);
+                if (requestId >= pendingRequestRef.current) {
+                  setIsFiltering(false);
+                }
               }
             });
         } catch (error) {
@@ -545,6 +585,7 @@ export function useFilterWorker(): UseFilterWorkerResult {
             error instanceof Error ? error.message : String(error);
           console.warn("[FilterWorker] IPC call failed:", errorMessage);
           const syncResult = filterSync(entries, options, marksMap);
+          lastAppliedRequestRef.current = requestId;
           setFilteredIndices(syncResult.indices);
           setStats(syncResult.stats);
           setIsFiltering(false);
@@ -554,6 +595,7 @@ export function useFilterWorker(): UseFilterWorkerResult {
 
       // Last resort: synchronous filtering
       const result = filterSync(entries, options, marksMap);
+      lastAppliedRequestRef.current = requestId;
       setFilteredIndices(result.indices);
       setStats(result.stats);
       setIsFiltering(false);

@@ -166,7 +166,8 @@
     "traceId": "Trace ID",
     "service": "Service",
     "emptyValue": "(empty)",
-    "addFilterButton": "+ Filter"
+    "addFilterButton": "+ Filter",
+    "loading": "Loading …"
   },
   "contextMenu": {
     "removeMark": "Remove mark",
@@ -903,6 +904,8 @@
     "sort": "Sort Order",
     "sortAsc": "Oldest first",
     "sortDesc": "Newest first",
+    "timestampField": "Timestamp field",
+    "timestampFieldTooltip": "Field used for the time range and sorting. Default: @timestamp. Must match your index's time field (like the Kibana data view time field, e.g. 'timestamp' or 'time'). A wrong field silently misses many hits.",
     "allowInsecureTLS": "Allow insecure TLS (self-signed)",
     "clearFieldsTooltip": "Reset fields",
     "clear": "Clear",

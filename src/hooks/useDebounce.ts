@@ -22,6 +22,53 @@ export function useDebounce<T>(value: T, delay: number): T {
 }
 
 /**
+ * Hook that debounces a value but also exposes a `flush` function that
+ * immediately applies the current value (skipping the remaining delay).
+ *
+ * Useful for "type-to-filter with debounce" inputs where pressing Enter
+ * should apply the filter right away instead of waiting for the delay.
+ *
+ * Returns a tuple of `[debouncedValue, flush]`.
+ */
+export function useDebouncedValueWithFlush<T>(
+  value: T,
+  delay: number,
+): [T, (overrideValue?: T) => void] {
+  const [debouncedValue, setDebouncedValue] = useState<T>(value);
+  const valueRef = useRef<T>(value);
+  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    valueRef.current = value;
+    if (timerRef.current) {
+      clearTimeout(timerRef.current);
+    }
+    timerRef.current = setTimeout(() => {
+      setDebouncedValue(value);
+      timerRef.current = null;
+    }, delay);
+
+    return () => {
+      if (timerRef.current) {
+        clearTimeout(timerRef.current);
+      }
+    };
+  }, [value, delay]);
+
+  const flush = useCallback((overrideValue?: T) => {
+    if (timerRef.current) {
+      clearTimeout(timerRef.current);
+      timerRef.current = null;
+    }
+    setDebouncedValue(
+      overrideValue !== undefined ? overrideValue : valueRef.current,
+    );
+  }, []);
+
+  return [debouncedValue, flush];
+}
+
+/**
  * Hook that returns a debounced callback function.
  * The callback will only be executed after the specified delay since the last call.
  */

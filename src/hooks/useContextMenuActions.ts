@@ -1,6 +1,13 @@
 /**
  * useContextMenuActions Hook
- * Manages context menu state, markings, and clipboard operations
+ *
+ * Manages the log-list context menu: menu state, color palette / custom
+ * colors, mark application, "adopt trace IDs", and clipboard copy.
+ *
+ * Performance note: marks are stored exclusively in `marksMap`
+ * (signature -> color) which is owned by the caller. This hook never writes
+ * a `_mark` field into entry objects and never rebuilds the `entries` array,
+ * so marking a selection does not trigger a full scan / re-filter.
  */
 
 import {
@@ -11,6 +18,7 @@ import {
   useMemo,
 } from "preact/hooks";
 import type { ContextMenuState, RendererLogEntry } from "../types/renderer";
+import type { RefObject } from "preact";
 import { BASE_MARK_COLORS } from "../constants";
 import { entrySignature } from "../utils/entryUtils";
 import { patchSettingsQuiet } from "../utils/typedApi";
@@ -20,12 +28,11 @@ import logger from "../utils/logger";
 
 export interface UseContextMenuActionsOptions {
   entries: RendererLogEntry[];
-  setEntries: (fn: (prev: RendererLogEntry[]) => RendererLogEntry[]) => void;
   selected: Set<number>;
-  setSelected: (fn: Set<number> | ((prev: Set<number>) => Set<number>)) => void;
+  setSelected: (fn: (prev: Set<number>) => Set<number>) => void;
   marksMap: Record<string, string>;
   setMarksMap: (map: Record<string, string>) => void;
-  parentRef: React.RefObject<HTMLDivElement | null>;
+  parentRef: RefObject<HTMLDivElement | null>;
   showAlert: (msg: string) => void;
   t: (key: string) => string;
 }
@@ -33,12 +40,13 @@ export interface UseContextMenuActionsOptions {
 export interface UseContextMenuActionsReturn {
   // Context menu state
   ctxMenu: ContextMenuState;
-  ctxRef: React.RefObject<HTMLDivElement | null>;
+  ctxRef: RefObject<HTMLDivElement>;
   openContextMenu: (ev: MouseEvent, idx: number) => void;
   closeContextMenu: () => void;
 
   // Color palette
   customColors: string[];
+  setCustomColors: (fn: string[] | ((prev: string[]) => string[])) => void;
   pickerColor: string;
   setPickerColor: (color: string) => void;
   palette: string[];
@@ -54,15 +62,11 @@ export interface UseContextMenuActionsReturn {
   adoptTraceIds: () => void;
 }
 
-/**
- * Hook for context menu, markings, and clipboard operations
- */
 export function useContextMenuActions(
   options: UseContextMenuActionsOptions,
 ): UseContextMenuActionsReturn {
   const {
     entries,
-    setEntries,
     selected,
     setSelected,
     marksMap,
@@ -72,15 +76,12 @@ export function useContextMenuActions(
     t,
   } = options;
 
-  // Context menu state
   const [ctxMenu, setCtxMenu] = useState<ContextMenuState>({
     open: false,
     x: 0,
     y: 0,
   });
   const ctxRef = useRef<HTMLDivElement | null>(null);
-
-  // Custom colors
   const [customColors, setCustomColors] = useState<string[]>([]);
   const [pickerColor, setPickerColor] = useState<string>("#ffcc00");
 
@@ -89,23 +90,24 @@ export function useContextMenuActions(
     [customColors],
   );
 
-  // Close context menu
-  const closeContextMenu = useCallback((): void => {
-    setCtxMenu({ open: false, x: 0, y: 0 });
-  }, []);
-
-  // Add custom color
   const addCustomColor = useCallback((c: string): void => {
     const color = String(c || "").trim();
     if (!color) return;
     setCustomColors((prev) => {
       const list = prev.includes(color) ? prev : [...prev, color];
-      patchSettingsQuiet({ customMarkColors: list });
+      try {
+        patchSettingsQuiet({ customMarkColors: list });
+      } catch (e) {
+        logger.error("Failed to save customMarkColors settings:", e);
+      }
       return list;
     });
   }, []);
 
-  // Close context menu on outside click or Escape
+  const closeContextMenu = useCallback((): void => {
+    setCtxMenu({ open: false, x: 0, y: 0 });
+  }, []);
+
   useEffect(() => {
     if (!ctxMenu.open) return;
     const onMouseDown = (e: MouseEvent): void => {
@@ -127,7 +129,6 @@ export function useContextMenuActions(
     };
   }, [ctxMenu.open, closeContextMenu]);
 
-  // Open context menu
   const openContextMenu = useCallback(
     (ev: MouseEvent, idx: number): void => {
       try {
@@ -137,14 +138,14 @@ export function useContextMenuActions(
           return new Set([idx]);
         });
         setCtxMenu({ open: true, x: ev.clientX, y: ev.clientY });
-        // Restore focus to list
+        // Keep the list focused even after opening the context menu
         try {
           setTimeout(() => {
             if (
               parentRef.current &&
               !parentRef.current.contains(document.activeElement || null)
             ) {
-              (parentRef.current as any)?.focus?.({ preventScroll: true });
+              parentRef.current?.focus({ preventScroll: true });
             }
           }, 0);
         } catch (err) {
@@ -157,56 +158,71 @@ export function useContextMenuActions(
     [setSelected, parentRef],
   );
 
-  // Apply mark color to selected entries
   const applyMarkColor = useCallback(
     (color?: string): void => {
-      setEntries((prev) => {
-        if (!prev || !prev.length) return prev;
-        const next = prev.slice();
-        const newMap: Record<string, string> = { ...marksMap };
-        for (const i of selected) {
-          if (i >= 0 && i < next.length) {
-            const e = next[i];
-            if (!e) continue;
-            const n: RendererLogEntry = { ...e };
-            if (color) {
-              n._mark = color;
-              newMap[entrySignature(n)] = color;
-            } else {
-              if (n._mark) delete newMap[entrySignature(n)];
-              delete n._mark;
-            }
-            next[i] = n;
+      if (!entries.length) {
+        closeContextMenu();
+        return;
+      }
+      const newMap: Record<string, string> = { ...marksMap };
+      for (const i of selected) {
+        if (i >= 0 && i < entries.length) {
+          const e = entries[i];
+          if (!e) continue;
+          const sig = entrySignature(e);
+          if (color) {
+            newMap[sig] = color;
+          } else {
+            delete newMap[sig];
           }
         }
-        setMarksMap(newMap);
+      }
+      setMarksMap(newMap);
+      try {
         patchSettingsQuiet({ marksMap: newMap });
-        return next;
-      });
+      } catch {
+        /* ignore */
+      }
       closeContextMenu();
     },
-    [setEntries, selected, marksMap, setMarksMap, closeContextMenu],
+    [entries, selected, marksMap, setMarksMap, closeContextMenu],
   );
 
-  // Sync marks when marksMap changes
-  useEffect(() => {
-    if (!entries.length) return;
-    setEntries((prev) =>
-      prev.map((e) => {
-        const sig = entrySignature(e);
-        const c = marksMap[sig];
-        if (c && e._mark !== c) return { ...e, _mark: c };
-        if (!c && e._mark) {
-          const n = { ...e };
-          delete n._mark;
-          return n;
+  const adoptTraceIds = useCallback((): void => {
+    try {
+      const variants = [
+        "TraceID",
+        "traceId",
+        "trace_id",
+        "trace.id",
+        "trace-id",
+        "x-trace-id",
+        "x_trace_id",
+        "x.trace.id",
+        "trace",
+      ];
+      const added = new Set<string>();
+      for (const i of selected) {
+        const e = entries[i];
+        const m = e && e.mdc;
+        if (!m || typeof m !== "object") continue;
+        for (const k of variants) {
+          if (Object.prototype.hasOwnProperty.call(m, k)) {
+            const v = String((m as Record<string, unknown>)[k] ?? "");
+            if (v && !added.has(v)) {
+              DiagnosticContextFilter.addMdcEntry("TraceID", v);
+              added.add(v);
+            }
+          }
         }
-        return e;
-      }),
-    );
-  }, [marksMap]);
+      }
+      if (added.size) DiagnosticContextFilter.setEnabled(true);
+    } catch (e) {
+      logger.warn("adoptTraceIds failed:", e);
+    }
+    closeContextMenu();
+  }, [selected, entries, closeContextMenu]);
 
-  // Copy timestamp + message to clipboard
   const copyTsMsg = useCallback(async (): Promise<void> => {
     const list = Array.from(selected).sort((a, b) => a - b);
     const lines = list.map((i) => {
@@ -235,47 +251,13 @@ export function useContextMenuActions(
     closeContextMenu();
   }, [selected, entries, showAlert, t, closeContextMenu]);
 
-  // Adopt trace IDs from selected entries to DC filter
-  const adoptTraceIds = useCallback((): void => {
-    try {
-      const variants = [
-        "TraceID",
-        "traceId",
-        "trace_id",
-        "trace.id",
-        "trace-id",
-        "x-trace-id",
-        "x_trace_id",
-        "x.trace.id",
-        "trace",
-      ];
-      const added = new Set<string>();
-      for (const i of selected) {
-        const e = entries[i];
-        const m = e && e.mdc;
-        if (!m || typeof m !== "object") continue;
-        for (const k of variants) {
-          if (Object.prototype.hasOwnProperty.call(m, k)) {
-            const v = String((m as Record<string, unknown>)[k] ?? "");
-            if (v && !added.has(v)) {
-              added.add(v);
-              (DiagnosticContextFilter as any).addMdcEntry("TraceID", v);
-            }
-          }
-        }
-      }
-      if (added.size) (DiagnosticContextFilter as any).setEnabled(true);
-    } catch (e) {
-      logger.warn("adoptTraceIds failed:", e as any);
-    }
-  }, [selected, entries]);
-
   return {
     ctxMenu,
     ctxRef,
     openContextMenu,
     closeContextMenu,
     customColors,
+    setCustomColors,
     pickerColor,
     setPickerColor,
     palette,

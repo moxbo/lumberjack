@@ -5,6 +5,64 @@ Alle nennenswerten Änderungen an diesem Projekt werden in dieser Datei dokument
 Das Format orientiert sich an [Keep a Changelog](https://keepachangelog.com/de/1.1.0/),
 und dieses Projekt folgt [Semantic Versioning](https://semver.org/lang/de/).
 
+## [1.1.2-beta.3] - 2026-07-20 _(Pre-Release)_
+
+
+### Added
+- Implement Elasticsearch dialect detection and caching for improved pagination handling
+
+## [1.1.2-beta.2] - 2026-07-20 _(Pre-Release)_
+
+
+### Changed
+- Implement debounced entries for improved filter performance during streaming
+- Remove raw payload from log entries to reduce memory footprint and prevent crashes
+- Implement heavy field offloading to IndexedDB for improved memory management
+- Enhance HTTP tail dialog settings persistence and initialization
+- Integrate accessibility announcer and HTTP poll countdown hooks
+- Extract Elasticsearch logic into useElasticSearch hook for improved modularity
+
+## [1.1.2-beta.1] - 2026-07-09 _(Pre-Release)_
+
+
+### Changed
+- Increase default heap size to 4096 MB for improved performance
+- Enhance entry management logic to prevent dropping bounded file imports
+
+## [1.1.1] - 2026-07-07
+
+
+### Added
+- Enhance file reading in WatchManager to handle large files and preserve multi-byte UTF-8 characters across read chunks
+
+
+### Changed
+- Simplify type definitions by removing unnecessary line breaks
+- Implement useDebouncedValueWithFlush hook for immediate filter application on Enter key press
+
+
+### Fixed
+- Improve request handling in useFilterWorker to ensure timely updates of filtered results
+
+## [1.1.0] - 2026-06-18
+
+
+### Added
+- Implement batched emission for large initial content in HttpTailManager
+- Enhance release notes rendering with HTML sanitization and Markdown support
+- Enhance CHANGELOG generation for stable releases by aggregating pre-release tags
+
+## [1.0.16-beta.4] - 2026-06-09 _(Pre-Release)_
+
+
+### Added
+- Add timestamp field support for Elasticsearch filtering and sorting
+
+
+### Fixed
+- Implement boolean query syntax for message filtering in Elasticsearch
+- Enhance elastic entry loading logic and improve loaded count tracking
+
 ## [1.0.16-beta.3] - 2026-06-02 _(Pre-Release)_
 
 

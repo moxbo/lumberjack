@@ -23,6 +23,11 @@ import {
   TRIM_THRESHOLD_ENTRIES,
 } from "../constants";
 import { getRendererLogEntryPool } from "../store/RendererLogEntryPool";
+import {
+  heavyFieldStore,
+  OFFLOAD_MIN_CHARS,
+  type HeavyRecord,
+} from "../store/heavyFieldStore";
 
 interface UseEntryManagementOptions {
   marksMap: Record<string, string>;
@@ -266,11 +271,64 @@ export function useEntryManagement({ marksMap }: UseEntryManagementOptions) {
         }
       }
 
-      // Add to LoggingStore
+      // Add to LoggingStore (this computes each entry's `mdc` from `raw`).
       try {
         (LoggingStore as any).addEvents(toAdd);
       } catch (e) {
         logger.error("LoggingStore.addEvents error:", e);
+      }
+
+      // Memory: release the (potentially large) raw payload after MDC has been
+      // derived. The renderer never reads `entry.raw` again – neither the log
+      // table, the detail panel (uses `mdc`) nor any export format serialises
+      // it. Keeping the full parsed object per entry roughly doubled the heap
+      // footprint and caused Out-of-Memory renderer crashes ("app restarts")
+      // around 200k–300k entries. `addEvents` above runs synchronously and all
+      // listeners have already consumed `raw` by this point, so it is safe to
+      // free it here.
+      for (let i = 0; i < toAdd.length; i++) {
+        const entry = toAdd[i];
+        if (entry) entry.raw = null;
+      }
+
+      // Phase 2: Große Detail-Felder (stackTrace, _fullMessage) auslagern.
+      //
+      // Diese Felder werden ausschließlich in der Detailansicht bzw. beim
+      // Export benötigt – die Log-Tabelle, die Filterung und die Suche lesen
+      // sie NIE. Wir schreiben sie (ab einer Mindestgröße) in den
+      // heavyFieldStore (IndexedDB) und entfernen sie aus dem In-Memory-Eintrag.
+      // Die Detailansicht lädt sie bei Bedarf per `_id` nach. So bleibt der
+      // Renderer-Heap bei großen Stacktraces / sehr langen Nachrichten klein,
+      // während Scrollen/Filtern/Suchen vollständig synchron bleiben.
+      const offloadRecords: HeavyRecord[] = [];
+      for (let i = 0; i < toAdd.length; i++) {
+        const entry = toAdd[i];
+        if (!entry || typeof entry._id !== "number") continue;
+        const stack =
+          typeof entry.stackTrace === "string" ? entry.stackTrace : "";
+        const full =
+          typeof entry._fullMessage === "string" ? entry._fullMessage : "";
+        const stackBig = stack.length > OFFLOAD_MIN_CHARS;
+        const fullBig = full.length > OFFLOAD_MIN_CHARS;
+        if (!stackBig && !fullBig) continue;
+
+        const rec: HeavyRecord = { _id: entry._id };
+        if (stackBig) {
+          rec.stackTrace = stack;
+          entry._hasStack = true; // Header in der Detailansicht anzeigen
+          entry.stackTrace = null; // aus dem Speicher entfernen
+        }
+        if (fullBig) {
+          rec._fullMessage = full;
+          rec._messageSize = entry._messageSize;
+          entry._fullMessage = undefined; // aus dem Speicher entfernen
+        }
+        entry._offloaded = true;
+        offloadRecords.push(rec);
+      }
+      if (offloadRecords.length > 0) {
+        // Best-effort, asynchron – blockiert das Append nie.
+        void heavyFieldStore.putMany(offloadRecords);
       }
 
       // Update state
@@ -358,11 +416,24 @@ export function useEntryManagement({ marksMap }: UseEntryManagementOptions) {
       ) {
         appendEntriesInternal(newEntries, options);
       } else {
+        // Bounded imports (file loads) deliver the complete, finite set of
+        // entries in a single call. They are already fully materialised in
+        // memory, so queuing them adds no extra pressure – and discarding any
+        // of them would silently drop log lines. The lossy overflow guard
+        // below only makes sense for *unbounded* live streams (TCP/HTTP) where
+        // a fast producer could outpace the consumer and exhaust memory.
+        const isBoundedBatch = newEntries.some((e) => isFileSource(e));
+
         // Large batch: queue for controlled processing
         ipcQueueRef.current.push(...newEntries);
 
-        // Limit queue size
-        if (ipcQueueRef.current.length > IPC_MAX_QUEUE_SIZE) {
+        // Limit queue size – but never drop entries from a bounded file import.
+        // The final-state trim (TRIM_THRESHOLD_ENTRIES) still guards against
+        // true out-of-memory situations after the entries are merged.
+        if (
+          !isBoundedBatch &&
+          ipcQueueRef.current.length > IPC_MAX_QUEUE_SIZE
+        ) {
           const overflow = ipcQueueRef.current.length - IPC_MAX_QUEUE_SIZE;
           ipcQueueRef.current.splice(0, overflow);
           console.warn(
@@ -397,6 +468,11 @@ export function useEntryManagement({ marksMap }: UseEntryManagementOptions) {
     clearTimestampCache();
     clearTimestampParseCache();
     clearRegexCache();
+
+    // Phase 2: ausgelagerte Detail-Felder verwerfen. Wichtig, weil `_id`s
+    // nach dem Reset wieder bei 1 beginnen und sonst Alt-Records fälschlich
+    // für neue Einträge geladen würden.
+    void heavyFieldStore.clear();
 
     try {
       (LoggingStore as any).reset();

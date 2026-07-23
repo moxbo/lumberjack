@@ -42,6 +42,10 @@ interface FilterSectionProps {
   // Callbacks
   onStdFiltersEnabledChange: (enabled: boolean) => void;
   onFilterChange: (filter: FilterState) => void;
+  // Called when a filter input is submitted (Enter) to apply it immediately,
+  // skipping the type-to-filter debounce delay. An optional value can be
+  // passed to apply a specific filter state right away.
+  onSubmitFilter?: (filter?: FilterState) => void;
   onOnlyMarkedChange: (onlyMarked: boolean) => void;
   onShowLoggerHistChange: (show: boolean) => void;
   onShowThreadHistChange: (show: boolean) => void;
@@ -87,6 +91,7 @@ export function FilterSection({
   messagePopRef,
   onStdFiltersEnabledChange,
   onFilterChange,
+  onSubmitFilter,
   onOnlyMarkedChange,
   onShowLoggerHistChange,
   onShowThreadHistChange,
@@ -156,8 +161,10 @@ export function FilterSection({
               onFilterChange({ ...filter, logger: e.currentTarget.value })
             }
             onKeyDown={(e) => {
-              if (e.key === "Enter")
+              if (e.key === "Enter") {
                 addFilterHistory("logger", e.currentTarget.value);
+                onSubmitFilter?.({ ...filter, logger: e.currentTarget.value });
+              }
               if (e.key === "ArrowDown") onShowLoggerHistChange(true);
               if (e.key === "a" && (e.ctrlKey || e.metaKey)) {
                 e.preventDefault();
@@ -213,8 +220,10 @@ export function FilterSection({
               onFilterChange({ ...filter, thread: e.currentTarget.value })
             }
             onKeyDown={(e) => {
-              if (e.key === "Enter")
+              if (e.key === "Enter") {
                 addFilterHistory("thread", e.currentTarget.value);
+                onSubmitFilter?.({ ...filter, thread: e.currentTarget.value });
+              }
               if (e.key === "ArrowDown") onShowThreadHistChange(true);
               if (e.key === "a" && (e.ctrlKey || e.metaKey)) {
                 e.preventDefault();
@@ -270,8 +279,10 @@ export function FilterSection({
               onFilterChange({ ...filter, message: e.currentTarget.value })
             }
             onKeyDown={(e) => {
-              if (e.key === "Enter")
+              if (e.key === "Enter") {
                 addFilterHistory("message", e.currentTarget.value);
+                onSubmitFilter?.({ ...filter, message: e.currentTarget.value });
+              }
               if (e.key === "ArrowDown") onShowMessageHistChange(true);
               if (e.key === "a" && (e.ctrlKey || e.metaKey)) {
                 e.preventDefault();
@@ -302,6 +313,7 @@ export function FilterSection({
                 onFilterChange({ ...filter, message: v });
                 addFilterHistory("message", v);
                 onShowMessageHistChange(false);
+                onSubmitFilter?.({ ...filter, message: v });
               }}
               onClose={() => onShowMessageHistChange(false)}
               inputRef={messageInputRef}

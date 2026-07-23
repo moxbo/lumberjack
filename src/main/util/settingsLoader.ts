@@ -9,7 +9,7 @@ import * as path from "path";
 import { app } from "electron";
 
 /** Default heap size in MB */
-export const DEFAULT_HEAP_SIZE_MB = 2048;
+export const DEFAULT_HEAP_SIZE_MB = 4096;
 
 /** Minimum heap size in MB */
 export const MIN_HEAP_SIZE_MB = 512;

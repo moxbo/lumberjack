@@ -232,7 +232,9 @@ export function UpdateNotification(): VNode | null {
           {showDetails && notesText && (
             <div
               className="update-release-notes"
-              dangerouslySetInnerHTML={{ __html: renderMarkdown(notesText) }}
+              dangerouslySetInnerHTML={{
+                __html: renderReleaseNotes(notesText),
+              }}
             />
           )}
         </div>
@@ -417,4 +419,102 @@ function renderMarkdown(src: string): string {
 
   closeList();
   return out.join("\n");
+}
+
+/**
+ * Heuristic check whether a release-notes string already contains HTML markup.
+ * electron-updater frequently delivers GitHub release notes as HTML, while the
+ * portable/GitHub-API path delivers raw Markdown.
+ */
+function looksLikeHtml(src: string): boolean {
+  return /<(\/?)(p|br|ul|ol|li|h[1-6]|a|strong|b|em|i|code|pre|blockquote|div|span|table|thead|tbody|tr|td|th|hr|img)\b[^>]*>/i.test(
+    src,
+  );
+}
+
+/**
+ * Allowed tags/attributes for sanitized HTML release notes.
+ */
+const ALLOWED_TAGS = new Set([
+  "A",
+  "P",
+  "BR",
+  "UL",
+  "OL",
+  "LI",
+  "H1",
+  "H2",
+  "H3",
+  "H4",
+  "H5",
+  "H6",
+  "STRONG",
+  "B",
+  "EM",
+  "I",
+  "CODE",
+  "PRE",
+  "BLOCKQUOTE",
+  "DIV",
+  "SPAN",
+  "TABLE",
+  "THEAD",
+  "TBODY",
+  "TR",
+  "TD",
+  "TH",
+  "HR",
+]);
+
+/**
+ * Sanitize untrusted HTML release notes so they can be safely rendered via
+ * dangerouslySetInnerHTML. Removes disallowed tags (keeping their text),
+ * strips all attributes except safe links, and neutralizes javascript: URLs.
+ */
+function sanitizeHtml(src: string): string {
+  const doc = new DOMParser().parseFromString(src, "text/html");
+
+  const sanitizeNode = (node: Node): void => {
+    const children = Array.from(node.childNodes);
+    for (const child of children) {
+      if (child.nodeType === Node.ELEMENT_NODE) {
+        const el = child as Element;
+        if (!ALLOWED_TAGS.has(el.tagName)) {
+          // Replace disallowed element with its text content
+          el.replaceWith(doc.createTextNode(el.textContent ?? ""));
+          continue;
+        }
+
+        // Strip every attribute except a safe href on anchors
+        const href = el.tagName === "A" ? el.getAttribute("href") : null;
+        for (const attr of Array.from(el.attributes)) {
+          el.removeAttribute(attr.name);
+        }
+        if (el.tagName === "A" && href && /^https?:\/\//i.test(href)) {
+          el.setAttribute("href", href);
+          el.setAttribute("target", "_blank");
+          el.setAttribute("rel", "noopener noreferrer");
+        }
+
+        sanitizeNode(el);
+      } else if (
+        child.nodeType !== Node.TEXT_NODE &&
+        child.nodeType !== Node.CDATA_SECTION_NODE
+      ) {
+        // Drop comments, processing instructions, etc.
+        child.remove();
+      }
+    }
+  };
+
+  sanitizeNode(doc.body);
+  return doc.body.innerHTML;
+}
+
+/**
+ * Render release notes that may arrive either as Markdown (portable path) or as
+ * pre-rendered HTML (electron-updater path).
+ */
+function renderReleaseNotes(src: string): string {
+  return looksLikeHtml(src) ? sanitizeHtml(src) : renderMarkdown(src);
 }

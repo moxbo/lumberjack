@@ -42,6 +42,10 @@ export interface SearchBarProps {
   selectedOneIdx: number | null;
   filteredIdx: number[];
   gotoSearchMatch: (dir: number) => void;
+  // Called when the user submits the search (Enter) to apply it immediately
+  // (skips the type-to-search debounce delay). An optional value can be passed
+  // to apply a specific value right away (e.g. when picking a history entry).
+  onSubmitSearch?: (value?: string) => void;
   // i18n
   t: (key: string, params?: Record<string, string>) => string;
 }
@@ -70,6 +74,7 @@ export function SearchBar({
   selectedOneIdx,
   filteredIdx,
   gotoSearchMatch,
+  onSubmitSearch,
   t,
 }: SearchBarProps): JSX.Element {
   const [showSyntaxHelp, setShowSyntaxHelp] = useState(false);
@@ -99,12 +104,14 @@ export function SearchBar({
                   addFilterHistory("search", selectedItem);
                   setShowSearchHist(false);
                   setSearchHistHighlightIdx(-1);
+                  onSubmitSearch?.(selectedItem);
                 }
               } else {
                 addFilterHistory(
                   "search",
                   (e.currentTarget as any).value as string,
                 );
+                onSubmitSearch?.((e.currentTarget as any).value as string);
                 gotoSearchMatch(1);
               }
               return;
@@ -339,6 +346,7 @@ export function SearchBar({
                   addFilterHistory("search", v);
                   setShowSearchHist(false);
                   setSearchHistHighlightIdx(-1);
+                  onSubmitSearch?.(v);
                 }}
                 onMouseDown={(e) => e.preventDefault()}
                 onMouseEnter={() => setSearchHistHighlightIdx(i)}

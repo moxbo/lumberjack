@@ -39,13 +39,18 @@ const DEFAULT_SETTINGS: Settings = {
   histIndex: [],
   // NEW: last environment-case used in Elastic dialog
   lastEnvironmentCase: "original",
+  // NEW: last used timestamp field for the ES time-range filter (empty => @timestamp)
+  lastTimestampField: "",
   httpUrl: "",
   httpPollInterval: 5, // Interval in seconds
+  httpTailEmitInitial: false,
+  httpTailAllowInsecureSSL: false,
+  httpAuthHeaderEnc: "",
   elasticMaxParallel: 1,
   // Auto-Update
   allowPrerelease: false,
   // Performance / Memory - heap size in MB (requires restart)
-  heapSizeMB: 2048,
+  heapSizeMB: 4096,
 };
 
 /**

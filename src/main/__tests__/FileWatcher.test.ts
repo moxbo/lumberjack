@@ -76,6 +76,61 @@ describe("WatchManager", () => {
     expect(received).toEqual(["first", "second"]);
   });
 
+  it("reads the ENTIRE existing file even when larger than one read chunk", async () => {
+    const file = path.join(tmpDir, "big.log");
+    // 500 lines; with a tiny maxReadBytes this spans many read chunks.
+    const lineCount = 500;
+    const content =
+      Array.from({ length: lineCount }, (_, i) => `line-${i}`).join("\n") +
+      "\n";
+    fs.writeFileSync(file, content);
+
+    const received: string[] = [];
+    const mgr = new WatchManager();
+    const w = mgr.start(
+      file,
+      { onLines: (lines) => received.push(...lines) },
+      { pollIntervalMs: 100, emitInitial: true, maxReadBytes: 64 * 1024 },
+    );
+
+    await delay(200);
+    mgr.stop(w.id);
+
+    // The static file never changes after start, so the initial emit must
+    // drain the whole file in one go – not just the first chunk.
+    expect(received).toHaveLength(lineCount);
+    expect(received[0]).toBe("line-0");
+    expect(received[lineCount - 1]).toBe(`line-${lineCount - 1}`);
+  });
+
+  it("keeps multi-byte UTF-8 chars intact across read-chunk boundaries", async () => {
+    const file = path.join(tmpDir, "utf8.log");
+    // Each line has multi-byte chars; small chunk size forces boundary splits.
+    const lineCount = 300;
+    const content =
+      Array.from({ length: lineCount }, (_, i) => `zeile-${i}-äöü-😀`).join(
+        "\n",
+      ) + "\n";
+    fs.writeFileSync(file, content);
+
+    const received: string[] = [];
+    const mgr = new WatchManager();
+    const w = mgr.start(
+      file,
+      { onLines: (lines) => received.push(...lines) },
+      { pollIntervalMs: 100, emitInitial: true, maxReadBytes: 64 * 1024 },
+    );
+
+    await delay(200);
+    mgr.stop(w.id);
+
+    expect(received).toHaveLength(lineCount);
+    expect(received[0]).toBe("zeile-0-äöü-😀");
+    expect(received[lineCount - 1]).toBe(`zeile-${lineCount - 1}-äöü-😀`);
+    // No replacement characters from broken multi-byte sequences.
+    expect(received.some((l) => l.includes("\uFFFD"))).toBe(false);
+  });
+
   it("buffers partial lines across reads (no premature emit without newline)", async () => {
     const file = path.join(tmpDir, "c.log");
     fs.writeFileSync(file, "");

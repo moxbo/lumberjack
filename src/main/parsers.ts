@@ -508,6 +508,13 @@ export interface ElasticsearchOptions {
   // Zusätze für ES6-kompatiblen Query-Body
   dateFormat?: string; // z.B. 'yyyy-MM-dd HH:mm:ss'
   levelValueGte?: number | string; // mappt auf range level_value.gte
+  /**
+   * Zeitstempel-Feld für Range-Filter UND Sortierung. Default: `@timestamp`.
+   * Muss zum Zeitfeld des Index passen (wie in Kibana die Data-View-Zeitfeld-
+   * Auswahl). Ein abweichendes Feld (z. B. `timestamp`) führt sonst dazu, dass
+   * der Zeitbereich nur Dokumente mit `@timestamp` matcht und viele Treffer fehlen.
+   */
+  timestampField?: string;
 }
 export interface ElasticsearchPitOptions extends ElasticsearchOptions {
   keepAlive?: string;
@@ -534,15 +541,26 @@ interface PitSession {
   maxRetries: number;
   backoffBaseMs: number;
   dialect?: "es" | "opensearch" | "scroll";
+  scrollFetched?: number;
+  scrollTotal?: number | null;
+  scrollPageSize?: number;
 }
 const pitSessions = new Map<string, PitSession>();
+const dialectCache = new Map<
+  string,
+  {
+    dialect: NonNullable<PitSession["dialect"]>;
+    expiresAt: number;
+  }
+>();
+const DIALECT_CACHE_TTL_MS = 60 * 60 * 1000;
 
 // Type alias for HTTP response
 type HttpResponse = { status: number; text: string; json: unknown };
 
 // HTTP JSON request with timeout + keep-alive + streaming decompression
 async function httpJsonRequest(
-  method: "POST" | "DELETE",
+  method: "GET" | "POST" | "DELETE",
   urlStr: string,
   body: unknown,
   headers: Record<string, string>,
@@ -642,7 +660,7 @@ async function httpJsonRequest(
         if (timer) clearTimeout(timer);
         reject(err);
       });
-      const payload = body ? JSON.stringify(body) : "";
+      const payload = method === "GET" ? "" : body ? JSON.stringify(body) : "";
       if (payload) req.write(payload);
       req.end();
     } catch (err) {
@@ -715,10 +733,22 @@ function buildHeadersWithAuth(
  */
 const PRIMARY_TIMESTAMP_FIELD = "@timestamp";
 
-function buildSortArray(order: "asc" | "desc" | undefined): AnyMap[] {
+/**
+ * Ermittelt das zu verwendende Zeitstempel-Feld. Bevorzugt das vom Nutzer im
+ * ES-Dialog gesetzte Feld (`timestampField`), fällt sonst auf `@timestamp` zurück.
+ */
+function resolveTimestampField(opts: { timestampField?: string }): string {
+  const f = safeString(opts?.timestampField).trim();
+  return f || PRIMARY_TIMESTAMP_FIELD;
+}
+
+function buildSortArray(
+  order: "asc" | "desc" | undefined,
+  field: string = PRIMARY_TIMESTAMP_FIELD,
+): AnyMap[] {
   const ord = order ?? "desc";
   return [
-    { [PRIMARY_TIMESTAMP_FIELD]: { order: ord, unmapped_type: "date" } },
+    { [field]: { order: ord, unmapped_type: "date" } },
     { _id: { order: ord } },
   ];
 }
@@ -1041,13 +1071,13 @@ function buildElasticSearchBody(opts: ElasticsearchOptions): AnyMap {
     }
   }
   if (Object.keys(range).length > 0) {
-    // Range-Filter ausschließlich gegen das konventionelle `@timestamp`-Feld.
-    // Siehe ausführlichen Hinweis bei PRIMARY_TIMESTAMP_FIELD: ein `should`
-    // über mehrere Kandidatenfelder kann auf Indizes mit abweichendem
-    // Feld-Typ Shard-Fehler auslösen und damit stillschweigend 0 Treffer
-    // liefern.
+    // Range-Filter gegen das konfigurierte Zeitstempel-Feld (Default `@timestamp`).
+    // Siehe Hinweis bei PRIMARY_TIMESTAMP_FIELD: ein `should` über mehrere
+    // Kandidatenfelder kann auf Indizes mit abweichendem Feld-Typ Shard-Fehler
+    // auslösen und damit stillschweigend 0 Treffer liefern – deshalb genau EIN
+    // Feld, das der Nutzer bei Bedarf im ES-Dialog überschreiben kann.
     must.push({
-      range: { [PRIMARY_TIMESTAMP_FIELD]: { ...range } },
+      range: { [resolveTimestampField(opts)]: { ...range } },
     } as AnyMap);
   }
 
@@ -1058,9 +1088,8 @@ function buildElasticSearchBody(opts: ElasticsearchOptions): AnyMap {
   }
 
   return {
-    version: true,
     size: opts.size ?? 1000,
-    sort: buildSortArray(opts.sort),
+    sort: buildSortArray(opts.sort, resolveTimestampField(opts)),
     query: {
       bool: {
         must,
@@ -1074,6 +1103,58 @@ function buildElasticSearchBody(opts: ElasticsearchOptions): AnyMap {
   };
 }
 
+async function detectElasticDialect(
+  sess: PitSession,
+): Promise<PitSession["dialect"] | undefined> {
+  const cached = dialectCache.get(sess.baseUrl);
+  if (cached && cached.expiresAt > Date.now()) return cached.dialect;
+  if (cached) dialectCache.delete(sess.baseUrl);
+
+  try {
+    const url = `${sess.baseUrl}/?filter_path=version.number,version.distribution`;
+    const res = await httpJsonRequest(
+      "GET",
+      url,
+      undefined,
+      sess.headers,
+      sess.allowInsecureTLS,
+      Math.min(sess.timeoutMs, 5000),
+    );
+    if (!(res.status >= 200 && res.status < 300)) return undefined;
+
+    const version =
+      res.json && typeof res.json === "object"
+        ? ((res.json as AnyMap).version as AnyMap | undefined)
+        : undefined;
+    const distribution = safeString(version?.distribution).toLowerCase();
+    const number = safeString(version?.number);
+    const match = /^(\d+)(?:\.(\d+))?/.exec(number);
+    const major = match ? Number(match[1]) : NaN;
+    const minor = match ? Number(match[2] || 0) : NaN;
+    const dialect: PitSession["dialect"] =
+      distribution === "opensearch"
+        ? "opensearch"
+        : Number.isFinite(major) && (major < 7 || (major === 7 && minor < 10))
+          ? "scroll"
+          : Number.isFinite(major)
+            ? "es"
+            : undefined;
+    if (dialect) {
+      dialectCache.set(sess.baseUrl, {
+        dialect,
+        expiresAt: Date.now() + DIALECT_CACHE_TTL_MS,
+      });
+    }
+    return dialect;
+  } catch (e) {
+    log.debug(
+      "Elasticsearch version detection failed, probing pagination APIs:",
+      e instanceof Error ? e.message : String(e),
+    );
+    return undefined;
+  }
+}
+
 function buildQueryBodyWithPit(
   opts: ElasticsearchPitOptions,
   pitId: string,
@@ -1083,7 +1164,7 @@ function buildQueryBodyWithPit(
     searchAfter: opts.searchAfter,
   });
   baseBody.size = opts.size ?? 1000;
-  baseBody.sort = buildSortArray(opts.sort);
+  baseBody.sort = buildSortArray(opts.sort, resolveTimestampField(opts));
   baseBody.pit = { id: pitId, keep_alive: opts.keepAlive ?? "1m" } as AnyMap;
   const inc = Array.isArray(opts.sourceIncludes)
     ? opts.sourceIncludes
@@ -1174,6 +1255,32 @@ function getOrCreateSessionSyncState(
 
 async function ensurePitOpened(sess: PitSession): Promise<void> {
   if (sess.pitId) return;
+  sess.dialect = sess.dialect || (await detectElasticDialect(sess));
+  if (sess.dialect === "scroll") return;
+
+  if (sess.dialect === "opensearch") {
+    try {
+      sess.pitId = await tryOpenPitOs(
+        sess.baseUrl,
+        sess.index,
+        sess.keepAlive,
+        sess.headers,
+        sess.allowInsecureTLS,
+        sess.timeoutMs,
+        sess.maxRetries,
+        sess.backoffBaseMs,
+      );
+      return;
+    } catch {
+      sess.dialect = "scroll";
+      dialectCache.set(sess.baseUrl, {
+        dialect: "scroll",
+        expiresAt: Date.now() + DIALECT_CACHE_TTL_MS,
+      });
+      return;
+    }
+  }
+
   try {
     sess.pitId = await tryOpenPitEs(
       sess.baseUrl,
@@ -1186,6 +1293,10 @@ async function ensurePitOpened(sess: PitSession): Promise<void> {
       sess.backoffBaseMs,
     );
     sess.dialect = "es";
+    dialectCache.set(sess.baseUrl, {
+      dialect: "es",
+      expiresAt: Date.now() + DIALECT_CACHE_TTL_MS,
+    });
     return;
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
@@ -1206,24 +1317,44 @@ async function ensurePitOpened(sess: PitSession): Promise<void> {
           sess.backoffBaseMs,
         );
         sess.dialect = "opensearch";
+        dialectCache.set(sess.baseUrl, {
+          dialect: "opensearch",
+          expiresAt: Date.now() + DIALECT_CACHE_TTL_MS,
+        });
         return;
       } catch (e2) {
         const m2 = e2 instanceof Error ? e2.message : String(e2);
         if (/security_exception|unauthorized|forbidden|403/.test(m2)) {
           sess.dialect = "scroll";
+          dialectCache.set(sess.baseUrl, {
+            dialect: "scroll",
+            expiresAt: Date.now() + DIALECT_CACHE_TTL_MS,
+          });
           return;
         }
         // Generischer Fallback: ältere ES-Versionen (z. B. 6.x) -> Scroll verwenden
         sess.dialect = "scroll";
+        dialectCache.set(sess.baseUrl, {
+          dialect: "scroll",
+          expiresAt: Date.now() + DIALECT_CACHE_TTL_MS,
+        });
         return;
       }
     }
     if (/security_exception|unauthorized|forbidden|403/.test(msg)) {
       sess.dialect = "scroll";
+      dialectCache.set(sess.baseUrl, {
+        dialect: "scroll",
+        expiresAt: Date.now() + DIALECT_CACHE_TTL_MS,
+      });
       return;
     }
     // Letzte Rettung: Auch hier auf Scroll wechseln, um Suche dennoch zu ermöglichen
     sess.dialect = "scroll";
+    dialectCache.set(sess.baseUrl, {
+      dialect: "scroll",
+      expiresAt: Date.now() + DIALECT_CACHE_TTL_MS,
+    });
     return;
   }
 }
@@ -1410,11 +1541,12 @@ export async function fetchElasticPitPage(
     let entries: Entry[];
     let total: number | null = null;
     if (!sess.pitId) {
+      const pageSize = opts.size ?? 1000;
       const first = await openScroll(
         sess.baseUrl,
         sess.index,
         sess.keepAlive,
-        opts.size ?? 1000,
+        pageSize,
         opts.sort,
         sess.headers,
         sess.allowInsecureTLS,
@@ -1426,6 +1558,9 @@ export async function fetchElasticPitPage(
       sess.pitId = first.scrollId;
       entries = first.entries;
       total = first.total;
+      sess.scrollPageSize = pageSize;
+      sess.scrollFetched = entries.length;
+      sess.scrollTotal = total;
     } else {
       try {
         const next = await scrollNext(
@@ -1440,6 +1575,7 @@ export async function fetchElasticPitPage(
         );
         sess.pitId = next.scrollId;
         entries = next.entries;
+        sess.scrollFetched = (sess.scrollFetched || 0) + entries.length;
       } catch (scrollErr) {
         // Scroll-Kontext vermutlich abgelaufen – Session aufräumen
         log.warn(
@@ -1453,7 +1589,13 @@ export async function fetchElasticPitPage(
         );
       }
     }
-    const hasMore = entries.length > 0;
+    const fetched = sess.scrollFetched || 0;
+    const knownTotal = sess.scrollTotal;
+    const hasMore =
+      entries.length > 0 &&
+      (typeof knownTotal === "number"
+        ? fetched < knownTotal
+        : entries.length >= (sess.scrollPageSize || opts.size || 1000));
     sess.lastUsed = Date.now();
     if (!hasMore) {
       try {

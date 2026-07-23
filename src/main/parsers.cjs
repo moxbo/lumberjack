@@ -690,10 +690,14 @@ function buildHeadersWithAuth(auth) {
   return headers;
 }
 var PRIMARY_TIMESTAMP_FIELD = "@timestamp";
-function buildSortArray(order) {
+function resolveTimestampField(opts) {
+  const f = safeString(opts?.timestampField).trim();
+  return f || PRIMARY_TIMESTAMP_FIELD;
+}
+function buildSortArray(order, field = PRIMARY_TIMESTAMP_FIELD) {
   const ord = order ?? "desc";
   return [
-    { [PRIMARY_TIMESTAMP_FIELD]: { order: ord, unmapped_type: "date" } },
+    { [field]: { order: ord, unmapped_type: "date" } },
     { _id: { order: ord } }
   ];
 }
@@ -934,7 +938,7 @@ function buildElasticSearchBody(opts) {
   }
   if (Object.keys(range).length > 0) {
     must.push({
-      range: { [PRIMARY_TIMESTAMP_FIELD]: { ...range } }
+      range: { [resolveTimestampField(opts)]: { ...range } }
     });
   }
   const lv = opts.levelValueGte;
@@ -944,7 +948,7 @@ function buildElasticSearchBody(opts) {
   return {
     version: true,
     size: opts.size ?? 1e3,
-    sort: buildSortArray(opts.sort),
+    sort: buildSortArray(opts.sort, resolveTimestampField(opts)),
     query: {
       bool: {
         must,
@@ -963,7 +967,7 @@ function buildQueryBodyWithPit(opts, pitId) {
     searchAfter: opts.searchAfter
   });
   baseBody.size = opts.size ?? 1e3;
-  baseBody.sort = buildSortArray(opts.sort);
+  baseBody.sort = buildSortArray(opts.sort, resolveTimestampField(opts));
   baseBody.pit = { id: pitId, keep_alive: opts.keepAlive ?? "1m" };
   const inc = Array.isArray(opts.sourceIncludes) ? opts.sourceIncludes : void 0;
   const exc = Array.isArray(opts.sourceExcludes) ? opts.sourceExcludes : void 0;

@@ -13,8 +13,7 @@ export async function ipcInvokeWithTimeout<T>(
 ): Promise<T> {
   const win = typeof window !== "undefined" ? window : null;
   const api = (win as Record<string, unknown> | null)?.api as
-    | Record<string, unknown>
-    | undefined;
+    Record<string, unknown> | undefined;
   if (!api || typeof api.invoke !== "function") {
     throw new Error("Electron API not available");
   }

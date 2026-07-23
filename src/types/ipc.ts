@@ -65,10 +65,22 @@ export interface Settings {
   histIndex?: string[];
   // NEW: persist last chosen Environment-Case across sessions
   lastEnvironmentCase?: "original" | "lower" | "upper" | "case-sensitive";
+  // NEW: persist last used timestamp field for the ES time-range filter
+  lastTimestampField?: string;
 
   // HTTP
   httpUrl?: string;
   httpPollInterval?: number;
+  /** Last used "emit initial content" flag for the HTTP tail dialog */
+  httpTailEmitInitial?: boolean;
+  /** Last used "allow insecure SSL" flag for the HTTP tail dialog */
+  httpTailAllowInsecureSSL?: boolean;
+  /** Encrypted HTTP auth header (never returned in plaintext by settingsGet) */
+  httpAuthHeaderEnc?: string;
+  /** Plaintext auth header to encrypt and store (write-only, used during settingsSet) */
+  httpAuthHeaderPlain?: string;
+  /** Set to true to clear the stored encrypted auth header */
+  httpAuthHeaderClear?: boolean;
 
   // UI runtime prefs (persisted)
   follow?: boolean;
@@ -106,7 +118,7 @@ export interface Settings {
   allowPrerelease?: boolean;
 
   // Performance / Memory
-  /** V8 heap size in MB (default: 2048, min: 512, max: 8192). Requires restart. */
+  /** V8 heap size in MB (default: 4096, min: 512, max: 8192). Requires restart. */
   heapSizeMB?: number;
 }
 
@@ -197,6 +209,11 @@ export interface ElasticSearchOptions {
   environment?: string;
   // NEW: case handling for environment
   environmentCase?: "original" | "lower" | "upper" | "case-sensitive";
+  /**
+   * Timestamp field used for the time-range filter AND sorting (default `@timestamp`).
+   * Must match the index's time field (like Kibana's data-view time field).
+   */
+  timestampField?: string;
 
   // auth and TLS
   auth?: ElasticAuth;
@@ -489,6 +506,15 @@ export type ElectronAPI = {
   httpTailList: () => Promise<{
     ok: boolean;
     tails: Array<{ id: number; url: string; offset: number }>;
+  }>;
+  /**
+   * Return the decrypted HTTP auth header stored in settings so the tail
+   * dialog can be pre-filled after a restart. Never exposed via settingsGet.
+   */
+  httpTailGetAuthHeader: () => Promise<{
+    ok: boolean;
+    authHeader: string;
+    error?: string;
   }>;
   onHttpTailStatus: (
     callback: (payload: {

@@ -166,7 +166,8 @@
     "traceId": "Trace ID",
     "service": "Service",
     "emptyValue": "(leer)",
-    "addFilterButton": "+ Filter"
+    "addFilterButton": "+ Filter",
+    "loading": "Wird geladen …"
   },
   "contextMenu": {
     "removeMark": "Markierung löschen",
@@ -903,6 +904,8 @@
     "sort": "Sortierung",
     "sortAsc": "Älteste zuerst",
     "sortDesc": "Neueste zuerst",
+    "timestampField": "Zeitstempel-Feld",
+    "timestampFieldTooltip": "Feld für Zeitbereich und Sortierung. Standard: @timestamp. Muss zum Zeitfeld deines Index passen (wie das Zeitfeld der Kibana-Data-View, z. B. 'timestamp' oder 'time'). Bei falschem Feld werden viele Treffer übersehen.",
     "allowInsecureTLS": "Unsicheres TLS erlauben (selbstsigniert)",
     "clearFieldsTooltip": "Felder zurücksetzen",
     "clear": "Leeren",
