@@ -1018,7 +1018,7 @@ function buildElasticSearchBody(opts: ElasticsearchOptions): AnyMap {
     if (!v) return;
     must.push({ match_phrase: { [field]: { query: v } } } as AnyMap);
   };
-  addField("logger", opts.logger);
+  addField("logger_name", opts.logger);
   addField("level", opts.level);
 
   // Message: Boolesche Filter-Syntax (&, |, !, AND, OR, NOT, Klammern,

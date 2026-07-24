@@ -82,6 +82,7 @@ describe("Elasticsearch 6 pagination", () => {
       url: baseUrl,
       index: "logs",
       size: 100,
+      logger: "com.example.Service",
     });
 
     expect(empty).toMatchObject({ entries: [], total: 0, hasMore: false });
@@ -108,5 +109,19 @@ describe("Elasticsearch 6 pagination", () => {
       request.url.startsWith("/logs/_search"),
     )?.body as Record<string, unknown>;
     expect(searchBody.version).toBeUndefined();
+    expect(searchBody).toMatchObject({
+      query: {
+        bool: {
+          must: [
+            { match_all: {} },
+            {
+              match_phrase: {
+                logger_name: { query: "com.example.Service" },
+              },
+            },
+          ],
+        },
+      },
+    });
   });
 });
