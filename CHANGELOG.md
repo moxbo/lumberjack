@@ -5,6 +5,20 @@ Alle nennenswerten Änderungen an diesem Projekt werden in dieser Datei dokument
 Das Format orientiert sich an [Keep a Changelog](https://keepachangelog.com/de/1.1.0/),
 und dieses Projekt folgt [Semantic Versioning](https://semver.org/lang/de/).
 
+## [1.1.2-beta.4] - 2026-07-24 _(Pre-Release)_
+
+
+### Added
+- Optimize filtering performance by implementing compiled DC filter and search match indexing
+
+
+### Changed
+- Implement local state management for filter and search inputs to improve user experience
+
+
+### Fixed
+- Update query construction to use query_string for single tokens in Elasticsearch
+
 ## [1.1.2-beta.3] - 2026-07-20 _(Pre-Release)_
 
 
@@ -61,6 +75,7 @@ und dieses Projekt folgt [Semantic Versioning](https://semver.org/lang/de/).
 
 ### Fixed
 - Implement boolean query syntax for message filtering in Elasticsearch
+- Update query construction to use query_string for single tokens in Elasticsearch
 - Enhance elastic entry loading logic and improve loaded count tracking
 
 ## [1.0.16-beta.3] - 2026-06-02 _(Pre-Release)_
