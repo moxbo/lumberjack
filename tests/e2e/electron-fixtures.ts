@@ -45,7 +45,7 @@ export const test = base.extend<{
     // Launch Electron app with the project directory as cwd
     const electronApp = await electron.launch({
       args: [
-        mainPath,
+        projectRoot,
         // Disable GPU for CI stability (headless environments)
         ...(isCI
           ? [

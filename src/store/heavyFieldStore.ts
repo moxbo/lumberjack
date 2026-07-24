@@ -45,6 +45,7 @@ class HeavyFieldStore {
   private initPromise: Promise<IDBDatabase | null> | null = null;
   private available = true;
   private readonly lru = new Map<number, HeavyRecord>();
+  private readonly pending = new Map<number, HeavyRecord>();
 
   private getDb(): Promise<IDBDatabase | null> {
     if (this.db) return Promise.resolve(this.db);
@@ -96,9 +97,11 @@ class HeavyFieldStore {
    */
   async putMany(records: HeavyRecord[]): Promise<void> {
     if (!records.length) return;
+    for (const record of records) this.pending.set(record._id, record);
+
     const db = await this.getDb();
     if (!db) return;
-    await new Promise<void>((resolve) => {
+    const persisted = await new Promise<boolean>((resolve) => {
       try {
         const tx = db.transaction([STORE], "readwrite");
         const store = tx.objectStore(STORE);
@@ -106,17 +109,26 @@ class HeavyFieldStore {
         // put ersetzt evtl. vorhandene Alt-Records vollständig (kein
         // Duplicate-Key-Fehler wie bei `add`).
         for (const r of records) store.put(r);
-        tx.oncomplete = () => resolve();
-        tx.onerror = () => resolve();
-        tx.onabort = () => resolve();
+        tx.oncomplete = () => resolve(true);
+        tx.onerror = () => resolve(false);
+        tx.onabort = () => resolve(false);
       } catch {
-        resolve();
+        resolve(false);
       }
     });
+    if (persisted) {
+      for (const record of records) {
+        if (this.pending.get(record._id) === record) {
+          this.pending.delete(record._id);
+        }
+      }
+    }
   }
 
   /** Lädt einen einzelnen Heavy-Record (Detailansicht). */
   async get(id: number): Promise<HeavyRecord | undefined> {
+    const pending = this.pending.get(id);
+    if (pending) return pending;
     const cached = this.lru.get(id);
     if (cached) return cached;
     const db = await this.getDb();
@@ -143,7 +155,7 @@ class HeavyFieldStore {
     if (!ids.length) return out;
     const missing: number[] = [];
     for (const id of ids) {
-      const c = this.lru.get(id);
+      const c = this.pending.get(id) ?? this.lru.get(id);
       if (c) out.set(id, c);
       else missing.push(id);
     }
@@ -185,6 +197,7 @@ class HeavyFieldStore {
    */
   async clear(): Promise<void> {
     this.lru.clear();
+    this.pending.clear();
     const db = await this.getDb();
     if (!db) return;
     await new Promise<void>((resolve) => {

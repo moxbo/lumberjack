@@ -4,8 +4,9 @@
  */
 import { Fragment } from "preact";
 import { memo } from "preact/compat";
-import { useState } from "preact/hooks";
+import { useEffect, useState } from "preact/hooks";
 import { useHighlightedHtml } from "../../hooks/useHighlightedHtml";
+import { heavyFieldStore, type HeavyRecord } from "../../store/heavyFieldStore";
 import { useI18n } from "../../utils/i18n";
 import { levelClass, fmtTimestamp, computeTint, fmt } from "../../utils/format";
 
@@ -60,13 +61,53 @@ function DetailPanelComponent({
 }: DetailPanelProps) {
   const { t } = useI18n();
   const [showFullMessage, setShowFullMessage] = useState(false);
+  const [heavyFields, setHeavyFields] = useState<{
+    entryId: number;
+    record?: HeavyRecord;
+  } | null>(null);
+
+  const entryId =
+    typeof selectedEntry?._id === "number" ? selectedEntry._id : undefined;
+  const offloaded = selectedEntry?._offloaded === true;
+
+  useEffect(() => {
+    let cancelled = false;
+    if (!offloaded || entryId === undefined) {
+      setHeavyFields(null);
+      return;
+    }
+
+    setHeavyFields({ entryId });
+    void heavyFieldStore.get(entryId).then((record) => {
+      if (!cancelled) setHeavyFields({ entryId, record });
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [entryId, offloaded]);
+
+  const loadedHeavy =
+    heavyFields !== null && heavyFields.entryId === entryId
+      ? heavyFields.record
+      : undefined;
+  const effectiveStackTrace =
+    loadedHeavy?.stackTrace ||
+    selectedEntry?.stack_trace ||
+    selectedEntry?.stackTrace ||
+    "";
+  const hasStackTrace =
+    effectiveStackTrace.length > 0 || selectedEntry?._hasStack === true;
+  const effectiveFullMessage = selectedEntry
+    ? loadedHeavy?._fullMessage || getFullMessage(selectedEntry)
+    : "";
 
   // Reset showFullMessage when selected entry changes
   const isTruncated = selectedEntry?._truncated === true;
   const messageSize = selectedEntry ? getMessageSize(selectedEntry) : 0;
   const displayedMessage = selectedEntry
     ? showFullMessage
-      ? getFullMessage(selectedEntry)
+      ? effectiveFullMessage
       : selectedEntry.message || ""
     : "";
   const highlightedMessage = useHighlightedHtml(displayedMessage, search);
@@ -246,13 +287,16 @@ function DetailPanelComponent({
             />
           </div>
 
-          {(selectedEntry.stack_trace || selectedEntry.stackTrace) && (
+          {hasStackTrace && (
             <div className="kv full">
               <span>{t("details.stacktrace")}</span>
               <pre className="stack-trace">
-                {String(
-                  selectedEntry.stack_trace || selectedEntry.stackTrace || "",
-                )}
+                {effectiveStackTrace ||
+                  (heavyFields !== null &&
+                  heavyFields.entryId === entryId &&
+                  !heavyFields.record
+                    ? t("details.loading")
+                    : "")}
               </pre>
             </div>
           )}
