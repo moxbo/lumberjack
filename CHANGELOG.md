@@ -5,6 +5,18 @@ Alle nennenswerten Änderungen an diesem Projekt werden in dieser Datei dokument
 Das Format orientiert sich an [Keep a Changelog](https://keepachangelog.com/de/1.1.0/),
 und dieses Projekt folgt [Semantic Versioning](https://semver.org/lang/de/).
 
+## [1.1.2-beta.6] - 2026-07-24 _(Pre-Release)_
+
+
+### Fixed
+- **renderer**: Display offloaded stacktraces
+
+
+### Performance
+- Offload long-message highlighting
+- Omit unused MDC worker data
+- Index marks and isolate toolbar controls
+
 ## [1.1.2-beta.5] - 2026-07-24 _(Pre-Release)_
 
 
