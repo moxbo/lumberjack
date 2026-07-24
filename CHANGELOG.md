@@ -5,6 +5,17 @@ Alle nennenswerten Änderungen an diesem Projekt werden in dieser Datei dokument
 Das Format orientiert sich an [Keep a Changelog](https://keepachangelog.com/de/1.1.0/),
 und dieses Projekt folgt [Semantic Versioning](https://semver.org/lang/de/).
 
+## [1.1.2-beta.5] - 2026-07-24 _(Pre-Release)_
+
+
+### Changed
+- Isolate virtualized log list
+- Enhance logging filter by adding logger name to search query
+
+
+### Fixed
+- Add metadata exclusion for message truncation in diagnostic context
+
 ## [1.1.2-beta.4] - 2026-07-24 _(Pre-Release)_
 
 
