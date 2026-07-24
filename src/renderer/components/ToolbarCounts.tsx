@@ -3,8 +3,9 @@
  * Displays total, filtered, selected counts and clear button
  */
 import type { FilterStats } from "../../types/renderer";
+import { memo } from "preact/compat";
 
-interface ToolbarCountsProps {
+export interface ToolbarCountsProps {
   countTotal: number;
   countFiltered: number;
   countSelected: number;
@@ -14,7 +15,7 @@ interface ToolbarCountsProps {
   t: (key: string, params?: Record<string, string>) => string;
 }
 
-export function ToolbarCounts({
+function ToolbarCountsComponent({
   countTotal,
   countFiltered,
   countSelected,
@@ -80,3 +81,5 @@ export function ToolbarCounts({
     </div>
   );
 }
+
+export const ToolbarCounts = memo(ToolbarCountsComponent);

@@ -64,6 +64,10 @@ import {
 
 // Import refactored utilities
 import { entrySignature } from "../utils/entryUtils";
+import {
+  buildMarkedPositionIndex,
+  resolveMarkedPositions,
+} from "../utils/markedPositions";
 import { nativeConfirm } from "../utils/nativeDialog";
 
 // Import refactored hooks
@@ -89,11 +93,11 @@ import {
   useElasticSearch,
   useTimeFilterDialog,
 } from "../hooks";
+import { useStableCallback } from "../hooks/useStableCallback";
 
 // Import refactored components - core components loaded eagerly
 import {
   AlertDialog,
-  BookmarksPopover,
   ConfirmDialog,
   ContextMenu,
   DetailPanel,
@@ -103,6 +107,8 @@ import {
   SearchBar,
   ActiveFilterChips,
   StatusSection,
+  MarksNavigation,
+  ToolbarCounts,
   VirtualizedLogList,
 } from "./components";
 import type { VirtualizedLogListHandle } from "./components";
@@ -1078,25 +1084,16 @@ export default function App(): JSX.Element {
     return pairs;
   }, [selectedEntry]);
 
-  const markedIdx = useMemo(() => {
-    const out: number[] = [];
-    if (!Object.keys(marksMap).length) return out;
-    const len = filteredIdx.length;
-    // Performance: Bei sehr großen Listen nur die ersten 100k durchsuchen
-    // um UI-Freezes zu vermeiden
-    const searchLimit = Math.min(len, 100_000);
-    for (let vi = 0; vi < searchLimit; vi++) {
-      const idx = filteredIdx[vi]!;
-      const e = debouncedEntries[idx];
-      if (!e) continue;
-      // #2: Markierung kommt aus marksMap, nicht mehr aus e._mark.
-      if (marksMap[entrySignature(e)]) out.push(vi);
-    }
-    return out;
-    // `debouncedEntries` statt `entries`: `filteredIdx` wurde ebenfalls aus dem
-    // koaleszierten Snapshot berechnet. So läuft diese O(n)-Schleife beim
-    // Streaming nur gebündelt statt bei jedem einzelnen Append.
-  }, [filteredIdx, debouncedEntries, marksMap]);
+  const hasMarks = Object.keys(marksMap).length > 0;
+  const markedPositionIndex = useMemo(
+    () =>
+      hasMarks ? buildMarkedPositionIndex(debouncedEntries, filteredIdx) : null,
+    [filteredIdx, debouncedEntries, hasMarks],
+  );
+  const markedIdx = useMemo(
+    () => resolveMarkedPositions(markedPositionIndex, marksMap),
+    [markedPositionIndex, marksMap],
+  );
 
   // Der Filter-Worker ermittelt dieselben, auf 50k begrenzten visuellen
   // Trefferindizes im selben Durchlauf wie `filteredIdx`. Dadurch entfällt der
@@ -2430,6 +2427,7 @@ export default function App(): JSX.Element {
         service: "",
         message: "",
       });
+
       setSearch("");
       setOnlyMarked(false);
     },
@@ -2549,6 +2547,18 @@ export default function App(): JSX.Element {
       } catch {}
     },
     currentTheme: themeMode,
+  });
+
+  const onClearLogs = useStableCallback(clearLogs);
+  const onGotoListStart = useStableCallback(gotoListStart);
+  const onGotoListEnd = useStableCallback(gotoListEnd);
+  const onGotoMarked = useStableCallback(gotoMarked);
+  const onSelectBookmark = useStableCallback((visualIndex: number) => {
+    gotoBookmark(visualIndex);
+    setShowBookmarks(false);
+  });
+  const onToggleBookmarks = useStableCallback(() => {
+    setShowBookmarks((visible) => !visible);
   });
 
   // Track when the component has fully mounted and is interactive
@@ -2793,133 +2803,27 @@ export default function App(): JSX.Element {
 
       {/* Toolbar */}
       <header className="toolbar">
-        <div className="section">
-          <span className="counts">
-            <span id="countTotal" className="count">
-              {countTotal}
-            </span>{" "}
-            {t("toolbar.total")},{" "}
-            <span
-              id="countFiltered"
-              className="count"
-              title={
-                lastFilterStats && countTotal > countFiltered
-                  ? t("filterStats.filtered", {
-                      count: String(countTotal - countFiltered),
-                    }) +
-                    "\n" +
-                    (lastFilterStats.rejectedByLevel > 0
-                      ? `• ${t("filterStats.byLevel", { count: String(lastFilterStats.rejectedByLevel) })}\n`
-                      : "") +
-                    (lastFilterStats.rejectedByLogger > 0
-                      ? `• ${t("filterStats.byLogger", { count: String(lastFilterStats.rejectedByLogger) })}\n`
-                      : "") +
-                    (lastFilterStats.rejectedByThread > 0
-                      ? `• ${t("filterStats.byThread", { count: String(lastFilterStats.rejectedByThread) })}\n`
-                      : "") +
-                    (lastFilterStats.rejectedByMessage > 0
-                      ? `• ${t("filterStats.byMessage", { count: String(lastFilterStats.rejectedByMessage) })}\n`
-                      : "") +
-                    (lastFilterStats.rejectedByTime > 0
-                      ? `• ${t("filterStats.byTime", { count: String(lastFilterStats.rejectedByTime) })}\n`
-                      : "") +
-                    (lastFilterStats.rejectedByDC > 0
-                      ? `• ${t("filterStats.byDC", { count: String(lastFilterStats.rejectedByDC) })}\n`
-                      : "") +
-                    (lastFilterStats.rejectedByOnlyMarked > 0
-                      ? `• ${t("filterStats.byOnlyMarked", { count: String(lastFilterStats.rejectedByOnlyMarked) })}\n`
-                      : "")
-                  : undefined
-              }
-              style={{
-                cursor:
-                  lastFilterStats && countTotal > countFiltered
-                    ? "help"
-                    : undefined,
-                textDecoration:
-                  lastFilterStats && countTotal > countFiltered
-                    ? "underline dotted"
-                    : undefined,
-              }}
-            >
-              {countFiltered}
-            </span>{" "}
-            {t("toolbar.filtered")},{" "}
-            <span id="countSelected" className="count">
-              {countSelected}
-            </span>{" "}
-            {t("toolbar.selected")}
-          </span>
-          <button onClick={clearLogs} disabled={entries.length === 0}>
-            {t("toolbar.clearLogs")}
-          </button>
-        </div>
-        {/* Kompakte Navigation & Markierungen */}
-        <div className="section" style={{ gap: "4px" }}>
-          <div className="btn-group" title={t("toolbar.navigation")}>
-            <button
-              className="btn-icon"
-              title={t("toolbar.gotoStartTooltip")}
-              onClick={gotoListStart}
-              disabled={countFiltered === 0}
-            >
-              ⏫
-            </button>
-            <button
-              className="btn-icon"
-              title={t("toolbar.gotoEndTooltip")}
-              onClick={gotoListEnd}
-              disabled={countFiltered === 0}
-            >
-              ⏬
-            </button>
-          </div>
-          <div className="btn-group" title={t("toolbar.marks")}>
-            <button
-              className="btn-icon"
-              title={t("toolbar.prevMarkTooltip")}
-              onClick={() => gotoMarked(-1)}
-              disabled={markedIdx.length === 0}
-            >
-              🔺
-            </button>
-            <button
-              className="btn-icon"
-              title={t("toolbar.nextMarkTooltip")}
-              onClick={() => gotoMarked(1)}
-              disabled={markedIdx.length === 0}
-            >
-              🔻
-            </button>
-            {markedIdx.length > 0 && (
-              <div style={{ position: "relative", display: "inline-flex" }}>
-                <button
-                  type="button"
-                  className="badge-count"
-                  onClick={() => setShowBookmarks((v) => !v)}
-                  aria-haspopup="dialog"
-                  aria-expanded={showBookmarks}
-                  title={t("toolbar.marksCount", {
-                    count: String(markedIdx.length),
-                  })}
-                >
-                  {markedIdx.length}
-                </button>
-                {showBookmarks && (
-                  <BookmarksPopover
-                    bookmarks={bookmarkItems}
-                    onSelect={(vi) => {
-                      gotoBookmark(vi);
-                      setShowBookmarks(false);
-                    }}
-                    emptyLabel={t("toolbar.noBookmarks") || "Keine Lesezeichen"}
-                    ariaLabel={t("toolbar.marks") || "Lesezeichen"}
-                  />
-                )}
-              </div>
-            )}
-          </div>
-        </div>
+        <ToolbarCounts
+          countTotal={countTotal}
+          countFiltered={countFiltered}
+          countSelected={countSelected}
+          lastFilterStats={lastFilterStats}
+          entriesLength={entries.length}
+          onClearLogs={onClearLogs}
+          t={t}
+        />
+        <MarksNavigation
+          countFiltered={countFiltered}
+          markedCount={markedIdx.length}
+          bookmarkItems={bookmarkItems}
+          showBookmarks={showBookmarks}
+          onGotoStart={onGotoListStart}
+          onGotoEnd={onGotoListEnd}
+          onGotoMarked={onGotoMarked}
+          onToggleBookmarks={onToggleBookmarks}
+          onSelectBookmark={onSelectBookmark}
+          t={t}
+        />
         <SearchBar
           search={search}
           setSearch={setSearch}
