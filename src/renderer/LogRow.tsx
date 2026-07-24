@@ -2,6 +2,10 @@
 import { memo, useMemo } from "preact/compat";
 import type { JSX } from "preact/jsx-runtime";
 import {
+  clearHighlightCaches,
+  useHighlightedHtml,
+} from "../hooks/useHighlightedHtml";
+import {
   computeTint,
   fmtTimestamp,
   getStr,
@@ -25,55 +29,8 @@ interface LogRowProps {
   compact?: boolean;
 }
 
-// Cache for highlighted messages to avoid repeated regex operations
-// Increased from 500 to 2000 for better performance with 300k+ entries
-const highlightCache = new Map<string, string>();
-const MAX_CACHE_SIZE = 2000;
-let lastSearchTerm = "";
-
-// Clear cache when search term changes significantly
 export function clearHighlightCache(): void {
-  highlightCache.clear();
-  lastSearchTerm = "";
-}
-
-function getCachedHighlight(
-  text: string,
-  search: string,
-  highlightFn: (text: string, search: string) => string,
-): string {
-  // If search term changed, consider clearing old entries
-  if (search !== lastSearchTerm) {
-    // Only clear if the new search is not a prefix of the old one
-    // This allows incremental typing to benefit from cache
-    if (
-      !search.startsWith(lastSearchTerm) &&
-      !lastSearchTerm.startsWith(search)
-    ) {
-      highlightCache.clear();
-    }
-    lastSearchTerm = search;
-  }
-
-  if (!search.trim()) return highlightFn(text, search);
-
-  const cacheKey = `${text}|${search}`;
-  const cached = highlightCache.get(cacheKey);
-  if (cached !== undefined) return cached;
-
-  // Evict oldest entries if cache is too large
-  // Delete 25% of entries to avoid frequent evictions
-  if (highlightCache.size >= MAX_CACHE_SIZE) {
-    const evictCount = Math.floor(MAX_CACHE_SIZE * 0.25);
-    const keysToDelete = Array.from(highlightCache.keys()).slice(0, evictCount);
-    for (const key of keysToDelete) {
-      highlightCache.delete(key);
-    }
-  }
-
-  const result = highlightFn(text, search);
-  highlightCache.set(cacheKey, result);
-  return result;
+  clearHighlightCaches();
 }
 
 const LogRowComponent = ({
@@ -87,7 +44,6 @@ const LogRowComponent = ({
   search,
   onSelect,
   onContextMenu,
-  highlightFn,
   compact = false,
 }: LogRowProps): JSX.Element => {
   const rowCls = "row" + (isSelected ? " sel" : "");
@@ -116,10 +72,7 @@ const LogRowComponent = ({
   const messageText = getStr(entry, "message");
 
   // Use cached highlight for better performance
-  const highlightedMessage = useMemo(
-    () => getCachedHighlight(messageText, search, highlightFn),
-    [messageText, search, highlightFn],
-  );
+  const highlightedMessage = useHighlightedHtml(messageText, search);
 
   return (
     <div

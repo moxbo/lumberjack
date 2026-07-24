@@ -5,8 +5,8 @@
 import { Fragment } from "preact";
 import { memo } from "preact/compat";
 import { useState } from "preact/hooks";
+import { useHighlightedHtml } from "../../hooks/useHighlightedHtml";
 import { useI18n } from "../../utils/i18n";
-import { highlightAll } from "../../utils/highlight";
 import { levelClass, fmtTimestamp, computeTint, fmt } from "../../utils/format";
 
 /**
@@ -64,6 +64,12 @@ function DetailPanelComponent({
   // Reset showFullMessage when selected entry changes
   const isTruncated = selectedEntry?._truncated === true;
   const messageSize = selectedEntry ? getMessageSize(selectedEntry) : 0;
+  const displayedMessage = selectedEntry
+    ? showFullMessage
+      ? getFullMessage(selectedEntry)
+      : selectedEntry.message || ""
+    : "";
+  const highlightedMessage = useHighlightedHtml(displayedMessage, search);
 
   // #2: bevorzugt aus marksMap (per Prop), fällt auf legacy `_mark`/`color` zurück.
   const effectiveMark =
@@ -235,12 +241,7 @@ function DetailPanelComponent({
                 overflow: showFullMessage ? "auto" : "auto",
               }}
               dangerouslySetInnerHTML={{
-                __html: highlightAll(
-                  showFullMessage
-                    ? getFullMessage(selectedEntry)
-                    : selectedEntry.message || "",
-                  search,
-                ),
+                __html: highlightedMessage,
               }}
             />
           </div>
