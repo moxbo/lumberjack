@@ -26,3 +26,5 @@ export { ActiveFilterChips } from "./ActiveFilterChips";
 export type { ActiveFilterChipsProps } from "./ActiveFilterChips";
 export { StatusSection } from "./StatusSection";
 export type { StatusSectionProps } from "./StatusSection";
+export { VirtualizedLogList } from "./VirtualizedLogList";
+export type { VirtualizedLogListHandle } from "./VirtualizedLogList";

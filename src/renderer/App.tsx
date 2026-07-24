@@ -7,7 +7,6 @@ import {
   useRef,
   useState,
 } from "preact/hooks";
-import { useVirtualizer } from "@tanstack/react-virtual";
 import { highlightAll } from "../utils/highlight";
 import logger from "../utils/logger";
 import { rendererPerf } from "../utils/rendererPerf";
@@ -41,7 +40,6 @@ import {
   onWindowFocus as typedOnWindowFocus,
 } from "../utils/typedApi";
 import type {
-  RendererLogEntry,
   ElasticFormState,
   HttpPollFormState,
   ThemeMode,
@@ -50,7 +48,7 @@ import type {
   FilterStats,
 } from "../types/renderer";
 import { MDCListener } from "../store/mdcListener";
-import { clearHighlightCache, LogRow } from "./LogRow";
+import { clearHighlightCache } from "./LogRow";
 import { clearTimestampCache, fmtTimestamp } from "../utils/format";
 import { heavyFieldStore } from "../store/heavyFieldStore";
 import {
@@ -105,7 +103,9 @@ import {
   SearchBar,
   ActiveFilterChips,
   StatusSection,
+  VirtualizedLogList,
 } from "./components";
+import type { VirtualizedLogListHandle } from "./components";
 import { SkeletonLoader } from "./components/SkeletonLoader";
 import { ElasticStatusBar } from "./components/ElasticStatusBar";
 import { JSX } from "preact/jsx-runtime";
@@ -679,7 +679,7 @@ export default function App(): JSX.Element {
 
   // Refs/Layout/Virtualizer
   const parentRef = useRef<HTMLDivElement | null>(null);
-  const [isParentMounted, setIsParentMounted] = useState(false);
+  const virtualListRef = useRef<VirtualizedLogListHandle | null>(null);
 
   // Log-list context menu (state, mark colors, clipboard, trace-id adoption)
   const {
@@ -704,17 +704,6 @@ export default function App(): JSX.Element {
     showAlert,
     t,
   });
-
-  // Track when parent element is mounted - use a layout effect to set this ASAP
-  useEffect(() => {
-    // Small delay to ensure ref is set after first render
-    const timer = setTimeout(() => {
-      if (parentRef.current && !isParentMounted) {
-        setIsParentMounted(true);
-      }
-    }, 0);
-    return () => clearTimeout(timer);
-  }, []); // Only run once on mount
 
   const layoutRef = useRef<HTMLDivElement | null>(null);
 
@@ -870,82 +859,14 @@ export default function App(): JSX.Element {
   const countFiltered = filteredIdx.length;
   const countSelected = selected.size;
 
-  const rowHeight = 36;
-
-  // Ref, um programmatisches Scrollen von manuellem Scrollen zu unterscheiden
-  const isProgrammaticScrollRef = useRef(false);
-
-  // Handler für manuelles Scrollen: deaktiviert Follow-Modus wenn der Benutzer nach oben scrollt
-  const handleListScroll = useCallback(
-    (e: Event) => {
-      // Ignoriere programmatisches Scrollen
-      if (isProgrammaticScrollRef.current) {
-        return;
-      }
-
-      // Nur reagieren, wenn Follow-Modus aktiv ist
-      if (!follow) return;
-
-      const target = e.target as HTMLElement;
-      if (!target) return;
-
-      // Berechne, ob wir am Ende der Liste sind (mit Toleranz)
-      const scrollTop = target.scrollTop;
-      const scrollHeight = target.scrollHeight;
-      const clientHeight = target.clientHeight;
-      const distanceFromBottom = scrollHeight - scrollTop - clientHeight;
-
-      // Wenn der Benutzer mehr als 100px vom Ende entfernt ist, deaktiviere Follow-Modus
-      if (distanceFromBottom > 100) {
-        setFollow(false);
-        try {
-          patchSettingsQuiet({ follow: false });
-        } catch (err) {
-          logger.warn("Persisting follow flag failed:", err);
-        }
-      }
-    },
-    [follow],
-  );
-
-  // TEMPORARY: Disable virtualizer to test if it's causing the render loop
-  // Memoize getScrollElement callback to prevent virtualizer from re-initializing
-  const getScrollElement = useCallback(() => parentRef.current, []);
-
-  // Memoize estimateSize to prevent re-initialization
-  const estimateSize = useCallback(() => rowHeight, []);
-
-  // Memoize getItemKey to prevent re-initialization
-  // Use existing filteredIdxRef to avoid dependency on filteredIdx which changes frequently
-  const getItemKey = useCallback((index: number) => {
-    const globalIdx = filteredIdxRef.current[index];
-    return globalIdx !== undefined ? `row-${globalIdx}` : `row-temp-${index}`;
+  const handleDisableFollow = useCallback(() => {
+    setFollow(false);
+    try {
+      patchSettingsQuiet({ follow: false });
+    } catch (err) {
+      logger.warn("Persisting follow flag failed:", err);
+    }
   }, []);
-
-  // Only create virtualizer if we have a scroll element to prevent initialization issues
-  const hasScrollElement = parentRef.current !== null;
-
-  // Dynamic overscan: increase for large datasets to prevent visual gaps during fast scrolling
-  // For 300k+ entries, use higher overscan to keep scrolling smooth
-  const dynamicOverscan =
-    filteredIdx.length > 100000 ? 25 : filteredIdx.length > 50000 ? 20 : 15;
-
-  const virtualizer = useVirtualizer({
-    count: hasScrollElement ? filteredIdx.length : 0,
-    getScrollElement,
-    estimateSize,
-    // Erhöhe overscan für glatteres Scrollen bei schnellem Scrollen
-    overscan: dynamicOverscan,
-    // getItemKey für stabile Keys und besseres Re-Rendering
-    getItemKey,
-    // CRITICAL: Disable automatic measurement which can cause render loops
-    measureElement: undefined,
-  } as any);
-
-  // Get virtual items - memoized to prevent render loops
-  // Note: virtualItems changes when scroll position changes, which is expected
-  const virtualItems = hasScrollElement ? virtualizer.getVirtualItems() : [];
-  const totalHeight = hasScrollElement ? virtualizer.getTotalSize() : 0;
 
   // Bei Filteränderung: ausgewählten Eintrag sichtbar halten, wenn er noch in der Liste ist
   const prevFilteredIdxRef = useRef<number[]>(filteredIdx);
@@ -964,9 +885,6 @@ export default function App(): JSX.Element {
   useEffect(() => {
     selectedRef.current = selected;
   }, [selected]);
-
-  // Zustand für erzwungenes Re-Render nach Filter-Scroll
-  const [, forceUpdate] = useState(0);
 
   useEffect(() => {
     // Prüfe ob sich die gefilterte Liste geändert hat
@@ -1007,30 +925,11 @@ export default function App(): JSX.Element {
     // Prüfe ob der ausgewählte Eintrag noch in der gefilterten Liste ist
     const viIndex = viOfGlobal(currentSelected);
     if (viIndex >= 0) {
-      // Markiere als programmatisches Scrollen
-      isProgrammaticScrollRef.current = true;
-
-      // Element ist noch in der Liste - scrolle es in den sichtbaren Bereich
-      // Verwende setTimeout um sicherzustellen, dass der virtualizer aktualisiert wurde
-      setTimeout(() => {
-        // Scrolle den Eintrag so, dass er am oberen Rand des sichtbaren Bereichs erscheint
-        // mit ein paar Zeilen Puffer darüber
-        const targetIndex = Math.max(0, viIndex - 3); // 3 Zeilen Puffer nach oben
-        virtualizer.scrollToIndex(targetIndex, { align: "start" });
-
-        // Erzwinge Re-Render
-        requestAnimationFrame(() => {
-          forceUpdate((n) => n + 1);
-          // Reset programmatic scroll flag
-          setTimeout(() => {
-            isProgrammaticScrollRef.current = false;
-          }, 300);
-        });
-      }, 0);
+      const targetIndex = Math.max(0, viIndex - 3);
+      virtualListRef.current?.scrollAfterFilterChange(targetIndex);
     }
   }, [
     filteredIdx,
-    virtualizer,
     stdFiltersEnabled,
     debouncedFilter,
     dcVersion,
@@ -1101,31 +1000,7 @@ export default function App(): JSX.Element {
 
   // Hilfsfunktion: Ziel-Index im sichtbaren Bereich anzeigen (scrollt nur wenn nötig)
   function scrollToIndexCenter(viIndex: number) {
-    // Markiere als programmatisches Scrollen, damit Follow-Modus nicht deaktiviert wird
-    isProgrammaticScrollRef.current = true;
-
-    // Erst Virtualizer nutzen um sicherzustellen, dass das Element gerendert wird
-    virtualizer.scrollToIndex(viIndex, { align: "auto" });
-
-    // Dann nach kurzer Verzögerung die Position korrigieren
-    requestAnimationFrame(() => {
-      const parent = parentRef.current as HTMLDivElement | null;
-      if (!parent) return;
-
-      // Versuche das Element direkt zu finden
-      const rowEl = parent.querySelector(
-        `[data-vi="${viIndex}"]`,
-      ) as HTMLElement | null;
-      if (rowEl) {
-        // Element gefunden - scrolle es in den sichtbaren Bereich (nur wenn nötig)
-        rowEl.scrollIntoView({ behavior: "smooth", block: "nearest" });
-      }
-
-      // Setze das Flag nach dem Scrollen zurück (mit etwas Verzögerung für smooth scrolling)
-      setTimeout(() => {
-        isProgrammaticScrollRef.current = false;
-      }, 300);
-    });
+    virtualListRef.current?.scrollToIndexCenter(viIndex);
   }
 
   // Selection
@@ -2528,14 +2403,14 @@ export default function App(): JSX.Element {
     // Navigation
     onGotoStart: () => {
       try {
-        virtualizer.scrollToIndex(0, { align: "start" });
+        virtualListRef.current?.scrollToIndex(0, "start");
       } catch {}
     },
     onGotoEnd: () => {
       try {
         const lastIdx = filteredIdx.length - 1;
         if (lastIdx >= 0) {
-          virtualizer.scrollToIndex(lastIdx, { align: "end" });
+          virtualListRef.current?.scrollToIndex(lastIdx, "end");
         }
       } catch {}
     },
@@ -3251,100 +3126,23 @@ export default function App(): JSX.Element {
 
       {/* Hauptlayout: Liste + Overlay-Details */}
       <div className="layout" ref={layoutRef}>
-        {/* Listen-Header */}
-        <div
-          className="list"
-          ref={parentRef as any}
-          tabIndex={0}
-          role="listbox"
-          aria-label={t("list.ariaLabel")}
-          onKeyDown={onListKeyDown as any}
-          onScroll={handleListScroll as any}
-          onMouseDown={(ev) => {
-            try {
-              // Stelle sicher, dass die Liste fokussiert ist wenn sie geklickt wird
-              if (parentRef.current && !ev.defaultPrevented) {
-                parentRef.current?.focus({ preventScroll: true });
-              }
-            } catch (err) {
-              logger.warn("onMouseDown focus set failed:", err);
-            }
-          }}
+        <VirtualizedLogList
+          ref={virtualListRef}
+          listRef={parentRef}
+          entries={entries}
+          filteredIdx={filteredIdx}
+          selected={selected}
+          marksMap={marksMap}
+          search={debouncedSearch}
+          follow={follow}
+          onDisableFollow={handleDisableFollow}
+          onKeyDown={onListKeyDown}
+          onRowSelect={handleRowSelect}
+          onRowContextMenu={handleRowContextMenu}
+          onColMouseDown={onColMouseDown}
+          highlightFn={stableHighlightFn}
+          t={t}
         >
-          <div className="list-header">
-            <div className="cell">
-              {t("list.header.timestamp")}
-              <div
-                className="resizer"
-                onMouseDown={(e) => onColMouseDown("ts", e)}
-              />
-            </div>
-            <div className="cell cell--center">
-              {t("list.header.level")}
-              <div
-                className="resizer"
-                onMouseDown={(e) => onColMouseDown("lvl", e)}
-              />
-            </div>
-            <div className="cell">
-              {t("list.header.logger")}
-              <div
-                className="resizer"
-                onMouseDown={(e) => onColMouseDown("logger", e)}
-              />
-            </div>
-            <div className="cell">{t("list.header.message")}</div>
-          </div>
-          {/* Virtualized rows */}
-          <div
-            style={{
-              height: totalHeight + "px",
-              position: "relative",
-              /* FIX: Stelle sicher dass Events in virtualisierte Zeilen durchgeleitet werden */
-              pointerEvents: "auto",
-              /* Performance: contain für besseres Layout-Verhalten */
-              contain: "strict",
-            }}
-          >
-            {virtualItems.map((vi: any) => {
-              const viIndex =
-                typeof vi?.index === "number" ? (vi.index as number) : -1;
-              if (viIndex < 0 || viIndex >= filteredIdx.length) return null;
-              const globalIdx: number = filteredIdx[viIndex]!;
-              const e: RendererLogEntry | undefined = entries[globalIdx];
-              if (!e) return null;
-              const isSel = selected.has(globalIdx);
-              // #2: Markierung kommt primär aus marksMap (Single-Source-of-Truth).
-              // Fallback auf e._mark/e.color für Legacy-Pfade (z. B. Entries
-              // mit eingebetteter Farbe aus früheren Sessions).
-              const markColor =
-                marksMap[entrySignature(e)] || e._mark || e.color;
-              const y: number =
-                typeof vi?.start === "number" ? (vi.start as number) : 0;
-              const key = (vi && vi.key) || `row-${globalIdx}`;
-
-              // Use memoized LogRow component with stable callbacks for better performance
-              return (
-                <LogRow
-                  key={key}
-                  index={viIndex}
-                  globalIdx={globalIdx}
-                  entry={e}
-                  isSelected={isSel}
-                  rowHeight={rowHeight}
-                  yOffset={y}
-                  markColor={markColor}
-                  search={debouncedSearch}
-                  onSelect={handleRowSelect}
-                  onContextMenu={handleRowContextMenu}
-                  highlightFn={stableHighlightFn}
-                  t={t}
-                />
-              );
-            })}
-          </div>
-          {/* Empty-States außerhalb des virtualisierten Wrappers,
-              damit sie bei totalHeight=0 nicht durch `contain: strict` geclippt werden. */}
           {countFiltered === 0 &&
             entries.length === 0 &&
             (!!tcpStatus &&
@@ -3501,7 +3299,7 @@ export default function App(): JSX.Element {
               </div>
             </div>
           )}
-        </div>
+        </VirtualizedLogList>
 
         {/* Overlay: Divider + Detailbereich */}
         <div className="overlay">
@@ -3655,7 +3453,7 @@ export default function App(): JSX.Element {
                 // Scroll to entry
                 const idx = viOfGlobal(entry._id);
                 if (idx >= 0) {
-                  virtualizer.scrollToIndex(idx, { align: "center" });
+                  virtualListRef.current?.scrollToIndex(idx, "center");
                 }
               }
               setShowTraceTimeline(false);
