@@ -38,6 +38,10 @@ const RESERVED_STD_FIELDS = new Set([
   "time",
   "logger",
   "thread",
+  // renderer-only metadata for truncated messages
+  "_fullMessage",
+  "_truncated",
+  "_messageSize",
   // trace id variants intentionally NOT excluded to show in MDC only
 ]);
 
