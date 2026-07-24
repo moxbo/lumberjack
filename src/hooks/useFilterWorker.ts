@@ -83,7 +83,7 @@ const MAX_ENTRIES_PER_MESSAGE = 50000;
  * Slim entry type - only fields needed for filtering
  * Prevents DataCloneError by not transferring large raw/stackTrace fields
  */
-interface SlimEntry {
+export interface SlimEntry {
   level?: string | null;
   logger?: string | null;
   thread?: string | null;
@@ -102,9 +102,10 @@ interface SlimEntry {
  * `_mark`-Feld zu projizieren, ohne dass die Renderer-Entries selbst eine
  * `_mark`-Property tragen müssen.
  */
-function projectToSlimEntries(
+export function projectToSlimEntries(
   entries: unknown[],
   marksMap?: Record<string, string>,
+  includeMdc = false,
 ): SlimEntry[] {
   const result: SlimEntry[] = new Array(entries.length);
   const hasMarks = !!marksMap && Object.keys(marksMap).length > 0;
@@ -125,16 +126,19 @@ function projectToSlimEntries(
       }
     }
     // Only copy fields needed for filtering - skip raw, stackTrace, etc.
-    result[i] = {
+    const slimEntry: SlimEntry = {
       level: e.level as string | null | undefined,
       logger: e.logger as string | null | undefined,
       thread: e.thread as string | null | undefined,
       message: e.message as string | null | undefined,
       timestamp: e.timestamp as string | number | Date | null | undefined,
       source: e.source as string | null | undefined,
-      mdc: e.mdc as Record<string, unknown> | null | undefined,
       _mark: mark,
     };
+    if (includeMdc) {
+      slimEntry.mdc = e.mdc as Record<string, unknown> | null | undefined;
+    }
+    result[i] = slimEntry;
   }
   return result;
 }
@@ -207,6 +211,7 @@ export function useFilterWorker(): UseFilterWorkerResult {
   // einem kompletten Austausch zu unterscheiden.
   const syncedEntriesRef = useRef<unknown[] | null>(null);
   const syncedLenRef = useRef<number>(0);
+  const syncedIncludesMdcRef = useRef<boolean | null>(null);
 
   // Check if UtilityProcess is available on mount
   useEffect(() => {
@@ -245,6 +250,7 @@ export function useFilterWorker(): UseFilterWorkerResult {
       // Frischer Worker hat noch keinen gecachten Datensatz.
       syncedEntriesRef.current = null;
       syncedLenRef.current = 0;
+      syncedIncludesMdcRef.current = null;
       lastAppliedRequestRef.current = 0;
 
       workerRef.current.onmessage = (event: MessageEvent) => {
@@ -289,6 +295,7 @@ export function useFilterWorker(): UseFilterWorkerResult {
         }
         syncedEntriesRef.current = null;
         syncedLenRef.current = 0;
+        syncedIncludesMdcRef.current = null;
         lastAppliedRequestRef.current = 0;
       };
     } catch (error) {
@@ -317,16 +324,21 @@ export function useFilterWorker(): UseFilterWorkerResult {
       entries: unknown[],
       marksMap: Record<string, string> | undefined,
       forceFull: boolean,
+      includeMdc: boolean,
     ): boolean => {
       const worker = workerRef.current;
       if (!worker) return false;
 
       const prevArr = syncedEntriesRef.current;
       const prevLen = syncedLenRef.current;
+      const payloadShapeChanged =
+        syncedIncludesMdcRef.current !== null &&
+        syncedIncludesMdcRef.current !== includeMdc;
+      const requiresFullSync = forceFull || payloadShapeChanged;
 
       // Unverändert → kein Re-Transfer nötig.
       if (
-        !forceFull &&
+        !requiresFullSync &&
         prevArr === entries &&
         prevLen === entries.length &&
         prevArr !== null
@@ -339,7 +351,7 @@ export function useFilterWorker(): UseFilterWorkerResult {
       // Streaming erzeugt ein neues Array mit identischen vorhandenen Elementen).
       let appendOnly = false;
       if (
-        !forceFull &&
+        !requiresFullSync &&
         prevArr !== null &&
         prevLen > 0 &&
         entries.length >= prevLen &&
@@ -359,13 +371,14 @@ export function useFilterWorker(): UseFilterWorkerResult {
             const delta = projectToSlimEntries(
               entries.slice(start, end),
               marksMap,
+              includeMdc,
             );
             worker.postMessage({ type: "appendEntries", entries: delta });
           }
         }
       } else {
         // Kompletter Austausch (erstes Laden, Filterwechsel mit Marks, Reset…).
-        const slim = projectToSlimEntries(entries, marksMap);
+        const slim = projectToSlimEntries(entries, marksMap, includeMdc);
         // Erste Batch ersetzt den Cache, weitere hängen an.
         const first = slim.length <= BATCH ? slim : slim.slice(0, BATCH);
         worker.postMessage({ type: "setEntries", entries: first });
@@ -379,6 +392,7 @@ export function useFilterWorker(): UseFilterWorkerResult {
 
       syncedEntriesRef.current = entries;
       syncedLenRef.current = entries.length;
+      syncedIncludesMdcRef.current = includeMdc;
       return true;
     },
     [],
@@ -545,7 +559,12 @@ export function useFilterWorker(): UseFilterWorkerResult {
         const forceFull = !!options.onlyMarked;
 
         try {
-          const ok = syncEntriesToWorker(entries, marksMap, forceFull);
+          const ok = syncEntriesToWorker(
+            entries,
+            marksMap,
+            forceFull,
+            options.dcFilterEnabled,
+          );
           if (ok) {
             setIsFiltering(true);
             // Nur die Optionen senden – Worker filtert den gecachten Datensatz.
@@ -566,6 +585,7 @@ export function useFilterWorker(): UseFilterWorkerResult {
           // Cache als ungültig markieren, damit der nächste Versuch neu synct.
           syncedEntriesRef.current = null;
           syncedLenRef.current = 0;
+          syncedIncludesMdcRef.current = null;
         }
       }
 
@@ -589,7 +609,11 @@ export function useFilterWorker(): UseFilterWorkerResult {
           }
 
           // Project to slim entries to prevent DataCloneError (out of memory)
-          const slimEntries = projectToSlimEntries(entries, marksMap);
+          const slimEntries = projectToSlimEntries(
+            entries,
+            marksMap,
+            options.dcFilterEnabled,
+          );
 
           typedFilterEntries(slimEntries, options)
             .then((result: import("../types/ipc").FilterResult) => {
