@@ -901,7 +901,18 @@ function buildElasticSearchBody(opts) {
     if (!v) return;
     must.push({ match_phrase: { [field]: { query: v } } });
   };
-  addField("logger", opts.logger);
+  const loggerValue = safeString(opts.logger).trim();
+  if (loggerValue) {
+    must.push({
+      bool: {
+        should: [
+          { match_phrase: { logger_name: { query: loggerValue } } },
+          { match_phrase: { logger: { query: loggerValue } } }
+        ],
+        minimum_should_match: 1
+      }
+    });
+  }
   addField("level", opts.level);
   const messageQuery = buildElasticMessageQuery(
     safeString(opts.message),

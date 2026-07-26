@@ -115,8 +115,20 @@ describe("Elasticsearch 6 pagination", () => {
           must: [
             { match_all: {} },
             {
-              match_phrase: {
-                logger_name: { query: "com.example.Service" },
+              bool: {
+                should: [
+                  {
+                    match_phrase: {
+                      logger_name: { query: "com.example.Service" },
+                    },
+                  },
+                  {
+                    match_phrase: {
+                      logger: { query: "com.example.Service" },
+                    },
+                  },
+                ],
+                minimum_should_match: 1,
               },
             },
           ],
