@@ -5,6 +5,12 @@ Alle nennenswerten Änderungen an diesem Projekt werden in dieser Datei dokument
 Das Format orientiert sich an [Keep a Changelog](https://keepachangelog.com/de/1.1.0/),
 und dieses Projekt folgt [Semantic Versioning](https://semver.org/lang/de/).
 
+## [1.1.2-beta.7] - 2026-07-27 _(Pre-Release)_
+
+
+### Fixed
+- **parser**: Enhance logger field handling for improved query matching
+
 ## [1.1.2-beta.6] - 2026-07-24 _(Pre-Release)_
 
 
