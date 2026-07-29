@@ -18,7 +18,7 @@
 #      (stable releases aggregate all intermediate beta/rc tags into one block)
 #   5. Commits the bump + changelog
 #   6. Creates an annotated tag vX.Y.Z[-pre.N]
-#   7. Pushes main and the tag explicitly
+#   7. Pushes branch + tag together in a single atomic push
 #   8. Prints links to GitHub Actions / Releases
 # ---------------------------------------------------------------------------
 
@@ -196,9 +196,11 @@ echo "  - $TAG → origin/$TAG"
 echo
 confirm "Push now?"
 
-git push origin "$CURRENT_BRANCH"
-git push origin "$TAG"
-green "  ✓ Pushed branch and tag"
+# Atomic push: branch and tag land together (or neither). This avoids the
+# half-pushed state where the tag arrives — triggering the release build —
+# before the release commit is on the branch, and vice versa.
+git push --atomic origin "$CURRENT_BRANCH" "refs/tags/$TAG"
+green "  ✓ Pushed branch and tag (atomic)"
 
 # ---------- done ------------------------------------------------------------
 REPO_URL="$(git config --get remote.origin.url \

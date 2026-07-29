@@ -119,8 +119,11 @@ jobs:
           fetch-depth: 0
           fetch-tags: true
 
-      - name: Update version in package.json and commit
-        if: ${{ steps.meta.outputs.should_release == 'true' && steps.meta.outputs.promote_only != 'true' }}
+      - name: Update version in package.json and commit (workflow_dispatch only)
+        # Bei Tag-Push hat scripts/release.sh Version-Bump, Commit und Tag bereits
+        # erledigt (der Tag ist die Quelle der Wahrheit). Dieser Schritt bumpt daher
+        # nur beim manuellen workflow_dispatch, wo Tag/Version noch nicht existieren.
+        if: ${{ steps.meta.outputs.should_release == 'true' && steps.meta.outputs.promote_only != 'true' && github.event_name == 'workflow_dispatch' }}
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         shell: bash
