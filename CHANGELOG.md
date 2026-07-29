@@ -5,6 +5,25 @@ Alle nennenswerten Änderungen an diesem Projekt werden in dieser Datei dokument
 Das Format orientiert sich an [Keep a Changelog](https://keepachangelog.com/de/1.1.0/),
 und dieses Projekt folgt [Semantic Versioning](https://semver.org/lang/de/).
 
+## [1.1.2-beta.8] - 2026-07-29 _(Pre-Release)_
+
+
+### Added
+- **multi-instance**: Close other instances before installing an update
+
+
+### Fixed
+- **query**: Support multi-field boolean expressions in message queries
+- **i18n**: Add new menu labels and improve locale switching functionality
+- **multi-instance**: Per-instance log file and primary-only auto-update
+- **settings**: Make settings.json writes concurrency-safe across instances
+- **release**: Ensure atomic push of branch and tag to prevent half-pushed state
+- **release**: Improve branch sync check before release process
+
+
+### Tests
+- Add integration tests for Elasticsearch and OpenSearch with Testcontainers
+
 ## [1.1.2-beta.7] - 2026-07-27 _(Pre-Release)_
 
 
