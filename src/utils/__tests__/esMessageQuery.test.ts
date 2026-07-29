@@ -14,6 +14,16 @@ const leaf = (value: string, field = "message"): Record<string, unknown> => ({
   },
 });
 
+const multiFieldLeaf = (
+  value: string,
+  fields: string[],
+): Record<string, unknown> => ({
+  bool: {
+    should: fields.map((field) => leaf(value, field)),
+    minimum_should_match: 1,
+  },
+});
+
 describe("buildElasticMessageQuery", () => {
   it("returns null for empty / whitespace expressions", () => {
     expect(buildElasticMessageQuery("")).toBeNull();
@@ -106,6 +116,28 @@ describe("buildElasticMessageQuery", () => {
 
   it("allows overriding the target field name", () => {
     expect(buildElasticMessageQuery("foo", "msg")).toEqual(leaf("foo", "msg"));
+  });
+
+  it("maps boolean expressions across multiple target fields", () => {
+    const fields = ["logger_name", "logger"];
+
+    expect(buildElasticMessageQuery("Sender & Interpreter", fields)).toEqual({
+      bool: {
+        must: [
+          multiFieldLeaf("Sender", fields),
+          multiFieldLeaf("Interpreter", fields),
+        ],
+      },
+    });
+    expect(buildElasticMessageQuery("Sender | Interpreter", fields)).toEqual({
+      bool: {
+        should: [
+          multiFieldLeaf("Sender", fields),
+          multiFieldLeaf("Interpreter", fields),
+        ],
+        minimum_should_match: 1,
+      },
+    });
   });
 
   it("does not throw on operator-only expressions", () => {

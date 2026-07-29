@@ -82,7 +82,7 @@ describe("Elasticsearch 6 pagination", () => {
       url: baseUrl,
       index: "logs",
       size: 100,
-      logger: "com.example.Service",
+      logger: "com.example.Service | com.example.Sender",
     });
 
     expect(empty).toMatchObject({ entries: [], total: 0, hasMore: false });
@@ -118,13 +118,37 @@ describe("Elasticsearch 6 pagination", () => {
               bool: {
                 should: [
                   {
-                    match_phrase: {
-                      logger_name: { query: "com.example.Service" },
+                    bool: {
+                      should: [
+                        {
+                          query_string: {
+                            query: "logger_name:*com.example.Service*",
+                          },
+                        },
+                        {
+                          query_string: {
+                            query: "logger:*com.example.Service*",
+                          },
+                        },
+                      ],
+                      minimum_should_match: 1,
                     },
                   },
                   {
-                    match_phrase: {
-                      logger: { query: "com.example.Service" },
+                    bool: {
+                      should: [
+                        {
+                          query_string: {
+                            query: "logger_name:*com.example.Sender*",
+                          },
+                        },
+                        {
+                          query_string: {
+                            query: "logger:*com.example.Sender*",
+                          },
+                        },
+                      ],
+                      minimum_should_match: 1,
                     },
                   },
                 ],

@@ -1018,17 +1018,12 @@ function buildElasticSearchBody(opts: ElasticsearchOptions): AnyMap {
     if (!v) return;
     must.push({ match_phrase: { [field]: { query: v } } } as AnyMap);
   };
-  const loggerValue = safeString(opts.logger).trim();
-  if (loggerValue) {
-    must.push({
-      bool: {
-        should: [
-          { match_phrase: { logger_name: { query: loggerValue } } },
-          { match_phrase: { logger: { query: loggerValue } } },
-        ],
-        minimum_should_match: 1,
-      },
-    } as AnyMap);
+  const loggerQuery = buildElasticMessageQuery(safeString(opts.logger), [
+    "logger_name",
+    "logger",
+  ]);
+  if (loggerQuery) {
+    must.push(loggerQuery as AnyMap);
   }
   addField("level", opts.level);
 

@@ -37,21 +37,32 @@ function escapeQueryStringTerm(term: string): string {
     .replace(/([+\-=&|!(){}[\]^"~*?:\\/])/g, "\\$1");
 }
 
-function messageLeaf(term: string, field: string): AnyMap {
-  // Phrasen (enthalten Whitespace) als match_phrase – tokenbasiert,
-  // entspricht der Reihenfolge-Suche und vermeidet teure Leading-Wildcards.
-  if (/\s/.test(term)) {
-    return { match_phrase: { [field]: { query: term } } };
-  }
-  // Einzel-Token: Substring je Token via Wildcard (case-insensitive),
-  // damit z.B. "err" auch "error" findet (analog zum clientseitigen includes).
-  // `query_string` + `analyze_wildcard` ist auf allen ES-Versionen verfügbar,
-  // anders als `wildcard` + `case_insensitive` (erst ab ES 7.10).
+function textLeaf(term: string, fields: string[]): AnyMap {
+  const fieldQueries = fields.map((field) => {
+    // Phrasen (enthalten Whitespace) als match_phrase – tokenbasiert,
+    // entspricht der Reihenfolge-Suche und vermeidet teure Leading-Wildcards.
+    if (/\s/.test(term)) {
+      return { match_phrase: { [field]: { query: term } } };
+    }
+    // Einzel-Token: Substring je Token via Wildcard (case-insensitive),
+    // damit z.B. "err" auch "error" findet (analog zum clientseitigen includes).
+    // `query_string` + `analyze_wildcard` ist auf allen ES-Versionen verfügbar,
+    // anders als `wildcard` + `case_insensitive` (erst ab ES 7.10).
+    return {
+      query_string: {
+        query: `${field}:*${escapeQueryStringTerm(term)}*`,
+        analyze_wildcard: true,
+        allow_leading_wildcard: true,
+      },
+    };
+  });
+
+  if (fieldQueries.length === 1) return fieldQueries[0]!;
+
   return {
-    query_string: {
-      query: `${field}:*${escapeQueryStringTerm(term)}*`,
-      analyze_wildcard: true,
-      allow_leading_wildcard: true,
+    bool: {
+      should: fieldQueries,
+      minimum_should_match: 1,
     },
   };
 }
@@ -63,10 +74,12 @@ function messageLeaf(term: string, field: string): AnyMap {
  */
 export function buildElasticMessageQuery(
   expr: string,
-  field = "message",
+  field: string | string[] = "message",
 ): AnyMap | null {
   const raw = (expr ?? "").trim();
   if (!raw) return null;
+  const fields = (Array.isArray(field) ? field : [field]).filter(Boolean);
+  if (fields.length === 0) return null;
 
   const tokens: Token[] = tokenizeQuery(raw);
   if (tokens.length === 0) return null;
@@ -81,7 +94,7 @@ export function buildElasticMessageQuery(
     if (!tk) return null;
     if (tk.t === "WORD") {
       take();
-      return messageLeaf(tk.v ?? "", field);
+      return textLeaf(tk.v ?? "", fields);
     }
     if (tk.t === "LPAREN") {
       take();
