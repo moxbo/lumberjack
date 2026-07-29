@@ -62,15 +62,25 @@ interface ValidationResult {
 }
 
 /**
+ * A lock file older than this is considered stale (left behind by a crashed
+ * instance) and may be stolen.
+ */
+const LOCK_STALE_MS = 5000;
+
+/**
  * SettingsService manages application settings
  */
 export class SettingsService {
   private settings: Settings;
+  // Last state this instance knows to be persisted on disk. Used to compute a
+  // minimal delta on save so concurrent instances don't clobber each other.
+  private baseline: Settings;
   private _settingsPath: string | null = null;
   private loaded = false;
 
   constructor() {
     this.settings = { ...DEFAULT_SETTINGS };
+    this.baseline = { ...DEFAULT_SETTINGS };
   }
 
   /**
@@ -136,6 +146,7 @@ export class SettingsService {
 
       // Merge with defaults to ensure all required fields exist
       this.settings = { ...DEFAULT_SETTINGS, ...parsed } as Settings;
+      this.baseline = structuredClone(this.settings);
       this.loaded = true;
       log.info("Settings loaded successfully from", this.settingsPath);
     } catch (err) {
@@ -176,6 +187,7 @@ export class SettingsService {
         delete (parsed as Record<string, unknown>)["marksMap"];
       }
       this.settings = { ...DEFAULT_SETTINGS, ...parsed } as Settings;
+      this.baseline = structuredClone(this.settings);
       log.info(
         "[settings] loadSync(): merged httpUrl:",
         this.settings.httpUrl || "(empty)",
@@ -191,36 +203,228 @@ export class SettingsService {
   }
 
   /**
-   * Save settings to disk
+   * Compute the keys this instance actually changed since it last read/wrote
+   * the settings file. Only these keys are written on save, so a concurrent
+   * instance that changed *other* keys is never clobbered. marksMap is
+   * session-only and always excluded.
+   */
+  private computeLocalDelta(): Record<string, unknown> {
+    const cur = this.settings as unknown as Record<string, unknown>;
+    const base = this.baseline as unknown as Record<string, unknown>;
+    const delta: Record<string, unknown> = {};
+    const keys = new Set<string>([...Object.keys(cur), ...Object.keys(base)]);
+    for (const key of keys) {
+      if (key === "marksMap") continue;
+      if (JSON.stringify(cur[key]) !== JSON.stringify(base[key])) {
+        delta[key] = cur[key];
+      }
+    }
+    return delta;
+  }
+
+  /**
+   * Read the currently persisted settings from disk (best effort).
+   */
+  private readPersistedSync(): Settings {
+    try {
+      if (fs.existsSync(this.settingsPath)) {
+        const raw = fs.readFileSync(this.settingsPath, "utf8");
+        return {
+          ...DEFAULT_SETTINGS,
+          ...(JSON.parse(raw) as Partial<Settings>),
+        } as Settings;
+      }
+    } catch (e) {
+      log.warn(
+        "[settings] Could not read persisted settings for merge (sync):",
+        e instanceof Error ? e.message : String(e),
+      );
+    }
+    return { ...DEFAULT_SETTINGS };
+  }
+
+  private async readPersistedAsync(): Promise<Settings> {
+    try {
+      if (fs.existsSync(this.settingsPath)) {
+        const raw = await fs.promises.readFile(this.settingsPath, "utf8");
+        return {
+          ...DEFAULT_SETTINGS,
+          ...(JSON.parse(raw) as Partial<Settings>),
+        } as Settings;
+      }
+    } catch (e) {
+      log.warn(
+        "[settings] Could not read persisted settings for merge (async):",
+        e instanceof Error ? e.message : String(e),
+      );
+    }
+    return { ...DEFAULT_SETTINGS };
+  }
+
+  /**
+   * Merge this instance's local delta on top of the current on-disk state.
+   * Returns the merged settings (without marksMap) ready to persist.
+   */
+  private buildMerged(prev: Settings): Settings {
+    const delta = this.computeLocalDelta();
+    const mergedNoMarks = { ...prev, ...delta } as Record<string, unknown>;
+    delete mergedNoMarks.marksMap;
+    return { ...DEFAULT_SETTINGS, ...mergedNoMarks } as Settings;
+  }
+
+  /**
+   * Adopt the freshly persisted merged state as the new in-memory truth.
+   * This also picks up changes other instances made to keys we didn't touch,
+   * and resets the baseline so the next save produces a correct delta. The
+   * ephemeral marksMap is preserved.
+   */
+  private adoptMerged(merged: Settings): void {
+    const marks = (this.settings as Settings & { marksMap?: unknown }).marksMap;
+    this.settings =
+      marks !== undefined
+        ? ({ ...merged, marksMap: marks } as Settings)
+        : merged;
+    this.baseline = structuredClone(merged);
+  }
+
+  private get lockPath(): string {
+    return this.settingsPath + ".lock";
+  }
+
+  private static sleepSync(ms: number): void {
+    try {
+      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+    } catch {
+      const end = Date.now() + ms;
+      while (Date.now() < end) {
+        /* busy wait fallback */
+      }
+    }
+  }
+
+  /**
+   * Acquire an exclusive cross-process lock for the settings file. Stale locks
+   * (left behind by a crashed instance) are stolen. Returns the open fd, or
+   * null if the lock could not be acquired (in which case the caller proceeds
+   * best-effort — the merge + atomic write still prevents corruption).
+   */
+  private acquireLockSync(maxWaitMs = 1500): number | null {
+    const start = Date.now();
+    for (;;) {
+      try {
+        const fd = fs.openSync(this.lockPath, "wx");
+        try {
+          fs.writeSync(fd, String(process.pid));
+        } catch {
+          /* ignore */
+        }
+        return fd;
+      } catch (e) {
+        const code = (e as NodeJS.ErrnoException).code;
+        if (code !== "EEXIST") return null;
+        try {
+          const st = fs.statSync(this.lockPath);
+          if (Date.now() - st.mtimeMs > LOCK_STALE_MS) {
+            fs.unlinkSync(this.lockPath);
+            continue;
+          }
+        } catch {
+          /* lock vanished – retry */
+        }
+        if (Date.now() - start > maxWaitMs) return null;
+        SettingsService.sleepSync(15);
+      }
+    }
+  }
+
+  private releaseLockSync(fd: number | null): void {
+    if (fd === null) return;
+    try {
+      fs.closeSync(fd);
+    } catch {
+      /* ignore */
+    }
+    try {
+      fs.unlinkSync(this.lockPath);
+    } catch {
+      /* ignore */
+    }
+  }
+
+  private async acquireLockAsync(
+    maxWaitMs = 1500,
+  ): Promise<fs.promises.FileHandle | null> {
+    const start = Date.now();
+    for (;;) {
+      try {
+        const fh = await fs.promises.open(this.lockPath, "wx");
+        try {
+          await fh.writeFile(String(process.pid));
+        } catch {
+          /* ignore */
+        }
+        return fh;
+      } catch (e) {
+        const code = (e as NodeJS.ErrnoException).code;
+        if (code !== "EEXIST") return null;
+        try {
+          const st = await fs.promises.stat(this.lockPath);
+          if (Date.now() - st.mtimeMs > LOCK_STALE_MS) {
+            await fs.promises.unlink(this.lockPath).catch(() => {});
+            continue;
+          }
+        } catch {
+          /* lock vanished – retry */
+        }
+        if (Date.now() - start > maxWaitMs) return null;
+        await new Promise((r) => setTimeout(r, 15));
+      }
+    }
+  }
+
+  private async releaseLockAsync(
+    fh: fs.promises.FileHandle | null,
+  ): Promise<void> {
+    if (!fh) return;
+    try {
+      await fh.close();
+    } catch {
+      /* ignore */
+    }
+    try {
+      await fs.promises.unlink(this.lockPath);
+    } catch {
+      /* ignore */
+    }
+  }
+
+  /**
+   * Save settings to disk (async).
+   *
+   * Multi-instance safe: the file is read again under a cross-process lock,
+   * this instance's delta is merged on top and the result is written
+   * atomically (temp file + rename). This prevents one instance from
+   * overwriting settings.json changes made by another instance.
    */
   async save(): Promise<boolean> {
+    const fh = await this.acquireLockAsync();
+    if (!fh) {
+      log.warn(
+        "[settings] Saving without lock (could not acquire) – async merge best-effort",
+      );
+    }
     try {
-      // Vorherigen persistierten Zustand laden (falls vorhanden)
-      let prev: Settings | null = null;
-      try {
-        if (fs.existsSync(this.settingsPath)) {
-          const rawPrev = await fs.promises.readFile(this.settingsPath, "utf8");
-          prev = {
-            ...DEFAULT_SETTINGS,
-            ...(JSON.parse(rawPrev) as Partial<Settings>),
-          } as Settings;
-        }
-      } catch (e) {
-        log.warn(
-          "[settings] Could not read previous settings for delta (async):",
-          e instanceof Error ? e.message : String(e),
-        );
-      }
-
-      // Exclude marksMap from persistence - it's session-only (ephemeral)
-      const { marksMap: _excluded, ...settingsToSave } = this
-        .settings as Settings & { marksMap?: Record<string, string> };
-      const json = JSON.stringify(settingsToSave, null, 2);
+      const prev = await this.readPersistedAsync();
+      const merged = this.buildMerged(prev);
+      const json = JSON.stringify(merged, null, 2);
       const dir = path.dirname(this.settingsPath);
       await fs.promises.mkdir(dir, { recursive: true });
-      await fs.promises.writeFile(this.settingsPath, json, "utf8");
+      const tmp = `${this.settingsPath}.tmp-${process.pid}`;
+      await fs.promises.writeFile(tmp, json, "utf8");
+      await fs.promises.rename(tmp, this.settingsPath);
 
-      this.logDelta(prev, this.settings, "async");
+      this.adoptMerged(merged);
+      this.logDelta(prev, merged, "async");
       return true;
     } catch (err) {
       log.error(
@@ -228,38 +432,33 @@ export class SettingsService {
         err instanceof Error ? err.message : String(err),
       );
       return false;
+    } finally {
+      await this.releaseLockAsync(fh);
     }
   }
 
   /**
-   * Save settings synchronously
+   * Save settings synchronously (multi-instance safe, see save()).
    */
   saveSync(): boolean {
+    const fd = this.acquireLockSync();
+    if (fd === null) {
+      log.warn(
+        "[settings] Saving without lock (could not acquire) – sync merge best-effort",
+      );
+    }
     try {
-      let prev: Settings | null = null;
-      try {
-        if (fs.existsSync(this.settingsPath)) {
-          const rawPrev = fs.readFileSync(this.settingsPath, "utf8");
-          prev = {
-            ...DEFAULT_SETTINGS,
-            ...(JSON.parse(rawPrev) as Partial<Settings>),
-          } as Settings;
-        }
-      } catch (e) {
-        log.warn(
-          "[settings] Could not read previous settings for delta (sync):",
-          e instanceof Error ? e.message : String(e),
-        );
-      }
-      // Exclude marksMap from persistence - it's session-only (ephemeral)
-      const { marksMap: _excluded, ...settingsToSave } = this
-        .settings as Settings & { marksMap?: Record<string, string> };
-      const json = JSON.stringify(settingsToSave, null, 2);
+      const prev = this.readPersistedSync();
+      const merged = this.buildMerged(prev);
+      const json = JSON.stringify(merged, null, 2);
       const dir = path.dirname(this.settingsPath);
       fs.mkdirSync(dir, { recursive: true });
-      fs.writeFileSync(this.settingsPath, json, "utf8");
+      const tmp = `${this.settingsPath}.tmp-${process.pid}`;
+      fs.writeFileSync(tmp, json, "utf8");
+      fs.renameSync(tmp, this.settingsPath);
 
-      this.logDelta(prev, this.settings, "sync");
+      this.adoptMerged(merged);
+      this.logDelta(prev, merged, "sync");
       return true;
     } catch (err) {
       log.error(
@@ -267,6 +466,8 @@ export class SettingsService {
         err instanceof Error ? err.message : String(err),
       );
       return false;
+    } finally {
+      this.releaseLockSync(fd);
     }
   }
 
