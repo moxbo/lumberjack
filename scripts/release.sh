@@ -86,12 +86,21 @@ if [[ -n "$(git status --porcelain)" ]]; then
   die "Commit or stash changes before releasing."
 fi
 
-# 4) up to date with origin
+# 4) not behind origin
+#    Being AHEAD of origin is fine — the atomic push at the end ships those
+#    commits together with the tag, so there is no need to push them first.
+#    Only abort if the branch is BEHIND (diverged), which would require a pull.
 git fetch origin --tags --quiet
-LOCAL="$(git rev-parse @)"
 REMOTE="$(git rev-parse "@{u}" 2>/dev/null || echo "")"
-if [[ -n "$REMOTE" && "$LOCAL" != "$REMOTE" ]]; then
-  die "Your branch is not in sync with origin. Pull/push first."
+if [[ -n "$REMOTE" ]]; then
+  BEHIND="$(git rev-list --count @..@{u})"
+  AHEAD="$(git rev-list --count @{u}..@)"
+  if [[ "$BEHIND" -gt 0 ]]; then
+    die "Your branch is $BEHIND commit(s) behind origin. Pull first."
+  fi
+  if [[ "$AHEAD" -gt 0 ]]; then
+    yellow "  ⚠ $AHEAD local commit(s) not yet on origin — they will be pushed with the tag."
+  fi
 fi
 
 # 5) tag must not already exist (local or remote)
@@ -102,7 +111,7 @@ if git ls-remote --tags origin "$TAG" | grep -q "$TAG"; then
   die "Tag $TAG already exists on origin. Choose a different version."
 fi
 
-green "  ✓ Clean working tree on '$CURRENT_BRANCH', in sync with origin, tag is free"
+green "  ✓ Clean working tree on '$CURRENT_BRANCH', not behind origin, tag is free"
 
 # ---------- best-practice warning for stable releases -----------------------
 if [[ "$IS_PRERELEASE" == "false" ]]; then
