@@ -99,6 +99,10 @@ export class AutoUpdaterService {
   // Startup check timer reference for cleanup
   private startupCheckTimer: ReturnType<typeof setTimeout> | null = null;
 
+  // Optional hook run right before quitAndInstall(). Used to close other
+  // running instances so the installer isn't blocked by locked files.
+  private preInstallHook: (() => Promise<void>) | null = null;
+
   constructor() {
     // Detect portable mode (set by electron-builder for portable targets)
     // Also treat "dir" / zip installations (packaged but no app-update.yml) as portable
@@ -854,9 +858,18 @@ export class AutoUpdaterService {
   }
 
   /**
+   * Register a hook that runs right before the update is installed. Used to
+   * close other running instances (multi-instance mode) so the installer can
+   * replace files without conflicts.
+   */
+  setPreInstallHook(hook: () => Promise<void>): void {
+    this.preInstallHook = hook;
+  }
+
+  /**
    * Install downloaded update and restart app
    */
-  installUpdate(): void {
+  async installUpdate(): Promise<void> {
     if (!this.autoUpdatesAvailable) {
       log.warn("[auto-updater] Auto-updates not available, cannot install");
       return;
@@ -865,6 +878,18 @@ export class AutoUpdaterService {
     if (!this.updateDownloaded) {
       log.warn("[auto-updater] No update downloaded to install");
       return;
+    }
+
+    if (this.preInstallHook) {
+      try {
+        log.info("[auto-updater] Running pre-install hook (closing instances)");
+        await this.preInstallHook();
+      } catch (e) {
+        log.warn(
+          "[auto-updater] Pre-install hook failed (continuing):",
+          e instanceof Error ? e.message : String(e),
+        );
+      }
     }
 
     log.info("[auto-updater] Installing update and restarting...");

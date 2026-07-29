@@ -54,6 +54,13 @@ import {
   resolveMacIconPath,
 } from "./util/iconResolver";
 import { showAboutDialog } from "./util/dialogs";
+import {
+  registerInstance,
+  unregisterInstance,
+  watchForQuitAll,
+  requestQuitAll,
+  waitForOthersToExit,
+} from "./util/instanceCoordinator";
 
 // ============================================================================
 // STARTUP OPTIMIZATIONS (must be before any other code)
@@ -414,6 +421,8 @@ const loadedWindows = new Set<number>(); // Track windows that have finished loa
 // Quit-Bestätigung
 let quitConfirmed = false;
 let quitPromptInProgress = false;
+// Disposer for the cross-instance quit-all watcher (see instanceCoordinator).
+let quitAllWatcherDispose: (() => void) | null = null;
 async function confirmQuitLocal(
   target?: BrowserWindow | null,
 ): Promise<boolean> {
@@ -3043,6 +3052,21 @@ try {
     try {
       log.info("[diag] will-quit fired; defaultPrevented=", e.defaultPrevented);
 
+      // Deregister from the shared instance registry and stop the quit-all
+      // watcher so other instances no longer wait on this process.
+      try {
+        if (quitAllWatcherDispose) {
+          quitAllWatcherDispose();
+          quitAllWatcherDispose = null;
+        }
+        unregisterInstance();
+      } catch (err) {
+        log.warn(
+          "[instances] Cleanup on will-quit failed:",
+          err instanceof Error ? err.message : String(err),
+        );
+      }
+
       // Shutdown FilterService UtilityProcess (Electron 40+)
       try {
         const { getFilterService } =
@@ -3213,6 +3237,22 @@ app
 
     // IPC handlers are already registered at module load time (line ~1685)
 
+    // Register this process in the shared instance registry and start watching
+    // for a quit-all request (issued before an update install by the primary
+    // instance). This runs for every instance, primary and secondary.
+    try {
+      registerInstance();
+      quitAllWatcherDispose = watchForQuitAll(() => {
+        quitConfirmed = true;
+        app.quit();
+      });
+    } catch (e) {
+      log.warn(
+        "[instances] Coordinator setup failed:",
+        e instanceof Error ? e.message : String(e),
+      );
+    }
+
     // Create the main window FIRST - highest priority for perceived startup speed
     try {
       createWindow({ makePrimary: true });
@@ -3236,6 +3276,12 @@ app
             if (mainWin) {
               autoUpdater.setMainWindow(mainWin);
             }
+            // Before installing, ask all other instances to quit and wait for
+            // them so the installer isn't blocked by locked files.
+            autoUpdater.setPreInstallHook(async () => {
+              requestQuitAll();
+              await waitForOthersToExit(5000);
+            });
             // Check for updates after a delay (don't block startup)
             autoUpdater.checkForUpdatesOnStart(5000);
           } catch (e) {
