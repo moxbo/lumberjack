@@ -1,0 +1,51 @@
+name: Integration Tests
+
+# Runs separately so the fast unit-test jobs do not start containers.
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main, develop]
+  # Allow manual runs (e.g. before a release or after dependency bumps)
+  workflow_dispatch:
+
+concurrency:
+  group: integration-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+
+jobs:
+  integration:
+    name: Container Integration Tests
+    # ubuntu-latest has Docker pre-installed.  macOS runners require Colima
+    # setup (not free), Windows runners are slower for containers — both skipped.
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      # Pull images in parallel before the test run to avoid per-suite timeouts
+      # being eaten by the initial pull.  ES 6.8 is amd64-only and runs fine on
+      # ubuntu-latest (x86_64); its image is included here.
+      - name: Pre-pull container images
+        run: |
+          docker pull docker.elastic.co/elasticsearch/elasticsearch:8.13.4 &
+          docker pull opensearchproject/opensearch:2.13.0 &
+          docker pull docker.elastic.co/elasticsearch/elasticsearch:6.8.23 &
+          wait
+        # Testcontainers retries pulls during the test if pre-pulling fails.
+        continue-on-error: true
+
+      - name: Run integration tests
+        run: npm run test:integration

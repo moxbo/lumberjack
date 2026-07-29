@@ -572,6 +572,8 @@ async function httpJsonRequest(
       const u = new URL(urlStr);
       const isHttps = u.protocol === "https:";
       const mod = isHttps ? https : http;
+      const payload =
+        method === "GET" || body == null ? "" : JSON.stringify(body);
       const opts: http.RequestOptions = {
         method,
         hostname: u.hostname,
@@ -582,6 +584,9 @@ async function httpJsonRequest(
           "content-type": "application/json",
           "accept-encoding": "gzip, deflate, br",
           Connection: "keep-alive",
+          ...(payload
+            ? { "content-length": String(Buffer.byteLength(payload)) }
+            : {}),
         },
         agent: isHttps
           ? allowInsecureTLS
@@ -660,7 +665,6 @@ async function httpJsonRequest(
         if (timer) clearTimeout(timer);
         reject(err);
       });
-      const payload = method === "GET" ? "" : body ? JSON.stringify(body) : "";
       if (payload) req.write(payload);
       req.end();
     } catch (err) {
@@ -747,10 +751,12 @@ function buildSortArray(
   field: string = PRIMARY_TIMESTAMP_FIELD,
 ): AnyMap[] {
   const ord = order ?? "desc";
-  return [
-    { [field]: { order: ord, unmapped_type: "date" } },
-    { _id: { order: ord } },
-  ];
+  // Only the timestamp field is used here (scroll path and first-stage query
+  // building).  For PIT queries buildQueryBodyWithPit overrides this with
+  // _shard_doc as a tie-breaker, which avoids fielddata access on _id
+  // (disabled by default in ES 8+).  The scroll cursor itself is already a
+  // stable, unique position marker so no additional tie-breaker is needed.
+  return [{ [field]: { order: ord, unmapped_type: "date" } }];
 }
 
 async function tryOpenPitEs(
@@ -820,10 +826,12 @@ async function closePitEs(
   maxRetries: number,
   backoffBaseMs: number,
 ): Promise<void> {
-  const url = `${baseUrl}/_pit/close`;
+  // ES 7.10+ closes a PIT with DELETE /_pit (body: { id }). The former
+  // /_pit/close path does not exist and causes a 404/405 on modern clusters.
+  const url = `${baseUrl}/_pit`;
   const body = { id: pitId };
   const exec = (): Promise<HttpResponse> =>
-    httpJsonRequest("POST", url, body, headers, allowInsecureTLS, timeoutMs);
+    httpJsonRequest("DELETE", url, body, headers, allowInsecureTLS, timeoutMs);
   const res = await requestWithRetry(exec, { maxRetries, backoffBaseMs });
   if (!(res.status >= 200 && res.status < 300))
     throw new Error(
@@ -1170,7 +1178,22 @@ function buildQueryBodyWithPit(
     searchAfter: opts.searchAfter,
   });
   baseBody.size = opts.size ?? 1000;
-  baseBody.sort = buildSortArray(opts.sort, resolveTimestampField(opts));
+  // Use _shard_doc as the tie-breaker for PIT queries.
+  // Sorting by _id requires fielddata on the _id field, which is disabled by
+  // default in Elasticsearch 8+ (indices.id_field_data.enabled=false).
+  // _shard_doc is a PIT-specific sequential per-shard identifier that works
+  // without fielddata and is stable across pages of the same PIT context.
+  // It is supported by ES 7.12+, ES 8.x, and OpenSearch 2.x.
+  const _pitSortOrd = opts.sort ?? "desc";
+  baseBody.sort = [
+    {
+      [resolveTimestampField(opts)]: {
+        order: _pitSortOrd,
+        unmapped_type: "date",
+      },
+    },
+    { _shard_doc: { order: _pitSortOrd } },
+  ] as AnyMap[];
   baseBody.pit = { id: pitId, keep_alive: opts.keepAlive ?? "1m" } as AnyMap;
   const inc = Array.isArray(opts.sourceIncludes)
     ? opts.sourceIncludes

@@ -150,21 +150,32 @@ function tokenizeQuery(s) {
 function escapeQueryStringTerm(term) {
   return term.replace(/[<>]/g, " ").replace(/([+\-=&|!(){}[\]^"~*?:\\/])/g, "\\$1");
 }
-function messageLeaf(term, field) {
-  if (/\s/.test(term)) {
-    return { match_phrase: { [field]: { query: term } } };
-  }
+function textLeaf(term, fields) {
+  const fieldQueries = fields.map((field) => {
+    if (/\s/.test(term)) {
+      return { match_phrase: { [field]: { query: term } } };
+    }
+    return {
+      query_string: {
+        query: `${field}:*${escapeQueryStringTerm(term)}*`,
+        analyze_wildcard: true,
+        allow_leading_wildcard: true
+      }
+    };
+  });
+  if (fieldQueries.length === 1) return fieldQueries[0];
   return {
-    query_string: {
-      query: `${field}:*${escapeQueryStringTerm(term)}*`,
-      analyze_wildcard: true,
-      allow_leading_wildcard: true
+    bool: {
+      should: fieldQueries,
+      minimum_should_match: 1
     }
   };
 }
 function buildElasticMessageQuery(expr, field = "message") {
   const raw = (expr ?? "").trim();
   if (!raw) return null;
+  const fields = (Array.isArray(field) ? field : [field]).filter(Boolean);
+  if (fields.length === 0) return null;
   const tokens = tokenizeQuery(raw);
   if (tokens.length === 0) return null;
   let pos = 0;
@@ -175,7 +186,7 @@ function buildElasticMessageQuery(expr, field = "message") {
     if (!tk) return null;
     if (tk.t === "WORD") {
       take();
-      return messageLeaf(tk.v ?? "", field);
+      return textLeaf(tk.v ?? "", fields);
     }
     if (tk.t === "LPAREN") {
       take();
@@ -700,10 +711,7 @@ function resolveTimestampField(opts) {
 }
 function buildSortArray(order, field = PRIMARY_TIMESTAMP_FIELD) {
   const ord = order ?? "desc";
-  return [
-    { [field]: { order: ord, unmapped_type: "date" } },
-    { _id: { order: ord } }
-  ];
+  return [{ [field]: { order: ord, unmapped_type: "date" } }];
 }
 async function tryOpenPitEs(baseUrl, index, keepAlive, headers, allowInsecureTLS, timeoutMs, maxRetries, backoffBaseMs) {
   const idx = index && index.trim() ? index.trim() : "_all";
@@ -741,9 +749,9 @@ async function tryOpenPitOs(baseUrl, index, keepAlive, headers, allowInsecureTLS
   );
 }
 async function closePitEs(baseUrl, pitId, headers, allowInsecureTLS, timeoutMs, maxRetries, backoffBaseMs) {
-  const url = `${baseUrl}/_pit/close`;
+  const url = `${baseUrl}/_pit`;
   const body = { id: pitId };
-  const exec = () => httpJsonRequest("POST", url, body, headers, allowInsecureTLS, timeoutMs);
+  const exec = () => httpJsonRequest("DELETE", url, body, headers, allowInsecureTLS, timeoutMs);
   const res = await requestWithRetry(exec, { maxRetries, backoffBaseMs });
   if (!(res.status >= 200 && res.status < 300))
     throw new Error(
@@ -901,17 +909,12 @@ function buildElasticSearchBody(opts) {
     if (!v) return;
     must.push({ match_phrase: { [field]: { query: v } } });
   };
-  const loggerValue = safeString(opts.logger).trim();
-  if (loggerValue) {
-    must.push({
-      bool: {
-        should: [
-          { match_phrase: { logger_name: { query: loggerValue } } },
-          { match_phrase: { logger: { query: loggerValue } } }
-        ],
-        minimum_should_match: 1
-      }
-    });
+  const loggerQuery = buildElasticMessageQuery(safeString(opts.logger), [
+    "logger_name",
+    "logger"
+  ]);
+  if (loggerQuery) {
+    must.push(loggerQuery);
   }
   addField("level", opts.level);
   const messageQuery = buildElasticMessageQuery(
@@ -1018,7 +1021,16 @@ function buildQueryBodyWithPit(opts, pitId) {
     searchAfter: opts.searchAfter
   });
   baseBody.size = opts.size ?? 1e3;
-  baseBody.sort = buildSortArray(opts.sort, resolveTimestampField(opts));
+  const _pitSortOrd = opts.sort ?? "desc";
+  baseBody.sort = [
+    {
+      [resolveTimestampField(opts)]: {
+        order: _pitSortOrd,
+        unmapped_type: "date"
+      }
+    },
+    { _shard_doc: { order: _pitSortOrd } }
+  ];
   baseBody.pit = { id: pitId, keep_alive: opts.keepAlive ?? "1m" };
   const inc = Array.isArray(opts.sourceIncludes) ? opts.sourceIncludes : void 0;
   const exc = Array.isArray(opts.sourceExcludes) ? opts.sourceExcludes : void 0;

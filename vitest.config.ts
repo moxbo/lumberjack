@@ -7,7 +7,16 @@ export default defineConfig({
     // Vitest 4.0.18+: Thread-Pool für schnellere parallele Tests
     pool: "threads",
     include: ["src/**/*.test.ts", "src/**/*.spec.ts"],
-    exclude: ["node_modules", "release", "dist-main", "scripts", "scripts/**"],
+    exclude: [
+      "node_modules",
+      "release",
+      "dist-main",
+      "scripts",
+      "scripts/**",
+      // Integration tests live in *.integration.test.ts and require Docker;
+      // run them separately with: npm run test:integration
+      "src/**/*.integration.test.ts",
+    ],
     passWithNoTests: false,
     server: {
       deps: {
