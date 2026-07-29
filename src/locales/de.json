@@ -356,6 +356,8 @@
       "cut": "Ausschneiden",
       "copy": "Kopieren",
       "paste": "Einfügen",
+      "pasteAndMatchStyle": "Einsetzen und Stil anpassen",
+      "delete": "Löschen",
       "selectAll": "Alles auswählen",
       "view": "Ansicht",
       "reload": "Neu laden",
@@ -369,6 +371,10 @@
       "minimize": "Minimieren",
       "zoom": "Zoomen",
       "front": "Alle nach vorne bringen",
+      "services": "Dienste",
+      "hide": "{{app}} ausblenden",
+      "hideOthers": "Andere ausblenden",
+      "unhide": "Alle einblenden",
       "help": "Hilfe",
       "about": "Über Lumberjack",
       "tcp": "TCP",
@@ -388,7 +394,9 @@
       "helpGuide": "Hilfe / Anleitung…",
       "checkForUpdates": "Nach Updates suchen…",
       "settings": "Einstellungen…",
-      "speech": "Sprachausgabe"
+      "speech": "Sprachausgabe",
+      "startSpeaking": "Sprachausgabe starten",
+      "stopSpeaking": "Sprachausgabe stoppen"
     },
     "about": {
       "title": "Über Lumberjack",

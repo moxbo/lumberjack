@@ -590,6 +590,7 @@ async function httpJsonRequest(method, urlStr, body, headers, allowInsecureTLS, 
       const u = new URL(urlStr);
       const isHttps = u.protocol === "https:";
       const mod = isHttps ? import_https.default : import_http.default;
+      const payload = method === "GET" || body == null ? "" : JSON.stringify(body);
       const opts = {
         method,
         hostname: u.hostname,
@@ -599,7 +600,8 @@ async function httpJsonRequest(method, urlStr, body, headers, allowInsecureTLS, 
           ...headers || {},
           "content-type": "application/json",
           "accept-encoding": "gzip, deflate, br",
-          Connection: "keep-alive"
+          Connection: "keep-alive",
+          ...payload ? { "content-length": String(Buffer.byteLength(payload)) } : {}
         },
         agent: isHttps ? allowInsecureTLS ? HTTPS_INSECURE_KEEPALIVE_AGENT : HTTPS_KEEPALIVE_AGENT : HTTP_KEEPALIVE_AGENT
       };
@@ -656,7 +658,6 @@ async function httpJsonRequest(method, urlStr, body, headers, allowInsecureTLS, 
         if (timer) clearTimeout(timer);
         reject(err);
       });
-      const payload = method === "GET" ? "" : body ? JSON.stringify(body) : "";
       if (payload) req.write(payload);
       req.end();
     } catch (err) {

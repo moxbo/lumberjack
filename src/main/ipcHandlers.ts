@@ -16,7 +16,7 @@ import * as fs from "fs";
 import { WatchManager } from "./FileWatcher";
 import { HttpTailManager } from "./HttpTailManager";
 import { getSharedMainApi } from "./sharedMainApi";
-import { t } from "../locales/mainI18n";
+import { setLocale, t } from "../locales/mainI18n";
 import {
   DroppedFile,
   ElasticSearchOptions,
@@ -256,10 +256,20 @@ export function registerIpcHandlers(
           return { ok: false, error: t("main.errors.saveFailed") };
         }
 
+        const nextLocale =
+          patch.locale === "de" || patch.locale === "en" ? patch.locale : null;
+        if (nextLocale) {
+          setLocale(nextLocale);
+        }
+
         updateWindowTitles();
 
-        // Update menu if follow status changed (to show checkmark)
-        if (typeof patch.follow === "boolean" && sharedApi.updateAppMenu) {
+        // Rebuild native labels after a locale change and the follow checkmark
+        // after a follow-mode change.
+        if (
+          (typeof patch.follow === "boolean" || nextLocale !== null) &&
+          sharedApi.updateAppMenu
+        ) {
           sharedApi.updateAppMenu();
         }
 

@@ -1193,7 +1193,10 @@ function buildMenu(): void {
           {
             label: app.name,
             submenu: [
-              { role: "about" as const },
+              {
+                role: "about" as const,
+                label: t("main.menu.about"),
+              },
               {
                 label: t("main.menu.checkForUpdates"),
                 click: () => {
@@ -1218,13 +1221,28 @@ function buildMenu(): void {
                   ),
               },
               { type: "separator" as const },
-              { role: "services" as const },
+              {
+                role: "services" as const,
+                label: t("main.menu.services"),
+              },
               { type: "separator" as const },
-              { role: "hide" as const },
-              { role: "hideOthers" as const },
-              { role: "unhide" as const },
+              {
+                role: "hide" as const,
+                label: t("main.menu.hide", { app: app.name }),
+              },
+              {
+                role: "hideOthers" as const,
+                label: t("main.menu.hideOthers"),
+              },
+              {
+                role: "unhide" as const,
+                label: t("main.menu.unhide"),
+              },
               { type: "separator" as const },
-              { role: "quit" as const },
+              {
+                role: "quit" as const,
+                label: t("main.menu.quit"),
+              },
             ],
           },
         ] as Electron.MenuItemConstructorOptions[])
@@ -1281,8 +1299,8 @@ function buildMenu(): void {
         },
         { type: "separator" as const },
         (isMac
-          ? { role: "close" as const }
-          : { role: "quit" as const }) as never,
+          ? { role: "close" as const, label: t("main.menu.closeWindow") }
+          : { role: "quit" as const, label: t("main.menu.quit") }) as never,
       ],
     },
     {
@@ -1296,20 +1314,32 @@ function buildMenu(): void {
         { role: "paste" as const, label: t("main.menu.paste") },
         ...(isMac
           ? ([
-              { role: "pasteAndMatchStyle" as const },
-              { role: "delete" as const },
-              { role: "selectAll" as const },
+              {
+                role: "pasteAndMatchStyle" as const,
+                label: t("main.menu.pasteAndMatchStyle"),
+              },
+              { role: "delete" as const, label: t("main.menu.delete") },
+              {
+                role: "selectAll" as const,
+                label: t("main.menu.selectAll"),
+              },
               { type: "separator" as const },
               {
                 label: t("main.menu.speech") || "Speech",
                 submenu: [
-                  { role: "startSpeaking" as const },
-                  { role: "stopSpeaking" as const },
+                  {
+                    role: "startSpeaking" as const,
+                    label: t("main.menu.startSpeaking"),
+                  },
+                  {
+                    role: "stopSpeaking" as const,
+                    label: t("main.menu.stopSpeaking"),
+                  },
                 ],
               },
             ] as Electron.MenuItemConstructorOptions[])
           : ([
-              { role: "delete" as const },
+              { role: "delete" as const, label: t("main.menu.delete") },
               { type: "separator" as const },
               { role: "selectAll" as const, label: t("main.menu.selectAll") },
             ] as Electron.MenuItemConstructorOptions[])),
@@ -1396,17 +1426,26 @@ function buildMenu(): void {
         ...(isDev
           ? [
               { type: "separator" as const },
-              { role: "reload" as const },
-              { role: "forceReload" as const },
-              { role: "toggleDevTools" as const },
+              { role: "reload" as const, label: t("main.menu.reload") },
+              {
+                role: "forceReload" as const,
+                label: t("main.menu.forceReload"),
+              },
+              {
+                role: "toggleDevTools" as const,
+                label: t("main.menu.toggleDevTools"),
+              },
             ]
           : []),
         { type: "separator" as const },
-        { role: "resetZoom" as const },
-        { role: "zoomIn" as const },
-        { role: "zoomOut" as const },
+        { role: "resetZoom" as const, label: t("main.menu.resetZoom") },
+        { role: "zoomIn" as const, label: t("main.menu.zoomIn") },
+        { role: "zoomOut" as const, label: t("main.menu.zoomOut") },
         { type: "separator" as const },
-        { role: "togglefullscreen" as const },
+        {
+          role: "togglefullscreen" as const,
+          label: t("main.menu.toggleFullscreen"),
+        },
       ],
     },
     // Window-Menü (macOS Standard)
@@ -1415,12 +1454,15 @@ function buildMenu(): void {
           {
             label: t("main.menu.window") || "Window",
             submenu: [
-              { role: "minimize" as const },
-              { role: "zoom" as const },
+              {
+                role: "minimize" as const,
+                label: t("main.menu.minimize"),
+              },
+              { role: "zoom" as const, label: t("main.menu.zoom") },
               { type: "separator" as const },
-              { role: "front" as const },
+              { role: "front" as const, label: t("main.menu.front") },
               { type: "separator" as const },
-              { role: "window" as const },
+              { role: "window" as const, label: t("main.menu.window") },
             ],
           },
         ] as Electron.MenuItemConstructorOptions[])
@@ -1544,13 +1586,19 @@ function installPlaceholderMenu(): void {
         {
           label: app.name,
           submenu: [
-            { role: "about" as const },
+            { role: "about" as const, label: t("main.menu.about") },
             { type: "separator" as const },
-            { role: "hide" as const },
-            { role: "hideOthers" as const },
-            { role: "unhide" as const },
+            {
+              role: "hide" as const,
+              label: t("main.menu.hide", { app: app.name }),
+            },
+            {
+              role: "hideOthers" as const,
+              label: t("main.menu.hideOthers"),
+            },
+            { role: "unhide" as const, label: t("main.menu.unhide") },
             { type: "separator" as const },
-            { role: "quit" as const },
+            { role: "quit" as const, label: t("main.menu.quit") },
           ],
         },
       ]);
