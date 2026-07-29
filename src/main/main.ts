@@ -178,6 +178,17 @@ log.transports.console.level = isDev ? "debug" : "info";
 // In production, only log info and above to file (not debug/silly)
 log.transports.file.level = isDev ? false : "info";
 
+// Multi-instance safety: each secondary instance writes to its own log file.
+// The app can run multiple processes in parallel (see openWindowInNewProcess).
+// They share the same userData directory, so without a per-instance file name
+// they would all append to main.log concurrently. That corrupts multi-line
+// entries and makes electron-log's size-based rotation (archiveLog) race
+// between processes. Giving each multi-instance launch a dedicated file avoids
+// interleaving and rotation conflicts entirely.
+if (isMultiInstanceLaunch) {
+  log.transports.file.fileName = `main-${process.pid}.log`;
+}
+
 // Quick-Win #8: Hot-Path-Diagnose-Logs (silly/debug in TCP/Flush/Freeze/Batch)
 // werden in Production komplett entkoppelt. Vorher wurden Template-Strings
 // und Diagnose-Objekte selbst dann konstruiert, wenn der Transport sie
@@ -214,8 +225,9 @@ if (log.transports.file.level !== false) {
           fs.mkdirSync(logDir, { recursive: true });
         }
 
-        // Test write permissions with a temp file
-        const testFile = path.join(logDir, ".write-test");
+        // Test write permissions with a temp file. Use a per-process name so
+        // concurrent instances don't unlink each other's probe file.
+        const testFile = path.join(logDir, `.write-test-${process.pid}`);
         try {
           fs.writeFileSync(testFile, "test", "utf8");
           fs.unlinkSync(testFile);
@@ -3208,8 +3220,11 @@ app
       log.info(`[PERF] Initial window created after ${windowCreatedTime}ms`);
 
       // Initialize auto-updater in production (not in dev mode) - DEFERRED
-      // Delay auto-updater to after window is shown for faster perceived startup
-      if (!isDev) {
+      // Delay auto-updater to after window is shown for faster perceived startup.
+      // Only the primary instance runs the updater: secondary (multi-instance)
+      // processes must not check/download/install in parallel, otherwise they
+      // corrupt the shared updater cache and could launch the installer twice.
+      if (!isDev && !isMultiInstanceLaunch) {
         setTimeout(() => {
           try {
             const autoUpdater = getAutoUpdaterService();
