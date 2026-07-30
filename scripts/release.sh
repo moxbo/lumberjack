@@ -68,11 +68,14 @@ cd "$REPO_ROOT"
 blue "▶ Sanity checks…"
 
 # 1) git available
+echo "  • Checking required tools…"
 command -v git >/dev/null || die "git not found"
 command -v node >/dev/null || die "node not found"
 command -v npm  >/dev/null || die "npm not found"
+green "  ✓ Required tools found"
 
 # 2) on branch main
+echo "  • Checking current branch…"
 CURRENT_BRANCH="$(git rev-parse --abbrev-ref HEAD)"
 if [[ "$CURRENT_BRANCH" != "main" ]]; then
   yellow "  ⚠ You are on branch '$CURRENT_BRANCH' (not 'main')."
@@ -80,6 +83,7 @@ if [[ "$CURRENT_BRANCH" != "main" ]]; then
 fi
 
 # 3) clean working tree
+echo "  • Checking working tree…"
 if [[ -n "$(git status --porcelain)" ]]; then
   red "  ❌ Working tree has uncommitted changes:"
   git status --short
@@ -90,11 +94,13 @@ fi
 #    Being AHEAD of origin is fine — the atomic push at the end ships those
 #    commits together with the tag, so there is no need to push them first.
 #    Only abort if the branch is BEHIND (diverged), which would require a pull.
-git fetch origin --tags --quiet
+echo "  • Fetching tags from origin (authentication may be required)…"
+git fetch origin --tags --verbose
 REMOTE="$(git rev-parse "@{u}" 2>/dev/null || echo "")"
 if [[ -n "$REMOTE" ]]; then
-  BEHIND="$(git rev-list --count @..@{u})"
-  AHEAD="$(git rev-list --count @{u}..@)"
+  echo "  • Comparing local branch with upstream…"
+  BEHIND="$(git rev-list --count '@..@{u}')"
+  AHEAD="$(git rev-list --count '@{u}..@')"
   if [[ "$BEHIND" -gt 0 ]]; then
     die "Your branch is $BEHIND commit(s) behind origin. Pull first."
   fi
@@ -104,9 +110,11 @@ if [[ -n "$REMOTE" ]]; then
 fi
 
 # 5) tag must not already exist (local or remote)
+echo "  • Checking whether tag $TAG is available locally…"
 if git rev-parse "$TAG" >/dev/null 2>&1; then
   die "Tag $TAG already exists locally. Delete with: git tag -d $TAG"
 fi
+echo "  • Checking whether tag $TAG is available on origin…"
 if git ls-remote --tags origin "$TAG" | grep -q "$TAG"; then
   die "Tag $TAG already exists on origin. Choose a different version."
 fi
