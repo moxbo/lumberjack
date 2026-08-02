@@ -20,6 +20,10 @@ const MAX_SIG_MSG_LENGTH = 10 * 1024; // 10 KB
  */
 export function entrySignatureForMerge(e: any): string {
   if (!e) return "";
+  if (typeof e.signature === "string") {
+    const src = e?.source != null ? String(e.source) : "";
+    return `${e.signature}|${src}`;
+  }
 
   // Check cache first
   const cached = mergeSignatureCache.get(e);
@@ -60,6 +64,7 @@ export function entrySignatureForMerge(e: any): string {
  */
 export function entrySignature(e: any): string {
   if (!e) return "";
+  if (typeof e.signature === "string") return e.signature;
 
   // Check cache first
   const cached = signatureCache.get(e);

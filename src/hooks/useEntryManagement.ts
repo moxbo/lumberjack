@@ -1,500 +1,271 @@
 /**
- * Hook for managing log entries (state, IPC queue, deduplication)
+ * Persists canonical log entries in IndexedDB and keeps only sortable metadata
+ * in renderer state.
  */
 import { useCallback, useEffect, useRef, useState } from "preact/hooks";
 import { LoggingStore } from "../store/loggingStore";
-import { compareByTimestampId } from "../utils/sort";
 import {
-  entrySignature,
-  isElasticSource,
-  isFileSource,
-  isHttpSource,
-  mergeSorted,
-} from "../utils/entryUtils";
+  pagedLogRepository,
+  startPagedSessionLifecycle,
+} from "../store/paged/session";
+import type { PagedTimestamp } from "../store/paged";
+import { compareByTimestampId, clearTimestampParseCache } from "../utils/sort";
+import { entrySignature, isElasticSource } from "../utils/entryUtils";
 import { clearHighlightCache } from "../renderer/LogRow";
 import { clearTimestampCache } from "../utils/format";
 import { clearRegexCache } from "../utils/highlight";
-import { clearTimestampParseCache } from "../utils/sort";
 import logger from "../utils/logger";
-import {
-  IPC_BATCH_SIZE,
-  IPC_MAX_QUEUE_SIZE,
-  IPC_PROCESS_INTERVAL,
-  TRIM_THRESHOLD_ENTRIES,
-} from "../constants";
-import { getRendererLogEntryPool } from "../store/RendererLogEntryPool";
-import {
-  heavyFieldStore,
-  OFFLOAD_MIN_CHARS,
-  type HeavyRecord,
-} from "../store/heavyFieldStore";
+import { IPC_BATCH_SIZE } from "../constants";
 
 interface UseEntryManagementOptions {
   marksMap: Record<string, string>;
 }
 
-export function useEntryManagement({ marksMap }: UseEntryManagementOptions) {
-  const [entries, setEntries] = useState<any[]>([]);
-  const [nextId, setNextId] = useState<number>(1);
+export interface PagedEntryMetadata {
+  _id: number;
+  timestamp: PagedTimestamp;
+  source: string;
+  signature: string;
+  level?: string | null;
+  logger?: string | null;
+  traceId?: string | null;
+  _mark?: string;
+}
 
-  // Keep a ref in sync with nextId for atomic id assignment
-  const nextIdRef = useRef<number>(1);
-  useEffect(() => {
-    nextIdRef.current = nextId;
-  }, [nextId]);
-
-  // Memory Pool for log entries - reduces GC pressure with 100k+ entries
-  // Erhöhte Größe für bessere Performance bei 300k+ Einträgen
-  const poolRef = useRef(
-    getRendererLogEntryPool({
-      maxSize: 100_000,
-      initialSize: 5_000,
-      enableLogging: false,
-    }),
+function mergeSortedMetadata(
+  previous: PagedEntryMetadata[],
+  incoming: PagedEntryMetadata[],
+): PagedEntryMetadata[] {
+  if (previous.length === 0) return incoming;
+  if (incoming.length === 0) return previous;
+  const result = new Array<PagedEntryMetadata>(
+    previous.length + incoming.length,
   );
+  let previousIndex = 0;
+  let incomingIndex = 0;
+  let outputIndex = 0;
+  while (previousIndex < previous.length && incomingIndex < incoming.length) {
+    if (
+      compareByTimestampId(
+        previous[previousIndex]!,
+        incoming[incomingIndex]!,
+      ) <= 0
+    ) {
+      result[outputIndex++] = previous[previousIndex++]!;
+    } else {
+      result[outputIndex++] = incoming[incomingIndex++]!;
+    }
+  }
+  while (previousIndex < previous.length) {
+    result[outputIndex++] = previous[previousIndex++]!;
+  }
+  while (incomingIndex < incoming.length) {
+    result[outputIndex++] = incoming[incomingIndex++]!;
+  }
+  return result;
+}
 
-  // IPC batching queue to prevent renderer overload
-  const ipcQueueRef = useRef<any[]>([]);
-  const ipcProcessingRef = useRef<boolean>(false);
-  const ipcFlushTimerRef = useRef<number | null>(null);
+export function useEntryManagement({ marksMap }: UseEntryManagementOptions) {
+  const [entries, setMetadataEntries] = useState<PagedEntryMetadata[]>([]);
+  const [storageError, setStorageError] = useState<Error | null>(null);
+  const marksMapRef = useRef(marksMap);
+  marksMapRef.current = marksMap;
+  const metadataByIdRef = useRef<Array<PagedEntryMetadata | undefined>>([]);
 
-  // Dedupe caches
-  const fileSigCacheRef = useRef<Map<string, Set<string>>>(new Map());
-  const httpSigCacheRef = useRef<Map<string, Set<string>>>(new Map());
+  const generationRef = useRef(0);
+  const operationTailRef = useRef<Promise<void> | null>(null);
+  const queueRef = useRef<
+    Array<{
+      entries: any[];
+      options?: { ignoreExistingForElastic?: boolean };
+      generation: number;
+    }>
+  >([]);
+  const drainingRef = useRef(false);
 
-  // Process IPC queue ref (to avoid stale closure)
-  const processIpcQueueRef = useRef<() => void>(() => {});
+  if (operationTailRef.current === null) {
+    operationTailRef.current = pagedLogRepository.clear().catch((error) => {
+      const normalized =
+        error instanceof Error ? error : new Error(String(error));
+      setStorageError(normalized);
+      logger.error("Paged log storage initialization failed:", normalized);
+      throw normalized;
+    });
+  }
 
-  // Internal append function
-  const appendEntriesInternal = useCallback(
-    (newEntries: any[], options?: { ignoreExistingForElastic?: boolean }) => {
-      if (!Array.isArray(newEntries) || newEntries.length === 0) return;
+  useEffect(() => {
+    const stopLifecycle = startPagedSessionLifecycle((error) => {
+      logger.error("Maintaining paged log session failed:", error);
+    });
+    return () => {
+      stopLifecycle();
+      void pagedLogRepository.destroy().catch((error) => {
+        logger.error("Cleaning up paged log storage failed:", error);
+      });
+    };
+  }, []);
 
-      const ignoreExistingForElastic = !!options?.ignoreExistingForElastic;
+  const processBatch = useCallback(
+    async (
+      newEntries: any[],
+      options: { ignoreExistingForElastic?: boolean } | undefined,
+      generation: number,
+    ): Promise<void> => {
+      if (newEntries.length === 0) return;
 
-      // Check sources
-      const needEsDedup = newEntries.some((e) => isElasticSource(e));
-      const needFileDedup = newEntries.some((e) => isFileSource(e));
-      const needHttpDedup = newEntries.some((e) => isHttpSource(e));
+      const batchKeys = new Set<string>();
+      const candidates: Array<{ source: string; signature: string }> = [];
+      const prepared: any[] = [];
+      for (const input of newEntries) {
+        if (!input) continue;
+        const source = String(input.source ?? "");
+        const signature = entrySignature(input);
+        const key = `${source}\0${signature}`;
+        if (batchKeys.has(key)) continue;
+        batchKeys.add(key);
 
-      // Build ES signature set if needed
-      let existingEsSigs: Set<string> | null = null;
-      if (needEsDedup && !ignoreExistingForElastic) {
-        existingEsSigs = new Set<string>();
-        for (const e of entries) {
-          if (isElasticSource(e)) existingEsSigs.add(entrySignature(e));
-        }
+        const ignoreExisting =
+          options?.ignoreExistingForElastic === true && isElasticSource(input);
+        if (!ignoreExisting) candidates.push({ source, signature });
+        prepared.push({ input, source, signature, ignoreExisting });
       }
 
-      // Initialize file cache if needed
-      if (
-        needFileDedup &&
-        fileSigCacheRef.current.size === 0 &&
-        entries.length
-      ) {
-        const map = fileSigCacheRef.current;
-        for (const e of entries) {
-          if (!isFileSource(e)) continue;
-          const src = String(e.source);
-          let set = map.get(src);
-          if (!set) {
-            set = new Set<string>();
-            map.set(src, set);
-          }
-          set.add(entrySignature(e));
-        }
-      }
-
-      // Initialize HTTP cache if needed
-      if (
-        needHttpDedup &&
-        httpSigCacheRef.current.size === 0 &&
-        entries.length
-      ) {
-        const map = httpSigCacheRef.current;
-        for (const e of entries) {
-          if (!isHttpSource(e)) continue;
-          const src = String(e.source);
-          let set = map.get(src);
-          if (!set) {
-            set = new Set<string>();
-            map.set(src, set);
-          }
-          set.add(entrySignature(e));
-        }
-      }
-
-      // Batch deduplication
-      const batchEsSigs = new Set<string>();
-      const batchFileSigsBySrc = new Map<string, Set<string>>();
-      const batchHttpSigsBySrc = new Map<string, Set<string>>();
-      const accepted: any[] = [];
-
-      for (const e of newEntries) {
-        // ES dedup
-        if (needEsDedup && isElasticSource(e)) {
-          const sig = entrySignature(e);
-          if (
-            !ignoreExistingForElastic &&
-            existingEsSigs &&
-            existingEsSigs.has(sig)
-          )
-            continue;
-          if (batchEsSigs.has(sig)) continue;
-          batchEsSigs.add(sig);
-          accepted.push(e);
-          continue;
-        }
-
-        // File dedup
-        if (needFileDedup && isFileSource(e)) {
-          const src = String(e.source || "");
-          const sig = entrySignature(e);
-          const existingSet = fileSigCacheRef.current.get(src);
-          if (existingSet && existingSet.has(sig)) continue;
-          let batchSet = batchFileSigsBySrc.get(src);
-          if (!batchSet) {
-            batchSet = new Set<string>();
-            batchFileSigsBySrc.set(src, batchSet);
-          }
-          if (batchSet.has(sig)) continue;
-          batchSet.add(sig);
-          accepted.push(e);
-          continue;
-        }
-
-        // HTTP dedup
-        if (needHttpDedup && isHttpSource(e)) {
-          const src = String(e.source || "");
-          const sig = entrySignature(e);
-          const existingSet = httpSigCacheRef.current.get(src);
-          if (existingSet && existingSet.has(sig)) continue;
-          let batchSet = batchHttpSigsBySrc.get(src);
-          if (!batchSet) {
-            batchSet = new Set<string>();
-            batchHttpSigsBySrc.set(src, batchSet);
-          }
-          if (batchSet.has(sig)) continue;
-          batchSet.add(sig);
-          accepted.push(e);
-          continue;
-        }
-
-        // Other sources
-        accepted.push(e);
-      }
-
+      const existing =
+        candidates.length > 0
+          ? await pagedLogRepository.findExistingSignatures(candidates)
+          : new Set<string>();
+      if (generation !== generationRef.current) return;
+      const accepted = prepared
+        .filter(
+          ({ source, signature, ignoreExisting }) =>
+            ignoreExisting || !existing.has(`${source}\0${signature}`),
+        )
+        .map(({ input }) => {
+          const entry = { ...input };
+          delete entry.id;
+          delete entry._id;
+          delete entry.signature;
+          return entry;
+        });
       if (accepted.length === 0) return;
 
-      // Assign IDs and apply marks using pool for efficient memory management
-      const baseId = nextIdRef.current;
-      // Acquire pooled objects for better memory efficiency at 100k+ entries
-      const pooledEntries = poolRef.current.acquireBatch(accepted.length);
-      const toAdd = accepted.map((e, i) => {
-        // Use pooled entry and copy properties (fallback to new object if pool exhausted)
-        const pooled = pooledEntries[i] ?? {
-          timestamp: null,
-          level: null,
-          logger: null,
-          thread: null,
-          message: "",
-          traceId: null,
-          stackTrace: null,
-          raw: null,
-          source: "",
-          _id: undefined,
-          _mark: undefined,
-          mdc: undefined,
-          service: undefined,
-          _fullMessage: undefined,
-          _truncated: undefined,
-          _messageSize: undefined,
-        };
-        pooled.timestamp = e.timestamp ?? null;
-        pooled.level = e.level ?? null;
-        pooled.logger = e.logger ?? null;
-        pooled.thread = e.thread ?? null;
-        pooled.message = e.message ?? "";
-        pooled.traceId = e.traceId ?? null;
-        pooled.stackTrace = e.stackTrace ?? null;
-        pooled.raw = e.raw ?? null;
-        pooled.source = e.source ?? "";
-        pooled.mdc = e.mdc;
-        pooled.service = e.service;
-        pooled._fullMessage = e._fullMessage;
-        pooled._truncated = e._truncated;
-        pooled._messageSize = e._messageSize;
-        // Preserve mark color from imported entries (JSON/NDJSON re-import).
-        // Streaming sources (TCP/HTTP/Elastic) don't set _mark so this is a no-op
-        // for them; marksMap below still wins for entries the user already marked
-        // in the current session.
-        pooled._mark =
-          typeof e._mark === "string" && e._mark ? e._mark : undefined;
-        pooled._id = baseId + i;
-
-        // Apply marks from the live marks map – existing user marks take
-        // precedence over the value carried in the imported entry.
-        const sig = entrySignature(pooled);
-        if (marksMap[sig]) pooled._mark = marksMap[sig];
-
-        return pooled;
-      });
-      nextIdRef.current = baseId + toAdd.length;
-
-      // Update file cache
-      if (needFileDedup) {
-        const map = fileSigCacheRef.current;
-        for (const n of toAdd) {
-          if (!isFileSource(n)) continue;
-          const src = String(n.source || "");
-          let set = map.get(src);
-          if (!set) {
-            set = new Set<string>();
-            map.set(src, set);
-          }
-          set.add(entrySignature(n));
-        }
-      }
-
-      // Update HTTP cache
-      if (needHttpDedup) {
-        const map = httpSigCacheRef.current;
-        for (const n of toAdd) {
-          if (!isHttpSource(n)) continue;
-          const src = String(n.source || "");
-          let set = map.get(src);
-          if (!set) {
-            set = new Set<string>();
-            map.set(src, set);
-          }
-          set.add(entrySignature(n));
-        }
-      }
-
-      // Add to LoggingStore (this computes each entry's `mdc` from `raw`).
       try {
-        (LoggingStore as any).addEvents(toAdd);
-      } catch (e) {
-        logger.error("LoggingStore.addEvents error:", e);
+        LoggingStore.addEvents(accepted as any);
+      } catch (error) {
+        logger.error("LoggingStore.addEvents error:", error);
       }
 
-      // Memory: release the (potentially large) raw payload after MDC has been
-      // derived. The renderer never reads `entry.raw` again – neither the log
-      // table, the detail panel (uses `mdc`) nor any export format serialises
-      // it. Keeping the full parsed object per entry roughly doubled the heap
-      // footprint and caused Out-of-Memory renderer crashes ("app restarts")
-      // around 200k–300k entries. `addEvents` above runs synchronously and all
-      // listeners have already consumed `raw` by this point, so it is safe to
-      // free it here.
-      for (let i = 0; i < toAdd.length; i++) {
-        const entry = toAdd[i];
-        if (entry) entry.raw = null;
+      for (const entry of accepted) {
+        entry.raw = null;
+        const mark = marksMapRef.current[entrySignature(entry)];
+        if (mark) entry._mark = mark;
       }
 
-      // Phase 2: Große Detail-Felder (stackTrace, _fullMessage) auslagern.
-      //
-      // Diese Felder werden ausschließlich in der Detailansicht bzw. beim
-      // Export benötigt – die Log-Tabelle, die Filterung und die Suche lesen
-      // sie NIE. Wir schreiben sie (ab einer Mindestgröße) in den
-      // heavyFieldStore (IndexedDB) und entfernen sie aus dem In-Memory-Eintrag.
-      // Die Detailansicht lädt sie bei Bedarf per `_id` nach. So bleibt der
-      // Renderer-Heap bei großen Stacktraces / sehr langen Nachrichten klein,
-      // während Scrollen/Filtern/Suchen vollständig synchron bleiben.
-      const offloadRecords: HeavyRecord[] = [];
-      for (let i = 0; i < toAdd.length; i++) {
-        const entry = toAdd[i];
-        if (!entry || typeof entry._id !== "number") continue;
-        const stack =
-          typeof entry.stackTrace === "string" ? entry.stackTrace : "";
-        const full =
-          typeof entry._fullMessage === "string" ? entry._fullMessage : "";
-        const stackBig = stack.length > OFFLOAD_MIN_CHARS;
-        const fullBig = full.length > OFFLOAD_MIN_CHARS;
-        if (!stackBig && !fullBig) continue;
-
-        const rec: HeavyRecord = { _id: entry._id };
-        if (stackBig) {
-          rec.stackTrace = stack;
-          entry._hasStack = true; // Header in der Detailansicht anzeigen
-          entry.stackTrace = null; // aus dem Speicher entfernen
-        }
-        if (fullBig) {
-          rec._fullMessage = full;
-          rec._messageSize = entry._messageSize;
-          entry._fullMessage = undefined; // aus dem Speicher entfernen
-        }
-        entry._offloaded = true;
-        offloadRecords.push(rec);
-      }
-      if (offloadRecords.length > 0) {
-        // Best-effort, asynchron – blockiert das Append nie.
-        void heavyFieldStore.putMany(offloadRecords);
-      }
-
-      // Update state
-      setEntries((prev) => {
-        const sortedNew = toAdd.slice().sort(compareByTimestampId as any);
-        let newState = mergeSorted(prev, sortedNew);
-
-        // Memory safety: trim if needed
-        if (newState.length > TRIM_THRESHOLD_ENTRIES) {
-          const trimCount =
-            newState.length - Math.floor(TRIM_THRESHOLD_ENTRIES * 0.8);
-          console.warn(
-            `[renderer-memory] Trimming ${trimCount} oldest entries (${newState.length} -> ${newState.length - trimCount})`,
-          );
-
-          // Recycle trimmed entries back to pool to reduce GC pressure
-          const trimmedEntries = newState.slice(0, trimCount);
-          poolRef.current.releaseBatch(trimmedEntries);
-
-          newState = newState.slice(trimCount);
-        }
-
-        return newState;
+      const ids = await pagedLogRepository.putMany(accepted);
+      if (generation !== generationRef.current) return;
+      const metadata = accepted.map((entry, index): PagedEntryMetadata => {
+        const signature = entrySignature(entry);
+        return {
+          _id: ids[index]!,
+          timestamp: entry.timestamp ?? null,
+          source: String(entry.source ?? ""),
+          signature,
+          level: entry.level ?? null,
+          logger: entry.logger ?? null,
+          traceId: entry.traceId ?? null,
+          _mark:
+            typeof entry._mark === "string" && entry._mark
+              ? entry._mark
+              : undefined,
+        };
       });
+      for (const item of metadata) metadataByIdRef.current[item._id] = item;
+      metadata.sort(compareByTimestampId as any);
 
-      setNextId((prev) => prev + toAdd.length);
+      setMetadataEntries((previous) => mergeSortedMetadata(previous, metadata));
+      setStorageError(null);
     },
-    [entries, marksMap],
+    [],
   );
 
-  // Process queued entries
-
-  // Keep ref in sync
-  processIpcQueueRef.current = useCallback(() => {
-    if (ipcProcessingRef.current) return;
-    if (ipcQueueRef.current.length === 0) return;
-
-    ipcProcessingRef.current = true;
-
-    const batch = ipcQueueRef.current.splice(0, IPC_BATCH_SIZE);
-    const remaining = ipcQueueRef.current.length;
-
-    if (remaining > 0) {
-      console.warn(
-        `[renderer-memory] Processing batch of ${batch.length}, ${remaining} entries still queued`,
-      );
-    }
-
-    appendEntriesInternal(batch);
-    ipcProcessingRef.current = false;
-
-    // Schedule next batch using requestIdleCallback for better UI responsiveness
-    if (ipcQueueRef.current.length > 0) {
-      if (ipcFlushTimerRef.current) {
-        clearTimeout(ipcFlushTimerRef.current);
-      }
-      // Use requestIdleCallback if available for non-blocking processing
-      if (typeof requestIdleCallback === "function") {
-        requestIdleCallback(
-          () => {
-            processIpcQueueRef.current();
-          },
-          { timeout: IPC_PROCESS_INTERVAL * 2 },
+  const drainQueue = useCallback(async (): Promise<void> => {
+    if (drainingRef.current) return;
+    drainingRef.current = true;
+    try {
+      while (queueRef.current.length > 0) {
+        const batch = queueRef.current.shift()!;
+        const previous = operationTailRef.current ?? Promise.resolve();
+        const operation = previous.then(() =>
+          processBatch(batch.entries, batch.options, batch.generation),
         );
-      } else {
-        ipcFlushTimerRef.current = window.setTimeout(() => {
-          ipcFlushTimerRef.current = null;
-          processIpcQueueRef.current();
-        }, IPC_PROCESS_INTERVAL);
+        operationTailRef.current = operation.catch((error) => {
+          const normalized =
+            error instanceof Error ? error : new Error(String(error));
+          setStorageError(normalized);
+          logger.error("Paged log append failed:", normalized);
+        });
+        await operationTailRef.current;
       }
+    } finally {
+      drainingRef.current = false;
+      if (queueRef.current.length > 0) void drainQueue();
     }
-  }, [appendEntriesInternal]);
+  }, [processBatch]);
 
-  // Public append function
   const appendEntries = useCallback(
     (newEntries: any[], options?: { ignoreExistingForElastic?: boolean }) => {
       if (!Array.isArray(newEntries) || newEntries.length === 0) return;
-
-      // Small batches or Elastic: process directly
-      const isElasticBatch = newEntries.some((e) => isElasticSource(e));
-      if (
-        newEntries.length <= 500 ||
-        isElasticBatch ||
-        options?.ignoreExistingForElastic
-      ) {
-        appendEntriesInternal(newEntries, options);
-      } else {
-        // Bounded imports (file loads) deliver the complete, finite set of
-        // entries in a single call. They are already fully materialised in
-        // memory, so queuing them adds no extra pressure – and discarding any
-        // of them would silently drop log lines. The lossy overflow guard
-        // below only makes sense for *unbounded* live streams (TCP/HTTP) where
-        // a fast producer could outpace the consumer and exhaust memory.
-        const isBoundedBatch = newEntries.some((e) => isFileSource(e));
-
-        // Large batch: queue for controlled processing
-        ipcQueueRef.current.push(...newEntries);
-
-        // Limit queue size – but never drop entries from a bounded file import.
-        // The final-state trim (TRIM_THRESHOLD_ENTRIES) still guards against
-        // true out-of-memory situations after the entries are merged.
-        if (
-          !isBoundedBatch &&
-          ipcQueueRef.current.length > IPC_MAX_QUEUE_SIZE
-        ) {
-          const overflow = ipcQueueRef.current.length - IPC_MAX_QUEUE_SIZE;
-          ipcQueueRef.current.splice(0, overflow);
-          console.warn(
-            `[renderer-memory] Queue overflow, discarded ${overflow} oldest entries`,
-          );
-        }
-
-        // Start processing
-        if (!ipcFlushTimerRef.current && !ipcProcessingRef.current) {
-          setTimeout(() => processIpcQueueRef.current(), 0);
-        }
+      const generation = generationRef.current;
+      for (let start = 0; start < newEntries.length; start += IPC_BATCH_SIZE) {
+        queueRef.current.push({
+          entries: newEntries.slice(start, start + IPC_BATCH_SIZE),
+          options,
+          generation,
+        });
       }
+      void drainQueue();
     },
-    [appendEntriesInternal],
+    [drainQueue],
   );
 
-  // Clear all entries
   const clearEntries = useCallback(() => {
-    // Recycle all entries back to pool before clearing
-    setEntries((prev) => {
-      if (prev.length > 0) {
-        poolRef.current.releaseBatch(prev);
-      }
-      return [];
-    });
-
-    setNextId(1);
-    nextIdRef.current = 1;
-    fileSigCacheRef.current = new Map();
-    httpSigCacheRef.current = new Map();
+    generationRef.current++;
+    queueRef.current = [];
+    metadataByIdRef.current = [];
+    setMetadataEntries([]);
     clearHighlightCache();
     clearTimestampCache();
     clearTimestampParseCache();
     clearRegexCache();
-
-    // Phase 2: ausgelagerte Detail-Felder verwerfen. Wichtig, weil `_id`s
-    // nach dem Reset wieder bei 1 beginnen und sonst Alt-Records fälschlich
-    // für neue Einträge geladen würden.
-    void heavyFieldStore.clear();
-
     try {
-      (LoggingStore as any).reset();
-    } catch (e) {
-      logger.error("LoggingStore.reset error:", e);
+      LoggingStore.reset();
+    } catch (error) {
+      logger.error("LoggingStore.reset error:", error);
     }
+
+    const previous = operationTailRef.current ?? Promise.resolve();
+    operationTailRef.current = previous
+      .then(() => pagedLogRepository.clear())
+      .then(() => setStorageError(null))
+      .catch((error) => {
+        const normalized =
+          error instanceof Error ? error : new Error(String(error));
+        setStorageError(normalized);
+        logger.error("Paged log clear failed:", normalized);
+      });
   }, []);
 
-  // Get pool statistics for debugging/monitoring
-  const getPoolStats = useCallback(() => {
-    return poolRef.current.getStats();
-  }, []);
+  const getMetadata = useCallback(
+    (id: number) => metadataByIdRef.current[id],
+    [],
+  );
 
   return {
     entries,
-    setEntries,
     appendEntries,
     clearEntries,
-    nextId,
-    setNextId,
-    fileSigCacheRef,
-    httpSigCacheRef,
-    getPoolStats,
+    storageError,
+    repository: pagedLogRepository,
+    getMetadata,
   };
 }

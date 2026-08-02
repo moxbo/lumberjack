@@ -1,48 +1,13 @@
-// filepath: /Users/mo/develop/my-electron-app/src/workers/filterWorker.ts
-/**
- * Web Worker für das Filtern großer Log-Mengen.
- *
- * Der Worker ist *zustandsbehaftet*: Einträge werden einmal per `setEntries`
- * (und inkrementell per `appendEntries`) in den Worker geladen und dort
- * gecached. Beim eigentlichen Filtern muss nur noch die (kleine) Optionen-
- * Nachricht gesendet werden – nicht erneut der komplette Datensatz. Das
- * verhindert, dass bei 300k+ Einträgen pro Tastendruck Hunderttausende
- * Objekte über die postMessage-Grenze geklont werden (Haupt-Thread-Blocker).
- */
-
+import {
+  openPagedDatabase,
+  PROJECTION_STORE_NAME,
+  type ProjectionRecord,
+} from "../store/paged";
 import { compileDcFilter, matchesCompiledDcFilter } from "../utils/dcMatch";
-// Geteilte msgMatches-Implementierung nutzen: sie cached tokenisierte
-// Ausdrücke (tokenCache), sodass der Filter-Ausdruck NICHT pro Eintrag neu
-// tokenisiert wird. Die bisherige lokale Kopie tokenisierte den Ausdruck für
-// jeden der bis zu 300k Einträge erneut.
 import { msgMatches, type SearchMode } from "../utils/msgFilter";
+import { compareByTimestampId } from "../utils/sort";
 
-// Message types
-interface SetEntriesRequest {
-  type: "setEntries";
-  entries: any[];
-}
-
-interface AppendEntriesRequest {
-  type: "appendEntries";
-  entries: any[];
-}
-
-interface FilterRequest {
-  type: "filter";
-  /**
-   * Optional: Wenn vorhanden, werden diese Einträge gefiltert (Legacy-Pfad,
-   * z.B. Tests). Fehlt das Feld, wird der im Worker gecachte Datensatz genutzt.
-   */
-  entries?: any[];
-  options: FilterOptions;
-  /** Optional request id used by the consumer to discard stale results. */
-  requestId?: number;
-}
-
-type WorkerRequest = SetEntriesRequest | AppendEntriesRequest | FilterRequest;
-
-interface FilterOptions {
+export interface FilterOptions {
   stdFiltersEnabled: boolean;
   filter: {
     level: string;
@@ -60,16 +25,7 @@ interface FilterOptions {
   navigationSearchMode?: SearchMode;
 }
 
-interface FilterResponse {
-  type: "result";
-  filteredIndices: number[];
-  searchMatchIndices: number[];
-  stats: FilterStats;
-  /** Echoed back from the request so the caller can drop stale results. */
-  requestId?: number;
-}
-
-interface FilterStats {
+export interface FilterStats {
   total: number;
   passed: number;
   rejectedByOnlyMarked: number;
@@ -81,32 +37,80 @@ interface FilterStats {
   rejectedByDC: number;
 }
 
-// Token types for the parser
-// (Die Tokenizer/Parser-Logik lebt jetzt zentral in ../utils/msgFilter.ts.)
-
-// Check if timestamp is within time range
-function matchesTimeRange(
-  timestamp: unknown,
-  fromTs: number | null,
-  toTs: number | null,
-): boolean {
-  if (fromTs === null && toTs === null) return true;
-  try {
-    const ts = new Date(timestamp as string).getTime();
-    if (isNaN(ts)) return true; // Invalid timestamps pass through
-
-    if (fromTs !== null && ts < fromTs) return false;
-    if (toTs !== null && ts > toTs) return false;
-
-    return true;
-  } catch {
-    return true;
-  }
+export interface SetEntriesRequest {
+  type: "setEntries";
+  entries: unknown[];
 }
 
-// Main filter function
-function filterEntries(entries: any[], options: FilterOptions): FilterResponse {
-  const stats: FilterStats = {
+export interface AppendEntriesRequest {
+  type: "appendEntries";
+  entries: unknown[];
+}
+
+export interface FilterRequest {
+  type: "filter";
+  entries?: unknown[];
+  options: FilterOptions;
+  requestId?: number;
+}
+
+export interface PagedFilterRequest {
+  type: "filterPaged";
+  options: FilterOptions;
+  requestId: number;
+  markedSignatures: string[];
+  pageSize?: number;
+  generation?: string | number;
+  revision?: string | number;
+  databaseName?: string;
+}
+
+export interface FilterResponse {
+  type: "result";
+  filteredIndices: number[];
+  searchMatchIndices: number[];
+  stats: FilterStats;
+  requestId?: number;
+  generation?: string | number;
+  revision?: string | number;
+  paged?: boolean;
+}
+
+export interface FilterErrorResponse {
+  type: "error";
+  requestId: number;
+  message: string;
+  generation?: string | number;
+  revision?: string | number;
+  paged: true;
+}
+
+type WorkerRequest =
+  SetEntriesRequest | AppendEntriesRequest | FilterRequest | PagedFilterRequest;
+
+type FilterableEntry = Partial<ProjectionRecord>;
+
+interface PassingReference {
+  id: number;
+  _id: number;
+  timestamp: unknown;
+  navigationMatch?: boolean;
+}
+
+interface PreparedFilter {
+  navigationSearch: string;
+  levelFilter: string;
+  loggerFilter: string;
+  threadFilter: string;
+  fromTs: number | null;
+  toTs: number | null;
+  compiledDcFilter: ReturnType<typeof compileDcFilter>;
+}
+
+const PAGED_SCAN_SIZE = 2_000;
+
+function emptyStats(): FilterStats {
+  return {
     total: 0,
     passed: 0,
     rejectedByOnlyMarked: 0,
@@ -117,106 +121,194 @@ function filterEntries(entries: any[], options: FilterOptions): FilterResponse {
     rejectedByTime: 0,
     rejectedByDC: 0,
   };
+}
 
+function parseOptionalTimestamp(value?: string): number | null {
+  if (!value) return null;
+  const parsed = new Date(value).getTime();
+  return Number.isNaN(parsed) ? null : parsed;
+}
+
+function prepareFilter(options: FilterOptions): PreparedFilter {
+  return {
+    navigationSearch: String(options.navigationSearch || "").trim(),
+    levelFilter: options.filter.level.toUpperCase(),
+    loggerFilter: options.filter.logger.toLowerCase(),
+    threadFilter: options.filter.thread.toLowerCase(),
+    fromTs: parseOptionalTimestamp(options.timeFilterFrom),
+    toTs: parseOptionalTimestamp(options.timeFilterTo),
+    compiledDcFilter: options.dcFilterEnabled
+      ? compileDcFilter(options.dcFilterEntries)
+      : [],
+  };
+}
+
+function matchesTimeRange(
+  timestamp: unknown,
+  fromTs: number | null,
+  toTs: number | null,
+): boolean {
+  if (fromTs === null && toTs === null) return true;
+  try {
+    const ts = new Date(timestamp as string).getTime();
+    if (Number.isNaN(ts)) return true;
+    return !((fromTs !== null && ts < fromTs) || (toTs !== null && ts > toTs));
+  } catch {
+    return true;
+  }
+}
+
+function entryPasses(
+  entry: FilterableEntry,
+  options: FilterOptions,
+  prepared: PreparedFilter,
+  stats: FilterStats,
+  markedSignatures?: ReadonlySet<string>,
+): boolean {
+  const externallyMarked =
+    typeof entry.signature === "string" &&
+    markedSignatures?.has(entry.signature) === true;
+  if (options.onlyMarked && !entry._mark && !externallyMarked) {
+    stats.rejectedByOnlyMarked++;
+    return false;
+  }
+
+  if (options.stdFiltersEnabled) {
+    if (
+      prepared.levelFilter &&
+      String(entry.level || "").toUpperCase() !== prepared.levelFilter
+    ) {
+      stats.rejectedByLevel++;
+      return false;
+    }
+    if (
+      prepared.loggerFilter &&
+      !String(entry.logger || "")
+        .toLowerCase()
+        .includes(prepared.loggerFilter)
+    ) {
+      stats.rejectedByLogger++;
+      return false;
+    }
+    if (
+      prepared.threadFilter &&
+      !String(entry.thread || "")
+        .toLowerCase()
+        .includes(prepared.threadFilter)
+    ) {
+      stats.rejectedByThread++;
+      return false;
+    }
+    if (
+      options.filter.message &&
+      !msgMatches(String(entry.message ?? ""), options.filter.message)
+    ) {
+      stats.rejectedByMessage++;
+      return false;
+    }
+  }
+
+  const isElasticSource =
+    typeof entry.source === "string" && entry.source.startsWith("elastic://");
+  if (
+    isElasticSource &&
+    options.timeFilterEnabled &&
+    !matchesTimeRange(entry.timestamp, prepared.fromTs, prepared.toTs)
+  ) {
+    stats.rejectedByTime++;
+    return false;
+  }
+
+  if (
+    options.dcFilterEnabled &&
+    !matchesCompiledDcFilter(entry.mdc, prepared.compiledDcFilter)
+  ) {
+    stats.rejectedByDC++;
+    return false;
+  }
+
+  stats.passed++;
+  return true;
+}
+
+function searchPositions(
+  references: readonly PassingReference[],
+  prepared: PreparedFilter,
+): number[] {
+  if (!prepared.navigationSearch) return [];
+  const matches: number[] = [];
+  const limit = Math.min(references.length, 50_000);
+  for (let visualIndex = 0; visualIndex < limit; visualIndex++) {
+    if (references[visualIndex]?.navigationMatch === true) {
+      matches.push(visualIndex);
+    }
+  }
+  return matches;
+}
+
+/**
+ * Pure paged-filter core. Each iterable item represents one IndexedDB page.
+ * It intentionally retains only passing IDs/timestamps and search messages.
+ */
+export function filterProjectionPages(
+  pages: Iterable<readonly ProjectionRecord[]>,
+  options: FilterOptions,
+  markedSignatures: ReadonlySet<string> = new Set(),
+): FilterResponse {
+  const stats = emptyStats();
+  const prepared = prepareFilter(options);
+  const references: PassingReference[] = [];
+
+  for (const page of pages) {
+    for (const entry of page) {
+      stats.total++;
+      if (
+        entry &&
+        entryPasses(entry, options, prepared, stats, markedSignatures)
+      ) {
+        references.push({
+          id: entry.id,
+          _id: entry.id,
+          timestamp: entry.timestamp,
+          navigationMatch: prepared.navigationSearch
+            ? msgMatches(entry.message, prepared.navigationSearch, {
+                mode: options.navigationSearchMode,
+              })
+            : undefined,
+        });
+      }
+    }
+  }
+
+  references.sort(compareByTimestampId);
+  return {
+    type: "result",
+    filteredIndices: references.map((entry) => entry.id),
+    searchMatchIndices: searchPositions(references, prepared),
+    stats,
+    paged: true,
+  };
+}
+
+function filterLegacyEntries(
+  entries: unknown[],
+  options: FilterOptions,
+): FilterResponse {
+  const stats = emptyStats();
+  const prepared = prepareFilter(options);
   const filteredIndices: number[] = [];
   const searchMatchIndices: number[] = [];
-  const navigationSearch = String(options.navigationSearch || "").trim();
-  const levelFilter = options.filter.level.toUpperCase();
-  const loggerFilter = options.filter.logger.toLowerCase();
-  const threadFilter = options.filter.thread.toLowerCase();
-  const parsedFrom = options.timeFilterFrom
-    ? new Date(options.timeFilterFrom).getTime()
-    : NaN;
-  const parsedTo = options.timeFilterTo
-    ? new Date(options.timeFilterTo).getTime()
-    : NaN;
-  const fromTs = Number.isNaN(parsedFrom) ? null : parsedFrom;
-  const toTs = Number.isNaN(parsedTo) ? null : parsedTo;
-  const compiledDcFilter = options.dcFilterEnabled
-    ? compileDcFilter(options.dcFilterEntries)
-    : [];
 
-  for (let i = 0; i < entries.length; i++) {
-    const e = entries[i];
+  for (let index = 0; index < entries.length; index++) {
+    const entry = entries[index] as FilterableEntry | null;
     stats.total++;
-
-    if (!e) continue;
-
-    // Only marked filter
-    if (options.onlyMarked && !e._mark) {
-      stats.rejectedByOnlyMarked++;
-      continue;
-    }
-
-    // Standard filters
-    if (options.stdFiltersEnabled) {
-      // Level filter
-      if (levelFilter) {
-        const lev = String(e.level || "").toUpperCase();
-        if (lev !== levelFilter) {
-          stats.rejectedByLevel++;
-          continue;
-        }
-      }
-
-      // Logger filter
-      if (loggerFilter) {
-        if (
-          !String(e.logger || "")
-            .toLowerCase()
-            .includes(loggerFilter)
-        ) {
-          stats.rejectedByLogger++;
-          continue;
-        }
-      }
-
-      // Thread filter
-      if (threadFilter) {
-        if (
-          !String(e.thread || "")
-            .toLowerCase()
-            .includes(threadFilter)
-        ) {
-          stats.rejectedByThread++;
-          continue;
-        }
-      }
-
-      // Message filter
-      if (options.filter.message) {
-        if (!msgMatches(String(e.message ?? ""), options.filter.message)) {
-          stats.rejectedByMessage++;
-          continue;
-        }
-      }
-    }
-
-    // Time filter (only for Elastic sources)
-    const isElasticSrc =
-      typeof e?.source === "string" && e.source.startsWith("elastic://");
-    if (isElasticSrc && options.timeFilterEnabled) {
-      if (!matchesTimeRange(e.timestamp, fromTs, toTs)) {
-        stats.rejectedByTime++;
-        continue;
-      }
-    }
-
-    // DC filter
-    if (options.dcFilterEnabled) {
-      if (!matchesCompiledDcFilter(e.mdc, compiledDcFilter)) {
-        stats.rejectedByDC++;
-        continue;
-      }
-    }
-
-    stats.passed++;
+    if (!entry || !entryPasses(entry, options, prepared, stats)) continue;
     const visualIndex = filteredIndices.length;
-    filteredIndices.push(i);
+    filteredIndices.push(index);
     if (
-      navigationSearch &&
+      prepared.navigationSearch &&
       visualIndex < 50_000 &&
-      msgMatches(String(e.message ?? ""), navigationSearch, {
+      msgMatches(String(entry.message ?? ""), prepared.navigationSearch, {
         mode: options.navigationSearchMode,
       })
     ) {
@@ -232,48 +324,186 @@ function filterEntries(entries: any[], options: FilterOptions): FilterResponse {
   };
 }
 
-// Worker message handler
-//
-// Zustandsbehafteter Cache: Der Worker hält die zuletzt per setEntries/
-// appendEntries übertragenen Einträge. So muss beim Filtern (häufig, z.B. bei
-// jedem Tastendruck) der Datensatz nicht erneut geklont werden.
-let cachedEntries: any[] = [];
+function readProjectionPage(
+  db: IDBDatabase,
+  afterId: number | undefined,
+  pageSize: number,
+): Promise<ProjectionRecord[]> {
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    const page: ProjectionRecord[] = [];
+    let transaction: IDBTransaction;
+    try {
+      transaction = db.transaction(PROJECTION_STORE_NAME, "readonly");
+      const range =
+        afterId === undefined
+          ? undefined
+          : IDBKeyRange.lowerBound(afterId, true);
+      const request = transaction
+        .objectStore(PROJECTION_STORE_NAME)
+        .openCursor(range, "next");
+      request.onerror = () => {
+        settled = true;
+        reject(request.error ?? new Error("Projection cursor failed"));
+      };
+      request.onsuccess = () => {
+        const cursor = request.result;
+        if (!cursor || page.length >= pageSize) {
+          if (!settled) {
+            settled = true;
+            resolve(page);
+          }
 
-self.onmessage = (event: MessageEvent<WorkerRequest>) => {
-  const data = event.data;
-  const type = data?.type;
-
-  if (type === "setEntries") {
-    cachedEntries = data.entries || [];
-    return;
-  }
-
-  if (type === "appendEntries") {
-    const add = data.entries;
-    if (add && add.length) {
-      // In-place anhängen, um eine erneute Allokation des Gesamt-Arrays zu
-      // vermeiden (wichtig bei Streaming-Quellen mit vielen kleinen Updates).
-      for (let i = 0; i < add.length; i++) cachedEntries.push(add[i]);
+          return;
+        }
+        page.push(cursor.value as ProjectionRecord);
+        cursor.continue();
+      };
+      transaction.onabort = () => {
+        if (!settled)
+          reject(transaction.error ?? new Error("Projection scan aborted"));
+      };
+      transaction.onerror = () => {
+        if (!settled)
+          reject(transaction.error ?? new Error("Projection scan failed"));
+      };
+    } catch (error) {
+      reject(error instanceof Error ? error : new Error(String(error)));
     }
-    return;
-  }
+  });
+}
 
-  if (type === "filter") {
-    // Legacy/Test-Pfad: Wenn entries mitgesendet werden, diese nutzen;
-    // ansonsten den gecachten Datensatz filtern.
-    const entries = data.entries !== undefined ? data.entries : cachedEntries;
-    const result = filterEntries(entries, data.options);
-    if (data.requestId !== undefined) result.requestId = data.requestId;
-    self.postMessage(result);
-  }
-};
+let latestPagedRequestId = 0;
 
-// Export for type checking
-export type {
-  FilterRequest,
-  FilterResponse,
-  FilterOptions,
-  FilterStats,
-  SetEntriesRequest,
-  AppendEntriesRequest,
-};
+async function filterPagedDatabase(
+  request: PagedFilterRequest,
+): Promise<FilterResponse | null> {
+  const stats = emptyStats();
+  const prepared = prepareFilter(request.options);
+  const references: PassingReference[] = [];
+  const markedSignatures = new Set(request.markedSignatures);
+  const pageSize =
+    request.pageSize !== undefined &&
+    Number.isSafeInteger(request.pageSize) &&
+    request.pageSize > 0
+      ? request.pageSize
+      : PAGED_SCAN_SIZE;
+  const db = await openPagedDatabase(undefined, request.databaseName);
+
+  try {
+    let afterId: number | undefined;
+    while (true) {
+      if (request.requestId !== latestPagedRequestId) return null;
+      const page = await readProjectionPage(db, afterId, pageSize);
+      if (request.requestId !== latestPagedRequestId) return null;
+      for (const entry of page) {
+        stats.total++;
+        if (
+          entry &&
+          entryPasses(entry, request.options, prepared, stats, markedSignatures)
+        ) {
+          references.push({
+            id: entry.id,
+            _id: entry.id,
+            timestamp: entry.timestamp,
+            navigationMatch: prepared.navigationSearch
+              ? msgMatches(entry.message, prepared.navigationSearch, {
+                  mode: request.options.navigationSearchMode,
+                })
+              : undefined,
+          });
+        }
+      }
+      if (page.length < pageSize) break;
+      afterId = page[page.length - 1]!.id;
+    }
+    if (request.requestId !== latestPagedRequestId) return null;
+    references.sort(compareByTimestampId);
+    const searchMatchIndices = searchPositions(references, prepared);
+    if (request.requestId !== latestPagedRequestId) return null;
+    return {
+      type: "result",
+      filteredIndices: references.map((entry) => entry.id),
+      searchMatchIndices,
+      stats,
+      requestId: request.requestId,
+      generation: request.generation,
+      revision: request.revision,
+      paged: true,
+    };
+  } finally {
+    db.close();
+  }
+}
+
+let cachedEntries: unknown[] = [];
+let pagedFilterRunning = false;
+let queuedPagedRequest: PagedFilterRequest | null = null;
+let activePagedGeneration: string | number | undefined;
+
+const workerScope =
+  typeof self === "undefined"
+    ? undefined
+    : (self as unknown as {
+        onmessage: ((event: MessageEvent<WorkerRequest>) => void) | null;
+        postMessage(message: FilterResponse | FilterErrorResponse): void;
+      });
+
+if (workerScope) {
+  const runPagedRequest = (request: PagedFilterRequest): void => {
+    pagedFilterRunning = true;
+    activePagedGeneration = request.generation;
+    latestPagedRequestId = request.requestId;
+    void filterPagedDatabase(request)
+      .then((result) => {
+        if (result) workerScope.postMessage(result);
+      })
+      .catch((error: unknown) => {
+        workerScope.postMessage({
+          type: "error",
+          requestId: request.requestId,
+          message: error instanceof Error ? error.message : String(error),
+          generation: request.generation,
+          revision: request.revision,
+          paged: true,
+        });
+      })
+      .finally(() => {
+        pagedFilterRunning = false;
+        activePagedGeneration = undefined;
+        const queued = queuedPagedRequest;
+        queuedPagedRequest = null;
+        if (queued) runPagedRequest(queued);
+      });
+  };
+
+  workerScope.onmessage = (event: MessageEvent<WorkerRequest>) => {
+    const data = event.data;
+    if (data.type === "setEntries") {
+      cachedEntries = data.entries || [];
+      return;
+    }
+    if (data.type === "appendEntries") {
+      cachedEntries.push(...(data.entries || []));
+      return;
+    }
+    if (data.type === "filter") {
+      const result = filterLegacyEntries(
+        data.entries ?? cachedEntries,
+        data.options,
+      );
+      result.requestId = data.requestId;
+      workerScope.postMessage(result);
+      return;
+    }
+
+    if (pagedFilterRunning) {
+      queuedPagedRequest = data;
+      if (data.generation !== activePagedGeneration) {
+        latestPagedRequestId = data.requestId;
+      }
+    } else {
+      runPagedRequest(data);
+    }
+  };
+}

@@ -1,0 +1,115 @@
+import { describe, expect, it } from "vitest";
+import type { ProjectionRecord } from "../../store/paged";
+import { filterProjectionPages, type FilterOptions } from "../filterWorker";
+
+function projection(
+  id: number,
+  overrides: Partial<ProjectionRecord> = {},
+): ProjectionRecord {
+  return {
+    id,
+    timestamp: `2026-01-01T00:00:0${id}.000Z`,
+    level: "INFO",
+    logger: "app",
+    thread: "main",
+    message: `message ${id}`,
+    source: "file.log",
+    mdc: null,
+    service: null,
+    traceId: null,
+    signature: `signature-${id}`,
+    _mark: null,
+    ...overrides,
+  };
+}
+
+function options(overrides: Partial<FilterOptions> = {}): FilterOptions {
+  return {
+    stdFiltersEnabled: true,
+    filter: { level: "", logger: "", thread: "", message: "" },
+    onlyMarked: false,
+    dcFilterEnabled: false,
+    dcFilterEntries: [],
+    timeFilterEnabled: false,
+    ...overrides,
+  };
+}
+
+describe("filterProjectionPages", () => {
+  it("returns stable IDs in timestamp/id order and sorted search positions", () => {
+    const result = filterProjectionPages(
+      [
+        [
+          projection(3, {
+            timestamp: "2026-01-01T00:00:02Z",
+            message: "needle last",
+          }),
+          projection(1, {
+            timestamp: "2026-01-01T00:00:01Z",
+            message: "needle first",
+          }),
+        ],
+        [
+          projection(2, {
+            timestamp: "2026-01-01T00:00:01Z",
+            message: "other",
+          }),
+        ],
+      ],
+      options({ navigationSearch: "needle" }),
+    );
+
+    expect(result.filteredIndices).toEqual([1, 2, 3]);
+    expect(result.searchMatchIndices).toEqual([0, 2]);
+    expect(result.stats).toMatchObject({ total: 3, passed: 3 });
+  });
+
+  it("combines current signature marks with persisted imported marks", () => {
+    const result = filterProjectionPages(
+      [[projection(1), projection(2, { _mark: "yellow" }), projection(3)]],
+      options({ onlyMarked: true }),
+      new Set(["signature-1"]),
+    );
+
+    expect(result.filteredIndices).toEqual([1, 2]);
+    expect(result.stats.rejectedByOnlyMarked).toBe(1);
+  });
+
+  it("preserves filter rejection order, Elastic time, and DC semantics", () => {
+    const result = filterProjectionPages(
+      [
+        [
+          projection(1, { level: "DEBUG", logger: "wrong" }),
+          projection(2, {
+            source: "elastic://logs",
+            timestamp: "2025-12-31T23:00:00Z",
+          }),
+          projection(3, { mdc: { tenant: "other" } }),
+          projection(4, { mdc: { tenant: "acme" } }),
+        ],
+      ],
+      options({
+        filter: {
+          level: "INFO",
+          logger: "app",
+          thread: "main",
+          message: "message",
+        },
+        timeFilterEnabled: true,
+        timeFilterFrom: "2026-01-01T00:00:00Z",
+        dcFilterEnabled: true,
+        dcFilterEntries: [{ key: "tenant", value: "acme", active: true }],
+      }),
+    );
+
+    expect(result.filteredIndices).toEqual([4]);
+    expect(result.stats).toMatchObject({
+      total: 4,
+      passed: 1,
+      rejectedByLevel: 1,
+      rejectedByTime: 1,
+      rejectedByDC: 1,
+      rejectedByLogger: 0,
+    });
+  });
+});

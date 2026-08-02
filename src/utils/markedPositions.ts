@@ -9,10 +9,20 @@ export function buildMarkedPositionIndex(
 ): MarkedPositionIndex {
   const index: MarkedPositionIndex = new Map();
   const scanLimit = Math.min(filteredIndices.length, limit);
-
+  const visualPositionById = new Map<number, number>();
   for (let visualIndex = 0; visualIndex < scanLimit; visualIndex++) {
-    const entry = entries[filteredIndices[visualIndex]!] as object | undefined;
+    visualPositionById.set(filteredIndices[visualIndex]!, visualIndex);
+  }
+
+  for (let entryIndex = 0; entryIndex < entries.length; entryIndex++) {
+    const candidate = entries[entryIndex];
+    const entry = candidate as { _id?: number } | undefined;
     if (!entry) continue;
+    const visualIndex =
+      typeof entry._id === "number"
+        ? visualPositionById.get(entry._id)
+        : visualPositionById.get(entryIndex);
+    if (visualIndex === undefined) continue;
     const signature = entrySignature(entry);
     const current = index.get(signature);
     if (current === undefined) {

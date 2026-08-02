@@ -12,6 +12,7 @@ import logger from "../utils/logger";
 import { rendererPerf } from "../utils/rendererPerf";
 import { useI18n } from "../utils/i18n";
 import { LoggingStore } from "../store/loggingStore";
+import type { CanonicalLogEntry } from "../store/paged";
 import { canonicalDcKey, DiagnosticContextFilter } from "../store/dcFilter";
 import { DragAndDropManager } from "../utils/dnd";
 import { TimeFilter } from "../store/timeFilter";
@@ -50,7 +51,6 @@ import type {
 import { MDCListener } from "../store/mdcListener";
 import { clearHighlightCache } from "./LogRow";
 import { clearTimestampCache, fmtTimestamp } from "../utils/format";
-import { heavyFieldStore } from "../store/heavyFieldStore";
 import {
   exportToCsv,
   exportToMarkdown,
@@ -64,6 +64,7 @@ import {
 
 // Import refactored utilities
 import { entrySignature } from "../utils/entryUtils";
+import { compareByTimestampId } from "../utils/sort";
 import {
   buildMarkedPositionIndex,
   resolveMarkedPositions,
@@ -284,14 +285,18 @@ export default function App(): JSX.Element {
   // Entry management hook (entries, IPC batching, deduplication)
   const {
     entries,
-    setEntries,
-    setNextId,
     appendEntries,
-    fileSigCacheRef,
-    httpSigCacheRef,
+    clearEntries,
+    storageError,
+    repository,
+    getMetadata,
   } = useEntryManagement({
     marksMap,
   });
+
+  useEffect(() => {
+    if (storageError) showAlert(storageError.message);
+  }, [storageError, showAlert]);
 
   const [selected, setSelected] = useState<Set<number>>(new Set());
   const lastClicked = useRef<number | null>(null);
@@ -653,13 +658,8 @@ export default function App(): JSX.Element {
     closeTimeDialog: () => setShowTimeDialog(false),
     onReplaceReset: () => {
       // Vollständiges Zurücksetzen: alle vorhandenen Einträge entfernen
-      setEntries([]);
+      clearEntries();
       setSelected(new Set());
-      setNextId(1);
-      // Datei-Dedupe-Cache leeren, damit Files erneut geladen werden können
-      fileSigCacheRef.current = new Map();
-      // HTTP-Dedupe-Cache leeren
-      httpSigCacheRef.current = new Map();
       // LoggingStore zurücksetzen (MDC etc.)
       try {
         LoggingStore.reset();
@@ -709,6 +709,7 @@ export default function App(): JSX.Element {
     parentRef,
     showAlert,
     t,
+    getMetadata,
   });
 
   const layoutRef = useRef<HTMLDivElement | null>(null);
@@ -723,8 +724,13 @@ export default function App(): JSX.Element {
     filteredIndices: workerFilteredIdx,
     searchMatchIndices: workerSearchMatchIdx,
     stats: workerFilterStats,
+    error: filterWorkerError,
     filterEntries,
   } = useFilterWorker();
+
+  useEffect(() => {
+    if (filterWorkerError) showAlert(filterWorkerError.message);
+  }, [filterWorkerError, showAlert]);
 
   // Track if we have ever triggered filtering (to show loading state on initial large load)
   const hasTriggeredFilterRef = useRef(false);
@@ -749,6 +755,19 @@ export default function App(): JSX.Element {
     const timeFilterTo = timeState.to || undefined;
 
     hasTriggeredFilterRef.current = true;
+    const filterGeneration = JSON.stringify({
+      stdFiltersEnabled,
+      filter: debouncedFilter,
+      onlyMarked,
+      dcFilterEnabled,
+      dcFilterEntries,
+      timeFilterEnabled,
+      timeFilterFrom,
+      timeFilterTo,
+      navigationSearch: debouncedSearch,
+      navigationSearchMode: searchMode,
+      markedSignatures: onlyMarked ? Object.keys(marksMap).sort() : [],
+    });
     filterEntries(
       debouncedEntries,
       {
@@ -771,6 +790,12 @@ export default function App(): JSX.Element {
       // marksMap nur für `onlyMarked` relevant – sonst wird es im Worker
       // ohnehin ignoriert. Übergabe ist zustandslos und billig.
       onlyMarked ? marksMap : undefined,
+      {
+        paged: true,
+        generation: filterGeneration,
+        revision: debouncedEntries.length,
+        databaseName: repository.databaseName,
+      },
     );
   }, [
     debouncedEntries,
@@ -791,24 +816,22 @@ export default function App(): JSX.Element {
   // Use worker results for filtered indices
   const filteredIdx = workerFilteredIdx;
 
-  // `filteredIdx` ist aufsteigend sortiert (alle Filterpfade laufen in
-  // Entry-Reihenfolge). Eine binäre Suche vermeidet die große Reverse-Map mit
-  // bis zu 500k Einträgen und deren O(n)-Neuaufbau bei jedem Filterergebnis.
+  // Stable IDs are dense but no longer monotonic after timestamp sorting.
+  // A compact typed reverse vector keeps navigation O(1) without Map overhead.
+  const visualPositionById = useMemo(() => {
+    const positions = new Int32Array(entries.length + 1);
+    for (let index = 0; index < filteredIdx.length; index++) {
+      const id = filteredIdx[index]!;
+      if (id < positions.length) positions[id] = index + 1;
+    }
+    return positions;
+  }, [entries.length, filteredIdx]);
   const viOfGlobal = useCallback(
     (g: number | null | undefined): number => {
-      if (g == null) return -1;
-      let lo = 0;
-      let hi = filteredIdx.length - 1;
-      while (lo <= hi) {
-        const mid = (lo + hi) >>> 1;
-        const value = filteredIdx[mid]!;
-        if (value === g) return mid;
-        if (value < g) lo = mid + 1;
-        else hi = mid - 1;
-      }
-      return -1;
+      if (g == null || g >= visualPositionById.length) return -1;
+      return visualPositionById[g]! - 1;
     },
-    [filteredIdx],
+    [visualPositionById],
   );
 
   // Update filter stats from worker
@@ -1051,10 +1074,31 @@ export default function App(): JSX.Element {
       );
     return null;
   }, [selected]);
-  const selectedEntry = useMemo(
-    () => (selectedOneIdx != null ? entries[selectedOneIdx] || null : null),
-    [selectedOneIdx, entries],
+  const [selectedEntry, setSelectedEntry] = useState<CanonicalLogEntry | null>(
+    null,
   );
+  useEffect(() => {
+    let cancelled = false;
+    if (selectedOneIdx == null) {
+      setSelectedEntry(null);
+      return;
+    }
+    setSelectedEntry(null);
+    void repository
+      .getPayload(selectedOneIdx)
+      .then((entry) => {
+        if (!cancelled) setSelectedEntry(entry ?? null);
+      })
+      .catch((error) => {
+        if (!cancelled) {
+          logger.error("Loading selected log entry failed:", error);
+          showAlert(error instanceof Error ? error.message : String(error));
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [repository, selectedOneIdx, showAlert]);
 
   const mdcPairs = useMemo(() => {
     const e = selectedEntry;
@@ -1140,26 +1184,52 @@ export default function App(): JSX.Element {
     scrollToIndexCenter(vi);
   }
 
-  // Bookmark items derived from markedIdx for the popover.
-  const bookmarkItems = useMemo(() => {
-    const MAX_PREVIEW = 200; // performance cap for popover
-    const slice = markedIdx.slice(0, MAX_PREVIEW);
-    return slice.map((vi) => {
-      const e = entries[filteredIdx[vi]!];
-      const msg = String(e?.message || "");
-      // #2: Farbe aus marksMap statt aus e._mark.
-      const color =
-        (e ? marksMap[entrySignature(e)] : undefined) ||
-        (e?._mark as string | undefined) ||
-        "#3b82f6";
-      return {
-        vi,
-        color,
-        timestamp: fmtTimestamp(e?.timestamp),
-        message: msg.length > 200 ? msg.slice(0, 200) + "…" : msg,
-      };
-    });
-  }, [markedIdx, filteredIdx, entries, marksMap]);
+  const [bookmarkItems, setBookmarkItems] = useState<
+    Array<{ vi: number; color: string; timestamp: string; message: string }>
+  >([]);
+  useEffect(() => {
+    let cancelled = false;
+    const positions = markedIdx.slice(0, 200);
+    const ids = positions
+      .map((visualIndex) => filteredIdx[visualIndex])
+      .filter((id): id is number => id !== undefined);
+    if (ids.length === 0) {
+      setBookmarkItems([]);
+      return;
+    }
+    void repository
+      .getPayloads(ids)
+      .then((payloads) => {
+        if (cancelled) return;
+        setBookmarkItems(
+          positions.flatMap((vi) => {
+            const id = filteredIdx[vi];
+            const entry = id === undefined ? undefined : payloads.get(id);
+            if (!entry) return [];
+            const message = String(entry.message || "");
+            return [
+              {
+                vi,
+                color:
+                  marksMap[entrySignature(entry)] ||
+                  (typeof entry._mark === "string" ? entry._mark : undefined) ||
+                  "#3b82f6",
+                timestamp: fmtTimestamp(entry.timestamp as any),
+                message:
+                  message.length > 200 ? message.slice(0, 200) + "…" : message,
+              },
+            ];
+          }),
+        );
+      })
+      .catch((error) => {
+        if (!cancelled)
+          logger.error("Loading bookmark previews failed:", error);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [markedIdx, filteredIdx, marksMap, repository]);
 
   function gotoSearchMatch(dir: number) {
     if (!searchMatchIdx.length) return;
@@ -1991,15 +2061,75 @@ export default function App(): JSX.Element {
     return { firstTs: minRaw, lastTs: maxRaw };
   }, [entries, showTimeDialog]);
 
-  const filteredDialogEntries = useMemo(() => {
-    if (!showStatsDialog && !showTraceTimeline) return [] as any[];
-    const projected: any[] = [];
-    for (let i = 0; i < filteredIdx.length; i++) {
-      const entry = entries[filteredIdx[i]!];
-      if (entry) projected.push(entry);
+  const filteredStatsEntries = useMemo(() => {
+    if (!showStatsDialog) return [];
+    const visibleIds = new Set(filteredIdx);
+    return entries.flatMap((entry) => {
+      if (!visibleIds.has(entry._id)) return [];
+      const timestamp =
+        entry.timestamp instanceof Date
+          ? entry.timestamp.getTime()
+          : entry.timestamp;
+      return [{ level: entry.level, logger: entry.logger, timestamp }];
+    });
+  }, [entries, filteredIdx, showStatsDialog]);
+
+  const [traceTimelineEntries, setTraceTimelineEntries] = useState<any[]>([]);
+  useEffect(() => {
+    let cancelled = false;
+    if (!showTraceTimeline || !traceTimelineId) {
+      setTraceTimelineEntries([]);
+      return;
     }
-    return projected;
-  }, [entries, filteredIdx, showStatsDialog, showTraceTimeline]);
+
+    const visibleIds = new Set(filteredIdx);
+    const traceKeys = [
+      "TraceID",
+      "traceId",
+      "trace_id",
+      "trace.id",
+      "trace-id",
+      "x-trace-id",
+      "x_trace_id",
+      "x.trace.id",
+      "trace",
+    ];
+    void (async () => {
+      const matchingIds: number[] = [];
+      await repository.scanProjections((page) => {
+        if (cancelled) return false;
+        for (const projection of page) {
+          if (!visibleIds.has(projection.id)) continue;
+          const directMatch = projection.traceId === traceTimelineId;
+          const mdcMatch = traceKeys.some(
+            (key) => String(projection.mdc?.[key] ?? "") === traceTimelineId,
+          );
+          if (directMatch || mdcMatch) matchingIds.push(projection.id);
+        }
+        return true;
+      });
+      if (cancelled) return;
+
+      const payloads: any[] = [];
+      for (let start = 0; start < matchingIds.length; start += 256) {
+        const page = await repository.getPayloads(
+          matchingIds.slice(start, start + 256),
+        );
+        if (cancelled) return;
+        payloads.push(...page.values());
+      }
+      payloads.sort(compareByTimestampId as any);
+      if (!cancelled) setTraceTimelineEntries(payloads);
+    })().catch((error) => {
+      if (!cancelled) {
+        logger.error("Loading trace timeline failed:", error);
+        showAlert(error instanceof Error ? error.message : String(error));
+      }
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [filteredIdx, repository, showAlert, showTraceTimeline, traceTimelineId]);
 
   function clearLogs() {
     // Sicherheitsabfrage über In-App-Dialog (keine native Dialog-Fokus-Bugs).
@@ -2015,22 +2145,14 @@ export default function App(): JSX.Element {
   }
 
   function doClearLogs() {
-    setEntries([]);
+    clearEntries();
     setSelected(new Set());
-    setNextId(1);
     resetElasticSearchState();
     // Clear marksMap (session-only, not persisted)
     setMarksMap({});
-    // Datei-Dedupe-Cache leeren
-    fileSigCacheRef.current = new Map();
-    // HTTP-Dedupe-Cache leeren
-    httpSigCacheRef.current = new Map();
     // Caches leeren für bessere Speicherfreigabe
     clearHighlightCache();
     clearTimestampCache();
-    // Phase 2: ausgelagerte Detail-Felder (stackTrace/_fullMessage) verwerfen.
-    // Muss hier passieren, weil setNextId(1) die _id-Vergabe zurücksetzt.
-    void heavyFieldStore.clear();
     // PIT-Session schließen (best effort)
     void closePitQuiet();
     try {
@@ -2071,35 +2193,16 @@ export default function App(): JSX.Element {
       }
 
       const format = pathResult.format || "ndjson";
-      const exportEntries = currentFilteredIdx.map(
-        (idx) => currentEntries[idx],
-      );
-
-      // Phase 2: ausgelagerte Detail-Felder (stackTrace/_fullMessage) für den
-      // Export nachladen. Nur JSON/NDJSON serialisieren stackTrace – für alle
-      // anderen Formate sparen wir uns den IndexedDB-Roundtrip.
-      let exportEntriesHydrated = exportEntries;
-      if (format === "json" || format === "ndjson") {
-        const offloadedIds: number[] = [];
-        for (const e of exportEntries) {
-          if (e && e._offloaded && typeof e._id === "number") {
-            offloadedIds.push(e._id);
-          }
-        }
-        if (offloadedIds.length > 0) {
-          const heavy = await heavyFieldStore.getMany(offloadedIds);
-          exportEntriesHydrated = exportEntries.map((e) => {
-            if (!e || !e._offloaded || typeof e._id !== "number") return e;
-            const rec = heavy.get(e._id);
-            if (!rec) return e;
-            return {
-              ...e,
-              stackTrace: rec.stackTrace ?? e.stackTrace ?? null,
-              _fullMessage: rec._fullMessage ?? e._fullMessage,
-            };
-          });
+      const exportEntries: any[] = [];
+      for (let start = 0; start < currentFilteredIdx.length; start += 256) {
+        const ids = currentFilteredIdx.slice(start, start + 256);
+        const page = await repository.getPayloads(ids);
+        for (const id of ids) {
+          const entry = page.get(id);
+          if (entry) exportEntries.push(entry);
         }
       }
+      const exportEntriesHydrated = exportEntries;
 
       let content: string;
 
@@ -3034,6 +3137,7 @@ export default function App(): JSX.Element {
           ref={virtualListRef}
           listRef={parentRef}
           entries={entries}
+          repository={repository}
           filteredIdx={filteredIdx}
           selected={selected}
           marksMap={marksMap}
@@ -3335,7 +3439,7 @@ export default function App(): JSX.Element {
         <Suspense fallback={null}>
           <StatsDialog
             open={showStatsDialog}
-            entries={filteredDialogEntries}
+            entries={filteredStatsEntries}
             totalEntries={entries.length}
             onClose={() => setShowStatsDialog(false)}
             t={t}
@@ -3348,7 +3452,7 @@ export default function App(): JSX.Element {
       {showTraceTimeline && traceTimelineId && (
         <Suspense fallback={null}>
           <TraceTimeline
-            entries={filteredDialogEntries}
+            entries={traceTimelineEntries}
             traceId={traceTimelineId}
             onClose={() => setShowTraceTimeline(false)}
             onEntryClick={(entry) => {

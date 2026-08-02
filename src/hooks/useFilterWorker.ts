@@ -19,7 +19,7 @@ import {
   filterEntries as typedFilterEntries,
 } from "../utils/typedApi";
 
-interface FilterOptions {
+export interface FilterOptions {
   stdFiltersEnabled: boolean;
   filter: {
     level: string;
@@ -37,7 +37,7 @@ interface FilterOptions {
   navigationSearchMode?: SearchMode;
 }
 
-interface FilterStats {
+export interface FilterStats {
   total: number;
   passed: number;
   rejectedByOnlyMarked: number;
@@ -49,13 +49,24 @@ interface FilterStats {
   rejectedByDC: number;
 }
 
-interface UseFilterWorkerResult {
+export interface PagedFilterConfig {
+  paged: true;
+  databaseName?: string;
+  generation?: string | number;
+  revision?: string | number;
+  pageSize?: number;
+}
+
+export interface UseFilterWorkerResult {
   filteredIndices: number[];
   searchMatchIndices: number[];
   isFiltering: boolean;
   stats: FilterStats | null;
+  /** IndexedDB/worker failures. Paged failures never masquerade as empty results. */
+  error: Error | null;
   /**
-   * @param entries  Vollständige Renderer-Einträge.
+   * @param entries  Renderer entries for legacy mode. Paged mode only uses the
+   *                 call as a change trigger and never transfers this array.
    * @param options  Filter-Optionen.
    * @param marksMap Optional: Map signature → Farbe. Wird genutzt, um
    *                 `_mark` für `onlyMarked` und für die Worker-Projektion
@@ -66,6 +77,7 @@ interface UseFilterWorkerResult {
     entries: unknown[],
     options: FilterOptions,
     marksMap?: Record<string, string>,
+    config?: PagedFilterConfig,
   ) => void;
   /** True wenn UtilityProcess verwendet wird, false für Web Worker/Sync */
   useUtilityProcess: boolean;
@@ -183,10 +195,12 @@ export function useFilterWorker(): UseFilterWorkerResult {
   const [searchMatchIndices, setSearchMatchIndices] = useState<number[]>([]);
   const [isFiltering, setIsFiltering] = useState(false);
   const [stats, setStats] = useState<FilterStats | null>(null);
+  const [error, setError] = useState<Error | null>(null);
   const [useUtilityProcess, setUseUtilityProcess] = useState(false);
 
   const workerRef = useRef<Worker | null>(null);
   const pendingRequestRef = useRef<number>(0);
+  const pendingGenerationRef = useRef<string | number | undefined>(undefined);
   // ID des zuletzt tatsächlich angewendeten Ergebnisses. Der (Single-Thread-)
   // Worker beantwortet Requests strikt in Reihenfolge, daher kommen Ergebnisse
   // mit monoton steigender requestId zurück. Wir wenden jedes Ergebnis an, das
@@ -260,17 +274,39 @@ export function useFilterWorker(): UseFilterWorkerResult {
           searchMatchIndices: workerSearchMatchIndices,
           stats: workerStats,
           requestId,
+          paged,
+          message,
+          generation,
         } = event.data;
+        if (
+          type === "error" &&
+          paged === true &&
+          requestId === pendingRequestRef.current
+        ) {
+          setError(new Error(message || "Paged filtering failed"));
+          setIsFiltering(false);
+          return;
+        }
         // Monoton anwenden: jedes Ergebnis, das neuer ist als das zuletzt
         // angewendete, übernehmen. So bleibt die gefilterte Ansicht auch bei
         // kontinuierlichem Datenzufluss live, statt einzufrieren, weil ein
         // noch neuerer Request bereits aussteht.
+        const isApplicablePagedResult =
+          paged === true &&
+          typeof requestId === "number" &&
+          generation === pendingGenerationRef.current &&
+          requestId > lastAppliedRequestRef.current;
+        const isApplicableLegacyResult =
+          paged !== true &&
+          typeof requestId === "number" &&
+          requestId > lastAppliedRequestRef.current;
         if (
           type === "result" &&
           typeof requestId === "number" &&
-          requestId > lastAppliedRequestRef.current
+          (isApplicablePagedResult || isApplicableLegacyResult)
         ) {
           lastAppliedRequestRef.current = requestId;
+          setError(null);
           setFilteredIndices(indices);
           setSearchMatchIndices(workerSearchMatchIndices || []);
           setStats(workerStats);
@@ -285,6 +321,7 @@ export function useFilterWorker(): UseFilterWorkerResult {
 
       workerRef.current.onerror = (error: ErrorEvent) => {
         console.error("[FilterWorker] Error:", error);
+        setError(new Error(error.message || "Filter worker failed"));
         setIsFiltering(false);
       };
 
@@ -523,9 +560,55 @@ export function useFilterWorker(): UseFilterWorkerResult {
       entries: unknown[],
       options: FilterOptions,
       marksMap?: Record<string, string>,
+      config?: PagedFilterConfig,
     ) => {
       const requestId = ++requestSeqRef.current;
       pendingRequestRef.current = requestId;
+      pendingGenerationRef.current = config?.generation;
+      setError(null);
+
+      if (config?.paged) {
+        if (entries.length === 0) {
+          const empty = filterSync([], options, marksMap);
+          lastAppliedRequestRef.current = requestId;
+          setFilteredIndices([]);
+          setSearchMatchIndices([]);
+          setStats(empty.stats);
+          setIsFiltering(false);
+          return;
+        }
+        const worker = workerRef.current;
+        if (!worker) {
+          setError(
+            new Error(
+              "Paged filtering requires the IndexedDB filter Web Worker",
+            ),
+          );
+          setIsFiltering(false);
+          return;
+        }
+        setIsFiltering(true);
+        try {
+          worker.postMessage({
+            type: "filterPaged",
+            options,
+            requestId,
+            markedSignatures: marksMap ? Object.keys(marksMap) : [],
+            generation: config.generation,
+            revision: config.revision,
+            pageSize: config.pageSize,
+            databaseName: config.databaseName,
+          });
+        } catch (postError) {
+          setError(
+            postError instanceof Error
+              ? postError
+              : new Error(String(postError)),
+          );
+          setIsFiltering(false);
+        }
+        return;
+      }
 
       // For small datasets, use synchronous filtering (fastest for small data)
       if (entries.length <= WORKER_THRESHOLD) {
@@ -692,6 +775,7 @@ export function useFilterWorker(): UseFilterWorkerResult {
     searchMatchIndices,
     isFiltering,
     stats,
+    error,
     filterEntries,
     useUtilityProcess,
   };

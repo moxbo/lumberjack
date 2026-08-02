@@ -2,13 +2,16 @@ import type { ComponentChildren } from "preact";
 import { forwardRef } from "preact/compat";
 import {
   useCallback,
-  useEffect,
   useImperativeHandle,
+  useMemo,
   useRef,
   useState,
 } from "preact/hooks";
 import { useVirtualizer } from "@tanstack/react-virtual";
-import type { RendererLogEntry } from "../../types/renderer";
+import {
+  type LogPayloadRepository,
+  usePagedLogHydration,
+} from "../../hooks/usePagedLogHydration";
 import { entrySignature } from "../../utils/entryUtils";
 import logger from "../../utils/logger";
 import { LogRow } from "../LogRow";
@@ -23,8 +26,9 @@ export interface VirtualizedLogListHandle {
   scrollAfterFilterChange: (index: number) => void;
 }
 
-interface VirtualizedLogListProps {
-  entries: RendererLogEntry[];
+export interface VirtualizedLogListProps {
+  entries?: readonly object[];
+  repository?: LogPayloadRepository;
   filteredIdx: number[];
   selected: Set<number>;
   marksMap: Record<string, string>;
@@ -46,7 +50,8 @@ export const VirtualizedLogList = forwardRef<
   VirtualizedLogListProps
 >(function VirtualizedLogList(
   {
-    entries,
+    entries = [],
+    repository,
     filteredIdx,
     selected,
     marksMap,
@@ -68,12 +73,7 @@ export const VirtualizedLogList = forwardRef<
     null,
   );
   const [, forceUpdate] = useState(0);
-  const filteredIdxRef = useRef(filteredIdx);
   const isProgrammaticScrollRef = useRef(false);
-
-  useEffect(() => {
-    filteredIdxRef.current = filteredIdx;
-  }, [filteredIdx]);
 
   const setListElement = useCallback(
     (element: HTMLDivElement | null) => {
@@ -85,10 +85,13 @@ export const VirtualizedLogList = forwardRef<
 
   const getScrollElement = useCallback(() => scrollElement, [scrollElement]);
   const estimateSize = useCallback(() => ROW_HEIGHT, []);
-  const getItemKey = useCallback((index: number) => {
-    const globalIdx = filteredIdxRef.current[index];
-    return globalIdx !== undefined ? `row-${globalIdx}` : `row-temp-${index}`;
-  }, []);
+  const getItemKey = useCallback(
+    (index: number) => {
+      const globalIdx = filteredIdx[index];
+      return globalIdx !== undefined ? `row-${globalIdx}` : `row-temp-${index}`;
+    },
+    [filteredIdx],
+  );
 
   const dynamicOverscan =
     filteredIdx.length > 100000 ? 25 : filteredIdx.length > 50000 ? 20 : 15;
@@ -158,6 +161,25 @@ export const VirtualizedLogList = forwardRef<
 
   const virtualItems = scrollElement ? virtualizer.getVirtualItems() : [];
   const totalHeight = scrollElement ? virtualizer.getTotalSize() : 0;
+  const requestedPayloadIds = useMemo(
+    () =>
+      repository
+        ? virtualItems
+            .map((virtualItem) => filteredIdx[virtualItem.index])
+            .filter((id): id is number => id !== undefined)
+        : [],
+    [filteredIdx, repository, virtualItems],
+  );
+  const handleHydrationError = useCallback(
+    (error: unknown) => logger.error("Loading visible log rows failed:", error),
+    [],
+  );
+  const hydratedPayloads = usePagedLogHydration(
+    repository,
+    requestedPayloadIds,
+    repository,
+    handleHydrationError,
+  );
 
   return (
     <div
@@ -218,11 +240,37 @@ export const VirtualizedLogList = forwardRef<
           if (visualIndex < 0 || visualIndex >= filteredIdx.length) return null;
 
           const globalIdx = filteredIdx[visualIndex]!;
-          const entry = entries[globalIdx];
-          if (!entry) return null;
+          const entry = repository
+            ? hydratedPayloads.get(globalIdx)
+            : (entries[globalIdx] as Record<string, unknown> | undefined);
+          if (!entry) {
+            return (
+              <div
+                key={virtualItem.key}
+                className="row row--placeholder"
+                role="presentation"
+                aria-hidden="true"
+                data-vi={visualIndex}
+                style={{
+                  position: "absolute",
+                  top: 0,
+                  left: 0,
+                  right: 0,
+                  height: `${ROW_HEIGHT}px`,
+                  transform: `translateY(${virtualItem.start}px)`,
+                  pointerEvents: "none",
+                }}
+              />
+            );
+          }
 
+          const payloadSignature =
+            typeof entry.signature === "string" ? entry.signature : undefined;
           const markColor =
-            marksMap[entrySignature(entry)] || entry._mark || entry.color;
+            (payloadSignature ? marksMap[payloadSignature] : undefined) ||
+            marksMap[entrySignature(entry)] ||
+            (typeof entry._mark === "string" ? entry._mark : undefined) ||
+            (typeof entry.color === "string" ? entry.color : undefined);
 
           return (
             <LogRow
