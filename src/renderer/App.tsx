@@ -73,7 +73,6 @@ import { nativeConfirm } from "../utils/nativeDialog";
 
 // Import refactored hooks
 import {
-  useDebouncedValueWithFlush,
   useDebounce,
   useFilterState,
   useHistoryPopovers,
@@ -339,18 +338,6 @@ export default function App(): JSX.Element {
     filtersExpanded,
     setFiltersExpanded,
   } = filterState;
-
-  // Debounced Filter-Werte für bessere Performance beim Tippen.
-  // Etwas höhere Verzögerung (350ms) als komfortabler "type-to-filter"-Fallback;
-  // Enter (flush) wendet die Eingabe sofort an, ohne auf den Timer zu warten.
-  const [debouncedSearch, flushSearch] = useDebouncedValueWithFlush(
-    search,
-    350,
-  );
-  const [debouncedFilter, flushFilter] = useDebouncedValueWithFlush(
-    filter,
-    350,
-  );
 
   // Koalesziertes `entries`-Snapshot als Filter-Trigger.
   // Beim Streaming wird `entries` bis zu ~60×/Sekunde aktualisiert. Ohne
@@ -759,14 +746,14 @@ export default function App(): JSX.Element {
     hasTriggeredFilterRef.current = true;
     const filterGeneration = JSON.stringify({
       stdFiltersEnabled,
-      filter: debouncedFilter,
+      filter,
       onlyMarked,
       dcFilterEnabled,
       dcFilterEntries,
       timeFilterEnabled,
       timeFilterFrom,
       timeFilterTo,
-      navigationSearch: debouncedSearch,
+      navigationSearch: search,
       navigationSearchMode: searchMode,
       markedSignatures: onlyMarked ? Object.keys(marksMap).sort() : [],
     });
@@ -775,10 +762,10 @@ export default function App(): JSX.Element {
       {
         stdFiltersEnabled,
         filter: {
-          level: debouncedFilter.level || "",
-          logger: debouncedFilter.logger || "",
-          thread: debouncedFilter.thread || "",
-          message: debouncedFilter.message || "",
+          level: filter.level || "",
+          logger: filter.logger || "",
+          thread: filter.thread || "",
+          message: filter.message || "",
         },
         onlyMarked,
         dcFilterEnabled,
@@ -786,7 +773,7 @@ export default function App(): JSX.Element {
         timeFilterEnabled,
         timeFilterFrom,
         timeFilterTo,
-        navigationSearch: debouncedSearch,
+        navigationSearch: search,
         navigationSearchMode: searchMode,
       },
       // marksMap nur für `onlyMarked` relevant – sonst wird es im Worker
@@ -803,11 +790,11 @@ export default function App(): JSX.Element {
   }, [
     debouncedEntries,
     stdFiltersEnabled,
-    debouncedFilter,
+    filter,
     dcVersion,
     timeVersion,
     onlyMarked,
-    debouncedSearch,
+    search,
     searchMode,
     filterEntries,
     // marksMap wirkt sich nur auf das Ergebnis aus, wenn `onlyMarked` aktiv
@@ -857,13 +844,13 @@ export default function App(): JSX.Element {
             total: workerFilterStats.total,
             onlyMarked,
             stdFiltersEnabled,
-            debouncedFilter,
+            filter,
             dcFilterEnabled: DiagnosticContextFilter.isEnabled(),
           });
         }
       }
     }
-  }, [workerFilterStats, onlyMarked, stdFiltersEnabled, debouncedFilter]);
+  }, [workerFilterStats, onlyMarked, stdFiltersEnabled, filter]);
 
   // Refs to track current values for menu handlers (avoid stale closures)
   const filteredIdxRef = useRef<number[]>(filteredIdx);
@@ -907,7 +894,7 @@ export default function App(): JSX.Element {
   // Track previous filter criteria to distinguish filter changes from new entries
   const prevFilterCriteriaRef = useRef({
     stdFiltersEnabled,
-    debouncedFilter,
+    filter,
     dcVersion,
     timeVersion,
     onlyMarked,
@@ -927,7 +914,7 @@ export default function App(): JSX.Element {
     const prevCriteria = prevFilterCriteriaRef.current;
     const filterCriteriaChanged =
       prevCriteria.stdFiltersEnabled !== stdFiltersEnabled ||
-      prevCriteria.debouncedFilter !== debouncedFilter ||
+      prevCriteria.filter !== filter ||
       prevCriteria.dcVersion !== dcVersion ||
       prevCriteria.timeVersion !== timeVersion ||
       prevCriteria.onlyMarked !== onlyMarked ||
@@ -937,7 +924,7 @@ export default function App(): JSX.Element {
     prevFilteredIdxRef.current = filteredIdx;
     prevFilterCriteriaRef.current = {
       stdFiltersEnabled,
-      debouncedFilter,
+      filter,
       dcVersion,
       timeVersion,
       onlyMarked,
@@ -964,7 +951,7 @@ export default function App(): JSX.Element {
   }, [
     filteredIdx,
     stdFiltersEnabled,
-    debouncedFilter,
+    filter,
     dcVersion,
     timeVersion,
     onlyMarked,
@@ -2955,7 +2942,6 @@ export default function App(): JSX.Element {
           selectedOneIdx={selectedOneIdx}
           filteredIdx={filteredIdx}
           gotoSearchMatch={gotoSearchMatch}
-          onSubmitSearch={flushSearch}
           t={t}
         />
         <StatusSection
@@ -3014,7 +3000,6 @@ export default function App(): JSX.Element {
           messagePopRef={messagePopRef}
           onStdFiltersEnabledChange={setStdFiltersEnabled}
           onFilterChange={setFilter}
-          onSubmitFilter={flushFilter}
           onOnlyMarkedChange={(nv) => {
             setOnlyMarked(nv);
             try {
@@ -3145,7 +3130,7 @@ export default function App(): JSX.Element {
           filteredIdx={filteredIdx}
           selected={selected}
           marksMap={marksMap}
-          search={debouncedSearch}
+          search={search}
           follow={follow}
           onDisableFollow={handleDisableFollow}
           onKeyDown={onListKeyDown}
