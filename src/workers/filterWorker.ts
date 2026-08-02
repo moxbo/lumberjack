@@ -61,7 +61,6 @@ export interface PagedFilterRequest {
   markedSignatures: string[];
   pageSize?: number;
   generation?: string | number;
-  revision?: string | number;
   databaseName?: string;
 }
 
@@ -72,7 +71,6 @@ export interface FilterResponse {
   stats: FilterStats;
   requestId?: number;
   generation?: string | number;
-  revision?: string | number;
   paged?: boolean;
 }
 
@@ -81,7 +79,6 @@ export interface FilterErrorResponse {
   requestId: number;
   message: string;
   generation?: string | number;
-  revision?: string | number;
   paged: true;
 }
 
@@ -94,7 +91,7 @@ interface PassingReference {
   id: number;
   _id: number;
   timestamp: unknown;
-  navigationMatch?: boolean;
+  message?: string;
 }
 
 interface PreparedFilter {
@@ -231,21 +228,6 @@ function entryPasses(
   return true;
 }
 
-function searchPositions(
-  references: readonly PassingReference[],
-  prepared: PreparedFilter,
-): number[] {
-  if (!prepared.navigationSearch) return [];
-  const matches: number[] = [];
-  const limit = Math.min(references.length, 50_000);
-  for (let visualIndex = 0; visualIndex < limit; visualIndex++) {
-    if (references[visualIndex]?.navigationMatch === true) {
-      matches.push(visualIndex);
-    }
-  }
-  return matches;
-}
-
 /**
  * Pure paged-filter core. Each iterable item represents one IndexedDB page.
  * It intentionally retains only passing IDs/timestamps and search messages.
@@ -270,21 +252,31 @@ export function filterProjectionPages(
           id: entry.id,
           _id: entry.id,
           timestamp: entry.timestamp,
-          navigationMatch: prepared.navigationSearch
-            ? msgMatches(entry.message, prepared.navigationSearch, {
-                mode: options.navigationSearchMode,
-              })
-            : undefined,
+          message: prepared.navigationSearch ? entry.message : undefined,
         });
       }
     }
   }
 
   references.sort(compareByTimestampId);
+  const searchMatchIndices: number[] = [];
+  if (prepared.navigationSearch) {
+    const limit = Math.min(references.length, 50_000);
+    for (let visualIndex = 0; visualIndex < limit; visualIndex++) {
+      const ref = references[visualIndex]!;
+      if (
+        msgMatches(ref.message ?? "", prepared.navigationSearch, {
+          mode: options.navigationSearchMode,
+        })
+      ) {
+        searchMatchIndices.push(visualIndex);
+      }
+    }
+  }
   return {
     type: "result",
     filteredIndices: references.map((entry) => entry.id),
-    searchMatchIndices: searchPositions(references, prepared),
+    searchMatchIndices,
     stats,
     paged: true,
   };
@@ -304,7 +296,9 @@ function filterLegacyEntries(
     stats.total++;
     if (!entry || !entryPasses(entry, options, prepared, stats)) continue;
     const visualIndex = filteredIndices.length;
-    filteredIndices.push(index);
+    const entryId = (entry as { _id?: unknown })._id;
+    const id = typeof entryId === "number" ? entryId : index;
+    filteredIndices.push(id);
     if (
       prepared.navigationSearch &&
       visualIndex < 50_000 &&
@@ -348,16 +342,20 @@ function readProjectionPage(
       };
       request.onsuccess = () => {
         const cursor = request.result;
-        if (!cursor || page.length >= pageSize) {
+        if (!cursor) {
           if (!settled) {
             settled = true;
             resolve(page);
           }
-
           return;
         }
         page.push(cursor.value as ProjectionRecord);
-        cursor.continue();
+        if (page.length < pageSize) {
+          cursor.continue();
+        } else if (!settled) {
+          settled = true;
+          resolve(page);
+        }
       };
       transaction.onabort = () => {
         if (!settled)
@@ -406,11 +404,7 @@ async function filterPagedDatabase(
             id: entry.id,
             _id: entry.id,
             timestamp: entry.timestamp,
-            navigationMatch: prepared.navigationSearch
-              ? msgMatches(entry.message, prepared.navigationSearch, {
-                  mode: request.options.navigationSearchMode,
-                })
-              : undefined,
+            message: prepared.navigationSearch ? entry.message : undefined,
           });
         }
       }
@@ -419,7 +413,20 @@ async function filterPagedDatabase(
     }
     if (request.requestId !== latestPagedRequestId) return null;
     references.sort(compareByTimestampId);
-    const searchMatchIndices = searchPositions(references, prepared);
+    const searchMatchIndices: number[] = [];
+    if (prepared.navigationSearch) {
+      const limit = Math.min(references.length, 50_000);
+      for (let visualIndex = 0; visualIndex < limit; visualIndex++) {
+        const ref = references[visualIndex]!;
+        if (
+          msgMatches(ref.message ?? "", prepared.navigationSearch, {
+            mode: request.options.navigationSearchMode,
+          })
+        ) {
+          searchMatchIndices.push(visualIndex);
+        }
+      }
+    }
     if (request.requestId !== latestPagedRequestId) return null;
     return {
       type: "result",
@@ -428,7 +435,6 @@ async function filterPagedDatabase(
       stats,
       requestId: request.requestId,
       generation: request.generation,
-      revision: request.revision,
       paged: true,
     };
   } finally {
@@ -464,7 +470,6 @@ if (workerScope) {
           requestId: request.requestId,
           message: error instanceof Error ? error.message : String(error),
           generation: request.generation,
-          revision: request.revision,
           paged: true,
         });
       })
@@ -484,7 +489,10 @@ if (workerScope) {
       return;
     }
     if (data.type === "appendEntries") {
-      cachedEntries.push(...(data.entries || []));
+      const incoming = data.entries || [];
+      for (let i = 0; i < incoming.length; i++) {
+        cachedEntries.push(incoming[i]);
+      }
       return;
     }
     if (data.type === "filter") {

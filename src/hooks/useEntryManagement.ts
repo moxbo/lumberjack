@@ -4,6 +4,8 @@
  */
 import { useCallback, useEffect, useRef, useState } from "preact/hooks";
 import { LoggingStore } from "../store/loggingStore";
+import { IndexedDbUnavailableError } from "../store/paged/errors";
+import { InMemoryLogRepository } from "../store/paged/InMemoryLogRepository";
 import {
   pagedLogRepository,
   startPagedSessionLifecycle,
@@ -30,6 +32,9 @@ export interface PagedEntryMetadata {
   logger?: string | null;
   traceId?: string | null;
   _mark?: string;
+  thread?: string | null;
+  message?: string;
+  mdc?: Record<string, unknown> | null;
 }
 
 function mergeSortedMetadata(
@@ -68,9 +73,18 @@ function mergeSortedMetadata(
 export function useEntryManagement({ marksMap }: UseEntryManagementOptions) {
   const [entries, setMetadataEntries] = useState<PagedEntryMetadata[]>([]);
   const [storageError, setStorageError] = useState<Error | null>(null);
+  const initialUsesPagedStorage = pagedLogRepository.isAvailable();
+  const [usesPagedStorage, setUsesPagedStorage] = useState(
+    initialUsesPagedStorage,
+  );
   const marksMapRef = useRef(marksMap);
   marksMapRef.current = marksMap;
   const metadataByIdRef = useRef<Array<PagedEntryMetadata | undefined>>([]);
+  const usesPagedStorageRef = useRef(usesPagedStorage);
+  usesPagedStorageRef.current = usesPagedStorage;
+  const repositoryRef = useRef<
+    typeof pagedLogRepository | InMemoryLogRepository
+  >(initialUsesPagedStorage ? pagedLogRepository : new InMemoryLogRepository());
 
   const generationRef = useRef(0);
   const operationTailRef = useRef<Promise<void> | null>(null);
@@ -84,16 +98,31 @@ export function useEntryManagement({ marksMap }: UseEntryManagementOptions) {
   const drainingRef = useRef(false);
 
   if (operationTailRef.current === null) {
-    operationTailRef.current = pagedLogRepository.clear().catch((error) => {
-      const normalized =
-        error instanceof Error ? error : new Error(String(error));
-      setStorageError(normalized);
-      logger.error("Paged log storage initialization failed:", normalized);
-      throw normalized;
-    });
+    if (!pagedLogRepository.isAvailable()) {
+      const memRepo = new InMemoryLogRepository();
+      repositoryRef.current = memRepo;
+      usesPagedStorageRef.current = false;
+      operationTailRef.current = memRepo.clear();
+    } else {
+      operationTailRef.current = pagedLogRepository.clear().catch((error) => {
+        const normalized =
+          error instanceof Error ? error : new Error(String(error));
+        if (error instanceof IndexedDbUnavailableError) {
+          const memRepo = new InMemoryLogRepository();
+          repositoryRef.current = memRepo;
+          usesPagedStorageRef.current = false;
+          setUsesPagedStorage(false);
+          return memRepo.clear();
+        }
+        setStorageError(normalized);
+        logger.error("Paged log storage initialization failed:", normalized);
+        throw normalized;
+      });
+    }
   }
 
   useEffect(() => {
+    if (!initialUsesPagedStorage) return () => {};
     const stopLifecycle = startPagedSessionLifecycle((error) => {
       logger.error("Maintaining paged log session failed:", error);
     });
@@ -112,6 +141,7 @@ export function useEntryManagement({ marksMap }: UseEntryManagementOptions) {
       generation: number,
     ): Promise<void> => {
       if (newEntries.length === 0) return;
+      const repository = repositoryRef.current;
 
       const batchKeys = new Set<string>();
       const candidates: Array<{ source: string; signature: string }> = [];
@@ -132,7 +162,7 @@ export function useEntryManagement({ marksMap }: UseEntryManagementOptions) {
 
       const existing =
         candidates.length > 0
-          ? await pagedLogRepository.findExistingSignatures(candidates)
+          ? await repository.findExistingSignatures(candidates)
           : new Set<string>();
       if (generation !== generationRef.current) return;
       const accepted = prepared
@@ -161,11 +191,11 @@ export function useEntryManagement({ marksMap }: UseEntryManagementOptions) {
         if (mark) entry._mark = mark;
       }
 
-      const ids = await pagedLogRepository.putMany(accepted);
+      const ids = await repository.putMany(accepted);
       if (generation !== generationRef.current) return;
       const metadata = accepted.map((entry, index): PagedEntryMetadata => {
         const signature = entrySignature(entry);
-        return {
+        const base: PagedEntryMetadata = {
           _id: ids[index]!,
           timestamp: entry.timestamp ?? null,
           source: String(entry.source ?? ""),
@@ -178,6 +208,12 @@ export function useEntryManagement({ marksMap }: UseEntryManagementOptions) {
               ? entry._mark
               : undefined,
         };
+        if (!usesPagedStorageRef.current) {
+          base.thread = entry.thread ?? null;
+          base.message = entry.message ?? "";
+          base.mdc = entry.mdc ?? null;
+        }
+        return base;
       });
       for (const item of metadata) metadataByIdRef.current[item._id] = item;
       metadata.sort(compareByTimestampId as any);
@@ -244,8 +280,9 @@ export function useEntryManagement({ marksMap }: UseEntryManagementOptions) {
     }
 
     const previous = operationTailRef.current ?? Promise.resolve();
+    const repository = repositoryRef.current;
     operationTailRef.current = previous
-      .then(() => pagedLogRepository.clear())
+      .then(() => repository.clear())
       .then(() => setStorageError(null))
       .catch((error) => {
         const normalized =
@@ -265,7 +302,8 @@ export function useEntryManagement({ marksMap }: UseEntryManagementOptions) {
     appendEntries,
     clearEntries,
     storageError,
-    repository: pagedLogRepository,
+    usesPagedStorage,
+    repository: repositoryRef.current,
     getMetadata,
   };
 }

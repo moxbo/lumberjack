@@ -112,4 +112,55 @@ describe("filterProjectionPages", () => {
       rejectedByLogger: 0,
     });
   });
+
+  it("does not evaluate search positions beyond 50 000 sorted results", () => {
+    const pages: ProjectionRecord[][] = [];
+    const PAGE = 1000;
+    for (let base = 0; base < 51; base++) {
+      const page: ProjectionRecord[] = [];
+      for (let i = 0; i < (base < 50 ? PAGE : 1); i++) {
+        const globalId = base * PAGE + i + 1;
+        page.push(
+          projection(globalId, {
+            timestamp: `2026-01-01T00:00:00.${String(globalId).padStart(6, "0")}Z`,
+            message: base * PAGE + i < 50_000 ? "not-needle" : "needle extra",
+          }),
+        );
+      }
+      pages.push(page);
+    }
+
+    const result = filterProjectionPages(
+      pages,
+      options({ navigationSearch: "needle extra" }),
+    );
+
+    expect(result.filteredIndices.length).toBe(50_001);
+    expect(result.searchMatchIndices).toEqual([]);
+    const ids = result.filteredIndices;
+    for (let i = 1; i < ids.length; i++) {
+      expect(ids[i]!).toBeGreaterThan(ids[i - 1]!);
+    }
+  });
+
+  it("evaluates search for entries within first 50 000 sorted results", () => {
+    const result = filterProjectionPages(
+      [
+        [
+          projection(1, {
+            message: "needle at start",
+            timestamp: "2026-01-01T00:00:01Z",
+          }),
+          projection(2, {
+            message: "no match",
+            timestamp: "2026-01-01T00:00:02Z",
+          }),
+        ],
+      ],
+      options({ navigationSearch: "needle at start" }),
+    );
+
+    expect(result.filteredIndices).toEqual([1, 2]);
+    expect(result.searchMatchIndices).toEqual([0]);
+  });
 });

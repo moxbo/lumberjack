@@ -288,6 +288,7 @@ export default function App(): JSX.Element {
     appendEntries,
     clearEntries,
     storageError,
+    usesPagedStorage,
     repository,
     getMetadata,
   } = useEntryManagement({
@@ -709,6 +710,7 @@ export default function App(): JSX.Element {
     parentRef,
     showAlert,
     t,
+    repository,
     getMetadata,
   });
 
@@ -790,12 +792,13 @@ export default function App(): JSX.Element {
       // marksMap nur für `onlyMarked` relevant – sonst wird es im Worker
       // ohnehin ignoriert. Übergabe ist zustandslos und billig.
       onlyMarked ? marksMap : undefined,
-      {
-        paged: true,
-        generation: filterGeneration,
-        revision: debouncedEntries.length,
-        databaseName: repository.databaseName,
-      },
+      usesPagedStorage
+        ? {
+            paged: true,
+            generation: filterGeneration,
+            databaseName: repository.databaseName,
+          }
+        : undefined,
     );
   }, [
     debouncedEntries,
@@ -811,6 +814,7 @@ export default function App(): JSX.Element {
     // ist. Anderfalls wäre eine Aufnahme in die Deps eine unnötige
     // Re-Filter-Quelle bei jedem Mark/Unmark-Klick.
     onlyMarked ? marksMap : null,
+    usesPagedStorage,
   ]);
 
   // Use worker results for filtered indices

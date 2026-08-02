@@ -53,7 +53,6 @@ export interface PagedFilterConfig {
   paged: true;
   databaseName?: string;
   generation?: string | number;
-  revision?: string | number;
   pageSize?: number;
 }
 
@@ -96,6 +95,7 @@ const MAX_ENTRIES_PER_MESSAGE = 50000;
  * Prevents DataCloneError by not transferring large raw/stackTrace fields
  */
 export interface SlimEntry {
+  _id?: number;
   level?: string | null;
   logger?: string | null;
   thread?: string | null;
@@ -139,6 +139,7 @@ export function projectToSlimEntries(
     }
     // Only copy fields needed for filtering - skip raw, stackTrace, etc.
     const slimEntry: SlimEntry = {
+      _id: typeof e._id === "number" ? (e._id as number) : undefined,
       level: e.level as string | null | undefined,
       logger: e.logger as string | null | undefined,
       thread: e.thread as string | null | undefined,
@@ -155,6 +156,16 @@ export function projectToSlimEntries(
   return result;
 }
 
+export function resolveFilteredEntryIds(
+  entries: unknown[],
+  filteredOffsets: readonly number[],
+): number[] {
+  return filteredOffsets.map((offset) => {
+    const entry = entries[offset] as { _id?: unknown } | null | undefined;
+    return typeof entry?._id === "number" ? entry._id : offset;
+  });
+}
+
 function computeSearchMatchIndices(
   entries: unknown[],
   filteredIndices: number[],
@@ -163,6 +174,8 @@ function computeSearchMatchIndices(
   const search = String(options.navigationSearch || "").trim();
   if (!search) return [];
 
+  // UtilityProcess filtering still returns legacy array indices, so this helper
+  // intentionally treats filteredIndices as direct offsets into `entries`.
   const matches: number[] = [];
   const limit = Math.min(filteredIndices.length, 50_000);
   for (let visualIndex = 0; visualIndex < limit; visualIndex++) {
@@ -537,7 +550,8 @@ export function useFilterWorker(): UseFilterWorkerResult {
 
         filterStats.passed++;
         const visualIndex = indices.length;
-        indices.push(i);
+        const id = typeof e._id === "number" ? (e._id as number) : i;
+        indices.push(id);
         if (
           navigationSearch &&
           visualIndex < 50_000 &&
@@ -595,7 +609,6 @@ export function useFilterWorker(): UseFilterWorkerResult {
             requestId,
             markedSignatures: marksMap ? Object.keys(marksMap) : [],
             generation: config.generation,
-            revision: config.revision,
             pageSize: config.pageSize,
             databaseName: config.databaseName,
           });
@@ -705,13 +718,15 @@ export function useFilterWorker(): UseFilterWorkerResult {
               if (requestId > lastAppliedRequestRef.current) {
                 lastAppliedRequestRef.current = requestId;
                 if (result.ok) {
-                  setFilteredIndices(result.filteredIndices);
                   setSearchMatchIndices(
                     computeSearchMatchIndices(
                       entries,
                       result.filteredIndices,
                       options,
                     ),
+                  );
+                  setFilteredIndices(
+                    resolveFilteredEntryIds(entries, result.filteredIndices),
                   );
                   setStats(result.stats);
                 } else {

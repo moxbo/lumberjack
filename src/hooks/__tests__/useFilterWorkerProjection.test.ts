@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { projectToSlimEntries } from "../useFilterWorker";
+import {
+  projectToSlimEntries,
+  resolveFilteredEntryIds,
+} from "../useFilterWorker";
 
 describe("projectToSlimEntries", () => {
   const source = [
@@ -26,5 +29,14 @@ describe("projectToSlimEntries", () => {
     const [projected] = projectToSlimEntries(source, undefined, true);
 
     expect(projected?.mdc).toEqual({ TraceID: "abc" });
+  });
+
+  it("maps UtilityProcess offsets back to stable entry IDs", () => {
+    expect(
+      resolveFilteredEntryIds(
+        [{ _id: 12 }, { _id: 4 }, { message: "legacy entry" }],
+        [1, 2, 0],
+      ),
+    ).toEqual([4, 2, 12]);
   });
 });
