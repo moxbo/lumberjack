@@ -176,39 +176,10 @@ und dieses Projekt folgt [Semantic Versioning](https://semver.org/lang/de/).
 - **release**: Improve branch sync check before release process
 
 
-### Tests
-- Add integration tests for Elasticsearch and OpenSearch with Testcontainers
-
-## [1.1.2-beta.7] - 2026-07-27 _(Pre-Release)_
-
-
-### Fixed
-- **parser**: Enhance logger field handling for improved query matching
-
-## [1.1.2-beta.6] - 2026-07-24 _(Pre-Release)_
-
-
-### Fixed
-- **renderer**: Display offloaded stacktraces
-
-
 ### Performance
 - Offload long-message highlighting
 - Omit unused MDC worker data
 - Index marks and isolate toolbar controls
-
-## [1.1.2-beta.5] - 2026-07-24 _(Pre-Release)_
-
-
-### Changed
-- Isolate virtualized log list
-- Enhance logging filter by adding logger name to search query
-
-
-### Fixed
-- Add metadata exclusion for message truncation in diagnostic context
-
-## [1.1.2-beta.4] - 2026-07-24 _(Pre-Release)_
 
 
 ### Added
