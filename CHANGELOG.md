@@ -176,10 +176,39 @@ und dieses Projekt folgt [Semantic Versioning](https://semver.org/lang/de/).
 - **release**: Improve branch sync check before release process
 
 
+### Tests
+- Add integration tests for Elasticsearch and OpenSearch with Testcontainers
+
+## [1.1.2-beta.7] - 2026-07-27 _(Pre-Release)_
+
+
+### Fixed
+- **parser**: Enhance logger field handling for improved query matching
+
+## [1.1.2-beta.6] - 2026-07-24 _(Pre-Release)_
+
+
+### Fixed
+- **renderer**: Display offloaded stacktraces
+
+
 ### Performance
 - Offload long-message highlighting
 - Omit unused MDC worker data
 - Index marks and isolate toolbar controls
+
+## [1.1.2-beta.5] - 2026-07-24 _(Pre-Release)_
+
+
+### Changed
+- Isolate virtualized log list
+- Enhance logging filter by adding logger name to search query
+
+
+### Fixed
+- Add metadata exclusion for message truncation in diagnostic context
+
+## [1.1.2-beta.4] - 2026-07-24 _(Pre-Release)_
 
 
 ### Added
@@ -239,6 +268,39 @@ und dieses Projekt folgt [Semantic Versioning](https://semver.org/lang/de/).
 - Implement batched emission for large initial content in HttpTailManager
 - Enhance release notes rendering with HTML sanitization and Markdown support
 - Enhance CHANGELOG generation for stable releases by aggregating pre-release tags
+
+## [1.0.16-beta.4] - 2026-06-09 _(Pre-Release)_
+
+
+### Added
+- Add timestamp field support for Elasticsearch filtering and sorting
+
+
+### Fixed
+- Implement boolean query syntax for message filtering in Elasticsearch
+- Update query construction to use query_string for single tokens in Elasticsearch
+- Enhance elastic entry loading logic and improve loaded count tracking
+
+## [1.0.16-beta.3] - 2026-06-02 _(Pre-Release)_
+
+
+### Fixed
+- Improve byte offset tracking for multi-byte UTF-8 content in HttpTailManager
+- Remove unnecessary libc entries from package-lock.json
+
+## [1.0.16-beta.2] - 2026-06-01 _(Pre-Release)_
+
+
+### Fixed
+- **release**: Update commit message filtering to exclude release-related chores
+
+## [1.0.16-beta.1] - 2026-06-01 _(Pre-Release)_
+
+
+### Added
+- **filters**: Optimize message filtering with precompiled patterns for improved performance
+- **vite.config**: Disable modulePreload for optimized initial load and adjust chunking strategy
+- **parsers**: Add asynchronous parsing functions for paths and enhance error handling
 
 ## [1.0.16-beta.4] - 2026-06-09 _(Pre-Release)_
 
