@@ -284,6 +284,7 @@ export default function App(): JSX.Element {
   // Entry management hook (entries, IPC batching, deduplication)
   const {
     entries,
+    entryGeneration,
     appendEntries,
     appendEntriesAsync,
     clearEntries,
@@ -754,8 +755,6 @@ export default function App(): JSX.Element {
       timeFilterEnabled,
       timeFilterFrom,
       timeFilterTo,
-      navigationSearch: search,
-      navigationSearchMode: searchMode,
       markedSignatures: onlyMarked ? Object.keys(marksMap).sort() : [],
     });
     filterEntries(
@@ -784,6 +783,8 @@ export default function App(): JSX.Element {
         ? {
             paged: true,
             generation: filterGeneration,
+            dataGeneration: entryGeneration,
+            entryCount: debouncedEntries.length,
             databaseName: repository.databaseName,
           }
         : undefined,
@@ -803,6 +804,7 @@ export default function App(): JSX.Element {
     // Re-Filter-Quelle bei jedem Mark/Unmark-Klick.
     onlyMarked ? marksMap : null,
     usesPagedStorage,
+    entryGeneration,
   ]);
 
   // Use worker results for filtered indices

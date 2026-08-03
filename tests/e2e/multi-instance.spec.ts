@@ -62,6 +62,79 @@ async function launchApp(
 const test = base;
 
 test.describe("Multi-Instance Input Behavior", () => {
+  test("secondary instance uses isolated Chromium session storage", async () => {
+    const { app: app1, window: window1 } = await launchApp();
+
+    try {
+      const { app: app2, window: window2 } = await launchApp([
+        "--multi-instance",
+        "--new-window",
+      ]);
+
+      try {
+        const paths1 = await app1.evaluate(async ({ app }) => ({
+          userData: app.getPath("userData"),
+          sessionData: app.getPath("sessionData"),
+        }));
+        const paths2 = await app2.evaluate(async ({ app }) => ({
+          userData: app.getPath("userData"),
+          sessionData: app.getPath("sessionData"),
+        }));
+
+        expect(paths2.userData).toBe(paths1.userData);
+        expect(paths2.sessionData).not.toBe(paths1.sessionData);
+        expect(paths2.sessionData).toContain("session-data");
+
+        const storedValues = await Promise.all(
+          [
+            [window1, "primary"],
+            [window2, "secondary"],
+          ].map(async ([window, value]) =>
+            (window as Page).evaluate(async (storedValue) => {
+              const db = await new Promise<IDBDatabase>((resolve, reject) => {
+                const request = indexedDB.open("multi-instance-check", 1);
+                request.onupgradeneeded = () => {
+                  request.result.createObjectStore("values");
+                };
+                request.onsuccess = () => resolve(request.result);
+                request.onerror = () =>
+                  reject(
+                    request.error ?? new Error("Opening IndexedDB failed"),
+                  );
+              });
+              await new Promise<void>((resolve, reject) => {
+                const transaction = db.transaction("values", "readwrite");
+                transaction.objectStore("values").put(storedValue, "owner");
+                transaction.oncomplete = () => resolve();
+                transaction.onerror = () =>
+                  reject(
+                    transaction.error ??
+                      new Error("Writing IndexedDB value failed"),
+                  );
+              });
+              const result = await new Promise<string>((resolve, reject) => {
+                const transaction = db.transaction("values", "readonly");
+                const request = transaction.objectStore("values").get("owner");
+                request.onsuccess = () => resolve(String(request.result));
+                request.onerror = () =>
+                  reject(
+                    request.error ?? new Error("Reading IndexedDB failed"),
+                  );
+              });
+              db.close();
+              return result;
+            }, value as string),
+          ),
+        );
+        expect(storedValues).toEqual(["primary", "secondary"]);
+      } finally {
+        await app2.close();
+      }
+    } finally {
+      await app1.close();
+    }
+  });
+
   test("input should work after launching second instance with --multi-instance flag", async () => {
     // Launch first instance
     const { app: app1, window: window1 } = await launchApp();

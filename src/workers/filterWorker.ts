@@ -61,6 +61,8 @@ export interface PagedFilterRequest {
   markedSignatures: string[];
   pageSize?: number;
   generation?: string | number;
+  dataGeneration?: string | number;
+  entryCount: number;
   databaseName?: string;
 }
 
@@ -72,6 +74,7 @@ export interface FilterResponse {
   requestId?: number;
   generation?: string | number;
   paged?: boolean;
+  partial?: boolean;
 }
 
 export interface FilterErrorResponse {
@@ -87,7 +90,7 @@ type WorkerRequest =
 
 type FilterableEntry = Partial<ProjectionRecord>;
 
-interface PassingReference {
+export interface PassingReference {
   id: number;
   _id: number;
   timestamp: unknown;
@@ -105,6 +108,19 @@ interface PreparedFilter {
 }
 
 const PAGED_SCAN_SIZE = 2_000;
+const SEARCHABLE_REFERENCE_LIMIT = 50_000;
+
+interface PagedFilterCache {
+  databaseName?: string;
+  generation?: string | number;
+  dataGeneration?: string | number;
+  scannedEntryCount: number;
+  lastScannedId?: number;
+  references: PassingReference[];
+  stats: FilterStats;
+}
+
+let pagedFilterCache: PagedFilterCache | null = null;
 
 function emptyStats(): FilterStats {
   return {
@@ -124,6 +140,80 @@ function parseOptionalTimestamp(value?: string): number | null {
   if (!value) return null;
   const parsed = new Date(value).getTime();
   return Number.isNaN(parsed) ? null : parsed;
+}
+
+export function mergePassingReferences(
+  previous: PassingReference[],
+  incoming: PassingReference[],
+): PassingReference[] {
+  if (previous.length === 0) return incoming.sort(compareByTimestampId);
+  if (incoming.length === 0) return previous.slice();
+  incoming.sort(compareByTimestampId);
+  const merged = new Array<PassingReference>(previous.length + incoming.length);
+  let previousIndex = 0;
+  let incomingIndex = 0;
+  let outputIndex = 0;
+  while (previousIndex < previous.length && incomingIndex < incoming.length) {
+    if (
+      compareByTimestampId(
+        previous[previousIndex]!,
+        incoming[incomingIndex]!,
+      ) <= 0
+    ) {
+      merged[outputIndex++] = previous[previousIndex++]!;
+    } else {
+      merged[outputIndex++] = incoming[incomingIndex++]!;
+    }
+  }
+  while (previousIndex < previous.length) {
+    merged[outputIndex++] = previous[previousIndex++]!;
+  }
+  while (incomingIndex < incoming.length) {
+    merged[outputIndex++] = incoming[incomingIndex++]!;
+  }
+  return merged;
+}
+
+function retainSearchableMessages(references: PassingReference[]): void {
+  for (
+    let index = SEARCHABLE_REFERENCE_LIMIT;
+    index < references.length;
+    index++
+  ) {
+    references[index]!.message = undefined;
+  }
+}
+
+function buildPagedResponse(
+  request: PagedFilterRequest,
+  references: PassingReference[],
+  stats: FilterStats,
+  partial = false,
+): FilterResponse {
+  const search = String(request.options.navigationSearch || "").trim();
+  const searchMatchIndices: number[] = [];
+  if (search) {
+    const limit = Math.min(references.length, SEARCHABLE_REFERENCE_LIMIT);
+    for (let visualIndex = 0; visualIndex < limit; visualIndex++) {
+      if (
+        msgMatches(references[visualIndex]!.message ?? "", search, {
+          mode: request.options.navigationSearchMode,
+        })
+      ) {
+        searchMatchIndices.push(visualIndex);
+      }
+    }
+  }
+  return {
+    type: "result",
+    filteredIndices: references.map((entry) => entry.id),
+    searchMatchIndices,
+    stats,
+    requestId: request.requestId,
+    generation: request.generation,
+    paged: true,
+    partial,
+  };
 }
 
 function prepareFilter(options: FilterOptions): PreparedFilter {
@@ -375,10 +465,18 @@ let latestPagedRequestId = 0;
 
 async function filterPagedDatabase(
   request: PagedFilterRequest,
+  onProgress?: (response: FilterResponse) => void,
 ): Promise<FilterResponse | null> {
-  const stats = emptyStats();
+  const canReuse =
+    pagedFilterCache !== null &&
+    pagedFilterCache.databaseName === request.databaseName &&
+    pagedFilterCache.generation === request.generation &&
+    pagedFilterCache.dataGeneration === request.dataGeneration &&
+    request.entryCount >= pagedFilterCache.scannedEntryCount;
+  const stats = canReuse ? { ...pagedFilterCache!.stats } : emptyStats();
   const prepared = prepareFilter(request.options);
-  const references: PassingReference[] = [];
+  const previousReferences = canReuse ? pagedFilterCache!.references : [];
+  const appendedReferences: PassingReference[] = [];
   const markedSignatures = new Set(request.markedSignatures);
   const pageSize =
     request.pageSize !== undefined &&
@@ -386,13 +484,18 @@ async function filterPagedDatabase(
     request.pageSize > 0
       ? request.pageSize
       : PAGED_SCAN_SIZE;
-  const db = await openPagedDatabase(undefined, request.databaseName);
+  let lastScannedId = canReuse ? pagedFilterCache!.lastScannedId : undefined;
 
+  if (canReuse && request.entryCount === pagedFilterCache!.scannedEntryCount) {
+    return buildPagedResponse(request, previousReferences, stats);
+  }
+
+  const db = await openPagedDatabase(undefined, request.databaseName);
   try {
-    let afterId: number | undefined;
+    let pageNumber = 0;
     while (true) {
       if (request.requestId !== latestPagedRequestId) return null;
-      const page = await readProjectionPage(db, afterId, pageSize);
+      const page = await readProjectionPage(db, lastScannedId, pageSize);
       if (request.requestId !== latestPagedRequestId) return null;
       for (const entry of page) {
         stats.total++;
@@ -400,43 +503,49 @@ async function filterPagedDatabase(
           entry &&
           entryPasses(entry, request.options, prepared, stats, markedSignatures)
         ) {
-          references.push({
+          appendedReferences.push({
             id: entry.id,
             _id: entry.id,
             timestamp: entry.timestamp,
-            message: prepared.navigationSearch ? entry.message : undefined,
+            message: entry.message,
           });
         }
       }
-      if (page.length < pageSize) break;
-      afterId = page[page.length - 1]!.id;
-    }
-    if (request.requestId !== latestPagedRequestId) return null;
-    references.sort(compareByTimestampId);
-    const searchMatchIndices: number[] = [];
-    if (prepared.navigationSearch) {
-      const limit = Math.min(references.length, 50_000);
-      for (let visualIndex = 0; visualIndex < limit; visualIndex++) {
-        const ref = references[visualIndex]!;
-        if (
-          msgMatches(ref.message ?? "", prepared.navigationSearch, {
-            mode: request.options.navigationSearchMode,
-          })
-        ) {
-          searchMatchIndices.push(visualIndex);
-        }
+      if (page.length > 0) {
+        lastScannedId = page[page.length - 1]!.id;
       }
+      pageNumber++;
+      if (
+        !canReuse &&
+        pageNumber === 1 &&
+        page.length === pageSize &&
+        request.requestId === latestPagedRequestId
+      ) {
+        const firstPageReferences = appendedReferences
+          .slice()
+          .sort(compareByTimestampId);
+        onProgress?.(
+          buildPagedResponse(request, firstPageReferences, { ...stats }, true),
+        );
+      }
+      if (page.length < pageSize) break;
     }
     if (request.requestId !== latestPagedRequestId) return null;
-    return {
-      type: "result",
-      filteredIndices: references.map((entry) => entry.id),
-      searchMatchIndices,
-      stats,
-      requestId: request.requestId,
+    const references = canReuse
+      ? mergePassingReferences(previousReferences, appendedReferences)
+      : appendedReferences.sort(compareByTimestampId);
+    retainSearchableMessages(references);
+    if (request.requestId !== latestPagedRequestId) return null;
+    pagedFilterCache = {
+      databaseName: request.databaseName,
       generation: request.generation,
-      paged: true,
+      dataGeneration: request.dataGeneration,
+      scannedEntryCount: stats.total,
+      lastScannedId,
+      references,
+      stats: { ...stats },
     };
+    return buildPagedResponse(request, references, stats);
   } finally {
     db.close();
   }
@@ -446,6 +555,7 @@ let cachedEntries: unknown[] = [];
 let pagedFilterRunning = false;
 let queuedPagedRequest: PagedFilterRequest | null = null;
 let activePagedGeneration: string | number | undefined;
+let activePagedDataGeneration: string | number | undefined;
 
 const workerScope =
   typeof self === "undefined"
@@ -459,8 +569,11 @@ if (workerScope) {
   const runPagedRequest = (request: PagedFilterRequest): void => {
     pagedFilterRunning = true;
     activePagedGeneration = request.generation;
+    activePagedDataGeneration = request.dataGeneration;
     latestPagedRequestId = request.requestId;
-    void filterPagedDatabase(request)
+    void filterPagedDatabase(request, (progress) =>
+      workerScope.postMessage(progress),
+    )
       .then((result) => {
         if (result) workerScope.postMessage(result);
       })
@@ -476,6 +589,7 @@ if (workerScope) {
       .finally(() => {
         pagedFilterRunning = false;
         activePagedGeneration = undefined;
+        activePagedDataGeneration = undefined;
         const queued = queuedPagedRequest;
         queuedPagedRequest = null;
         if (queued) runPagedRequest(queued);
@@ -507,7 +621,10 @@ if (workerScope) {
 
     if (pagedFilterRunning) {
       queuedPagedRequest = data;
-      if (data.generation !== activePagedGeneration) {
+      if (
+        data.generation !== activePagedGeneration ||
+        data.dataGeneration !== activePagedDataGeneration
+      ) {
         latestPagedRequestId = data.requestId;
       }
     } else {

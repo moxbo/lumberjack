@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
 import type { ProjectionRecord } from "../../store/paged";
-import { filterProjectionPages, type FilterOptions } from "../filterWorker";
+import {
+  filterProjectionPages,
+  mergePassingReferences,
+  type FilterOptions,
+} from "../filterWorker";
 
 function projection(
   id: number,
@@ -36,6 +40,33 @@ function options(overrides: Partial<FilterOptions> = {}): FilterOptions {
 }
 
 describe("filterProjectionPages", () => {
+  it("merges appended matches without re-sorting existing matches", () => {
+    const merged = mergePassingReferences(
+      [
+        { id: 1, _id: 1, timestamp: "2026-01-01T00:00:02Z" },
+        { id: 2, _id: 2, timestamp: "2026-01-01T00:00:04Z" },
+      ],
+      [
+        { id: 3, _id: 3, timestamp: "2026-01-01T00:00:01Z" },
+        { id: 4, _id: 4, timestamp: "2026-01-01T00:00:03Z" },
+      ],
+    );
+
+    expect(merged.map((entry) => entry.id)).toEqual([3, 1, 4, 2]);
+  });
+
+  it("sorts appended matches when the cached filter result is empty", () => {
+    const merged = mergePassingReferences(
+      [],
+      [
+        { id: 2, _id: 2, timestamp: "2026-01-01T00:00:02Z" },
+        { id: 1, _id: 1, timestamp: "2026-01-01T00:00:01Z" },
+      ],
+    );
+
+    expect(merged.map((entry) => entry.id)).toEqual([1, 2]);
+  });
+
   it("returns stable IDs in timestamp/id order and sorted search positions", () => {
     const result = filterProjectionPages(
       [

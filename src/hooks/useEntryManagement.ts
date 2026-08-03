@@ -10,7 +10,7 @@ import {
   startPagedSessionLifecycle,
 } from "../store/paged/session";
 import type { PagedLogEntry, PagedTimestamp } from "../store/paged";
-import { compareByTimestampId, clearTimestampParseCache } from "../utils/sort";
+import { clearTimestampParseCache, compareByTimestampId } from "../utils/sort";
 import {
   entrySignature,
   isElasticSource,
@@ -197,7 +197,7 @@ export function useEntryManagement({ marksMap }: UseEntryManagementOptions) {
         usesPagedStorageRef.current = false;
         setUsesPagedStorage(false);
         setMetadataEntries((previous) => {
-          const recovered = previous.map((item) => {
+          return previous.map((item) => {
             const payload = recoveredEntries.get(item._id);
             const enriched: PagedEntryMetadata = {
               ...item,
@@ -208,7 +208,6 @@ export function useEntryManagement({ marksMap }: UseEntryManagementOptions) {
             metadataByIdRef.current[item._id] = enriched;
             return enriched;
           });
-          return recovered;
         });
         logger.warn(
           "Paged log storage failed; switched to in-memory storage",
@@ -436,6 +435,7 @@ export function useEntryManagement({ marksMap }: UseEntryManagementOptions) {
 
   return {
     entries,
+    entryGeneration: generationRef.current,
     appendEntries,
     appendEntriesAsync,
     clearEntries,

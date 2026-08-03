@@ -68,6 +68,29 @@ import {
 
 // Track startup time for performance monitoring
 const processStartTime = Date.now();
+const isMultiInstanceLaunch = process.argv.includes(MULTI_INSTANCE_FLAG);
+
+// Independent Electron processes must not share Chromium's session profile.
+// Keep userData shared for Lumberjack settings, but isolate IndexedDB, quota
+// metadata, localStorage and caches used by each renderer process.
+if (isMultiInstanceLaunch) {
+  const sessionDataPath = path.join(
+    app.getPath("userData"),
+    "session-data",
+    `instance-${process.pid}`,
+  );
+  try {
+    fs.rmSync(sessionDataPath, { recursive: true, force: true });
+    fs.mkdirSync(sessionDataPath, { recursive: true });
+    app.setPath("sessionData", sessionDataPath);
+    console.warn("[multi-instance] Isolated sessionData:", sessionDataPath);
+  } catch (error) {
+    console.error(
+      "[multi-instance] Failed to isolate sessionData:",
+      error instanceof Error ? error.message : String(error),
+    );
+  }
+}
 
 // GPU/Hardware Acceleration: Allow disabling for problematic systems (VMs, old drivers)
 // Users can set LUMBERJACK_DISABLE_GPU=1 to skip hardware acceleration
@@ -175,7 +198,6 @@ try {
 
 // Environment (use imported constant)
 const isDev = isDevEnv;
-const isMultiInstanceLaunch = process.argv.includes(MULTI_INSTANCE_FLAG);
 
 // Initialize logging as early as possible to catch startup crashes
 log.initialize();

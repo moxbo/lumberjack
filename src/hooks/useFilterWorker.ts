@@ -53,6 +53,8 @@ export interface PagedFilterConfig {
   paged: true;
   databaseName?: string;
   generation?: string | number;
+  dataGeneration?: string | number;
+  entryCount: number;
   pageSize?: number;
 }
 
@@ -290,6 +292,7 @@ export function useFilterWorker(): UseFilterWorkerResult {
           paged,
           message,
           generation,
+          partial,
         } = event.data;
         if (
           type === "error" &&
@@ -308,7 +311,7 @@ export function useFilterWorker(): UseFilterWorkerResult {
           paged === true &&
           typeof requestId === "number" &&
           generation === pendingGenerationRef.current &&
-          requestId > lastAppliedRequestRef.current;
+          requestId >= lastAppliedRequestRef.current;
         const isApplicableLegacyResult =
           paged !== true &&
           typeof requestId === "number" &&
@@ -326,7 +329,7 @@ export function useFilterWorker(): UseFilterWorkerResult {
           // isFiltering erst zurücksetzen, wenn das aktuell jüngste Ergebnis da
           // ist – sonst würde der Ladeindikator bei jedem Zwischenergebnis
           // flackern, obwohl noch Requests ausstehen.
-          if (requestId >= pendingRequestRef.current) {
+          if (!partial && requestId >= pendingRequestRef.current) {
             setIsFiltering(false);
           }
         }
@@ -609,6 +612,8 @@ export function useFilterWorker(): UseFilterWorkerResult {
             requestId,
             markedSignatures: marksMap ? Object.keys(marksMap) : [],
             generation: config.generation,
+            dataGeneration: config.dataGeneration,
+            entryCount: config.entryCount,
             pageSize: config.pageSize,
             databaseName: config.databaseName,
           });
@@ -652,7 +657,7 @@ export function useFilterWorker(): UseFilterWorkerResult {
         // genügt der inkrementelle Sync. Das vermeidet einen teuren Komplett-
         // Transfer aller Einträge pro Filterlauf, sobald überhaupt Marks
         // existieren (häufiger Fall bei großen Datenmengen).
-        const forceFull = !!options.onlyMarked;
+        const forceFull = options.onlyMarked;
 
         try {
           const ok = syncEntriesToWorker(
