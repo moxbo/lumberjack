@@ -1751,8 +1751,11 @@ export default function App(): JSX.Element {
               `[renderer-diag] Received IPC logs:append with ${newEntries?.length || 0} entries`,
             );
           }
-          appendEntries(newEntries as any[]);
-          announceAppend(newEntries as any[]);
+          void appendEntriesAsync(newEntries as any[])
+            .then(() => announceAppend(newEntries as any[]))
+            .catch((error) => {
+              logger.error("Persisting appended IPC logs failed:", error);
+            });
           // Sprint 5: feed alert evaluator with new entries.
           try {
             if (Array.isArray(newEntries) && newEntries.length > 0) {

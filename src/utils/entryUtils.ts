@@ -168,7 +168,9 @@ export function isElasticSource(e: any): boolean {
  */
 export function isFileSource(e: any): boolean {
   const s = e?.source;
-  return typeof s === "string" && !s.includes("://");
+  if (typeof s !== "string") return false;
+  if (/^[A-Za-z]:[\\/]/.test(s)) return true;
+  return !/^[A-Za-z][A-Za-z0-9+.-]*:/.test(s);
 }
 
 /**
@@ -180,4 +182,8 @@ export function isHttpSource(e: any): boolean {
     typeof s === "string" &&
     (s.startsWith("http://") || s.startsWith("https://"))
   );
+}
+
+export function shouldDeduplicateSource(e: any): boolean {
+  return isElasticSource(e) || isFileSource(e) || isHttpSource(e);
 }

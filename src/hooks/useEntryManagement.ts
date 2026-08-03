@@ -11,7 +11,11 @@ import {
 } from "../store/paged/session";
 import type { PagedLogEntry, PagedTimestamp } from "../store/paged";
 import { compareByTimestampId, clearTimestampParseCache } from "../utils/sort";
-import { entrySignature, isElasticSource } from "../utils/entryUtils";
+import {
+  entrySignature,
+  isElasticSource,
+  shouldDeduplicateSource,
+} from "../utils/entryUtils";
 import { clearHighlightCache } from "../renderer/LogRow";
 import { clearTimestampCache } from "../utils/format";
 import { clearRegexCache } from "../utils/highlight";
@@ -219,14 +223,25 @@ export function useEntryManagement({ marksMap }: UseEntryManagementOptions) {
         if (!input) continue;
         const source = String(input.source ?? "");
         const signature = entrySignature(input);
+        const deduplicate = shouldDeduplicateSource(input);
         const key = `${source}\0${signature}`;
-        if (batchKeys.has(key)) continue;
-        batchKeys.add(key);
+        if (deduplicate) {
+          if (batchKeys.has(key)) continue;
+          batchKeys.add(key);
+        }
 
         const ignoreExisting =
           options?.ignoreExistingForElastic === true && isElasticSource(input);
-        if (!ignoreExisting) candidates.push({ source, signature });
-        prepared.push({ input, source, signature, ignoreExisting });
+        if (deduplicate && !ignoreExisting) {
+          candidates.push({ source, signature });
+        }
+        prepared.push({
+          input,
+          source,
+          signature,
+          deduplicate,
+          ignoreExisting,
+        });
       }
 
       let existing = new Set<string>();
@@ -241,8 +256,10 @@ export function useEntryManagement({ marksMap }: UseEntryManagementOptions) {
       if (generation !== generationRef.current) return 0;
       const accepted = prepared
         .filter(
-          ({ source, signature, ignoreExisting }) =>
-            ignoreExisting || !existing.has(`${source}\0${signature}`),
+          ({ source, signature, deduplicate, ignoreExisting }) =>
+            !deduplicate ||
+            ignoreExisting ||
+            !existing.has(`${source}\0${signature}`),
         )
         .map(({ input }) => {
           const entry = { ...input };
