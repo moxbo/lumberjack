@@ -4,13 +4,12 @@
  */
 import { useCallback, useEffect, useRef, useState } from "preact/hooks";
 import { LoggingStore } from "../store/loggingStore";
-import { IndexedDbUnavailableError } from "../store/paged/errors";
 import { InMemoryLogRepository } from "../store/paged/InMemoryLogRepository";
 import {
   pagedLogRepository,
   startPagedSessionLifecycle,
 } from "../store/paged/session";
-import type { PagedTimestamp } from "../store/paged";
+import type { PagedLogEntry, PagedTimestamp } from "../store/paged";
 import { compareByTimestampId, clearTimestampParseCache } from "../utils/sort";
 import { entrySignature, isElasticSource } from "../utils/entryUtils";
 import { clearHighlightCache } from "../renderer/LogRow";
@@ -93,6 +92,8 @@ export function useEntryManagement({ marksMap }: UseEntryManagementOptions) {
       entries: any[];
       options?: { ignoreExistingForElastic?: boolean };
       generation: number;
+      resolve: (stored: number) => void;
+      reject: (error: Error) => void;
     }>
   >([]);
   const drainingRef = useRef(false);
@@ -105,18 +106,15 @@ export function useEntryManagement({ marksMap }: UseEntryManagementOptions) {
       operationTailRef.current = memRepo.clear();
     } else {
       operationTailRef.current = pagedLogRepository.clear().catch((error) => {
-        const normalized =
-          error instanceof Error ? error : new Error(String(error));
-        if (error instanceof IndexedDbUnavailableError) {
-          const memRepo = new InMemoryLogRepository();
-          repositoryRef.current = memRepo;
-          usesPagedStorageRef.current = false;
-          setUsesPagedStorage(false);
-          return memRepo.clear();
-        }
-        setStorageError(normalized);
-        logger.error("Paged log storage initialization failed:", normalized);
-        throw normalized;
+        const memRepo = new InMemoryLogRepository();
+        repositoryRef.current = memRepo;
+        usesPagedStorageRef.current = false;
+        setUsesPagedStorage(false);
+        logger.warn(
+          "Paged log storage initialization failed; using in-memory storage",
+          error,
+        );
+        return memRepo.clear();
       });
     }
   }
@@ -139,9 +137,80 @@ export function useEntryManagement({ marksMap }: UseEntryManagementOptions) {
       newEntries: any[],
       options: { ignoreExistingForElastic?: boolean } | undefined,
       generation: number,
-    ): Promise<void> => {
-      if (newEntries.length === 0) return;
-      const repository = repositoryRef.current;
+    ): Promise<number> => {
+      if (newEntries.length === 0) return 0;
+      let repository = repositoryRef.current;
+
+      const fallBackToMemory = async (cause: unknown) => {
+        if (repository instanceof InMemoryLogRepository) throw cause;
+
+        const fallback = new InMemoryLogRepository();
+        const recoveredEntries = new Map<number, PagedLogEntry>();
+        const existingMetadata = metadataByIdRef.current.filter(
+          (item): item is PagedEntryMetadata => item !== undefined,
+        );
+        try {
+          for (
+            let start = 0;
+            start < existingMetadata.length;
+            start += IPC_BATCH_SIZE
+          ) {
+            const page = existingMetadata.slice(start, start + IPC_BATCH_SIZE);
+            const payloads = await repository.getPayloads(
+              page.map((item) => item._id),
+            );
+            const entries = page
+              .map((item): PagedLogEntry | null => {
+                const entry = payloads.get(item._id);
+                if (!entry) return null;
+                return {
+                  ...entry,
+                  _id: item._id,
+                  timestamp: item.timestamp,
+                  message: String(entry.message ?? ""),
+                  source: item.source,
+                };
+              })
+              .filter((entry): entry is PagedLogEntry => entry !== null);
+            if (entries.length !== page.length) {
+              throw new Error("Not all paged log entries could be recovered");
+            }
+            await fallback.putMany(entries);
+            for (const entry of entries) {
+              recoveredEntries.set(entry._id!, entry);
+            }
+          }
+        } catch (fallbackError) {
+          throw new AggregateError(
+            [cause, fallbackError],
+            "Paged log storage failed and in-memory recovery was incomplete",
+            { cause: fallbackError },
+          );
+        }
+
+        repositoryRef.current = fallback;
+        repository = fallback;
+        usesPagedStorageRef.current = false;
+        setUsesPagedStorage(false);
+        setMetadataEntries((previous) => {
+          const recovered = previous.map((item) => {
+            const payload = recoveredEntries.get(item._id);
+            const enriched: PagedEntryMetadata = {
+              ...item,
+              thread: payload?.thread ?? null,
+              message: payload?.message ?? "",
+              mdc: payload?.mdc ?? null,
+            };
+            metadataByIdRef.current[item._id] = enriched;
+            return enriched;
+          });
+          return recovered;
+        });
+        logger.warn(
+          "Paged log storage failed; switched to in-memory storage",
+          cause,
+        );
+      };
 
       const batchKeys = new Set<string>();
       const candidates: Array<{ source: string; signature: string }> = [];
@@ -160,11 +229,16 @@ export function useEntryManagement({ marksMap }: UseEntryManagementOptions) {
         prepared.push({ input, source, signature, ignoreExisting });
       }
 
-      const existing =
-        candidates.length > 0
-          ? await repository.findExistingSignatures(candidates)
-          : new Set<string>();
-      if (generation !== generationRef.current) return;
+      let existing = new Set<string>();
+      if (candidates.length > 0) {
+        try {
+          existing = await repository.findExistingSignatures(candidates);
+        } catch (error) {
+          await fallBackToMemory(error);
+          existing = await repository.findExistingSignatures(candidates);
+        }
+      }
+      if (generation !== generationRef.current) return 0;
       const accepted = prepared
         .filter(
           ({ source, signature, ignoreExisting }) =>
@@ -177,7 +251,7 @@ export function useEntryManagement({ marksMap }: UseEntryManagementOptions) {
           delete entry.signature;
           return entry;
         });
-      if (accepted.length === 0) return;
+      if (accepted.length === 0) return 0;
 
       try {
         LoggingStore.addEvents(accepted as any);
@@ -191,8 +265,14 @@ export function useEntryManagement({ marksMap }: UseEntryManagementOptions) {
         if (mark) entry._mark = mark;
       }
 
-      const ids = await repository.putMany(accepted);
-      if (generation !== generationRef.current) return;
+      let ids: number[];
+      try {
+        ids = await repository.putMany(accepted);
+      } catch (error) {
+        await fallBackToMemory(error);
+        ids = await repository.putMany(accepted);
+      }
+      if (generation !== generationRef.current) return 0;
       const metadata = accepted.map((entry, index): PagedEntryMetadata => {
         const signature = entrySignature(entry);
         const base: PagedEntryMetadata = {
@@ -220,6 +300,7 @@ export function useEntryManagement({ marksMap }: UseEntryManagementOptions) {
 
       setMetadataEntries((previous) => mergeSortedMetadata(previous, metadata));
       setStorageError(null);
+      return metadata.length;
     },
     [],
   );
@@ -234,13 +315,20 @@ export function useEntryManagement({ marksMap }: UseEntryManagementOptions) {
         const operation = previous.then(() =>
           processBatch(batch.entries, batch.options, batch.generation),
         );
-        operationTailRef.current = operation.catch((error) => {
+        operationTailRef.current = operation.then(
+          () => undefined,
+          () => undefined,
+        );
+        try {
+          const stored = await operation;
+          batch.resolve(stored ?? 0);
+        } catch (error) {
           const normalized =
             error instanceof Error ? error : new Error(String(error));
           setStorageError(normalized);
           logger.error("Paged log append failed:", normalized);
-        });
-        await operationTailRef.current;
+          batch.reject(normalized);
+        }
       }
     } finally {
       drainingRef.current = false;
@@ -248,25 +336,57 @@ export function useEntryManagement({ marksMap }: UseEntryManagementOptions) {
     }
   }, [processBatch]);
 
-  const appendEntries = useCallback(
-    (newEntries: any[], options?: { ignoreExistingForElastic?: boolean }) => {
-      if (!Array.isArray(newEntries) || newEntries.length === 0) return;
+  const appendEntriesAsync = useCallback(
+    (
+      newEntries: any[],
+      options?: { ignoreExistingForElastic?: boolean },
+    ): Promise<number> => {
+      if (!Array.isArray(newEntries) || newEntries.length === 0) {
+        return Promise.resolve(0);
+      }
       const generation = generationRef.current;
+      const completions: Promise<number>[] = [];
       for (let start = 0; start < newEntries.length; start += IPC_BATCH_SIZE) {
-        queueRef.current.push({
-          entries: newEntries.slice(start, start + IPC_BATCH_SIZE),
-          options,
-          generation,
-        });
+        completions.push(
+          new Promise<number>((resolve, reject) => {
+            queueRef.current.push({
+              entries: newEntries.slice(start, start + IPC_BATCH_SIZE),
+              options,
+              generation,
+              resolve,
+              reject,
+            });
+          }),
+        );
       }
       void drainQueue();
+      return Promise.all(completions).then((counts) => {
+        let total = 0;
+        for (const count of counts) total += count;
+        return total;
+      });
     },
     [drainQueue],
   );
 
+  const appendEntries = useCallback(
+    (newEntries: any[], options?: { ignoreExistingForElastic?: boolean }) => {
+      void appendEntriesAsync(newEntries, options).catch(() => {
+        // The hook already records and exposes the storage error to the UI.
+      });
+    },
+    [appendEntriesAsync],
+  );
+
   const clearEntries = useCallback(() => {
     generationRef.current++;
+    const cancelled = queueRef.current;
     queueRef.current = [];
+    for (const batch of cancelled) {
+      batch.reject(
+        new Error("Log append cancelled because entries were cleared"),
+      );
+    }
     metadataByIdRef.current = [];
     setMetadataEntries([]);
     clearHighlightCache();
@@ -300,6 +420,7 @@ export function useEntryManagement({ marksMap }: UseEntryManagementOptions) {
   return {
     entries,
     appendEntries,
+    appendEntriesAsync,
     clearEntries,
     storageError,
     usesPagedStorage,

@@ -285,6 +285,7 @@ export default function App(): JSX.Element {
   const {
     entries,
     appendEntries,
+    appendEntriesAsync,
     clearEntries,
     storageError,
     usesPagedStorage,
@@ -635,7 +636,7 @@ export default function App(): JSX.Element {
     closePitQuiet,
   } = useElasticSearch({
     entries,
-    appendEntries,
+    appendEntries: appendEntriesAsync,
     elasticUrl,
     elasticSize,
     withBusy,

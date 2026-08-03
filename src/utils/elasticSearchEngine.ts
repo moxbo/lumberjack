@@ -32,7 +32,7 @@ export interface ExecuteElasticSearchDeps {
     batch: any[],
     available: number,
     options?: { ignoreExistingForElastic?: boolean; messageFilter?: string },
-  ) => number;
+  ) => Promise<number>;
   /** Reset entry store on a "replace" search (clear entries, caches, LoggingStore). */
   onReplaceReset: () => void;
   setHasMore: (v: boolean) => void;
@@ -140,7 +140,7 @@ export async function executeElasticSearch(
     // Anhängen mit Kappung
     const messageFilter = formVals.message || "";
     if (Array.isArray(res.entries) && res.entries.length) {
-      const used = appendCapped(res.entries as any[], available, {
+      const used = await appendCapped(res.entries as any[], available, {
         ignoreExistingForElastic: loadMode === "replace",
         messageFilter,
       });
@@ -172,7 +172,7 @@ export async function executeElasticSearch(
       setNextSearchAfter(nextToken);
       setPitSessionId(carriedPit);
       if (Array.isArray(r2.entries) && r2.entries.length) {
-        const used2 = appendCapped(r2.entries as any[], available, {
+        const used2 = await appendCapped(r2.entries as any[], available, {
           messageFilter,
         });
         available = Math.max(0, available - used2);

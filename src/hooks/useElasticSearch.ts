@@ -30,7 +30,7 @@ export interface UseElasticSearchOptions {
   appendEntries: (
     entries: any[],
     options?: { ignoreExistingForElastic?: boolean },
-  ) => void;
+  ) => Promise<number>;
   elasticUrl: string;
   elasticSize: number;
   withBusy: (fn: () => Promise<void>) => Promise<void>;
@@ -93,15 +93,18 @@ export function useElasticSearch({
   // Ein bereits vorhandener (deduplizierter) Eintrag gilt als erfolgreich geladen –
   // er ist ja bereits in der Ansicht. Dadurch stimmen "geladen" und "gefunden"
   // überein und es wird nicht über das Ziel (elasticSize) hinaus nachgeladen.
-  function appendElasticCapped(
+  async function appendElasticCapped(
     batch: any[],
     available: number,
     options?: { ignoreExistingForElastic?: boolean; messageFilter?: string },
-  ): number {
+  ): Promise<number> {
     const list = Array.isArray(batch) ? batch : [];
     const take = Math.max(0, Math.min(available, list.length));
     if (take <= 0) return 0;
-    appendEntries(take === list.length ? list : list.slice(0, take), options);
+    await appendEntries(
+      take === list.length ? list : list.slice(0, take),
+      options,
+    );
     return take;
   }
 
@@ -161,9 +164,13 @@ export function useElasticSearch({
         setEsPitSessionId(carriedPit);
 
         if (Array.isArray(r.entries) && r.entries.length) {
-          const used = appendElasticCapped(r.entries as any[], available, {
-            messageFilter: lastEsForm.message || "",
-          });
+          const used = await appendElasticCapped(
+            r.entries as any[],
+            available,
+            {
+              messageFilter: lastEsForm.message || "",
+            },
+          );
           available = Math.max(0, available - used);
           setEsLoadedCount((c) => c + used);
         }
