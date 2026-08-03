@@ -5,6 +5,13 @@ Alle nennenswerten Änderungen an diesem Projekt werden in dieser Datei dokument
 Das Format orientiert sich an [Keep a Changelog](https://keepachangelog.com/de/1.1.0/),
 und dieses Projekt folgt [Semantic Versioning](https://semver.org/lang/de/).
 
+## [1.2.0-beta.1] - 2026-08-03 _(Pre-Release)_
+
+
+### Fixed
+- Implement async entry appending and enhance persistence handling
+- Enhance entry management with deduplication logic and async logging
+
 ## [1.1.3-beta.1] - 2026-08-02 _(Pre-Release)_
 
 
