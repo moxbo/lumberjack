@@ -3,6 +3,8 @@ import type { ProjectionRecord } from "../../store/paged";
 import {
   filterProjectionPages,
   mergePassingReferences,
+  mergeProjectionRecords,
+  normalizeProjection,
   type FilterOptions,
 } from "../filterWorker";
 
@@ -65,6 +67,48 @@ describe("filterProjectionPages", () => {
     );
 
     expect(merged.map((entry) => entry.id)).toEqual([1, 2]);
+  });
+
+  it("appends chronologically newer cache entries without copying the cache", () => {
+    const references = [{ id: 1, _id: 1, timestamp: "2026-01-01T00:00:01Z" }];
+    const projections = [normalizeProjection(projection(1))];
+
+    const mergedReferences = mergePassingReferences(references, [
+      { id: 2, _id: 2, timestamp: "2026-01-01T00:00:02Z" },
+    ]);
+    const mergedProjections = mergeProjectionRecords(projections, [
+      normalizeProjection(projection(2, { timestamp: "2026-01-01T00:00:02Z" })),
+    ]);
+
+    expect(mergedReferences).toBe(references);
+    expect(mergedReferences.map((entry) => entry.id)).toEqual([1, 2]);
+    expect(mergedProjections).toBe(projections);
+    expect(mergedProjections.map((entry) => entry.id)).toEqual([1, 2]);
+  });
+
+  it("filters normalized cached projections with implicit AND terms", () => {
+    const result = filterProjectionPages(
+      [
+        [
+          normalizeProjection(
+            projection(1, { message: "Alpha request completed" }),
+          ),
+          normalizeProjection(
+            projection(2, { message: "Alpha beta request completed" }),
+          ),
+        ],
+      ],
+      options({
+        filter: {
+          level: "",
+          logger: "",
+          thread: "",
+          message: "alpha beta",
+        },
+      }),
+    );
+
+    expect(result.filteredIndices).toEqual([2]);
   });
 
   it("returns stable IDs in timestamp/id order and sorted search positions", () => {

@@ -88,13 +88,26 @@ export interface FilterErrorResponse {
 type WorkerRequest =
   SetEntriesRequest | AppendEntriesRequest | FilterRequest | PagedFilterRequest;
 
-type FilterableEntry = Partial<ProjectionRecord>;
+interface NormalizedProjectionFields {
+  _id: number;
+  levelUpper: string;
+  loggerLower: string;
+  threadLower: string;
+  messageLower: string;
+  timestampMs: number | null;
+  elasticSource: boolean;
+}
+
+type FilterableEntry = Partial<ProjectionRecord> &
+  Partial<NormalizedProjectionFields>;
+export type CachedProjection = ProjectionRecord & NormalizedProjectionFields;
 
 export interface PassingReference {
   id: number;
   _id: number;
   timestamp: unknown;
   message?: string;
+  messageLower?: string;
 }
 
 interface PreparedFilter {
@@ -105,6 +118,7 @@ interface PreparedFilter {
   fromTs: number | null;
   toTs: number | null;
   compiledDcFilter: ReturnType<typeof compileDcFilter>;
+  messageMatcher: (entry: FilterableEntry) => boolean;
 }
 
 const PAGED_SCAN_SIZE = 2_000;
@@ -121,6 +135,16 @@ interface PagedFilterCache {
 }
 
 let pagedFilterCache: PagedFilterCache | null = null;
+
+interface PagedProjectionCache {
+  databaseName?: string;
+  dataGeneration?: string | number;
+  recordsById: CachedProjection[];
+  sortedRecords: CachedProjection[];
+  lastScannedId?: number;
+}
+
+let pagedProjectionCache: PagedProjectionCache | null = null;
 
 function emptyStats(): FilterStats {
   return {
@@ -142,14 +166,74 @@ function parseOptionalTimestamp(value?: string): number | null {
   return Number.isNaN(parsed) ? null : parsed;
 }
 
-export function mergePassingReferences(
-  previous: PassingReference[],
-  incoming: PassingReference[],
-): PassingReference[] {
+function createMessageMatcher(
+  expression: string,
+  mode: SearchMode = "insensitive",
+): (entry: Pick<FilterableEntry, "message" | "messageLower">) => boolean {
+  const query = String(expression || "").trim();
+  if (!query) return () => true;
+
+  // Most interactive searches are literals or whitespace-separated implicit
+  // AND terms. Avoid the general query parser and repeated lower-casing.
+  if (/^[^&|!()"\\]+$/.test(query)) {
+    const terms = query.split(/\s+/).filter(Boolean);
+    const hasTextOperator = terms.some(
+      (term) => term === "AND" || term === "OR" || term === "NOT",
+    );
+    if (hasTextOperator) {
+      return (entry) =>
+        msgMatches(String(entry.message ?? ""), query, {
+          mode,
+        });
+    }
+    if (mode === "sensitive") {
+      return (entry) => {
+        const message = String(entry.message ?? "");
+        return terms.every((term) => message.includes(term));
+      };
+    }
+    if (mode === "insensitive") {
+      const needles = terms.map((term) => term.toLowerCase());
+      return (entry) => {
+        const message =
+          entry.messageLower ?? String(entry.message ?? "").toLowerCase();
+        return needles.every((needle) => message.includes(needle));
+      };
+    }
+  }
+
+  return (entry) =>
+    msgMatches(String(entry.message ?? ""), query, {
+      mode,
+    });
+}
+
+export function normalizeProjection(entry: ProjectionRecord): CachedProjection {
+  const timestampMs = new Date(entry.timestamp as string).getTime();
+  return {
+    ...entry,
+    _id: entry.id,
+    levelUpper: String(entry.level ?? "").toUpperCase(),
+    loggerLower: String(entry.logger ?? "").toLowerCase(),
+    threadLower: String(entry.thread ?? "").toLowerCase(),
+    messageLower: String(entry.message ?? "").toLowerCase(),
+    timestampMs: Number.isNaN(timestampMs) ? null : timestampMs,
+    elasticSource: entry.source.startsWith("elastic://"),
+  };
+}
+
+export function mergeProjectionRecords(
+  previous: CachedProjection[],
+  incoming: CachedProjection[],
+): CachedProjection[] {
   if (previous.length === 0) return incoming.sort(compareByTimestampId);
-  if (incoming.length === 0) return previous.slice();
+  if (incoming.length === 0) return previous;
   incoming.sort(compareByTimestampId);
-  const merged = new Array<PassingReference>(previous.length + incoming.length);
+  if (compareByTimestampId(previous[previous.length - 1]!, incoming[0]!) <= 0) {
+    for (const entry of incoming) previous.push(entry);
+    return previous;
+  }
+  const merged = new Array<CachedProjection>(previous.length + incoming.length);
   let previousIndex = 0;
   let incomingIndex = 0;
   let outputIndex = 0;
@@ -174,14 +258,77 @@ export function mergePassingReferences(
   return merged;
 }
 
-function retainSearchableMessages(references: PassingReference[]): void {
-  for (
-    let index = SEARCHABLE_REFERENCE_LIMIT;
-    index < references.length;
-    index++
-  ) {
-    references[index]!.message = undefined;
+export function mergePassingReferences(
+  previous: PassingReference[],
+  incoming: PassingReference[],
+): PassingReference[] {
+  if (previous.length === 0) {
+    incoming.sort(compareByTimestampId);
+    for (
+      let index = SEARCHABLE_REFERENCE_LIMIT;
+      index < incoming.length;
+      index++
+    ) {
+      incoming[index]!.message = undefined;
+      incoming[index]!.messageLower = undefined;
+    }
+    return incoming;
   }
+  if (incoming.length === 0) return previous;
+  incoming.sort(compareByTimestampId);
+  if (compareByTimestampId(previous[previous.length - 1]!, incoming[0]!) <= 0) {
+    for (const entry of incoming) {
+      if (previous.length >= SEARCHABLE_REFERENCE_LIMIT) {
+        entry.message = undefined;
+        entry.messageLower = undefined;
+      }
+      previous.push(entry);
+    }
+    return previous;
+  }
+  const merged = new Array<PassingReference>(previous.length + incoming.length);
+  let previousIndex = 0;
+  let incomingIndex = 0;
+  let outputIndex = 0;
+  while (previousIndex < previous.length && incomingIndex < incoming.length) {
+    if (
+      compareByTimestampId(
+        previous[previousIndex]!,
+        incoming[incomingIndex]!,
+      ) <= 0
+    ) {
+      const entry = previous[previousIndex++]!;
+      if (outputIndex >= SEARCHABLE_REFERENCE_LIMIT) {
+        entry.message = undefined;
+        entry.messageLower = undefined;
+      }
+      merged[outputIndex++] = entry;
+    } else {
+      const entry = incoming[incomingIndex++]!;
+      if (outputIndex >= SEARCHABLE_REFERENCE_LIMIT) {
+        entry.message = undefined;
+        entry.messageLower = undefined;
+      }
+      merged[outputIndex++] = entry;
+    }
+  }
+  while (previousIndex < previous.length) {
+    const entry = previous[previousIndex++]!;
+    if (outputIndex >= SEARCHABLE_REFERENCE_LIMIT) {
+      entry.message = undefined;
+      entry.messageLower = undefined;
+    }
+    merged[outputIndex++] = entry;
+  }
+  while (incomingIndex < incoming.length) {
+    const entry = incoming[incomingIndex++]!;
+    if (outputIndex >= SEARCHABLE_REFERENCE_LIMIT) {
+      entry.message = undefined;
+      entry.messageLower = undefined;
+    }
+    merged[outputIndex++] = entry;
+  }
+  return merged;
 }
 
 function buildPagedResponse(
@@ -193,13 +340,13 @@ function buildPagedResponse(
   const search = String(request.options.navigationSearch || "").trim();
   const searchMatchIndices: number[] = [];
   if (search) {
+    const matcher = createMessageMatcher(
+      search,
+      request.options.navigationSearchMode,
+    );
     const limit = Math.min(references.length, SEARCHABLE_REFERENCE_LIMIT);
     for (let visualIndex = 0; visualIndex < limit; visualIndex++) {
-      if (
-        msgMatches(references[visualIndex]!.message ?? "", search, {
-          mode: request.options.navigationSearchMode,
-        })
-      ) {
+      if (matcher(references[visualIndex]!)) {
         searchMatchIndices.push(visualIndex);
       }
     }
@@ -227,6 +374,7 @@ function prepareFilter(options: FilterOptions): PreparedFilter {
     compiledDcFilter: options.dcFilterEnabled
       ? compileDcFilter(options.dcFilterEntries)
       : [],
+    messageMatcher: createMessageMatcher(options.filter.message),
   };
 }
 
@@ -263,44 +411,48 @@ function entryPasses(
   if (options.stdFiltersEnabled) {
     if (
       prepared.levelFilter &&
-      String(entry.level || "").toUpperCase() !== prepared.levelFilter
+      (entry.levelUpper ?? String(entry.level || "").toUpperCase()) !==
+        prepared.levelFilter
     ) {
       stats.rejectedByLevel++;
       return false;
     }
     if (
       prepared.loggerFilter &&
-      !String(entry.logger || "")
-        .toLowerCase()
-        .includes(prepared.loggerFilter)
+      !(entry.loggerLower ?? String(entry.logger || "").toLowerCase()).includes(
+        prepared.loggerFilter,
+      )
     ) {
       stats.rejectedByLogger++;
       return false;
     }
     if (
       prepared.threadFilter &&
-      !String(entry.thread || "")
-        .toLowerCase()
-        .includes(prepared.threadFilter)
+      !(entry.threadLower ?? String(entry.thread || "").toLowerCase()).includes(
+        prepared.threadFilter,
+      )
     ) {
       stats.rejectedByThread++;
       return false;
     }
-    if (
-      options.filter.message &&
-      !msgMatches(String(entry.message ?? ""), options.filter.message)
-    ) {
+    if (options.filter.message && !prepared.messageMatcher(entry)) {
       stats.rejectedByMessage++;
       return false;
     }
   }
 
   const isElasticSource =
-    typeof entry.source === "string" && entry.source.startsWith("elastic://");
+    entry.elasticSource ??
+    (typeof entry.source === "string" && entry.source.startsWith("elastic://"));
   if (
     isElasticSource &&
     options.timeFilterEnabled &&
-    !matchesTimeRange(entry.timestamp, prepared.fromTs, prepared.toTs)
+    !(entry.timestampMs != null
+      ? !(
+          (prepared.fromTs !== null && entry.timestampMs < prepared.fromTs) ||
+          (prepared.toTs !== null && entry.timestampMs > prepared.toTs)
+        )
+      : matchesTimeRange(entry.timestamp, prepared.fromTs, prepared.toTs))
   ) {
     stats.rejectedByTime++;
     return false;
@@ -461,94 +613,154 @@ function readProjectionPage(
   });
 }
 
+async function loadPagedProjectionCache(
+  request: PagedFilterRequest,
+  pageSize: number,
+): Promise<{
+  cache: PagedProjectionCache;
+  appendedRecords: CachedProjection[];
+}> {
+  const canReuse =
+    pagedProjectionCache !== null &&
+    pagedProjectionCache.databaseName === request.databaseName &&
+    pagedProjectionCache.dataGeneration === request.dataGeneration &&
+    request.entryCount >= pagedProjectionCache.recordsById.length;
+  const cache: PagedProjectionCache = canReuse
+    ? pagedProjectionCache!
+    : {
+        databaseName: request.databaseName,
+        dataGeneration: request.dataGeneration,
+        recordsById: [],
+        sortedRecords: [],
+      };
+
+  if (request.entryCount === cache.recordsById.length) {
+    pagedProjectionCache = cache;
+    return { cache, appendedRecords: [] };
+  }
+
+  const appendedRecords: CachedProjection[] = [];
+  const db = await openPagedDatabase(undefined, request.databaseName);
+  try {
+    while (true) {
+      const page = await readProjectionPage(db, cache.lastScannedId, pageSize);
+      for (const entry of page) {
+        appendedRecords.push(normalizeProjection(entry));
+      }
+      if (page.length > 0) {
+        cache.lastScannedId = page[page.length - 1]!.id;
+      }
+      if (page.length < pageSize) break;
+    }
+  } finally {
+    db.close();
+  }
+
+  for (const record of appendedRecords) cache.recordsById.push(record);
+  cache.sortedRecords = mergeProjectionRecords(
+    cache.sortedRecords,
+    appendedRecords.slice(),
+  );
+  pagedProjectionCache = cache;
+  return { cache, appendedRecords };
+}
+
+function yieldWorker(): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, 0));
+}
+
 let latestPagedRequestId = 0;
 
 async function filterPagedDatabase(
   request: PagedFilterRequest,
   onProgress?: (response: FilterResponse) => void,
 ): Promise<FilterResponse | null> {
-  const canReuse =
-    pagedFilterCache !== null &&
-    pagedFilterCache.databaseName === request.databaseName &&
-    pagedFilterCache.generation === request.generation &&
-    pagedFilterCache.dataGeneration === request.dataGeneration &&
-    request.entryCount >= pagedFilterCache.scannedEntryCount;
-  const stats = canReuse ? { ...pagedFilterCache!.stats } : emptyStats();
-  const prepared = prepareFilter(request.options);
-  const previousReferences = canReuse ? pagedFilterCache!.references : [];
-  const appendedReferences: PassingReference[] = [];
-  const markedSignatures = new Set(request.markedSignatures);
   const pageSize =
     request.pageSize !== undefined &&
     Number.isSafeInteger(request.pageSize) &&
     request.pageSize > 0
       ? request.pageSize
       : PAGED_SCAN_SIZE;
-  let lastScannedId = canReuse ? pagedFilterCache!.lastScannedId : undefined;
+  const { cache: projectionCache } = await loadPagedProjectionCache(
+    request,
+    pageSize,
+  );
+  if (request.requestId !== latestPagedRequestId) return null;
 
-  if (canReuse && request.entryCount === pagedFilterCache!.scannedEntryCount) {
+  const canReuseFiltered =
+    pagedFilterCache !== null &&
+    pagedFilterCache.databaseName === request.databaseName &&
+    pagedFilterCache.generation === request.generation &&
+    pagedFilterCache.dataGeneration === request.dataGeneration &&
+    projectionCache.recordsById.length >= pagedFilterCache.scannedEntryCount;
+  const stats = canReuseFiltered
+    ? { ...pagedFilterCache!.stats }
+    : emptyStats();
+  const prepared = prepareFilter(request.options);
+  const previousReferences = canReuseFiltered
+    ? pagedFilterCache!.references
+    : [];
+  const appendedReferences: PassingReference[] = [];
+  const markedSignatures = new Set(request.markedSignatures);
+
+  if (
+    canReuseFiltered &&
+    projectionCache.recordsById.length === pagedFilterCache!.scannedEntryCount
+  ) {
     return buildPagedResponse(request, previousReferences, stats);
   }
 
-  const db = await openPagedDatabase(undefined, request.databaseName);
-  try {
-    let pageNumber = 0;
-    while (true) {
-      if (request.requestId !== latestPagedRequestId) return null;
-      const page = await readProjectionPage(db, lastScannedId, pageSize);
-      if (request.requestId !== latestPagedRequestId) return null;
-      for (const entry of page) {
-        stats.total++;
-        if (
-          entry &&
-          entryPasses(entry, request.options, prepared, stats, markedSignatures)
-        ) {
-          appendedReferences.push({
-            id: entry.id,
-            _id: entry.id,
-            timestamp: entry.timestamp,
-            message: entry.message,
-          });
-        }
-      }
-      if (page.length > 0) {
-        lastScannedId = page[page.length - 1]!.id;
-      }
-      pageNumber++;
-      if (
-        !canReuse &&
-        pageNumber === 1 &&
-        page.length === pageSize &&
-        request.requestId === latestPagedRequestId
-      ) {
-        const firstPageReferences = appendedReferences
-          .slice()
-          .sort(compareByTimestampId);
-        onProgress?.(
-          buildPagedResponse(request, firstPageReferences, { ...stats }, true),
-        );
-      }
-      if (page.length < pageSize) break;
+  const records = canReuseFiltered
+    ? projectionCache.recordsById.slice(pagedFilterCache!.scannedEntryCount)
+    : projectionCache.sortedRecords;
+  for (let index = 0; index < records.length; index++) {
+    const entry = records[index]!;
+    stats.total++;
+    if (
+      entryPasses(entry, request.options, prepared, stats, markedSignatures)
+    ) {
+      const retainMessage =
+        canReuseFiltered ||
+        appendedReferences.length < SEARCHABLE_REFERENCE_LIMIT;
+      appendedReferences.push({
+        id: entry.id,
+        _id: entry.id,
+        timestamp: entry.timestamp,
+        message: retainMessage ? entry.message : undefined,
+        messageLower: retainMessage ? entry.messageLower : undefined,
+      });
     }
-    if (request.requestId !== latestPagedRequestId) return null;
-    const references = canReuse
-      ? mergePassingReferences(previousReferences, appendedReferences)
-      : appendedReferences.sort(compareByTimestampId);
-    retainSearchableMessages(references);
-    if (request.requestId !== latestPagedRequestId) return null;
-    pagedFilterCache = {
-      databaseName: request.databaseName,
-      generation: request.generation,
-      dataGeneration: request.dataGeneration,
-      scannedEntryCount: stats.total,
-      lastScannedId,
-      references,
-      stats: { ...stats },
-    };
-    return buildPagedResponse(request, references, stats);
-  } finally {
-    db.close();
+
+    if (!canReuseFiltered && index + 1 === Math.min(pageSize, records.length)) {
+      onProgress?.(
+        buildPagedResponse(
+          request,
+          appendedReferences.slice(),
+          { ...stats },
+          true,
+        ),
+      );
+    }
+    if ((index + 1) % 5_000 === 0) {
+      await yieldWorker();
+      if (request.requestId !== latestPagedRequestId) return null;
+    }
   }
+
+  const references = canReuseFiltered
+    ? mergePassingReferences(previousReferences, appendedReferences)
+    : appendedReferences;
+  if (request.requestId !== latestPagedRequestId) return null;
+  pagedFilterCache = {
+    databaseName: request.databaseName,
+    generation: request.generation,
+    dataGeneration: request.dataGeneration,
+    scannedEntryCount: projectionCache.recordsById.length,
+    lastScannedId: projectionCache.lastScannedId,
+    references,
+    stats: { ...stats },
+  };
+  return buildPagedResponse(request, references, stats);
 }
 
 let cachedEntries: unknown[] = [];

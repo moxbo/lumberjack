@@ -31,6 +31,12 @@
 import { performance } from "node:perf_hooks";
 import { Worker } from "node:worker_threads";
 import { msgMatches } from "../src/utils/msgFilter.js";
+import {
+  filterProjectionPages,
+  mergePassingReferences,
+  mergeProjectionRecords,
+  normalizeProjection,
+} from "../src/workers/filterWorker.js";
 
 // ============================================================================
 // Test-Daten (analog scripts/test-performance.ts, leicht vereinfacht)
@@ -200,12 +206,97 @@ async function main(): Promise<void> {
   );
 
   // ==========================================================================
-  // 3) Echte Off-Thread-Demo: Event-Loop-Reaktivität während des Tippens
+  // 3) Produktionsnaher paged Filter mit normalisiertem Worker-Cache
   // ==========================================================================
   console.log(
     "\n──────────────────────────────────────────────────────────────",
   );
-  console.log(" 3) Event-Loop-Reaktivität während simuliertem Tippen");
+  console.log(" 3) Produktionsnaher paged Filter");
+  console.log("──────────────────────────────────────────────────────────────");
+  const projections = entries.map((entry, index) =>
+    normalizeProjection({
+      id: index + 1,
+      timestamp: entry.timestamp,
+      level: entry.level,
+      logger: entry.logger,
+      thread: entry.thread,
+      message: entry.message,
+      source: entry.source,
+      mdc: entry.mdc ?? null,
+      service: null,
+      traceId: null,
+      signature: `entry-${index + 1}`,
+      _mark: null,
+    }),
+  );
+  const pagedStart = performance.now();
+  const pagedResult = filterProjectionPages([projections], {
+    stdFiltersEnabled: true,
+    filter: { level: "", logger: "", thread: "", message: "error" },
+    onlyMarked: false,
+    dcFilterEnabled: false,
+    dcFilterEntries: [],
+    timeFilterEnabled: false,
+  });
+  const pagedElapsed = performance.now() - pagedStart;
+  console.log(
+    `\n  300k Message-Filter: ${pagedElapsed.toFixed(1)} ms (${pagedResult.filteredIndices.length.toLocaleString()} Treffer)`,
+  );
+  if (pagedElapsed > 1500) {
+    throw new Error(
+      `Paged message filtering exceeded 1500 ms (${pagedElapsed.toFixed(1)} ms)`,
+    );
+  }
+
+  const appended = Array.from({ length: 1000 }, (_, offset) => {
+    const id = DATASET_SIZE + offset + 1;
+    return normalizeProjection({
+      id,
+      timestamp: new Date(Date.now() + offset).toISOString(),
+      level: "INFO",
+      logger: "app",
+      thread: "main",
+      message: `appended error ${id}`,
+      source: "tcp:benchmark",
+      mdc: null,
+      service: null,
+      traceId: null,
+      signature: `entry-${id}`,
+      _mark: null,
+    });
+  });
+  const existingReferences = projections.map((entry, index) => ({
+    id: entry.id,
+    _id: entry.id,
+    timestamp: entry.timestamp,
+    message: index < 50_000 ? entry.message : undefined,
+    messageLower: index < 50_000 ? entry.messageLower : undefined,
+  }));
+  const appendedReferences = appended.map((entry) => ({
+    id: entry.id,
+    _id: entry.id,
+    timestamp: entry.timestamp,
+    message: entry.message,
+    messageLower: entry.messageLower,
+  }));
+  const appendStart = performance.now();
+  mergeProjectionRecords(projections, appended.slice());
+  mergePassingReferences(existingReferences, appendedReferences);
+  const appendElapsed = performance.now() - appendStart;
+  console.log(`  300k + 1k Cache-Ergänzung: ${appendElapsed.toFixed(1)} ms`);
+  if (appendElapsed > 100) {
+    throw new Error(
+      `Paged cache append exceeded 100 ms (${appendElapsed.toFixed(1)} ms)`,
+    );
+  }
+
+  // ==========================================================================
+  // 4) Echte Off-Thread-Demo: Event-Loop-Reaktivität während des Tippens
+  // ==========================================================================
+  console.log(
+    "\n──────────────────────────────────────────────────────────────",
+  );
+  console.log(" 4) Event-Loop-Reaktivität während simuliertem Tippen");
   console.log("──────────────────────────────────────────────────────────────");
   console.log(
     "\n  Ein 'Reaktivitäts-Tick' alle 4 ms simuliert UI-Arbeit (Repaint/\n  Scroll). Große Lücken = eingefrorene UI.\n",
