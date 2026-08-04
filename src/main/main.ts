@@ -69,6 +69,7 @@ import {
 // Track startup time for performance monitoring
 const processStartTime = Date.now();
 const isMultiInstanceLaunch = process.argv.includes(MULTI_INSTANCE_FLAG);
+const configuredHeapSizeMB = loadHeapSizeSync();
 
 // Independent Electron processes must not share Chromium's session profile.
 // Keep userData shared for Lumberjack settings, but isolate IndexedDB, quota
@@ -118,11 +119,10 @@ if (!process.env.LUMBERJACK_DISABLE_V8_OPTS) {
   if (isDevEnv) {
     flagParts.push("--expose-gc");
   }
-  const heapSizeMB = loadHeapSizeSync();
   console.warn(
-    `[startup] Heap size configured: ${heapSizeMB}MB (platform=${process.platform})`,
+    `[startup] Heap size configured: ${configuredHeapSizeMB}MB (platform=${process.platform})`,
   );
-  flagParts.push(`--max-old-space-size=${heapSizeMB}`);
+  flagParts.push(`--max-old-space-size=${configuredHeapSizeMB}`);
   app.commandLine.appendSwitch("js-flags", flagParts.join(" "));
 }
 
@@ -303,7 +303,7 @@ log.info("[diag] Application starting", {
 });
 
 // Log configured heap size (using centralized loader)
-log.info("[memory] Heap size configured:", `${loadHeapSizeSync()}MB`);
+log.info("[memory] Heap size configured:", `${configuredHeapSizeMB}MB`);
 
 // Set AppUserModelId for Windows taskbar and notifications
 // This must be done early in the app lifecycle
@@ -328,6 +328,10 @@ const healthMonitor = new HealthMonitor();
 const loggingStrategy = new LoggingStrategy();
 const featureFlags = new FeatureFlags();
 const shutdownCoordinator = new ShutdownCoordinator();
+// Start disk I/O while Electron initializes instead of waiting until a window
+// already exists. All consumers share this promise, so additional in-process
+// windows never reload the settings file.
+const settingsLoadPromise = settingsService.load();
 
 // Load feature flags from settings and set up persistence
 try {
@@ -2464,7 +2468,7 @@ function createWindow(opts: { makePrimary?: boolean } = {}): BrowserWindow {
     // Show a minimal placeholder menu (or none on Win/Linux) until settings
     // are loaded AND the renderer signals ready – see tryInstallMenu().
     installPlaceholderMenu();
-    await settingsService.load();
+    await settingsLoadPromise;
     const s = settingsService.get();
     if (s.logToFile) openLogStream();
     settingsLoadedForMenu = true;
@@ -3262,18 +3266,16 @@ app
     // Register this process in the shared instance registry and start watching
     // for a quit-all request (issued before an update install by the primary
     // instance). This runs for every instance, primary and secondary.
-    try {
-      registerInstance();
-      quitAllWatcherDispose = watchForQuitAll(() => {
-        quitConfirmed = true;
-        app.quit();
-      });
-    } catch (e) {
+    void registerInstance().catch((e) => {
       log.warn(
         "[instances] Coordinator setup failed:",
         e instanceof Error ? e.message : String(e),
       );
-    }
+    });
+    quitAllWatcherDispose = watchForQuitAll(() => {
+      quitConfirmed = true;
+      app.quit();
+    });
 
     // Create the main window FIRST - highest priority for perceived startup speed
     try {

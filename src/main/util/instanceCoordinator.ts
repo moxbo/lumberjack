@@ -79,6 +79,10 @@ function sleepSync(ms: number): void {
   }
 }
 
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 function acquireLock(maxWaitMs = 1000): number | null {
   const start = Date.now();
   for (;;) {
@@ -107,6 +111,36 @@ function acquireLock(maxWaitMs = 1000): number | null {
   }
 }
 
+async function acquireLockAsync(
+  maxWaitMs = 1000,
+): Promise<fs.promises.FileHandle | null> {
+  const start = Date.now();
+  for (;;) {
+    try {
+      const handle = await fs.promises.open(lockPath(), "wx");
+      try {
+        await handle.writeFile(String(process.pid));
+      } catch {
+        /* lock ownership is already established by the open handle */
+      }
+      return handle;
+    } catch (e) {
+      if ((e as NodeJS.ErrnoException).code !== "EEXIST") return null;
+      try {
+        const st = await fs.promises.stat(lockPath());
+        if (Date.now() - st.mtimeMs > LOCK_STALE_MS) {
+          await fs.promises.unlink(lockPath());
+          continue;
+        }
+      } catch {
+        /* lock vanished – retry */
+      }
+      if (Date.now() - start > maxWaitMs) return null;
+      await sleep(15);
+    }
+  }
+}
+
 function releaseLock(fd: number | null): void {
   if (fd === null) return;
   try {
@@ -116,6 +150,22 @@ function releaseLock(fd: number | null): void {
   }
   try {
     fs.unlinkSync(lockPath());
+  } catch {
+    /* ignore */
+  }
+}
+
+async function releaseLockAsync(
+  handle: fs.promises.FileHandle | null,
+): Promise<void> {
+  if (handle === null) return;
+  try {
+    await handle.close();
+  } catch {
+    /* ignore */
+  }
+  try {
+    await fs.promises.unlink(lockPath());
   } catch {
     /* ignore */
   }
@@ -139,12 +189,38 @@ function readRegistry(): InstanceEntry[] {
   return [];
 }
 
+async function readRegistryAsync(): Promise<InstanceEntry[]> {
+  try {
+    const raw = await fs.promises.readFile(registryPath(), "utf8");
+    const arr = JSON.parse(raw) as unknown;
+    if (Array.isArray(arr)) {
+      return arr.filter(
+        (e): e is InstanceEntry =>
+          !!e &&
+          typeof (e as InstanceEntry).pid === "number" &&
+          typeof (e as InstanceEntry).ts === "number",
+      );
+    }
+  } catch {
+    /* missing / corrupt → treated as empty */
+  }
+  return [];
+}
+
 function writeRegistry(entries: InstanceEntry[]): void {
   const dir = baseDir();
   const tmp = `${registryPath()}.tmp-${process.pid}`;
   fs.mkdirSync(dir, { recursive: true });
   fs.writeFileSync(tmp, JSON.stringify(entries), "utf8");
   fs.renameSync(tmp, registryPath());
+}
+
+async function writeRegistryAsync(entries: InstanceEntry[]): Promise<void> {
+  const dir = baseDir();
+  const tmp = `${registryPath()}.tmp-${process.pid}`;
+  await fs.promises.mkdir(dir, { recursive: true });
+  await fs.promises.writeFile(tmp, JSON.stringify(entries), "utf8");
+  await fs.promises.rename(tmp, registryPath());
 }
 
 function updateRegistry(
@@ -166,11 +242,26 @@ function updateRegistry(
   }
 }
 
+async function updateRegistryAsync(
+  mutate: (entries: InstanceEntry[]) => InstanceEntry[],
+): Promise<void> {
+  const handle = await acquireLockAsync();
+  if (!handle) {
+    throw new Error("Timed out acquiring the instance registry lock");
+  }
+  try {
+    const live = (await readRegistryAsync()).filter((e) => isAlive(e.pid));
+    await writeRegistryAsync(mutate(live));
+  } finally {
+    await releaseLockAsync(handle);
+  }
+}
+
 /**
  * Register this process in the shared instance registry.
  */
-export function registerInstance(): void {
-  updateRegistry((entries) => {
+export async function registerInstance(): Promise<void> {
+  await updateRegistryAsync((entries) => {
     const others = entries.filter((e) => e.pid !== process.pid);
     others.push({ pid: process.pid, ts: Date.now() });
     return others;
