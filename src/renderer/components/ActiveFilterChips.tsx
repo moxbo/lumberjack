@@ -2,11 +2,11 @@
  * ActiveFilterChips Component
  *
  * Renders inline filter chip badges showing the currently active filters
- * (level, logger, thread, message, only-marked, DC entries, trace timeline).
+ * (level, logger, thread, message, only-marked, time, DC entries, trace timeline).
  * Includes a "clear all" button.
  */
 import { DiagnosticContextFilter } from "../../store/dcFilter";
-import { TimeFilter } from "../../store/timeFilter";
+import { TimeFilter, type TimeFilterState } from "../../store/timeFilter";
 import { patchSettingsQuiet } from "../../utils/typedApi";
 import type { JSX } from "preact/jsx-runtime";
 
@@ -16,11 +16,13 @@ export interface ActiveFilterChipsProps {
   onlyMarked: boolean;
   setFilter: (fn: (prev: any) => any) => void;
   setOnlyMarked: (v: boolean) => void;
-  setSearch: (v: string) => void;
   setTraceTimelineId: (v: string) => void;
   setShowTraceTimeline: (v: boolean) => void;
+  onClearAllFilters: () => void;
   /** Current DC filter version (used as render dependency) */
   dcVersion: number;
+  /** Current time filter version (used as render dependency) */
+  timeVersion: number;
   t: (key: string, params?: Record<string, string>) => string;
 }
 
@@ -32,16 +34,30 @@ interface ActiveFilter {
   colorClass?: string;
 }
 
+export function describeTimeFilter(
+  state: TimeFilterState,
+  t: ActiveFilterChipsProps["t"],
+): string {
+  if (state.mode === "relative") {
+    return state.duration || t("activeFilters.timeRelative");
+  }
+  return (
+    [state.from, state.to].filter(Boolean).join(" – ") ||
+    t("activeFilters.timeAbsolute")
+  );
+}
+
 export function ActiveFilterChips({
   filter,
   stdFiltersEnabled,
   onlyMarked,
   setFilter,
   setOnlyMarked,
-  setSearch,
   setTraceTimelineId,
   setShowTraceTimeline,
+  onClearAllFilters,
   dcVersion: _dcVersion,
+  timeVersion: _timeVersion,
   t,
 }: ActiveFilterChipsProps): JSX.Element | null {
   const activeFilters: ActiveFilter[] = [];
@@ -93,6 +109,17 @@ export function ActiveFilterChips({
           patchSettingsQuiet({ onlyMarked: false });
         } catch {}
       },
+    });
+  }
+
+  const timeState = TimeFilter.getState();
+  if (timeState.enabled) {
+    activeFilters.push({
+      type: "time",
+      label: t("activeFilters.time"),
+      value: describeTimeFilter(timeState, t),
+      colorClass: "time-filter",
+      onRemove: () => TimeFilter.reset(),
     });
   }
 
@@ -179,26 +206,7 @@ export function ActiveFilterChips({
             padding: "2px 6px",
             marginLeft: "4px",
           }}
-          onClick={() => {
-            setSearch("");
-            setFilter(() => ({
-              level: "",
-              logger: "",
-              thread: "",
-              service: "",
-              message: "",
-            }));
-            setOnlyMarked(false);
-            try {
-              patchSettingsQuiet({ onlyMarked: false });
-            } catch {}
-            try {
-              TimeFilter.reset();
-            } catch {}
-            try {
-              DiagnosticContextFilter.reset();
-            } catch {}
-          }}
+          onClick={onClearAllFilters}
           title={t("activeFilters.clearAllTooltip")}
         >
           {t("activeFilters.clearAll")}

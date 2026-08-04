@@ -882,6 +882,25 @@ export default function App(): JSX.Element {
   const countFiltered = filteredIdx.length;
   const countSelected = selected.size;
 
+  const clearAllFilters = useCallback(() => {
+    setSearch("");
+    setFilter({
+      level: "",
+      logger: "",
+      thread: "",
+      service: "",
+      message: "",
+    });
+    setOnlyMarked(false);
+    try {
+      patchSettingsQuiet({ onlyMarked: false });
+    } catch (error) {
+      logger.error("Persisting cleared filter settings failed:", error);
+    }
+    TimeFilter.reset();
+    DiagnosticContextFilter.reset();
+  }, [setFilter, setOnlyMarked, setSearch]);
+
   const handleDisableFollow = useCallback(() => {
     setFollow(false);
     try {
@@ -2975,10 +2994,11 @@ export default function App(): JSX.Element {
             onlyMarked={onlyMarked}
             setFilter={setFilter}
             setOnlyMarked={setOnlyMarked}
-            setSearch={setSearch}
             setTraceTimelineId={setTraceTimelineId}
             setShowTraceTimeline={setShowTraceTimeline}
+            onClearAllFilters={clearAllFilters}
             dcVersion={dcVersion}
+            timeVersion={timeVersion}
             t={t}
           />
         </div>
@@ -3029,25 +3049,7 @@ export default function App(): JSX.Element {
           addFilterHistory={addFilterHistory}
           onShowDcDialog={() => setShowDcDialog(true)}
           onShowTimeDialog={openTimeFilterDialog}
-          onClearAllFilters={() => {
-            setSearch("");
-            setFilter({
-              level: "",
-              logger: "",
-              thread: "",
-              service: "",
-              message: "",
-            });
-            setOnlyMarked(false);
-            try {
-              patchSettingsQuiet({ onlyMarked: false });
-            } catch {}
-            try {
-              TimeFilter.reset();
-            } catch (e) {
-              logger.error("Resetting TimeFilter failed:", e);
-            }
-          }}
+          onClearAllFilters={clearAllFilters}
           search={search}
           searchMode={searchMode}
           onApplyProfile={(profile) => {
@@ -3274,28 +3276,7 @@ export default function App(): JSX.Element {
                 <button
                   type="button"
                   className="btn-primary"
-                  onClick={() => {
-                    setSearch("");
-                    setFilter({
-                      level: "",
-                      logger: "",
-                      thread: "",
-                      service: "",
-                      message: "",
-                    });
-                    setOnlyMarked(false);
-                    try {
-                      patchSettingsQuiet({ onlyMarked: false });
-                    } catch {}
-                    try {
-                      TimeFilter.reset();
-                    } catch (e) {
-                      logger.error("Resetting TimeFilter failed:", e);
-                    }
-                    try {
-                      DiagnosticContextFilter.setEnabled(false);
-                    } catch {}
-                  }}
+                  onClick={clearAllFilters}
                 >
                   ✕ {t("list.actionResetFilters")}
                 </button>

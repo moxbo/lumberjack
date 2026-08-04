@@ -233,8 +233,12 @@ export function useElasticSearch({
           } else if (formVals.mode === "absolute") {
             const from = formVals.from || undefined;
             const to = formVals.to || undefined;
-            TimeFilter.setAbsolute(from, to);
-            TimeFilter.setEnabled(true);
+            if (from || to) {
+              TimeFilter.setAbsolute(from, to);
+              TimeFilter.setEnabled(true);
+            } else {
+              TimeFilter.reset();
+            }
           }
         } else {
           const state = TimeFilter.getState();

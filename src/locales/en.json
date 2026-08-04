@@ -841,7 +841,10 @@
     "removeFilter": "Remove filter",
     "clearAll": "Clear all",
     "clearAllTooltip": "Clear all filters",
-    "marked": "Marked"
+    "marked": "Marked",
+    "time": "Time",
+    "timeRelative": "Relative range",
+    "timeAbsolute": "Absolute range"
   },
   "filterStats": {
     "filtered": "Filtered: {{count}} entries",
