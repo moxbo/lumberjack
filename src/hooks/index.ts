@@ -2,7 +2,7 @@
  * Re-export all custom hooks
  */
 
-export { useDebounce } from "./useDebounce";
+export { useDebounce, useThrottledValue } from "./useDebounce";
 export { useSelection } from "./useSelection";
 export { useFilterState, INITIAL_FILTER_STATE } from "./useFilterState";
 export type { FilterState, FilterStateReturn } from "./useFilterState";

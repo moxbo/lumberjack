@@ -73,7 +73,7 @@ import { nativeConfirm } from "../utils/nativeDialog";
 
 // Import refactored hooks
 import {
-  useDebounce,
+  useThrottledValue,
   useFilterState,
   useHistoryPopovers,
   useAlerts,
@@ -341,15 +341,14 @@ export default function App(): JSX.Element {
     setFiltersExpanded,
   } = filterState;
 
-  // Koalesziertes `entries`-Snapshot als Filter-Trigger.
+  // Gedrosseltes `entries`-Snapshot als Filter-Trigger.
   // Beim Streaming wird `entries` bis zu ~60×/Sekunde aktualisiert. Ohne
   // Koaleszenz würde jeder Append (a) einen Worker-Filterlauf UND (b) die
   // O(n)-Neuberechnung von `markedIdx`/`searchMatchIdx` auf dem Main-Thread
   // auslösen → bei 100k–300k Einträgen friert die Oberfläche beim gleichzeitigen
-  // Tippen/Einstellen ein. Ein kurzes Debounce (120ms) bündelt Append-Bursts
-  // zu wenigen Filterläufen. Für statische Datensätze (reines Tippen im Filter)
-  // ist `entries` stabil, daher entsteht KEINE zusätzliche Latenz.
-  const debouncedEntries = useDebounce(entries, 120);
+  // Tippen/Einstellen ein. Das Throttling veröffentlicht den ersten Block
+  // sofort und bündelt danach Bursts auf höchstens einen Filterlauf je 120 ms.
+  const visibleEntries = useThrottledValue(entries, 120);
 
   // History popovers - using extracted hook
   const {
@@ -758,7 +757,7 @@ export default function App(): JSX.Element {
       markedSignatures: onlyMarked ? Object.keys(marksMap).sort() : [],
     });
     filterEntries(
-      debouncedEntries,
+      visibleEntries,
       {
         stdFiltersEnabled,
         filter: {
@@ -784,13 +783,13 @@ export default function App(): JSX.Element {
             paged: true,
             generation: filterGeneration,
             dataGeneration: entryGeneration,
-            entryCount: debouncedEntries.length,
+            entryCount: visibleEntries.length,
             databaseName: repository.databaseName,
           }
         : undefined,
     );
   }, [
-    debouncedEntries,
+    visibleEntries,
     stdFiltersEnabled,
     filter,
     dcVersion,
@@ -1144,8 +1143,8 @@ export default function App(): JSX.Element {
   const hasMarks = Object.keys(marksMap).length > 0;
   const markedPositionIndex = useMemo(
     () =>
-      hasMarks ? buildMarkedPositionIndex(debouncedEntries, filteredIdx) : null,
-    [filteredIdx, debouncedEntries, hasMarks],
+      hasMarks ? buildMarkedPositionIndex(visibleEntries, filteredIdx) : null,
+    [filteredIdx, visibleEntries, hasMarks],
   );
   const markedIdx = useMemo(
     () => resolveMarkedPositions(markedPositionIndex, marksMap),

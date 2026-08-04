@@ -22,6 +22,55 @@ export function useDebounce<T>(value: T, delay: number): T {
 }
 
 /**
+ * Publishes the first changed value immediately, then coalesces rapid updates
+ * to at most one publication per interval while retaining the latest value.
+ */
+export function useThrottledValue<T>(value: T, interval: number): T {
+  const [throttledValue, setThrottledValue] = useState<T>(value);
+  const latestValueRef = useRef(value);
+  const lastPublishedAtRef = useRef(0);
+  const timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const initializedRef = useRef(false);
+
+  useEffect(() => {
+    latestValueRef.current = value;
+    if (!initializedRef.current) {
+      initializedRef.current = true;
+      return;
+    }
+
+    const now = Date.now();
+    const elapsed = now - lastPublishedAtRef.current;
+    if (elapsed >= interval) {
+      if (timeoutRef.current) {
+        clearTimeout(timeoutRef.current);
+        timeoutRef.current = null;
+      }
+      lastPublishedAtRef.current = now;
+      setThrottledValue(value);
+      return;
+    }
+
+    if (!timeoutRef.current) {
+      timeoutRef.current = setTimeout(() => {
+        timeoutRef.current = null;
+        lastPublishedAtRef.current = Date.now();
+        setThrottledValue(latestValueRef.current);
+      }, interval - elapsed);
+    }
+  }, [value, interval]);
+
+  useEffect(
+    () => () => {
+      if (timeoutRef.current) clearTimeout(timeoutRef.current);
+    },
+    [],
+  );
+
+  return throttledValue;
+}
+
+/**
  * Hook that returns a debounced callback function.
  * The callback will only be executed after the specified delay since the last call.
  */
