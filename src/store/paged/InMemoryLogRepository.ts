@@ -1,4 +1,5 @@
 import {
+  hydratePagedRecord,
   preparePagedRecord,
   type CanonicalLogEntry,
   type PagedLogEntry,
@@ -62,7 +63,10 @@ export class InMemoryLogRepository {
 
       for (let index = 0; index < entries.length; index++) {
         const record = preparePagedRecord(entries[index]!, ids[index]!);
-        this.payloadMap.set(ids[index]!, record.payload.entry);
+        this.payloadMap.set(
+          ids[index]!,
+          hydratePagedRecord(record.payload.entry, record.projection),
+        );
         this.projectionMap.set(ids[index]!, record.projection);
         this.signatureSet.add(
           `${record.projection.source}\0${record.projection.signature}`,

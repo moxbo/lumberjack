@@ -21,6 +21,7 @@ export {
 } from "./PagedLogRepository";
 export {
   createEntrySignature,
+  hydratePagedRecord,
   preparePagedRecord,
   type CanonicalLogEntry,
   type PagedLogEntry,

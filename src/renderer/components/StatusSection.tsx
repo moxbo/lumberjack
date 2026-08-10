@@ -8,6 +8,7 @@ import type { JSX } from "preact/jsx-runtime";
 
 export interface StatusSectionProps {
   busy: boolean;
+  importProgress?: { processed: number; total: number } | null;
   tcpStatus: string;
   httpStatus: string;
   /** Number of currently active HTTP-Tail watchers (0 = hidden). */
@@ -18,6 +19,7 @@ export interface StatusSectionProps {
 
 export function StatusSection({
   busy,
+  importProgress,
   tcpStatus,
   httpStatus,
   httpTailCount = 0,
@@ -45,7 +47,23 @@ export function StatusSection({
       {busy && (
         <span className="busy">
           <span className="spinner" aria-hidden="true"></span>
-          {t("toolbar.busy")}
+          <span>{t("toolbar.busy")}</span>
+          {importProgress && importProgress.total > 0 && (
+            <>
+              <progress
+                className="import-progress"
+                value={importProgress.processed}
+                max={importProgress.total}
+                aria-label={t("toolbar.busy")}
+              />
+              <span className="import-progress-text">
+                {Math.round(
+                  (importProgress.processed / importProgress.total) * 100,
+                )}
+                %
+              </span>
+            </>
+          )}
         </span>
       )}
       {/* TCP Status - show when active */}

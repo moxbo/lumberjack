@@ -6,11 +6,11 @@ import {
   openPagedDatabase,
   PAGED_DB_NAME,
   PAYLOAD_STORE_NAME,
-  PROJECTION_SOURCE_SIGNATURE_INDEX,
   PROJECTION_STORE_NAME,
   requestPersistentStorage,
 } from "./indexedDb";
 import {
+  hydratePagedRecord,
   preparePagedRecord,
   type CanonicalLogEntry,
   type PagedLogEntry,
@@ -71,6 +71,9 @@ export class PagedLogRepository {
   private initialized = false;
   private lifecycleGeneration = 0;
   private mutationTail: Promise<void> = Promise.resolve();
+  private readonly signatureKeys = new Set<string>();
+  private signaturesLoaded = false;
+  private signatureLoadPromise: Promise<void> | null = null;
   private readonly factory?: IDBFactory;
   private readonly payloadCache: PageLruCache<CanonicalLogEntry>;
 
@@ -146,6 +149,11 @@ export class PagedLogRepository {
       } catch (error) {
         throw toPagedWriteError(error);
       }
+      for (const record of records) {
+        this.signatureKeys.add(
+          `${record.projection.source}\0${record.projection.signature}`,
+        );
+      }
       this.payloadCache.invalidateIds(ids);
       return ids;
     });
@@ -200,29 +208,12 @@ export class PagedLogRepository {
     candidates: readonly { source: string; signature: string }[],
   ): Promise<Set<string>> {
     if (candidates.length === 0) return new Set();
-    const db = await this.getDb();
-    const transaction = db.transaction(PROJECTION_STORE_NAME, "readonly");
-    const index = transaction
-      .objectStore(PROJECTION_STORE_NAME)
-      .index(PROJECTION_SOURCE_SIGNATURE_INDEX);
+    await this.ensureSignatureCache();
     const output = new Set<string>();
-    let requestError: unknown;
-    const done = transactionDone(
-      transaction,
-      () => requestError ?? transaction.error,
-    );
     for (const candidate of candidates) {
-      const request = index.getKey([candidate.source, candidate.signature]);
-      request.onsuccess = () => {
-        if (request.result !== undefined) {
-          output.add(`${candidate.source}\0${candidate.signature}`);
-        }
-      };
-      request.onerror = () => {
-        requestError = request.error;
-      };
+      const key = `${candidate.source}\0${candidate.signature}`;
+      if (this.signatureKeys.has(key)) output.add(key);
     }
-    await done;
     return output;
   }
 
@@ -316,6 +307,9 @@ export class PagedLogRepository {
         throw toPagedWriteError(error);
       }
       this.nextId = 1;
+      this.signatureKeys.clear();
+      this.signaturesLoaded = true;
+      this.signatureLoadPromise = null;
       this.payloadCache.invalidate();
     });
   }
@@ -352,6 +346,9 @@ export class PagedLogRepository {
             ),
           );
       });
+      this.signatureKeys.clear();
+      this.signaturesLoaded = false;
+      this.signatureLoadPromise = null;
     });
   }
 
@@ -437,6 +434,41 @@ export class PagedLogRepository {
     return result;
   }
 
+  private async ensureSignatureCache(): Promise<void> {
+    if (this.signaturesLoaded) return;
+    if (this.signatureLoadPromise) return this.signatureLoadPromise;
+
+    const load = (async () => {
+      const db = await this.getDb();
+      const transaction = db.transaction(PROJECTION_STORE_NAME, "readonly");
+      const request = transaction
+        .objectStore(PROJECTION_STORE_NAME)
+        .openCursor();
+      let requestError: unknown;
+      request.onsuccess = () => {
+        const cursor = request.result;
+        if (!cursor) return;
+        const projection = cursor.value as ProjectionRecord;
+        this.signatureKeys.add(`${projection.source}\0${projection.signature}`);
+        cursor.continue();
+      };
+      request.onerror = () => {
+        requestError = request.error;
+      };
+      await transactionDone(
+        transaction,
+        () => requestError ?? transaction.error,
+      );
+      this.signaturesLoaded = true;
+    })();
+    this.signatureLoadPromise = load;
+    try {
+      await load;
+    } finally {
+      if (this.signatureLoadPromise === load) this.signatureLoadPromise = null;
+    }
+  }
+
   private async loadPayloadPage(
     firstId: number,
     lastId: number,
@@ -445,23 +477,49 @@ export class PagedLogRepository {
     if (typeof IDBKeyRange === "undefined") {
       throw new IndexedDbUnavailableError("IDBKeyRange is unavailable");
     }
-    const transaction = db.transaction(PAYLOAD_STORE_NAME, "readonly");
-    const request = transaction
+    const transaction = db.transaction(
+      [PAYLOAD_STORE_NAME, PROJECTION_STORE_NAME],
+      "readonly",
+    );
+    const range = IDBKeyRange.bound(firstId, lastId);
+    const payloadRequest = transaction
       .objectStore(PAYLOAD_STORE_NAME)
-      .openCursor(IDBKeyRange.bound(firstId, lastId));
+      .openCursor(range);
+    const projectionRequest = transaction
+      .objectStore(PROJECTION_STORE_NAME)
+      .openCursor(range);
+    const payloads = new Map<number, PayloadRecord["entry"]>();
+    const projections = new Map<number, ProjectionRecord>();
     const output = new Map<number, CanonicalLogEntry>();
     let requestError: unknown;
-    request.onsuccess = () => {
-      const cursor = request.result;
+    payloadRequest.onsuccess = () => {
+      const cursor = payloadRequest.result;
       if (!cursor) return;
       const record = cursor.value as PayloadRecord;
-      output.set(record.id, record.entry);
+      payloads.set(record.id, record.entry);
       cursor.continue();
     };
-    request.onerror = () => {
-      requestError = request.error;
+    payloadRequest.onerror = () => {
+      requestError = payloadRequest.error;
+    };
+    projectionRequest.onsuccess = () => {
+      const cursor = projectionRequest.result;
+      if (!cursor) return;
+      const record = cursor.value as ProjectionRecord;
+      projections.set(record.id, record);
+      cursor.continue();
+    };
+    projectionRequest.onerror = () => {
+      requestError = projectionRequest.error;
     };
     await transactionDone(transaction, () => requestError ?? transaction.error);
+    for (const [id, payload] of payloads) {
+      const projection = projections.get(id);
+      if (!projection) {
+        throw new Error(`Projection missing for paged log entry ${id}`);
+      }
+      output.set(id, hydratePagedRecord(payload, projection));
+    }
     return output;
   }
 

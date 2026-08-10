@@ -375,6 +375,17 @@ body {
   font-weight: 600;
 }
 
+.toolbar .import-progress {
+  width: 90px;
+  height: 8px;
+  accent-color: var(--color-primary);
+}
+
+.toolbar .import-progress-text {
+  min-width: 3ch;
+  font-variant-numeric: tabular-nums;
+}
+
 /* Toolbar inputs - kompakter */
 .toolbar input:not([type="checkbox"]):not([type="radio"]) {
   padding: 4px 8px;

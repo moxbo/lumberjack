@@ -25,7 +25,7 @@ export interface CanonicalLogEntry extends Omit<PagedLogEntry, "id" | "raw"> {
 
 export interface PayloadRecord {
   id: number;
-  entry: CanonicalLogEntry;
+  entry: Partial<CanonicalLogEntry> & Pick<CanonicalLogEntry, "_id">;
 }
 
 export interface ProjectionRecord {
@@ -115,27 +115,65 @@ export function preparePagedRecord(
   delete entry.raw;
   entry._id = id;
 
-  const canonical = entry as CanonicalLogEntry;
   const mark = input._mark ?? input.mark ?? null;
+  const projection: ProjectionRecord = {
+    id,
+    timestamp: input.timestamp ?? null,
+    level: input.level ?? null,
+    logger: input.logger ?? null,
+    thread: input.thread ?? null,
+    message: input.message ?? "",
+    source: input.source ?? "",
+    mdc: input.mdc ?? null,
+    service: input.service ?? null,
+    traceId: input.traceId ?? null,
+    signature:
+      typeof input.signature === "string"
+        ? input.signature
+        : createEntrySignature(input),
+    _mark: mark,
+  };
+
+  for (const key of [
+    "timestamp",
+    "level",
+    "logger",
+    "thread",
+    "message",
+    "source",
+    "mdc",
+    "service",
+    "traceId",
+    "signature",
+    "mark",
+    "_mark",
+  ]) {
+    delete entry[key];
+  }
 
   return {
-    payload: { id, entry: canonical },
-    projection: {
-      id,
-      timestamp: input.timestamp ?? null,
-      level: input.level ?? null,
-      logger: input.logger ?? null,
-      thread: input.thread ?? null,
-      message: input.message ?? "",
-      source: input.source ?? "",
-      mdc: input.mdc ?? null,
-      service: input.service ?? null,
-      traceId: input.traceId ?? null,
-      signature:
-        typeof input.signature === "string"
-          ? input.signature
-          : createEntrySignature(input),
-      _mark: mark,
-    },
+    payload: { id, entry },
+    projection,
   };
+}
+
+export function hydratePagedRecord(
+  payload: PayloadRecord["entry"],
+  projection: ProjectionRecord,
+): CanonicalLogEntry {
+  return {
+    ...payload,
+    _id: projection.id,
+    timestamp: projection.timestamp,
+    level: projection.level,
+    logger: projection.logger,
+    thread: projection.thread,
+    message: projection.message,
+    source: projection.source,
+    mdc: projection.mdc,
+    service: projection.service,
+    traceId: projection.traceId,
+    signature: projection.signature,
+    _mark: projection._mark,
+  } as CanonicalLogEntry;
 }

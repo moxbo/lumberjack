@@ -610,6 +610,10 @@ export default function App(): JSX.Element {
 
   // Busy helper
   const [busy, setBusy] = useState<boolean>(false);
+  const [importProgress, setImportProgress] = useState<{
+    processed: number;
+    total: number;
+  } | null>(null);
   const withBusy = async (fn: () => Promise<void>) => {
     setBusy(true);
     try {
@@ -618,6 +622,23 @@ export default function App(): JSX.Element {
       setBusy(false);
     }
   };
+
+  const persistImportedEntries = useCallback(
+    async (importedEntries: any[] | undefined | null): Promise<void> => {
+      if (!importedEntries || importedEntries.length === 0) return;
+      setImportProgress({ processed: 0, total: importedEntries.length });
+      try {
+        await appendEntriesAsync(importedEntries, {
+          onProgress: (processed, total) =>
+            setImportProgress({ processed, total }),
+        });
+        hydrateMarksFromEntries(importedEntries);
+      } finally {
+        setImportProgress(null);
+      }
+    },
+    [appendEntriesAsync, hydrateMarksFromEntries],
+  );
 
   // Elasticsearch search state + flow (search, pagination, "load more").
   const {
@@ -718,6 +739,20 @@ export default function App(): JSX.Element {
     filterEntries,
   } = useFilterWorker();
 
+  const standardFilterActive =
+    stdFiltersEnabled &&
+    [filter.level, filter.logger, filter.thread, filter.message].some(
+      (value) => String(value ?? "").trim().length > 0,
+    );
+  const dcFilterActive =
+    DiagnosticContextFilter.isEnabled() &&
+    DiagnosticContextFilter.getState().entries.some((entry) => entry.active);
+  const filterIsActive =
+    standardFilterActive ||
+    onlyMarked ||
+    dcFilterActive ||
+    TimeFilter.isEnabled();
+
   useEffect(() => {
     if (filterWorkerError) showAlert(filterWorkerError.message);
   }, [filterWorkerError, showAlert]);
@@ -743,6 +778,8 @@ export default function App(): JSX.Element {
     const timeFilterEnabled = timeState.enabled;
     const timeFilterFrom = timeState.from || undefined;
     const timeFilterTo = timeState.to || undefined;
+
+    if (!filterIsActive && !String(search || "").trim()) return;
 
     hasTriggeredFilterRef.current = true;
     const filterGeneration = JSON.stringify({
@@ -804,10 +841,14 @@ export default function App(): JSX.Element {
     onlyMarked ? marksMap : null,
     usesPagedStorage,
     entryGeneration,
+    filterIsActive,
   ]);
 
-  // Use worker results for filtered indices
-  const filteredIdx = workerFilteredIdx;
+  const unfilteredIds = useMemo(
+    () => entries.map((entry) => entry._id),
+    [entries],
+  );
+  const filteredIdx = filterIsActive ? workerFilteredIdx : unfilteredIds;
 
   // Stable IDs are dense but no longer monotonic after timestamp sorting.
   // A compact typed reverse vector keeps navigation O(1) without Map overhead.
@@ -1797,14 +1838,15 @@ export default function App(): JSX.Element {
             const { type, tab } = (cmd as any) || ({} as any);
             switch (type) {
               case "open-files": {
-                const paths = await typedOpenFiles();
-                if (paths && paths.length) {
-                  const res = await typedParsePaths(paths);
-                  if (res?.ok) {
-                    appendEntries(res.entries as any);
-                    hydrateMarksFromEntries(res.entries as any[]);
+                await withBusy(async () => {
+                  const paths = await typedOpenFiles();
+                  if (paths && paths.length) {
+                    const res = await typedParsePaths(paths);
+                    if (res?.ok) {
+                      await persistImportedEntries(res.entries as any[]);
+                    }
                   }
-                }
+                });
                 break;
               }
               case "open-settings": {
@@ -2003,8 +2045,7 @@ export default function App(): JSX.Element {
         await withBusy(async () => {
           const res = await typedParsePaths(paths);
           if (res?.ok) {
-            appendEntries(res.entries as any);
-            hydrateMarksFromEntries(res.entries as any[]);
+            await persistImportedEntries(res.entries as any[]);
           } else
             showAlertRef.current(
               tRef.current("errors.dropLoadError", {
@@ -2019,8 +2060,7 @@ export default function App(): JSX.Element {
           try {
             const res = await typedParseRawDrops(files);
             if (res?.ok) {
-              appendEntries(res.entries as any);
-              hydrateMarksFromEntries(res.entries as any[]);
+              await persistImportedEntries(res.entries as any[]);
             } else
               showAlertRef.current(
                 tRef.current("errors.dropLoadError", {
@@ -2614,14 +2654,15 @@ export default function App(): JSX.Element {
     // File
     onOpenFile: async () => {
       try {
-        const result = await typedOpenFiles();
-        if (result && result.length > 0) {
-          const parsed = await typedParsePaths(result);
-          if (parsed?.ok && parsed.entries && parsed.entries.length > 0) {
-            appendEntries(parsed.entries);
-            hydrateMarksFromEntries(parsed.entries as any[]);
+        await withBusy(async () => {
+          const result = await typedOpenFiles();
+          if (result && result.length > 0) {
+            const parsed = await typedParsePaths(result);
+            if (parsed?.ok && parsed.entries && parsed.entries.length > 0) {
+              await persistImportedEntries(parsed.entries as any[]);
+            }
           }
-        }
+        });
       } catch (err) {
         logger.error("Open file failed:", err);
       }
@@ -2970,6 +3011,7 @@ export default function App(): JSX.Element {
         />
         <StatusSection
           busy={busy}
+          importProgress={importProgress}
           tcpStatus={tcpStatus}
           httpStatus={httpStatus}
           httpTailCount={httpTail.tails.length}
@@ -3205,14 +3247,17 @@ export default function App(): JSX.Element {
                     className="btn-primary"
                     onClick={async () => {
                       try {
-                        const paths = await typedOpenFiles();
-                        if (paths && paths.length) {
-                          const res = await typedParsePaths(paths);
-                          if (res?.ok) {
-                            appendEntries(res.entries as any);
-                            hydrateMarksFromEntries(res.entries as any[]);
+                        await withBusy(async () => {
+                          const paths = await typedOpenFiles();
+                          if (paths && paths.length) {
+                            const res = await typedParsePaths(paths);
+                            if (res?.ok) {
+                              await persistImportedEntries(
+                                res.entries as any[],
+                              );
+                            }
                           }
-                        }
+                        });
                       } catch (e) {
                         logger.error("Open file failed:", e);
                       }

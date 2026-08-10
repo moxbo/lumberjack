@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   createEntrySignature,
+  hydratePagedRecord,
   preparePagedRecord,
   type PagedLogEntry,
 } from "../types";
@@ -22,17 +23,19 @@ describe("paged record conversion", () => {
     _mark: "#ff0",
   };
 
-  it("keeps the canonical entry complete except for raw", () => {
+  it("keeps projection fields out of the persisted payload", () => {
     const record = preparePagedRecord(entry, 7);
 
     expect(record.payload.id).toBe(7);
     expect(record.payload.entry).toMatchObject({
       _id: 7,
       stackTrace: "complete payload field",
-      message: "created",
     });
     expect("raw" in record.payload.entry).toBe(false);
     expect("id" in record.payload.entry).toBe(false);
+    expect("message" in record.payload.entry).toBe(false);
+    expect("mdc" in record.payload.entry).toBe(false);
+    expect("source" in record.payload.entry).toBe(false);
   });
 
   it("creates a complete filter projection", () => {
@@ -49,6 +52,25 @@ describe("paged record conversion", () => {
       mdc: { tenant: "acme" },
       service: "checkout",
       traceId: "trace-1",
+      signature: "2026-01-02T03:04:05.000Z|orders|created",
+      _mark: "#ff0",
+    });
+  });
+
+  it("hydrates a complete canonical entry from payload and projection", () => {
+    const record = preparePagedRecord(entry, 7);
+
+    expect(
+      hydratePagedRecord(record.payload.entry, record.projection),
+    ).toMatchObject({
+      _id: 7,
+      timestamp: entry.timestamp,
+      level: "INFO",
+      logger: "orders",
+      message: "created",
+      source: "file.log",
+      mdc: { tenant: "acme" },
+      stackTrace: "complete payload field",
       signature: "2026-01-02T03:04:05.000Z|orders|created",
       _mark: "#ff0",
     });

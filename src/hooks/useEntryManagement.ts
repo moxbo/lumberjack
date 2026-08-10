@@ -26,6 +26,11 @@ interface UseEntryManagementOptions {
   marksMap: Record<string, string>;
 }
 
+interface AppendEntriesOptions {
+  ignoreExistingForElastic?: boolean;
+  onProgress?: (processed: number, total: number) => void;
+}
+
 export interface PagedEntryMetadata {
   _id: number;
   timestamp: PagedTimestamp;
@@ -40,12 +45,15 @@ export interface PagedEntryMetadata {
   mdc?: Record<string, unknown> | null;
 }
 
-function mergeSortedMetadata(
+export function mergeSortedMetadata(
   previous: PagedEntryMetadata[],
   incoming: PagedEntryMetadata[],
 ): PagedEntryMetadata[] {
   if (previous.length === 0) return incoming;
   if (incoming.length === 0) return previous;
+  if (compareByTimestampId(previous[previous.length - 1]!, incoming[0]!) <= 0) {
+    return previous.concat(incoming);
+  }
   const result = new Array<PagedEntryMetadata>(
     previous.length + incoming.length,
   );
@@ -94,7 +102,7 @@ export function useEntryManagement({ marksMap }: UseEntryManagementOptions) {
   const queueRef = useRef<
     Array<{
       entries: any[];
-      options?: { ignoreExistingForElastic?: boolean };
+      options?: AppendEntriesOptions;
       generation: number;
       resolve: (stored: number) => void;
       reject: (error: Error) => void;
@@ -139,7 +147,7 @@ export function useEntryManagement({ marksMap }: UseEntryManagementOptions) {
   const processBatch = useCallback(
     async (
       newEntries: any[],
-      options: { ignoreExistingForElastic?: boolean } | undefined,
+      options: AppendEntriesOptions | undefined,
       generation: number,
     ): Promise<number> => {
       if (newEntries.length === 0) return 0;
@@ -260,11 +268,11 @@ export function useEntryManagement({ marksMap }: UseEntryManagementOptions) {
             ignoreExisting ||
             !existing.has(`${source}\0${signature}`),
         )
-        .map(({ input }) => {
+        .map(({ input, signature }) => {
           const entry = { ...input };
           delete entry.id;
           delete entry._id;
-          delete entry.signature;
+          entry.signature = signature;
           return entry;
         });
       if (accepted.length === 0) return 0;
@@ -277,7 +285,7 @@ export function useEntryManagement({ marksMap }: UseEntryManagementOptions) {
 
       for (const entry of accepted) {
         entry.raw = null;
-        const mark = marksMapRef.current[entrySignature(entry)];
+        const mark = marksMapRef.current[entry.signature];
         if (mark) entry._mark = mark;
       }
 
@@ -290,12 +298,11 @@ export function useEntryManagement({ marksMap }: UseEntryManagementOptions) {
       }
       if (generation !== generationRef.current) return 0;
       const metadata = accepted.map((entry, index): PagedEntryMetadata => {
-        const signature = entrySignature(entry);
         const base: PagedEntryMetadata = {
           _id: ids[index]!,
           timestamp: entry.timestamp ?? null,
           source: String(entry.source ?? ""),
-          signature,
+          signature: entry.signature,
           level: entry.level ?? null,
           logger: entry.logger ?? null,
           traceId: entry.traceId ?? null,
@@ -353,25 +360,28 @@ export function useEntryManagement({ marksMap }: UseEntryManagementOptions) {
   }, [processBatch]);
 
   const appendEntriesAsync = useCallback(
-    (
-      newEntries: any[],
-      options?: { ignoreExistingForElastic?: boolean },
-    ): Promise<number> => {
+    (newEntries: any[], options?: AppendEntriesOptions): Promise<number> => {
       if (!Array.isArray(newEntries) || newEntries.length === 0) {
         return Promise.resolve(0);
       }
       const generation = generationRef.current;
       const completions: Promise<number>[] = [];
+      let processed = 0;
       for (let start = 0; start < newEntries.length; start += IPC_BATCH_SIZE) {
+        const batchEntries = newEntries.slice(start, start + IPC_BATCH_SIZE);
         completions.push(
           new Promise<number>((resolve, reject) => {
             queueRef.current.push({
-              entries: newEntries.slice(start, start + IPC_BATCH_SIZE),
+              entries: batchEntries,
               options,
               generation,
               resolve,
               reject,
             });
+          }).then((stored) => {
+            processed += batchEntries.length;
+            options?.onProgress?.(processed, newEntries.length);
+            return stored;
           }),
         );
       }
@@ -386,7 +396,7 @@ export function useEntryManagement({ marksMap }: UseEntryManagementOptions) {
   );
 
   const appendEntries = useCallback(
-    (newEntries: any[], options?: { ignoreExistingForElastic?: boolean }) => {
+    (newEntries: any[], options?: AppendEntriesOptions) => {
       void appendEntriesAsync(newEntries, options).catch(() => {
         // The hook already records and exposes the storage error to the UI.
       });
