@@ -24,8 +24,11 @@ import {
   patchSettingsQuiet,
   windowPermsGet,
   openFiles as typedOpenFiles,
-  parsePaths as typedParsePaths,
   parseRawDrops as typedParseRawDrops,
+  streamAck as typedStreamAck,
+  streamCancel as typedStreamCancel,
+  streamParsePaths as typedStreamParsePaths,
+  streamReady as typedStreamReady,
   tcpStart as typedTcpStart,
   tcpStop as typedTcpStop,
   httpLoadOnce as typedHttpLoadOnce,
@@ -37,6 +40,9 @@ import {
   appRelaunch as typedAppRelaunch,
   onAppend as typedOnAppend,
   onMenu as typedOnMenu,
+  onStreamChunk as typedOnStreamChunk,
+  onStreamComplete as typedOnStreamComplete,
+  onStreamError as typedOnStreamError,
   onTcpStatus as typedOnTcpStatus,
   onWindowFocus as typedOnWindowFocus,
 } from "../utils/typedApi";
@@ -48,6 +54,7 @@ import type {
   SettingsFormState,
   FilterStats,
 } from "../types/renderer";
+import type { StreamParseChunk, StreamParsePathsResult } from "../types/ipc";
 import { MDCListener } from "../store/mdcListener";
 import { clearHighlightCache } from "./LogRow";
 import { clearTimestampCache, fmtTimestamp } from "../utils/format";
@@ -63,12 +70,9 @@ import {
 } from "../utils/debugFunctions";
 
 // Import refactored utilities
-import { entrySignature } from "../utils/entryUtils";
+import { compactEntrySignature, entrySignature } from "../utils/entryUtils";
 import { compareByTimestampId } from "../utils/sort";
-import {
-  buildMarkedPositionIndex,
-  resolveMarkedPositions,
-} from "../utils/markedPositions";
+import { resolveMarkedPositionsById } from "../utils/markedPositions";
 import { nativeConfirm } from "../utils/nativeDialog";
 
 // Import refactored hooks
@@ -94,6 +98,7 @@ import {
   useTimeFilterDialog,
 } from "../hooks";
 import { useStableCallback } from "../hooks/useStableCallback";
+import type { ProjectionBridge } from "../workers/projectionBridge";
 
 // Import refactored components - core components loaded eagerly
 import {
@@ -192,6 +197,7 @@ export default function App(): JSX.Element {
 
   // Persistenz: Markierungen (signature -> color)
   const [marksMap, setMarksMap] = useState<Record<string, string>>({});
+  const marksMapRef = useRef<Record<string, string>>(marksMap);
 
   // Use alerts hook
   const { alertState, showAlert, closeAlert, handleFeatureError } = useAlerts();
@@ -282,6 +288,7 @@ export default function App(): JSX.Element {
   }, [httpTail.tails.length]);
 
   // Entry management hook (entries, IPC batching, deduplication)
+  const projectionBridgeRef = useRef<ProjectionBridge | null>(null);
   const {
     entries,
     entryGeneration,
@@ -292,8 +299,10 @@ export default function App(): JSX.Element {
     usesPagedStorage,
     repository,
     getMetadata,
+    getIdsBySignature,
   } = useEntryManagement({
     marksMap,
+    projectionBridgeRef,
   });
 
   useEffect(() => {
@@ -585,35 +594,36 @@ export default function App(): JSX.Element {
   const hydrateMarksFromEntries = useCallback(
     (importedEntries: any[] | undefined | null) => {
       if (!importedEntries || importedEntries.length === 0) return;
-      let next: Record<string, string> | null = null;
-      for (let i = 0; i < importedEntries.length; i++) {
-        const e = importedEntries[i];
-        const m = e?._mark;
-        if (typeof m !== "string" || !m) continue;
-        const sig = entrySignature(e);
-        if (!sig) continue;
-        if ((next ?? marksMap)[sig] === m) continue;
-        if (!next) next = { ...marksMap };
-        next[sig] = m;
-      }
-      if (next) {
-        setMarksMap(next);
-        try {
-          patchSettingsQuiet({ marksMap: next });
-        } catch {
-          /* ignore */
+      setMarksMap((current) => {
+        let next: Record<string, string> | null = null;
+        for (let i = 0; i < importedEntries.length; i++) {
+          const e = importedEntries[i];
+          const m = e?._mark;
+          if (typeof m !== "string" || !m) continue;
+          const sig = compactEntrySignature(e);
+          if (!sig || (next ?? current)[sig] === m) continue;
+          if (!next) next = { ...current };
+          next[sig] = m;
         }
-      }
+        return next ?? current;
+      });
     },
-    [marksMap],
+    [],
   );
 
   // Busy helper
   const [busy, setBusy] = useState<boolean>(false);
   const [importProgress, setImportProgress] = useState<{
-    processed: number;
-    total: number;
+    processedEntries: number;
+    totalEntries?: number;
+    bytesRead?: number;
+    totalBytes?: number;
+    filePath?: string;
+    fileIndex?: number;
+    totalFiles?: number;
   } | null>(null);
+  const activeStreamSessionRef = useRef<string | null>(null);
+  const activeStreamCleanupRef = useRef<(() => void) | null>(null);
   const withBusy = async (fn: () => Promise<void>) => {
     setBusy(true);
     try {
@@ -626,11 +636,17 @@ export default function App(): JSX.Element {
   const persistImportedEntries = useCallback(
     async (importedEntries: any[] | undefined | null): Promise<void> => {
       if (!importedEntries || importedEntries.length === 0) return;
-      setImportProgress({ processed: 0, total: importedEntries.length });
+      setImportProgress({
+        processedEntries: 0,
+        totalEntries: importedEntries.length,
+      });
       try {
         await appendEntriesAsync(importedEntries, {
           onProgress: (processed, total) =>
-            setImportProgress({ processed, total }),
+            setImportProgress({
+              processedEntries: processed,
+              totalEntries: total,
+            }),
         });
         hydrateMarksFromEntries(importedEntries);
       } finally {
@@ -638,6 +654,108 @@ export default function App(): JSX.Element {
       }
     },
     [appendEntriesAsync, hydrateMarksFromEntries],
+  );
+
+  const persistStreamedEntries = useCallback(
+    async (sessionId: string): Promise<void> => {
+      activeStreamSessionRef.current = sessionId;
+      setImportProgress({ processedEntries: 0, bytesRead: 0, totalBytes: 0 });
+      let persistedEntries = 0;
+
+      await new Promise<void>((resolve, reject) => {
+        const cleanup = (): void => {
+          offChunk();
+          offComplete();
+          offError();
+          if (activeStreamSessionRef.current === sessionId) {
+            activeStreamSessionRef.current = null;
+          }
+          if (activeStreamCleanupRef.current === cancel) {
+            activeStreamCleanupRef.current = null;
+          }
+        };
+        const cancel = (): void => {
+          typedStreamCancel(sessionId);
+          cleanup();
+          reject(new DOMException("Stream import cancelled", "AbortError"));
+        };
+
+        const handleChunk = (chunk: StreamParseChunk): void => {
+          if (chunk.sessionId !== sessionId) return;
+          void (async () => {
+            try {
+              if (chunk.entries.length > 0) {
+                await appendEntriesAsync(chunk.entries as any[], {
+                  onProgress: (processed) =>
+                    setImportProgress({
+                      processedEntries: persistedEntries + processed,
+                      bytesRead: chunk.bytesRead,
+                      totalBytes: chunk.totalBytes,
+                      filePath: chunk.filePath,
+                      fileIndex: chunk.fileIndex,
+                      totalFiles: chunk.totalFiles,
+                    }),
+                });
+                persistedEntries += chunk.entries.length;
+                hydrateMarksFromEntries(chunk.entries as any[]);
+              }
+              setImportProgress({
+                processedEntries: persistedEntries,
+                bytesRead: chunk.bytesRead,
+                totalBytes: chunk.totalBytes,
+                filePath: chunk.filePath,
+                fileIndex: chunk.fileIndex,
+                totalFiles: chunk.totalFiles,
+              });
+              typedStreamAck(sessionId, chunk.chunkIndex);
+            } catch (error) {
+              typedStreamCancel(sessionId);
+              cleanup();
+              reject(error instanceof Error ? error : new Error(String(error)));
+            }
+          })();
+        };
+
+        const offChunk = typedOnStreamChunk(handleChunk);
+        const offComplete = typedOnStreamComplete((result) => {
+          if (result.sessionId !== sessionId) return;
+          cleanup();
+          if (result.errors.length > 0) {
+            reject(new Error(result.errors.join("\n")));
+          } else {
+            resolve();
+          }
+        });
+        const offError = typedOnStreamError((error) => {
+          if (error.sessionId !== sessionId) return;
+          cleanup();
+          reject(new Error(error.error));
+        });
+        activeStreamCleanupRef.current = cancel;
+        typedStreamReady(sessionId);
+      }).finally(() => {
+        if (activeStreamSessionRef.current === sessionId) {
+          activeStreamSessionRef.current = null;
+        }
+        setImportProgress(null);
+      });
+    },
+    [appendEntriesAsync, hydrateMarksFromEntries],
+  );
+
+  const importPaths = useCallback(
+    async (paths: string[]): Promise<void> => {
+      const result: StreamParsePathsResult = await typedStreamParsePaths(paths);
+      if ("streamed" in result) {
+        await persistStreamedEntries(result.sessionId);
+        return;
+      }
+      if (!result.ok) {
+        throw new Error(result.error || tRef.current("status.errorUnknown"));
+      }
+      await persistImportedEntries(result.entries as any[]);
+    },
+    [persistImportedEntries, persistStreamedEntries],
   );
 
   // Elasticsearch search state + flow (search, pagination, "load more").
@@ -737,7 +855,11 @@ export default function App(): JSX.Element {
     stats: workerFilterStats,
     error: filterWorkerError,
     filterEntries,
+    projectionBridge,
   } = useFilterWorker();
+
+  // Wire projection bridge so useEntryManagement can publish directly.
+  projectionBridgeRef.current = projectionBridge;
 
   const standardFilterActive =
     stdFiltersEnabled &&
@@ -903,7 +1025,6 @@ export default function App(): JSX.Element {
   // würde `exportCurrentView` über den Menu-Pfad auf eine stale `marksMap`-
   // Closure zugreifen → exportierte Einträge hätten `markColor: null`,
   // obwohl sie sichtbar markiert sind.
-  const marksMapRef = useRef<Record<string, string>>(marksMap);
   useEffect(() => {
     filteredIdxRef.current = filteredIdx;
     // Update debug reference
@@ -916,6 +1037,11 @@ export default function App(): JSX.Element {
   }, [entries]);
   useEffect(() => {
     marksMapRef.current = marksMap;
+    try {
+      patchSettingsQuiet({ marksMap });
+    } catch {
+      // Session marks remain available in component state.
+    }
   }, [marksMap]);
 
   const countTotal = entries.length;
@@ -1181,15 +1307,14 @@ export default function App(): JSX.Element {
     return pairs;
   }, [selectedEntry]);
 
-  const hasMarks = Object.keys(marksMap).length > 0;
-  const markedPositionIndex = useMemo(
-    () =>
-      hasMarks ? buildMarkedPositionIndex(visibleEntries, filteredIdx) : null,
-    [filteredIdx, visibleEntries, hasMarks],
-  );
   const markedIdx = useMemo(
-    () => resolveMarkedPositions(markedPositionIndex, marksMap),
-    [markedPositionIndex, marksMap],
+    () =>
+      resolveMarkedPositionsById(
+        marksMap,
+        getIdsBySignature,
+        visualPositionById,
+      ),
+    [getIdsBySignature, marksMap, visualPositionById],
   );
 
   // Der Filter-Worker ermittelt dieselben, auf 50k begrenzten visuellen
@@ -1406,6 +1531,12 @@ export default function App(): JSX.Element {
       logger.warn("Error in onListKeyDown:", err);
     }
   };
+  const onListKeyDownRef = useRef(onListKeyDown);
+  onListKeyDownRef.current = onListKeyDown;
+  const stableOnListKeyDown = useCallback(
+    (event: KeyboardEvent) => onListKeyDownRef.current(event),
+    [],
+  );
 
   // Follow mode auto-select
   useEffect(() => {
@@ -1792,6 +1923,14 @@ export default function App(): JSX.Element {
   useEffect(() => {
     tcpPortRef.current = tcpPort;
   }, [tcpPort]);
+  useEffect(
+    () => () => {
+      if (activeStreamSessionRef.current) {
+        activeStreamCleanupRef.current?.();
+      }
+    },
+    [],
+  );
 
   // IPC listeners setup (deferred to not block rendering)
   // IMPORTANT: This effect should only run ONCE on mount to avoid duplicate listeners
@@ -1841,10 +1980,7 @@ export default function App(): JSX.Element {
                 await withBusy(async () => {
                   const paths = await typedOpenFiles();
                   if (paths && paths.length) {
-                    const res = await typedParsePaths(paths);
-                    if (res?.ok) {
-                      await persistImportedEntries(res.entries as any[]);
-                    }
+                    await importPaths(paths);
                   }
                 });
                 break;
@@ -2043,15 +2179,18 @@ export default function App(): JSX.Element {
     const mgr = new DragAndDropManager({
       onFiles: async (paths) => {
         await withBusy(async () => {
-          const res = await typedParsePaths(paths);
-          if (res?.ok) {
-            await persistImportedEntries(res.entries as any[]);
-          } else
+          try {
+            await importPaths(paths);
+          } catch (error) {
             showAlertRef.current(
               tRef.current("errors.dropLoadError", {
-                message: res?.error || tRef.current("status.errorUnknown"),
+                message:
+                  error instanceof Error
+                    ? error.message
+                    : tRef.current("status.errorUnknown"),
               }),
             );
+          }
         });
       },
       onActiveChange: (active) => setDragActive(active),
@@ -2200,6 +2339,7 @@ export default function App(): JSX.Element {
   }
 
   function doClearLogs() {
+    activeStreamCleanupRef.current?.();
     clearEntries();
     setSelected(new Set());
     resetElasticSearchState();
@@ -2657,10 +2797,7 @@ export default function App(): JSX.Element {
         await withBusy(async () => {
           const result = await typedOpenFiles();
           if (result && result.length > 0) {
-            const parsed = await typedParsePaths(result);
-            if (parsed?.ok && parsed.entries && parsed.entries.length > 0) {
-              await persistImportedEntries(parsed.entries as any[]);
-            }
+            await importPaths(result);
           }
         });
       } catch (err) {
@@ -3182,7 +3319,7 @@ export default function App(): JSX.Element {
           search={search}
           follow={follow}
           onDisableFollow={handleDisableFollow}
-          onKeyDown={onListKeyDown}
+          onKeyDown={stableOnListKeyDown}
           onRowSelect={handleRowSelect}
           onRowContextMenu={handleRowContextMenu}
           onColMouseDown={onColMouseDown}
@@ -3250,12 +3387,7 @@ export default function App(): JSX.Element {
                         await withBusy(async () => {
                           const paths = await typedOpenFiles();
                           if (paths && paths.length) {
-                            const res = await typedParsePaths(paths);
-                            if (res?.ok) {
-                              await persistImportedEntries(
-                                res.entries as any[],
-                              );
-                            }
+                            await importPaths(paths);
                           }
                         });
                       } catch (e) {

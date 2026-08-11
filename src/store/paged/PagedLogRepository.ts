@@ -20,6 +20,11 @@ import {
   type ProjectionRecord,
   type ProjectionScanOptions,
 } from "./types";
+import {
+  compressPayloadEntry,
+  decompressPayloadEntry,
+  type StoredPayloadEntry,
+} from "./payloadCompression";
 
 export interface PagedLogRepositoryOptions {
   pageSize?: number;
@@ -117,6 +122,20 @@ export class PagedLogRepository {
       const records = entries.map((entry, index) =>
         preparePagedRecord(entry, ids[index]!),
       );
+      let nextRecord = 0;
+      const workers = Array.from(
+        { length: Math.min(8, records.length) },
+        async () => {
+          while (nextRecord < records.length) {
+            const index = nextRecord++;
+            const record = records[index]!;
+            record.payload.entry = await compressPayloadEntry(
+              record.payload.entry,
+            );
+          }
+        },
+      );
+      await Promise.all(workers);
       const transaction = db.transaction(
         [PAYLOAD_STORE_NAME, PROJECTION_STORE_NAME],
         "readwrite",
@@ -488,7 +507,7 @@ export class PagedLogRepository {
     const projectionRequest = transaction
       .objectStore(PROJECTION_STORE_NAME)
       .openCursor(range);
-    const payloads = new Map<number, PayloadRecord["entry"]>();
+    const payloads = new Map<number, StoredPayloadEntry>();
     const projections = new Map<number, ProjectionRecord>();
     const output = new Map<number, CanonicalLogEntry>();
     let requestError: unknown;
@@ -513,13 +532,23 @@ export class PagedLogRepository {
       requestError = projectionRequest.error;
     };
     await transactionDone(transaction, () => requestError ?? transaction.error);
-    for (const [id, payload] of payloads) {
-      const projection = projections.get(id);
-      if (!projection) {
-        throw new Error(`Projection missing for paged log entry ${id}`);
-      }
-      output.set(id, hydratePagedRecord(payload, projection));
-    }
+    const storedPayloads = [...payloads];
+    let nextPayload = 0;
+    const workers = Array.from(
+      { length: Math.min(8, storedPayloads.length) },
+      async () => {
+        while (nextPayload < storedPayloads.length) {
+          const [id, payload] = storedPayloads[nextPayload++]!;
+          const projection = projections.get(id);
+          if (!projection) {
+            throw new Error(`Projection missing for paged log entry ${id}`);
+          }
+          const decompressed = await decompressPayloadEntry(payload);
+          output.set(id, hydratePagedRecord(decompressed, projection));
+        }
+      },
+    );
+    await Promise.all(workers);
     return output;
   }
 

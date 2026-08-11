@@ -19,6 +19,10 @@ import type {
   Result,
   Settings,
   SettingsResult,
+  StreamParseChunk,
+  StreamParseComplete,
+  StreamParseError,
+  StreamParsePathsResult,
   TcpStatus,
   WindowTitleResult,
 } from "./src/types/ipc";
@@ -101,8 +105,23 @@ const api: ElectronAPI = {
   parsePaths: (paths: string[]): Promise<ParseResult> =>
     ipcRenderer.invoke("logs:parsePaths", paths),
 
+  streamParsePaths: (paths: string[]): Promise<StreamParsePathsResult> =>
+    ipcRenderer.invoke("logs:streamParsePaths", paths),
+
+  streamReady: (sessionId: string): void => {
+    ipcRenderer.send("logs:streamReady", { sessionId });
+  },
+
   parseRawDrops: (files: DroppedFile[]): Promise<ParseResult> =>
     ipcRenderer.invoke("logs:parseRaw", files),
+
+  streamAck: (sessionId: string, chunkIndex: number): void => {
+    ipcRenderer.send("logs:streamAck", { sessionId, chunkIndex });
+  },
+
+  streamCancel: (sessionId: string): void => {
+    ipcRenderer.send("logs:streamCancel", { sessionId });
+  },
 
   // TCP operations
   tcpStart: (port: number): void => {
@@ -148,6 +167,51 @@ const api: ElectronAPI = {
     // Return cleanup function
     return (): void => {
       ipcRenderer.removeListener("logs:append", listener);
+    };
+  },
+
+  onStreamChunk: (
+    callback: (chunk: StreamParseChunk) => void,
+  ): (() => void) => {
+    const listener = (
+      _event: IpcRendererEvent,
+      chunk: StreamParseChunk,
+    ): void => {
+      callback(chunk);
+    };
+    ipcRenderer.on("logs:streamChunk", listener);
+    return (): void => {
+      ipcRenderer.removeListener("logs:streamChunk", listener);
+    };
+  },
+
+  onStreamComplete: (
+    callback: (result: StreamParseComplete) => void,
+  ): (() => void) => {
+    const listener = (
+      _event: IpcRendererEvent,
+      result: StreamParseComplete,
+    ): void => {
+      callback(result);
+    };
+    ipcRenderer.on("logs:streamComplete", listener);
+    return (): void => {
+      ipcRenderer.removeListener("logs:streamComplete", listener);
+    };
+  },
+
+  onStreamError: (
+    callback: (error: StreamParseError) => void,
+  ): (() => void) => {
+    const listener = (
+      _event: IpcRendererEvent,
+      error: StreamParseError,
+    ): void => {
+      callback(error);
+    };
+    ipcRenderer.on("logs:streamError", listener);
+    return (): void => {
+      ipcRenderer.removeListener("logs:streamError", listener);
     };
   },
 

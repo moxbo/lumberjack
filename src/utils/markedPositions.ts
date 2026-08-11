@@ -49,6 +49,31 @@ export function resolveMarkedPositions(
     if (typeof matched === "number") positions.push(matched);
     else positions.push(...matched);
   }
+
+  positions.sort((a, b) => a - b);
+  return positions;
+}
+
+export function resolveMarkedPositionsById(
+  marksMap: Record<string, string>,
+  getIdsBySignature: (
+    signature: string,
+  ) => number | readonly number[] | undefined,
+  visualPositionById: Int32Array,
+  limit = 100_000,
+): number[] {
+  const positions: number[] = [];
+  for (const signature of Object.keys(marksMap)) {
+    const ids = getIdsBySignature(signature);
+    if (ids === undefined) continue;
+    const append = (id: number): void => {
+      if (id >= visualPositionById.length) return;
+      const visualIndex = visualPositionById[id]! - 1;
+      if (visualIndex >= 0 && visualIndex < limit) positions.push(visualIndex);
+    };
+    if (typeof ids === "number") append(ids);
+    else for (const id of ids) append(id);
+  }
   positions.sort((a, b) => a - b);
   return positions;
 }

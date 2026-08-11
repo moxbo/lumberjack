@@ -8,7 +8,15 @@ import type { JSX } from "preact/jsx-runtime";
 
 export interface StatusSectionProps {
   busy: boolean;
-  importProgress?: { processed: number; total: number } | null;
+  importProgress?: {
+    processedEntries: number;
+    totalEntries?: number;
+    bytesRead?: number;
+    totalBytes?: number;
+    filePath?: string;
+    fileIndex?: number;
+    totalFiles?: number;
+  } | null;
   tcpStatus: string;
   httpStatus: string;
   /** Number of currently active HTTP-Tail watchers (0 = hidden). */
@@ -35,6 +43,20 @@ export function StatusSection({
     !!httpStatus && httpStatus !== t("status.httpPollStopped");
   const errorPrefix = t("status.error").split("{{")[0] || "Error";
   const isHttpError = !!httpStatus && httpStatus.startsWith(errorPrefix);
+  const progressValue =
+    importProgress && (importProgress.totalBytes || 0) > 0
+      ? importProgress.bytesRead || 0
+      : importProgress?.processedEntries || 0;
+  const progressMax =
+    importProgress && (importProgress.totalBytes || 0) > 0
+      ? importProgress.totalBytes || 0
+      : importProgress?.totalEntries || 0;
+  const progressPercent =
+    progressMax > 0 ? Math.round((progressValue / progressMax) * 100) : 0;
+  const progressLabel =
+    importProgress && (importProgress.totalBytes || 0) > 0
+      ? `${importProgress.processedEntries.toLocaleString()} entries`
+      : null;
 
   return (
     <div
@@ -48,19 +70,16 @@ export function StatusSection({
         <span className="busy">
           <span className="spinner" aria-hidden="true"></span>
           <span>{t("toolbar.busy")}</span>
-          {importProgress && importProgress.total > 0 && (
+          {importProgress && progressMax > 0 && (
             <>
               <progress
                 className="import-progress"
-                value={importProgress.processed}
-                max={importProgress.total}
+                value={progressValue}
+                max={progressMax}
                 aria-label={t("toolbar.busy")}
               />
               <span className="import-progress-text">
-                {Math.round(
-                  (importProgress.processed / importProgress.total) * 100,
-                )}
-                %
+                {progressPercent}%{progressLabel ? ` • ${progressLabel}` : ""}
               </span>
             </>
           )}

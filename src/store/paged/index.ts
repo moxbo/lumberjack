@@ -21,6 +21,7 @@ export {
 } from "./PagedLogRepository";
 export {
   createEntrySignature,
+  createProjectionRecord,
   hydratePagedRecord,
   preparePagedRecord,
   type CanonicalLogEntry,
@@ -34,3 +35,10 @@ export {
   type ProjectionScanOptions,
   type StorageEstimateResult,
 } from "./types";
+export {
+  PAYLOAD_COMPRESSION_THRESHOLD,
+  compressPayloadEntry,
+  decompressPayloadEntry,
+  type CompressedHeavyFields,
+  type StoredPayloadEntry,
+} from "./payloadCompression";

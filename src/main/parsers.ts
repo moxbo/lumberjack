@@ -6,6 +6,7 @@ import path from "path";
 import { createRequire } from "module";
 import https from "https";
 import http from "http";
+import * as readline from "readline";
 import log from "electron-log/main";
 import zlib from "zlib";
 import { buildElasticMessageQuery } from "../utils/esMessageQuery";
@@ -24,6 +25,15 @@ const HTTPS_INSECURE_KEEPALIVE_AGENT = new https.Agent({
 const MESSAGE_TRUNCATE_THRESHOLD = 100 * 1024; // 100 KB - truncate for display
 const MESSAGE_PREVIEW_LENGTH = 50 * 1024; // 50 KB - preview shown in list
 const LARGE_MESSAGE_WARNING_THRESHOLD = 1024 * 1024; // 1 MB - log warning
+const DEFAULT_STREAM_PARSE_THRESHOLD_BYTES = 1024 * 1024;
+const DEFAULT_STREAM_PARSE_CHUNK_SIZE = 1000;
+const STREAMABLE_LINE_EXTENSIONS = new Set([
+  "",
+  ".log",
+  ".txt",
+  ".jsonl",
+  ".ndjson",
+]);
 
 // Types
 type AnyMap = Record<string, unknown>;
@@ -45,6 +55,33 @@ export interface Entry {
   _fullMessage?: string; // Original full message if truncated
   _truncated?: boolean; // True if message was truncated
   _messageSize?: number; // Original message size in bytes
+  [key: string]: unknown;
+}
+
+export interface StreamParseFileOptions {
+  chunkSize?: number;
+  signal?: AbortSignal;
+  highWaterMark?: number;
+}
+
+export interface StreamParseFileChunk {
+  entries: Entry[];
+  bytesRead: number;
+  totalBytes: number;
+  done: boolean;
+  filePath: string;
+}
+
+export interface StreamParseStrategy {
+  streamable: boolean;
+  totalBytes: number;
+  reason:
+    | "stream"
+    | "small-file"
+    | "directory"
+    | "unsupported-extension"
+    | "unsupported-format"
+    | "json-array";
 }
 
 // AdmZip lazy
@@ -295,36 +332,162 @@ function tryParseJsonLoose(line: string): AnyMap | null {
   }
 }
 
+function parseTextLine(filename: string, line: string): Entry | null {
+  if (!line || !line.trim()) return null;
+  let obj = tryParseJson(line.trim());
+  if (!obj) {
+    const match = line.match(/{[\s\S]*}$/);
+    if (match) obj = tryParseJson(match[0]);
+  }
+  if (!obj) {
+    obj = tryParseJsonLoose(line.trim()) || null;
+  }
+  if (obj) {
+    return toEntry(obj, "", filename);
+  }
+
+  let ts: string | null = null;
+  const isoMatch = line.match(
+    /\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.[\d]+)?(?:Z|[+-]\d{2}:?\d{2})?/,
+  );
+  if (isoMatch) ts = isoMatch[0];
+  const entry = toEntry({}, line, filename);
+  if (ts) entry.timestamp = ts;
+  return entry;
+}
+
 function parseTextLines(filename: string, text: string): Entry[] {
   const entries: Entry[] = [];
   const lines = text.split(/\r?\n/);
   for (const line of lines) {
-    if (!line || !line.trim()) continue;
-    let obj = tryParseJson(line.trim());
-    if (!obj) {
-      // try to extract {...} json inside line
-      const match = line.match(/{[\s\S]*}$/);
-      if (match) obj = tryParseJson(match[0]);
-    }
-    if (!obj) {
-      // last resort: tolerant KV scan to salvage structured fields
-      obj = tryParseJsonLoose(line.trim()) || null;
-    }
-    if (obj) {
-      entries.push(toEntry(obj, "", filename));
-    } else {
-      // fallback: plain text line
-      // try to parse timestamp like ISO 8601 at the beginning
-      let ts: string | null = null;
-      const isoMatch = line.match(
-        /\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.[\d]+)?(?:Z|[+-]\d{2}:?\d{2})?/,
-      );
-      if (isoMatch) ts = isoMatch[0];
-      entries.push(toEntry({}, line, filename));
-      if (ts) entries[entries.length - 1]!.timestamp = ts;
-    }
+    const entry = parseTextLine(filename, line);
+    if (entry) entries.push(entry);
   }
   return entries;
+}
+
+function createAbortError(): Error {
+  const error = new Error("Stream parsing aborted");
+  error.name = "AbortError";
+  return error;
+}
+
+async function readFirstNonWhitespaceChar(
+  filePath: string,
+  maxProbeBytes = 4096,
+): Promise<string | null> {
+  const handle = await fs.promises.open(filePath, "r");
+  try {
+    const buffer = Buffer.alloc(maxProbeBytes);
+    const { bytesRead } = await handle.read(buffer, 0, maxProbeBytes, 0);
+    if (bytesRead <= 0) return null;
+    const text = buffer.subarray(0, bytesRead).toString("utf8");
+    const match = text.match(/\S/);
+    return match ? (match[0] ?? null) : null;
+  } finally {
+    await handle.close();
+  }
+}
+
+async function getStreamParseStrategy(
+  filePath: string,
+  thresholdBytes = DEFAULT_STREAM_PARSE_THRESHOLD_BYTES,
+): Promise<StreamParseStrategy> {
+  const stat = await fs.promises.stat(filePath);
+  if (stat.isDirectory()) {
+    return { streamable: false, totalBytes: 0, reason: "directory" };
+  }
+  const totalBytes = stat.size;
+  if (totalBytes < thresholdBytes) {
+    return { streamable: false, totalBytes, reason: "small-file" };
+  }
+  const ext = path.extname(filePath).toLowerCase();
+  if (ext === ".zip") {
+    return { streamable: false, totalBytes, reason: "unsupported-format" };
+  }
+  if (ext === ".json") {
+    const firstToken = await readFirstNonWhitespaceChar(filePath);
+    if (firstToken === "[") {
+      return { streamable: false, totalBytes, reason: "json-array" };
+    }
+    return { streamable: true, totalBytes, reason: "stream" };
+  }
+  if (STREAMABLE_LINE_EXTENSIONS.has(ext)) {
+    return { streamable: true, totalBytes, reason: "stream" };
+  }
+  return { streamable: false, totalBytes, reason: "unsupported-extension" };
+}
+
+async function* streamParseFile(
+  filePath: string,
+  options: StreamParseFileOptions = {},
+): AsyncGenerator<StreamParseFileChunk, void, void> {
+  const stat = await fs.promises.stat(filePath);
+  if (stat.isDirectory()) return;
+
+  const chunkSize = Math.max(
+    1,
+    options.chunkSize ?? DEFAULT_STREAM_PARSE_CHUNK_SIZE,
+  );
+  const totalBytes = stat.size;
+  const stream = fs.createReadStream(filePath, {
+    encoding: "utf8",
+    highWaterMark: options.highWaterMark,
+  });
+  const lines = readline.createInterface({
+    input: stream,
+    crlfDelay: Infinity,
+  });
+  const onAbort = (): void => {
+    stream.destroy(createAbortError());
+    lines.close();
+  };
+  options.signal?.addEventListener("abort", onAbort, { once: true });
+
+  let pending: Entry[] = [];
+
+  try {
+    for await (const line of lines) {
+      if (options.signal?.aborted) throw createAbortError();
+      const entry = parseTextLine(filePath, line);
+      if (entry) pending.push(entry);
+      if (pending.length >= chunkSize) {
+        const current = pending;
+        pending = [];
+        yield {
+          entries: current,
+          bytesRead: Math.min(stream.bytesRead, totalBytes),
+          totalBytes,
+          done: false,
+          filePath,
+        };
+      }
+    }
+
+    if (options.signal?.aborted) throw createAbortError();
+
+    if (pending.length > 0) {
+      yield {
+        entries: pending,
+        bytesRead: totalBytes,
+        totalBytes,
+        done: true,
+        filePath,
+      };
+    } else {
+      yield {
+        entries: [],
+        bytesRead: totalBytes,
+        totalBytes,
+        done: true,
+        filePath,
+      };
+    }
+  } finally {
+    options.signal?.removeEventListener("abort", onAbort);
+    lines.close();
+    if (!stream.destroyed) stream.destroy();
+  }
 }
 
 function parseJsonFile(filename: string, text: string): Entry[] {
@@ -1744,11 +1907,15 @@ export async function closeElasticPitSession(sessionId: string): Promise<void> {
 }
 
 export {
+  DEFAULT_STREAM_PARSE_CHUNK_SIZE,
+  DEFAULT_STREAM_PARSE_THRESHOLD_BYTES,
+  getStreamParseStrategy,
   parsePaths,
   parsePathsAsync,
   parsePathAsync,
   parseTextLines,
   parseJsonFile,
   parseZipFile,
+  streamParseFile,
   toEntry,
 };

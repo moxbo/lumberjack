@@ -40,6 +40,7 @@ describe("paged record conversion", () => {
 
   it("creates a complete filter projection", () => {
     const record = preparePagedRecord(entry, 7);
+    const signature = createEntrySignature(entry);
 
     expect(record.projection).toEqual({
       id: 7,
@@ -52,13 +53,14 @@ describe("paged record conversion", () => {
       mdc: { tenant: "acme" },
       service: "checkout",
       traceId: "trace-1",
-      signature: "2026-01-02T03:04:05.000Z|orders|created",
+      signature,
       _mark: "#ff0",
     });
   });
 
   it("hydrates a complete canonical entry from payload and projection", () => {
     const record = preparePagedRecord(entry, 7);
+    const signature = createEntrySignature(entry);
 
     expect(
       hydratePagedRecord(record.payload.entry, record.projection),
@@ -71,21 +73,28 @@ describe("paged record conversion", () => {
       source: "file.log",
       mdc: { tenant: "acme" },
       stackTrace: "complete payload field",
-      signature: "2026-01-02T03:04:05.000Z|orders|created",
+      signature,
       _mark: "#ff0",
     });
   });
 
   it("uses full messages and elastic sources in generated signatures", () => {
-    expect(
-      createEntrySignature({
-        timestamp: 1,
-        logger: "logger",
-        message: "short",
-        _fullMessage: "full",
-        source: "elastic://index/id",
-      }),
-    ).toBe("1|logger|full|elastic://index/id");
+    const fullSignature = createEntrySignature({
+      timestamp: 1,
+      logger: "logger",
+      message: "short",
+      _fullMessage: "full",
+      source: "elastic://index/id",
+    });
+    const shortSignature = createEntrySignature({
+      timestamp: 1,
+      logger: "logger",
+      message: "short",
+      source: "elastic://index/id",
+    });
+
+    expect(fullSignature).toMatch(/^v2:[0-9a-f]{32}$/);
+    expect(fullSignature).not.toBe(shortSignature);
   });
 
   it("rejects invalid stable IDs", () => {

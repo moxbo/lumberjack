@@ -9,11 +9,17 @@ import {
   pagedLogRepository,
   startPagedSessionLifecycle,
 } from "../store/paged/session";
-import type { PagedLogEntry, PagedTimestamp } from "../store/paged";
+import {
+  createProjectionRecord,
+  type PagedLogEntry,
+  type PagedTimestamp,
+  type ProjectionRecord,
+} from "../store/paged";
 import { clearTimestampParseCache, compareByTimestampId } from "../utils/sort";
 import {
-  entrySignature,
+  compactEntrySignature,
   isElasticSource,
+  legacyEntrySignature,
   shouldDeduplicateSource,
 } from "../utils/entryUtils";
 import { clearHighlightCache } from "../renderer/LogRow";
@@ -21,9 +27,11 @@ import { clearTimestampCache } from "../utils/format";
 import { clearRegexCache } from "../utils/highlight";
 import logger from "../utils/logger";
 import { IPC_BATCH_SIZE } from "../constants";
+import type { ProjectionBridge } from "../workers/projectionBridge";
 
 interface UseEntryManagementOptions {
   marksMap: Record<string, string>;
+  projectionBridgeRef?: { current: ProjectionBridge | null };
 }
 
 interface AppendEntriesOptions {
@@ -81,7 +89,10 @@ export function mergeSortedMetadata(
   return result;
 }
 
-export function useEntryManagement({ marksMap }: UseEntryManagementOptions) {
+export function useEntryManagement({
+  marksMap,
+  projectionBridgeRef: externalBridgeRef,
+}: UseEntryManagementOptions) {
   const [entries, setMetadataEntries] = useState<PagedEntryMetadata[]>([]);
   const [storageError, setStorageError] = useState<Error | null>(null);
   const initialUsesPagedStorage = pagedLogRepository.isAvailable();
@@ -90,7 +101,13 @@ export function useEntryManagement({ marksMap }: UseEntryManagementOptions) {
   );
   const marksMapRef = useRef(marksMap);
   marksMapRef.current = marksMap;
+  const hasLegacyMarksRef = useRef(false);
+  hasLegacyMarksRef.current = Object.keys(marksMap).some(
+    (signature) => !signature.startsWith("v2:"),
+  );
+  const projectionBridgeRef = externalBridgeRef ?? { current: null };
   const metadataByIdRef = useRef<Array<PagedEntryMetadata | undefined>>([]);
+  const idsBySignatureRef = useRef<Map<string, number | number[]>>(new Map());
   const usesPagedStorageRef = useRef(usesPagedStorage);
   usesPagedStorageRef.current = usesPagedStorage;
   const repositoryRef = useRef<
@@ -229,7 +246,7 @@ export function useEntryManagement({ marksMap }: UseEntryManagementOptions) {
       for (const input of newEntries) {
         if (!input) continue;
         const source = String(input.source ?? "");
-        const signature = entrySignature(input);
+        const signature = compactEntrySignature(input);
         const deduplicate = shouldDeduplicateSource(input);
         const key = `${source}\0${signature}`;
         if (deduplicate) {
@@ -283,9 +300,16 @@ export function useEntryManagement({ marksMap }: UseEntryManagementOptions) {
         logger.error("LoggingStore.addEvents error:", error);
       }
 
-      for (const entry of accepted) {
+      const legacyMarkedSignatures: Array<string | undefined> = [];
+      for (let index = 0; index < accepted.length; index++) {
+        const entry = accepted[index]!;
         entry.raw = null;
-        const mark = marksMapRef.current[entry.signature];
+        let mark = marksMapRef.current[entry.signature];
+        if (!mark && hasLegacyMarksRef.current) {
+          const legacySignature = legacyEntrySignature(entry);
+          mark = marksMapRef.current[legacySignature];
+          if (mark) legacyMarkedSignatures[index] = legacySignature;
+        }
         if (mark) entry._mark = mark;
       }
 
@@ -297,6 +321,20 @@ export function useEntryManagement({ marksMap }: UseEntryManagementOptions) {
         ids = await repository.putMany(accepted);
       }
       if (generation !== generationRef.current) return 0;
+
+      // Publish projections directly to the filter worker (paged storage only).
+      // In-memory fallback must not publish because the worker cannot use them.
+      if (usesPagedStorageRef.current && projectionBridgeRef.current) {
+        const projections: ProjectionRecord[] = accepted.map((entry, index) =>
+          createProjectionRecord(entry, ids[index]!),
+        );
+        projectionBridgeRef.current.publish(
+          projections,
+          repository.databaseName,
+          generationRef.current,
+        );
+      }
+
       const metadata = accepted.map((entry, index): PagedEntryMetadata => {
         const base: PagedEntryMetadata = {
           _id: ids[index]!,
@@ -318,7 +356,22 @@ export function useEntryManagement({ marksMap }: UseEntryManagementOptions) {
         }
         return base;
       });
-      for (const item of metadata) metadataByIdRef.current[item._id] = item;
+      for (let index = 0; index < metadata.length; index++) {
+        const item = metadata[index]!;
+        metadataByIdRef.current[item._id] = item;
+        const signatures = [item.signature, legacyMarkedSignatures[index]];
+        for (const signature of signatures) {
+          if (!signature) continue;
+          const current = idsBySignatureRef.current.get(signature);
+          if (current === undefined) {
+            idsBySignatureRef.current.set(signature, item._id);
+          } else if (typeof current === "number") {
+            idsBySignatureRef.current.set(signature, [current, item._id]);
+          } else {
+            current.push(item._id);
+          }
+        }
+      }
       metadata.sort(compareByTimestampId as any);
 
       setMetadataEntries((previous) => mergeSortedMetadata(previous, metadata));
@@ -406,6 +459,7 @@ export function useEntryManagement({ marksMap }: UseEntryManagementOptions) {
 
   const clearEntries = useCallback(() => {
     generationRef.current++;
+    projectionBridgeRef.current?.reset();
     const cancelled = queueRef.current;
     queueRef.current = [];
     for (const batch of cancelled) {
@@ -414,6 +468,7 @@ export function useEntryManagement({ marksMap }: UseEntryManagementOptions) {
       );
     }
     metadataByIdRef.current = [];
+    idsBySignatureRef.current.clear();
     setMetadataEntries([]);
     clearHighlightCache();
     clearTimestampCache();
@@ -442,6 +497,11 @@ export function useEntryManagement({ marksMap }: UseEntryManagementOptions) {
     (id: number) => metadataByIdRef.current[id],
     [],
   );
+  const getIdsBySignature = useCallback(
+    (signature: string): number | readonly number[] | undefined =>
+      idsBySignatureRef.current.get(signature),
+    [],
+  );
 
   return {
     entries,
@@ -453,5 +513,6 @@ export function useEntryManagement({ marksMap }: UseEntryManagementOptions) {
     usesPagedStorage,
     repository: repositoryRef.current,
     getMetadata,
+    getIdsBySignature,
   };
 }

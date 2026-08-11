@@ -21,6 +21,10 @@ import type {
   Result,
   Settings,
   SettingsResult,
+  StreamParseChunk,
+  StreamParseComplete,
+  StreamParseError,
+  StreamParsePathsResult,
   TcpStatus,
   WindowPermsResult,
   WindowTitleResult,
@@ -260,6 +264,21 @@ export async function parsePaths(paths: string[]): Promise<ParseResult> {
   }
 }
 
+export async function streamParsePaths(
+  paths: string[],
+): Promise<StreamParsePathsResult> {
+  if (!window.api?.streamParsePaths)
+    return { ok: false, error: "streamParsePaths unavailable" };
+  try {
+    return await window.api.streamParsePaths(paths);
+  } catch (e) {
+    return {
+      ok: false,
+      error: e instanceof Error ? e.message : String(e),
+    };
+  }
+}
+
 /**
  * Parse raw dropped files.
  */
@@ -272,6 +291,24 @@ export async function parseRawDrops(
     return await window.api.parseRawDrops(files);
   } catch (e) {
     return { ok: false, error: e instanceof Error ? e.message : String(e) };
+  }
+}
+
+export function streamAck(sessionId: string, chunkIndex: number): void {
+  if (window.api?.streamAck) {
+    window.api.streamAck(sessionId, chunkIndex);
+  }
+}
+
+export function streamReady(sessionId: string): void {
+  if (window.api?.streamReady) {
+    window.api.streamReady(sessionId);
+  }
+}
+
+export function streamCancel(sessionId: string): void {
+  if (window.api?.streamCancel) {
+    window.api.streamCancel(sessionId);
   }
 }
 
@@ -549,6 +586,39 @@ export function onAppend(callback: (entries: LogEntry[]) => void): () => void {
   if (!window.api?.onAppend) return noop;
   try {
     return window.api.onAppend(callback);
+  } catch {
+    return noop;
+  }
+}
+
+export function onStreamChunk(
+  callback: (chunk: StreamParseChunk) => void,
+): () => void {
+  if (!window.api?.onStreamChunk) return noop;
+  try {
+    return window.api.onStreamChunk(callback);
+  } catch {
+    return noop;
+  }
+}
+
+export function onStreamComplete(
+  callback: (result: StreamParseComplete) => void,
+): () => void {
+  if (!window.api?.onStreamComplete) return noop;
+  try {
+    return window.api.onStreamComplete(callback);
+  } catch {
+    return noop;
+  }
+}
+
+export function onStreamError(
+  callback: (error: StreamParseError) => void,
+): () => void {
+  if (!window.api?.onStreamError) return noop;
+  try {
+    return window.api.onStreamError(callback);
   } catch {
     return noop;
   }

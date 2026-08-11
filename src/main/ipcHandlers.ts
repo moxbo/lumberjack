@@ -27,6 +27,10 @@ import {
   Result,
   Settings,
   SettingsResult,
+  StreamParseChunk,
+  StreamParseComplete,
+  StreamParseError,
+  StreamParseStartResult,
   WindowPermsResult,
 } from "../types/ipc";
 import type { SettingsService } from "../services/SettingsService";
@@ -41,11 +45,43 @@ interface ParsersModule {
   parsePathsAsync?: (paths: string[]) => Promise<LogEntry[]>;
   parseJsonFile: (name: string, data: string) => LogEntry[];
   parseTextLines: (name: string, data: string) => LogEntry[];
+  streamParseFile?: (
+    filePath: string,
+    options?: {
+      chunkSize?: number;
+      signal?: AbortSignal;
+      highWaterMark?: number;
+    },
+  ) => AsyncGenerator<{
+    entries: LogEntry[];
+    bytesRead: number;
+    totalBytes: number;
+    done: boolean;
+    filePath: string;
+  }>;
+  getStreamParseStrategy?: (
+    filePath: string,
+    thresholdBytes?: number,
+  ) => Promise<{
+    streamable: boolean;
+    totalBytes: number;
+    reason: string;
+  }>;
   fetchElasticPitPage: (
     opts: ElasticSearchOptions,
   ) => Promise<ElasticPitPageResult>;
   closeElasticPitSession: (sessionId: string) => Promise<void>;
 }
+
+type StreamParsersModule = Pick<
+  ParsersModule,
+  | "parsePaths"
+  | "parsePathsAsync"
+  | "parseJsonFile"
+  | "parseTextLines"
+  | "streamParseFile"
+  | "getStreamParseStrategy"
+>;
 
 interface ElasticPitPageResult {
   entries: LogEntry[];
@@ -60,6 +96,200 @@ interface ZipEntry {
   entryName: string;
   isDirectory: boolean;
   getData: () => Buffer;
+}
+
+const STREAM_PARSE_THRESHOLD_BYTES = 1024 * 1024;
+const STREAM_PARSE_CHUNK_SIZE = 1000;
+
+interface StreamParseFilePlan {
+  filePath: string;
+  fileIndex: number;
+  totalBytes: number;
+  streamable: boolean;
+}
+
+interface StreamPathsWithBackpressureOptions {
+  sessionId: string;
+  filePaths: string[];
+  plans?: StreamParseFilePlan[];
+  parsers: StreamParsersModule;
+  sendChunk: (chunk: StreamParseChunk) => Promise<void>;
+  sendComplete: (result: StreamParseComplete) => void | Promise<void>;
+  sendError: (error: StreamParseError) => void | Promise<void>;
+  signal?: AbortSignal;
+  thresholdBytes?: number;
+  chunkSize?: number;
+}
+
+function createAbortError(message = "Stream parsing aborted"): Error {
+  const error = new Error(message);
+  error.name = "AbortError";
+  return error;
+}
+
+function isAbortError(error: unknown): boolean {
+  return error instanceof Error && error.name === "AbortError";
+}
+
+async function planStreamParseFiles(
+  filePaths: string[],
+  parsers: StreamParsersModule,
+  thresholdBytes = STREAM_PARSE_THRESHOLD_BYTES,
+): Promise<StreamParseFilePlan[]> {
+  const plans: StreamParseFilePlan[] = [];
+  for (let fileIndex = 0; fileIndex < filePaths.length; fileIndex++) {
+    const filePath = filePaths[fileIndex]!;
+    try {
+      if (parsers.getStreamParseStrategy) {
+        const strategy = await parsers.getStreamParseStrategy(
+          filePath,
+          thresholdBytes,
+        );
+        plans.push({
+          filePath,
+          fileIndex,
+          totalBytes: strategy.totalBytes,
+          streamable:
+            !!parsers.streamParseFile &&
+            strategy.streamable &&
+            strategy.reason === "stream",
+        });
+        continue;
+      }
+      const stat = await fs.promises.stat(filePath);
+      plans.push({
+        filePath,
+        fileIndex,
+        totalBytes: stat.isDirectory() ? 0 : stat.size,
+        streamable: false,
+      });
+    } catch {
+      plans.push({
+        filePath,
+        fileIndex,
+        totalBytes: 0,
+        streamable: false,
+      });
+    }
+  }
+  return plans;
+}
+
+export async function streamPathsWithBackpressure({
+  sessionId,
+  filePaths,
+  plans: suppliedPlans,
+  parsers,
+  sendChunk,
+  sendComplete,
+  sendError,
+  signal,
+  thresholdBytes = STREAM_PARSE_THRESHOLD_BYTES,
+  chunkSize = STREAM_PARSE_CHUNK_SIZE,
+}: StreamPathsWithBackpressureOptions): Promise<void> {
+  const plans =
+    suppliedPlans ??
+    (await planStreamParseFiles(filePaths, parsers, thresholdBytes));
+  const totalBytes = plans.reduce((sum, plan) => sum + plan.totalBytes, 0);
+  const totalFiles = filePaths.length;
+
+  let completedBytes = 0;
+  let chunkIndex = 0;
+  let totalEntries = 0;
+  let currentFilePath: string | undefined;
+  const errors: string[] = [];
+
+  try {
+    for (const plan of plans) {
+      if (signal?.aborted) throw createAbortError();
+      currentFilePath = plan.filePath;
+
+      try {
+        if (plan.streamable && parsers.streamParseFile) {
+          for await (const chunk of parsers.streamParseFile(plan.filePath, {
+            chunkSize,
+            signal,
+          })) {
+            if (signal?.aborted) throw createAbortError();
+            totalEntries += chunk.entries.length;
+            await sendChunk({
+              sessionId,
+              chunkIndex,
+              entries: chunk.entries,
+              bytesRead: Math.min(totalBytes, completedBytes + chunk.bytesRead),
+              totalBytes,
+              filePath: plan.filePath,
+              done: chunk.done,
+              fileIndex: plan.fileIndex,
+              totalFiles,
+            });
+            chunkIndex++;
+          }
+        } else {
+          const parsed = parsers.parsePathsAsync
+            ? await parsers.parsePathsAsync([plan.filePath])
+            : parsers.parsePaths([plan.filePath]);
+          if (parsed.length === 0) {
+            await sendChunk({
+              sessionId,
+              chunkIndex,
+              entries: [],
+              bytesRead: Math.min(totalBytes, completedBytes + plan.totalBytes),
+              totalBytes,
+              filePath: plan.filePath,
+              done: true,
+              fileIndex: plan.fileIndex,
+              totalFiles,
+            });
+            chunkIndex++;
+          } else {
+            for (let start = 0; start < parsed.length; start += chunkSize) {
+              const entries = parsed.slice(start, start + chunkSize);
+              totalEntries += entries.length;
+              await sendChunk({
+                sessionId,
+                chunkIndex,
+                entries,
+                bytesRead: Math.min(
+                  totalBytes,
+                  completedBytes + plan.totalBytes,
+                ),
+                totalBytes,
+                filePath: plan.filePath,
+                done: start + chunkSize >= parsed.length,
+                fileIndex: plan.fileIndex,
+                totalFiles,
+              });
+              chunkIndex++;
+            }
+          }
+        }
+      } catch (error) {
+        if (isAbortError(error) || signal?.aborted) throw error;
+        errors.push(
+          `${plan.filePath}: ${
+            error instanceof Error ? error.message : String(error)
+          }`,
+        );
+      }
+
+      completedBytes += plan.totalBytes;
+    }
+
+    await sendComplete({
+      sessionId,
+      totalEntries,
+      totalFiles,
+      errors,
+    });
+  } catch (error) {
+    if (isAbortError(error) || signal?.aborted) return;
+    await sendError({
+      sessionId,
+      error: error instanceof Error ? error.message : String(error),
+      filePath: currentFilePath,
+    });
+  }
 }
 
 export function registerIpcHandlers(
@@ -80,6 +310,61 @@ export function registerIpcHandlers(
   ) => void,
 ): void {
   const sharedApi = getSharedMainApi();
+  const streamSessions = new Map<
+    string,
+    {
+      sender: Electron.WebContents;
+      abortController: AbortController;
+      ackWaiters: Map<
+        string,
+        { resolve: () => void; reject: (error: Error) => void }
+      >;
+      ready: Promise<void>;
+      resolveReady: () => void;
+      onDestroyed: () => void;
+    }
+  >();
+
+  function cleanupStreamSession(sessionId: string): void {
+    const session = streamSessions.get(sessionId);
+    if (!session) return;
+    session.resolveReady();
+    streamSessions.delete(sessionId);
+    try {
+      session.sender.removeListener("destroyed", session.onDestroyed);
+    } catch {
+      // Intentionally empty - ignore cleanup errors
+    }
+    for (const waiter of session.ackWaiters.values()) {
+      waiter.reject(createAbortError());
+    }
+    session.ackWaiters.clear();
+  }
+
+  function cancelStreamSession(sessionId: string): void {
+    const session = streamSessions.get(sessionId);
+    if (!session) return;
+    session.abortController.abort();
+    cleanupStreamSession(sessionId);
+  }
+
+  function waitForStreamAck(
+    sessionId: string,
+    chunkIndex: number,
+  ): Promise<void> {
+    const session = streamSessions.get(sessionId);
+    if (
+      !session ||
+      session.abortController.signal.aborted ||
+      session.sender.isDestroyed()
+    ) {
+      return Promise.reject(createAbortError());
+    }
+    const key = String(chunkIndex);
+    return new Promise<void>((resolve, reject) => {
+      session.ackWaiters.set(key, { resolve, reject });
+    });
+  }
 
   function updateWindowTitles(): void {
     try {
@@ -490,6 +775,127 @@ export function registerIpcHandlers(
   // per-line, so chunking is lossless; yielding between chunks keeps the main
   // process responsive instead of freezing on one giant synchronous parse.
   const HTTP_TAIL_PARSE_CHUNK_LINES = 5000;
+
+  ipcMain.on(
+    "logs:streamReady",
+    (event, { sessionId }: { sessionId: string }) => {
+      const session = streamSessions.get(sessionId);
+      if (!session || session.sender !== event.sender) return;
+      session.resolveReady();
+    },
+  );
+
+  ipcMain.on(
+    "logs:streamAck",
+    (
+      event,
+      { sessionId, chunkIndex }: { sessionId: string; chunkIndex: number },
+    ) => {
+      const session = streamSessions.get(sessionId);
+      if (!session || session.sender !== event.sender) return;
+      const key = String(chunkIndex);
+      const waiter = session.ackWaiters.get(key);
+      if (!waiter) return;
+      session.ackWaiters.delete(key);
+      waiter.resolve();
+    },
+  );
+
+  ipcMain.on(
+    "logs:streamCancel",
+    (event, { sessionId }: { sessionId: string }) => {
+      const session = streamSessions.get(sessionId);
+      if (!session || session.sender !== event.sender) return;
+      cancelStreamSession(sessionId);
+    },
+  );
+
+  ipcMain.handle(
+    "logs:streamParsePaths",
+    async (
+      event,
+      filePaths: string[],
+    ): Promise<ParseResult | StreamParseStartResult> => {
+      try {
+        const parsers = getParsers();
+        const plans = await planStreamParseFiles(filePaths, parsers);
+        const shouldStream = plans.some((plan) => plan.streamable);
+        if (!shouldStream) {
+          await yieldToEventLoop();
+          const entries: LogEntry[] = parsers.parsePathsAsync
+            ? await parsers.parsePathsAsync(filePaths)
+            : parsers.parsePaths(filePaths);
+          await yieldToEventLoop();
+          return { ok: true, entries };
+        }
+
+        const sessionId = `stream-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+        const abortController = new AbortController();
+        const sender = event.sender;
+        let resolveReady!: () => void;
+        const ready = new Promise<void>((resolve) => {
+          resolveReady = resolve;
+        });
+        const onDestroyed = (): void => {
+          cancelStreamSession(sessionId);
+        };
+
+        sender.once("destroyed", onDestroyed);
+        streamSessions.set(sessionId, {
+          sender,
+          abortController,
+          ackWaiters: new Map(),
+          ready,
+          resolveReady,
+          onDestroyed,
+        });
+
+        void ready
+          .then(() =>
+            streamPathsWithBackpressure({
+              sessionId,
+              filePaths,
+              plans,
+              parsers,
+              signal: abortController.signal,
+              sendChunk: async (chunk) => {
+                const session = streamSessions.get(sessionId);
+                if (!session || session.sender.isDestroyed()) {
+                  throw createAbortError();
+                }
+                const ack = waitForStreamAck(sessionId, chunk.chunkIndex);
+                session.sender.send("logs:streamChunk", chunk);
+                await ack;
+              },
+              sendComplete: (result) => {
+                const session = streamSessions.get(sessionId);
+                if (!session || session.sender.isDestroyed()) return;
+                session.sender.send("logs:streamComplete", result);
+              },
+              sendError: (error) => {
+                const session = streamSessions.get(sessionId);
+                if (!session || session.sender.isDestroyed()) return;
+                session.sender.send("logs:streamError", error);
+              },
+            }),
+          )
+          .finally(() => {
+            cleanupStreamSession(sessionId);
+          });
+
+        return { sessionId, streamed: true };
+      } catch (err) {
+        log.error(
+          "Error starting streamed parse:",
+          err instanceof Error ? err.message : String(err),
+        );
+        return {
+          ok: false,
+          error: err instanceof Error ? err.message : String(err),
+        };
+      }
+    },
+  );
 
   ipcMain.handle(
     "logs:parsePaths",

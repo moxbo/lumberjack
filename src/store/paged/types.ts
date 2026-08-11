@@ -1,3 +1,5 @@
+import { compactEntrySignature } from "../../utils/signature";
+
 export type PagedTimestamp = string | number | Date | null;
 
 export interface PagedLogEntry {
@@ -12,6 +14,9 @@ export interface PagedLogEntry {
   mdc?: Record<string, unknown> | null;
   service?: string | null;
   traceId?: string | null;
+  stackTrace?: string | null;
+  _fullMessage?: string;
+  _truncated?: boolean;
   signature?: string;
   mark?: string | null;
   _mark?: string | null;
@@ -81,25 +86,8 @@ export interface StorageEstimateResult {
   quota: number | null;
 }
 
-const MAX_SIGNATURE_MESSAGE_LENGTH = 10 * 1024;
-
 export function createEntrySignature(entry: PagedLogEntry): string {
-  const timestamp = entry.timestamp == null ? "" : String(entry.timestamp);
-  const logger = entry.logger == null ? "" : String(entry.logger);
-  const fullMessage = entry._fullMessage;
-  let message =
-    fullMessage == null ? String(entry.message ?? "") : String(fullMessage);
-
-  if (message.length > MAX_SIGNATURE_MESSAGE_LENGTH) {
-    message =
-      message.slice(0, MAX_SIGNATURE_MESSAGE_LENGTH) +
-      `[len:${message.length}]`;
-  }
-
-  return typeof entry.source === "string" &&
-    entry.source.startsWith("elastic://")
-    ? `${timestamp}|${logger}|${message}|${entry.source}`
-    : `${timestamp}|${logger}|${message}`;
+  return compactEntrySignature(entry);
 }
 
 export function preparePagedRecord(
@@ -110,29 +98,14 @@ export function preparePagedRecord(
     throw new RangeError("Paged log entry IDs must be positive safe integers");
   }
 
-  const entry = { ...input } as Record<string, unknown>;
+  const entry: PreparedPagedRecord["payload"]["entry"] = {
+    ...input,
+    _id: id,
+  };
   delete entry.id;
   delete entry.raw;
-  entry._id = id;
 
-  const mark = input._mark ?? input.mark ?? null;
-  const projection: ProjectionRecord = {
-    id,
-    timestamp: input.timestamp ?? null,
-    level: input.level ?? null,
-    logger: input.logger ?? null,
-    thread: input.thread ?? null,
-    message: input.message ?? "",
-    source: input.source ?? "",
-    mdc: input.mdc ?? null,
-    service: input.service ?? null,
-    traceId: input.traceId ?? null,
-    signature:
-      typeof input.signature === "string"
-        ? input.signature
-        : createEntrySignature(input),
-    _mark: mark,
-  };
+  const projection = createProjectionRecord(input, id);
 
   for (const key of [
     "timestamp",
@@ -154,6 +127,33 @@ export function preparePagedRecord(
   return {
     payload: { id, entry },
     projection,
+  };
+}
+
+export function createProjectionRecord(
+  input: PagedLogEntry,
+  id: number,
+): ProjectionRecord {
+  if (!Number.isSafeInteger(id) || id < 1) {
+    throw new RangeError("Paged log entry IDs must be positive safe integers");
+  }
+  const mark = input._mark ?? input.mark ?? null;
+  return {
+    id,
+    timestamp: input.timestamp ?? null,
+    level: input.level ?? null,
+    logger: input.logger ?? null,
+    thread: input.thread ?? null,
+    message: input.message ?? "",
+    source: input.source ?? "",
+    mdc: input.mdc ?? null,
+    service: input.service ?? null,
+    traceId: input.traceId ?? null,
+    signature:
+      typeof input.signature === "string"
+        ? input.signature
+        : createEntrySignature(input),
+    _mark: mark,
   };
 }
 

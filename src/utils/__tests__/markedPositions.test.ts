@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   buildMarkedPositionIndex,
   resolveMarkedPositions,
+  resolveMarkedPositionsById,
 } from "../markedPositions";
 import { entrySignature } from "../entryUtils";
 
@@ -9,6 +10,24 @@ const entry = (timestamp: string, message: string) => ({
   timestamp,
   logger: "test",
   message,
+});
+
+describe("resolveMarkedPositionsById", () => {
+  it("resolves only marked signatures without scanning all entries", () => {
+    const positions = new Int32Array([0, 3, 1, 2]);
+    const ids = new Map<string, number | number[]>([
+      ["first", 1],
+      ["duplicates", [2, 3]],
+    ]);
+
+    expect(
+      resolveMarkedPositionsById(
+        { first: "#f00", duplicates: "#0f0" },
+        (signature) => ids.get(signature),
+        positions,
+      ),
+    ).toEqual([0, 1, 2]);
+  });
 });
 
 describe("markedPositions", () => {

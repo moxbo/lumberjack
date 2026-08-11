@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { InMemoryLogRepository } from "../InMemoryLogRepository";
+import { createEntrySignature } from "../types";
 
 describe("InMemoryLogRepository", () => {
   it("stores complete payloads and tracks source/signature deduplication", async () => {
@@ -20,14 +21,20 @@ describe("InMemoryLogRepository", () => {
       message: "started",
       stackTrace: "details",
     });
+    const signature = createEntrySignature({
+      timestamp: "2026-01-01T00:00:00Z",
+      logger: "app",
+      message: "started",
+      source: "file.log",
+    });
     expect(
       await repository.findExistingSignatures([
         {
           source: "file.log",
-          signature: "2026-01-01T00:00:00Z|app|started",
+          signature,
         },
       ]),
-    ).toEqual(new Set(["file.log\0" + "2026-01-01T00:00:00Z|app|started"]));
+    ).toEqual(new Set([`file.log\0${signature}`]));
   });
 
   it("resets IDs and payloads when cleared", async () => {

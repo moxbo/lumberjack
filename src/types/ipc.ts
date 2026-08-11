@@ -169,6 +169,38 @@ export interface ParseResult {
   pitSessionId?: string | null;
 }
 
+export interface StreamParseStartResult {
+  sessionId: string;
+  streamed: true;
+}
+
+export type StreamParsePathsResult = ParseResult | StreamParseStartResult;
+
+export interface StreamParseChunk {
+  sessionId: string;
+  chunkIndex: number;
+  entries: LogEntry[];
+  bytesRead: number;
+  totalBytes: number;
+  filePath: string;
+  done: boolean;
+  fileIndex: number;
+  totalFiles: number;
+}
+
+export interface StreamParseComplete {
+  sessionId: string;
+  totalEntries: number;
+  totalFiles: number;
+  errors: string[];
+}
+
+export interface StreamParseError {
+  sessionId: string;
+  error: string;
+  filePath?: string;
+}
+
 /**
  * TCP status
  */
@@ -374,7 +406,11 @@ export type ElectronAPI = {
     options: ExportViewOptions,
   ) => Promise<ExportResult>;
   parsePaths: (paths: string[]) => Promise<ParseResult>;
+  streamParsePaths: (paths: string[]) => Promise<StreamParsePathsResult>;
   parseRawDrops: (files: DroppedFile[]) => Promise<ParseResult>;
+  streamReady: (sessionId: string) => void;
+  streamAck: (sessionId: string, chunkIndex: number) => void;
+  streamCancel: (sessionId: string) => void;
   tcpStart: (port: number) => void;
   tcpStop: () => void;
   httpLoadOnce: (url: string) => Promise<ParseResult>;
@@ -389,6 +425,11 @@ export type ElectronAPI = {
   elasticSearch: (options: ElasticSearchOptions) => Promise<ParseResult>;
   elasticClosePit: (sessionId: string) => Promise<Result<void>>;
   onAppend: (callback: (entries: LogEntry[]) => void) => () => void;
+  onStreamChunk: (callback: (chunk: StreamParseChunk) => void) => () => void;
+  onStreamComplete: (
+    callback: (result: StreamParseComplete) => void,
+  ) => () => void;
+  onStreamError: (callback: (error: StreamParseError) => void) => () => void;
   onTcpStatus: (callback: (status: TcpStatus) => void) => () => void;
   onMenu: (callback: (command: MenuCommand) => void) => () => void;
   logError: (errorData: unknown) => Promise<Result<void>>;

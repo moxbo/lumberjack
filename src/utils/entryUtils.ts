@@ -3,6 +3,8 @@
  */
 
 import { compareByTimestampId } from "./sort";
+import { compactEntrySignature } from "./signature";
+export { compactEntrySignature, legacyEntrySignature } from "./signature";
 
 // Cache für Entry-Signaturen - reduziert String-Operationen bei wiederholten Aufrufen
 // WeakMap ermöglicht automatische Garbage Collection wenn Entries entfernt werden
@@ -70,30 +72,7 @@ export function entrySignature(e: any): string {
   const cached = signatureCache.get(e);
   if (cached !== undefined) return cached;
 
-  const ts = e?.timestamp != null ? String(e.timestamp) : "";
-  const lg = e?.logger != null ? String(e.logger) : "";
-
-  // Use _fullMessage (original before truncation) if available, otherwise use message
-  let msg =
-    e?._fullMessage != null
-      ? String(e._fullMessage)
-      : e?.message != null
-        ? String(e.message)
-        : "";
-
-  // For very large messages, use prefix + length to create unique but memory-efficient signature
-  if (msg.length > MAX_SIG_MSG_LENGTH) {
-    msg = msg.substring(0, MAX_SIG_MSG_LENGTH) + `[len:${msg.length}]`;
-  }
-
-  // For ES entries, include source (contains doc ID) to distinguish same-content entries
-  const src = e?.source;
-  let result: string;
-  if (typeof src === "string" && src.startsWith("elastic://")) {
-    result = `${ts}|${lg}|${msg}|${src}`;
-  } else {
-    result = `${ts}|${lg}|${msg}`;
-  }
+  const result = compactEntrySignature(e);
 
   // Cache the result
   if (typeof e === "object") {

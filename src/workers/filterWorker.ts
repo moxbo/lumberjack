@@ -85,8 +85,24 @@ export interface FilterErrorResponse {
   paged: true;
 }
 
+export interface TransferProjectionsRequest {
+  type: "transferProjections";
+  records: ProjectionRecord[];
+  databaseName: string;
+  dataGeneration: string | number;
+}
+
+export interface ResetProjectionsRequest {
+  type: "resetProjections";
+}
+
 type WorkerRequest =
-  SetEntriesRequest | AppendEntriesRequest | FilterRequest | PagedFilterRequest;
+  | SetEntriesRequest
+  | AppendEntriesRequest
+  | FilterRequest
+  | PagedFilterRequest
+  | TransferProjectionsRequest
+  | ResetProjectionsRequest;
 
 interface NormalizedProjectionFields {
   _id: number;
@@ -145,6 +161,96 @@ interface PagedProjectionCache {
 }
 
 let pagedProjectionCache: PagedProjectionCache | null = null;
+
+// ─── Transferred projection cache ────────────────────────────────────────────
+// Records pushed directly from the main thread via `transferProjections`.
+// Keyed by ID for idempotent duplicate rejection.
+
+interface TransferredProjectionCache {
+  databaseName: string;
+  dataGeneration: string | number;
+  recordsById: Map<number, CachedProjection>;
+  sortedRecords: CachedProjection[];
+}
+
+let transferredProjectionCache: TransferredProjectionCache | null = null;
+
+/**
+ * Merge transferred records idempotently.  Duplicate IDs (replayed batches)
+ * are ignored.  Out-of-order batches are sorted on merge.  A generation or
+ * database change resets the cache.
+ */
+export function handleTransferProjections(
+  records: ProjectionRecord[],
+  databaseName: string,
+  dataGeneration: string | number,
+): void {
+  if (records.length === 0) return;
+
+  // Generation/database reset → discard existing transferred cache
+  if (
+    transferredProjectionCache !== null &&
+    (transferredProjectionCache.databaseName !== databaseName ||
+      transferredProjectionCache.dataGeneration !== dataGeneration)
+  ) {
+    transferredProjectionCache = null;
+  }
+
+  if (transferredProjectionCache === null) {
+    transferredProjectionCache = {
+      databaseName,
+      dataGeneration,
+      recordsById: new Map(),
+      sortedRecords: [],
+    };
+  }
+
+  const cache = transferredProjectionCache;
+  const newRecords: CachedProjection[] = [];
+
+  for (const record of records) {
+    if (cache.recordsById.has(record.id)) continue; // idempotent: skip duplicates
+    const normalized = normalizeProjection(record);
+    cache.recordsById.set(record.id, normalized);
+    newRecords.push(normalized);
+  }
+
+  if (newRecords.length > 0) {
+    cache.sortedRecords = mergeProjectionRecords(
+      cache.sortedRecords,
+      newRecords,
+    );
+  }
+}
+
+/** Test-only: inspect transferred projection cache state. */
+export function _getTransferredProjectionCache(): {
+  databaseName: string;
+  dataGeneration: string | number;
+  count: number;
+  sortedCount: number;
+} | null {
+  if (!transferredProjectionCache) return null;
+  return {
+    databaseName: transferredProjectionCache.databaseName,
+    dataGeneration: transferredProjectionCache.dataGeneration,
+    count: transferredProjectionCache.recordsById.size,
+    sortedCount: transferredProjectionCache.sortedRecords.length,
+  };
+}
+
+/** Test-only: reset all worker-level caches. */
+export function _resetWorkerCaches(): void {
+  pagedProjectionCache = null;
+  pagedFilterCache = null;
+  transferredProjectionCache = null;
+}
+
+export function handleResetProjections(): void {
+  pagedProjectionCache = null;
+  pagedFilterCache = null;
+  transferredProjectionCache = null;
+}
 
 function emptyStats(): FilterStats {
   return {
@@ -639,6 +745,51 @@ async function loadPagedProjectionCache(
     return { cache, appendedRecords: [] };
   }
 
+  // ─── Attempt to satisfy from transferred projection cache ──────────────
+  // If the transferred cache matches database/generation and contains all
+  // expected records (no gaps), we can skip the IndexedDB read entirely.
+  const transferred = transferredProjectionCache;
+  if (
+    transferred !== null &&
+    transferred.databaseName === request.databaseName &&
+    transferred.dataGeneration === request.dataGeneration
+  ) {
+    const expectedNew = request.entryCount - cache.recordsById.length;
+    const lastScannedId = cache.lastScannedId ?? 0;
+
+    const appendedRecords: CachedProjection[] = [];
+    let minimumId = Number.POSITIVE_INFINITY;
+    let maximumId = lastScannedId;
+    for (const [id, record] of transferred.recordsById) {
+      if (id <= lastScannedId) continue;
+      appendedRecords.push(record);
+      if (id < minimumId) minimumId = id;
+      if (id > maximumId) maximumId = id;
+    }
+
+    const hasCompleteRange =
+      appendedRecords.length === expectedNew &&
+      (expectedNew === 0 ||
+        (minimumId === lastScannedId + 1 &&
+          maximumId === lastScannedId + expectedNew));
+
+    if (hasCompleteRange) {
+      // Transferred cache fully covers expected records – use it directly
+      for (const record of appendedRecords) cache.recordsById.push(record);
+      if (appendedRecords.length > 0) {
+        cache.lastScannedId = maximumId;
+      }
+      cache.sortedRecords = mergeProjectionRecords(
+        cache.sortedRecords,
+        appendedRecords.slice(),
+      );
+      pagedProjectionCache = cache;
+      return { cache, appendedRecords };
+    }
+    // Gap/count mismatch detected → fall through to IndexedDB recovery
+  }
+
+  // ─── IndexedDB fallback ────────────────────────────────────────────────
   const appendedRecords: CachedProjection[] = [];
   const db = await openPagedDatabase(undefined, request.databaseName);
   try {
@@ -830,17 +981,30 @@ if (workerScope) {
       workerScope.postMessage(result);
       return;
     }
+    if (data.type === "transferProjections") {
+      handleTransferProjections(
+        data.records,
+        data.databaseName,
+        data.dataGeneration,
+      );
+      return;
+    }
+    if (data.type === "resetProjections") {
+      handleResetProjections();
+      return;
+    }
 
     if (pagedFilterRunning) {
-      queuedPagedRequest = data;
+      queuedPagedRequest = data as PagedFilterRequest;
       if (
-        data.generation !== activePagedGeneration ||
-        data.dataGeneration !== activePagedDataGeneration
+        (data as PagedFilterRequest).generation !== activePagedGeneration ||
+        (data as PagedFilterRequest).dataGeneration !==
+          activePagedDataGeneration
       ) {
-        latestPagedRequestId = data.requestId;
+        latestPagedRequestId = (data as PagedFilterRequest).requestId;
       }
     } else {
-      runPagedRequest(data);
+      runPagedRequest(data as PagedFilterRequest);
     }
   };
 }

@@ -18,6 +18,10 @@ import {
   filterIsAvailable,
   filterEntries as typedFilterEntries,
 } from "../utils/typedApi";
+import {
+  createProjectionBridge,
+  type ProjectionBridge,
+} from "../workers/projectionBridge";
 
 export interface FilterOptions {
   stdFiltersEnabled: boolean;
@@ -82,6 +86,8 @@ export interface UseFilterWorkerResult {
   ) => void;
   /** True wenn UtilityProcess verwendet wird, false für Web Worker/Sync */
   useUtilityProcess: boolean;
+  /** Bridge for direct projection transfer to the filter worker. null when no worker. */
+  projectionBridge: ProjectionBridge | null;
 }
 
 // Threshold for using worker/utility process (entries count)
@@ -241,6 +247,9 @@ export function useFilterWorker(): UseFilterWorkerResult {
   const syncedEntriesRef = useRef<unknown[] | null>(null);
   const syncedLenRef = useRef<number>(0);
   const syncedIncludesMdcRef = useRef<boolean | null>(null);
+  const projectionBridgeRef = useRef<ProjectionBridge | null>(null);
+  const [projectionBridge, setProjectionBridge] =
+    useState<ProjectionBridge | null>(null);
 
   // Check if UtilityProcess is available on mount
   useEffect(() => {
@@ -281,6 +290,10 @@ export function useFilterWorker(): UseFilterWorkerResult {
       syncedLenRef.current = 0;
       syncedIncludesMdcRef.current = null;
       lastAppliedRequestRef.current = 0;
+
+      // Create typed projection bridge for this worker instance.
+      projectionBridgeRef.current = createProjectionBridge(workerRef.current);
+      setProjectionBridge(projectionBridgeRef.current);
 
       workerRef.current.onmessage = (event: MessageEvent) => {
         const {
@@ -342,6 +355,11 @@ export function useFilterWorker(): UseFilterWorkerResult {
       };
 
       return () => {
+        if (projectionBridgeRef.current) {
+          projectionBridgeRef.current.dispose();
+          projectionBridgeRef.current = null;
+          setProjectionBridge(null);
+        }
         if (workerRef.current) {
           workerRef.current.terminate();
           workerRef.current = null;
@@ -798,5 +816,6 @@ export function useFilterWorker(): UseFilterWorkerResult {
     error,
     filterEntries,
     useUtilityProcess,
+    projectionBridge,
   };
 }

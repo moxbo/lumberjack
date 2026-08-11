@@ -1,5 +1,5 @@
 import type { ComponentChildren } from "preact";
-import { forwardRef } from "preact/compat";
+import { forwardRef, memo } from "preact/compat";
 import {
   useCallback,
   useImperativeHandle,
@@ -12,7 +12,6 @@ import {
   type LogPayloadRepository,
   usePagedLogHydration,
 } from "../../hooks/usePagedLogHydration";
-import { entrySignature } from "../../utils/entryUtils";
 import logger from "../../utils/logger";
 import { LogRow } from "../LogRow";
 
@@ -45,7 +44,7 @@ export interface VirtualizedLogListProps {
   children?: ComponentChildren;
 }
 
-export const VirtualizedLogList = forwardRef<
+const VirtualizedLogListWithRef = forwardRef<
   VirtualizedLogListHandle,
   VirtualizedLogListProps
 >(function VirtualizedLogList(
@@ -268,7 +267,6 @@ export const VirtualizedLogList = forwardRef<
             typeof entry.signature === "string" ? entry.signature : undefined;
           const markColor =
             (payloadSignature ? marksMap[payloadSignature] : undefined) ||
-            marksMap[entrySignature(entry)] ||
             (typeof entry._mark === "string" ? entry._mark : undefined) ||
             (typeof entry.color === "string" ? entry.color : undefined);
 
@@ -296,3 +294,5 @@ export const VirtualizedLogList = forwardRef<
     </div>
   );
 });
+
+export const VirtualizedLogList = memo(VirtualizedLogListWithRef);
