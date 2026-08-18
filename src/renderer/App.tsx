@@ -1079,6 +1079,7 @@ export default function App(): JSX.Element {
   // Bei Filteränderung: ausgewählten Eintrag sichtbar halten, wenn er noch in der Liste ist
   const prevFilteredIdxRef = useRef<number[]>(filteredIdx);
   const selectedRef = useRef<Set<number>>(selected);
+  const pendingSelectedAfterFilterRef = useRef<number | null>(null);
   // Track previous filter criteria to distinguish filter changes from new entries
   const prevFilterCriteriaRef = useRef({
     stdFiltersEnabled,
@@ -1095,8 +1096,7 @@ export default function App(): JSX.Element {
   }, [selected]);
 
   useEffect(() => {
-    // Prüfe ob sich die gefilterte Liste geändert hat
-    if (prevFilteredIdxRef.current === filteredIdx) return;
+    const filteredListChanged = prevFilteredIdxRef.current !== filteredIdx;
 
     // Prüfe ob sich die Filter-Kriterien geändert haben (nicht nur neue Einträge)
     const prevCriteria = prevFilterCriteriaRef.current;
@@ -1108,7 +1108,11 @@ export default function App(): JSX.Element {
       prevCriteria.onlyMarked !== onlyMarked ||
       prevCriteria.searchMode !== searchMode;
 
-    // Update refs
+    if (filterCriteriaChanged) {
+      pendingSelectedAfterFilterRef.current =
+        lastClicked.current ?? Array.from(selectedRef.current).pop() ?? null;
+    }
+
     prevFilteredIdxRef.current = filteredIdx;
     prevFilterCriteriaRef.current = {
       stdFiltersEnabled,
@@ -1119,22 +1123,18 @@ export default function App(): JSX.Element {
       searchMode,
     };
 
-    // Nur bei Filter-Änderungen zum ausgewählten Eintrag scrollen, nicht bei neuen Einträgen
-    if (!filterCriteriaChanged) return;
+    if (!filteredListChanged) return;
 
-    // Wenn kein Eintrag ausgewählt ist, nichts tun
-    if (selectedRef.current.size === 0) return;
-
-    // Finde den zuletzt ausgewählten Eintrag (lastClicked oder letzten aus selected)
-    const currentSelected =
-      lastClicked.current ?? Array.from(selectedRef.current).pop();
+    // Teilergebnisse enthalten den ausgewählten Eintrag möglicherweise noch
+    // nicht. Das Ziel bleibt daher bis zu einem späteren Worker-Ergebnis aktiv.
+    const currentSelected = pendingSelectedAfterFilterRef.current;
     if (currentSelected == null) return;
 
     // Prüfe ob der ausgewählte Eintrag noch in der gefilterten Liste ist
     const viIndex = viOfGlobal(currentSelected);
     if (viIndex >= 0) {
-      const targetIndex = Math.max(0, viIndex - 3);
-      virtualListRef.current?.scrollAfterFilterChange(targetIndex);
+      pendingSelectedAfterFilterRef.current = null;
+      virtualListRef.current?.scrollAfterFilterChange(viIndex);
     }
   }, [
     filteredIdx,

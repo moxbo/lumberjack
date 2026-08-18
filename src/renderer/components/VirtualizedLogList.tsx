@@ -71,7 +71,6 @@ const VirtualizedLogListWithRef = forwardRef<
   const [scrollElement, setScrollElement] = useState<HTMLDivElement | null>(
     null,
   );
-  const [, forceUpdate] = useState(0);
   const isProgrammaticScrollRef = useRef(false);
 
   const setListElement = useCallback(
@@ -93,7 +92,7 @@ const VirtualizedLogListWithRef = forwardRef<
   );
 
   const dynamicOverscan =
-    filteredIdx.length > 100000 ? 25 : filteredIdx.length > 50000 ? 20 : 15;
+    filteredIdx.length > 100000 ? 8 : filteredIdx.length > 50000 ? 10 : 15;
 
   const virtualizer = useVirtualizer({
     count: scrollElement ? filteredIdx.length : 0,
@@ -144,15 +143,12 @@ const VirtualizedLogListWithRef = forwardRef<
       },
       scrollAfterFilterChange(index) {
         isProgrammaticScrollRef.current = true;
-        setTimeout(() => {
-          virtualizer.scrollToIndex(index, { align: "start" });
+        requestAnimationFrame(() => {
+          virtualizer.scrollToIndex(index, { align: "center" });
           requestAnimationFrame(() => {
-            forceUpdate((value) => value + 1);
-            setTimeout(() => {
-              isProgrammaticScrollRef.current = false;
-            }, 300);
+            isProgrammaticScrollRef.current = false;
           });
-        }, 0);
+        });
       },
     }),
     [scrollElement, virtualizer],

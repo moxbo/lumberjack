@@ -139,6 +139,7 @@ interface PreparedFilter {
 
 const PAGED_SCAN_SIZE = 2_000;
 const SEARCHABLE_REFERENCE_LIMIT = 50_000;
+const PAGED_FILTER_YIELD_INTERVAL = 50_000;
 
 interface PagedFilterCache {
   databaseName?: string;
@@ -892,7 +893,7 @@ async function filterPagedDatabase(
         ),
       );
     }
-    if ((index + 1) % 5_000 === 0) {
+    if ((index + 1) % PAGED_FILTER_YIELD_INTERVAL === 0) {
       await yieldWorker();
       if (request.requestId !== latestPagedRequestId) return null;
     }
