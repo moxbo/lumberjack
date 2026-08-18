@@ -13,7 +13,7 @@
  * dedupe caches and LoggingStore) stay in App via the `onReplaceReset`
  * callback, so this hook does not need to own entry-management internals.
  */
-import { useState, useMemo } from "preact/hooks";
+import { useState, useMemo, useRef } from "preact/hooks";
 import logger from "../utils/logger";
 import type { ElasticSearchOptions } from "../types/ipc";
 import type { ElasticFormState } from "../types/renderer";
@@ -23,7 +23,11 @@ import {
   patchSettings,
 } from "../utils/typedApi";
 import { TimeFilter } from "../store/timeFilter";
-import { executeElasticSearch } from "../utils/elasticSearchEngine";
+import {
+  assertElasticPaginationProgress,
+  ElasticPaginationStalledError,
+  executeElasticSearch,
+} from "../utils/elasticSearchEngine";
 
 export interface UseElasticSearchOptions {
   entries: any[];
@@ -68,6 +72,7 @@ export function useElasticSearch({
   const [esLoadedCount, setEsLoadedCount] = useState<number>(0);
   const [esPitSessionId, setEsPitSessionId] = useState<string | null>(null);
   const [esBusy, setEsBusy] = useState<boolean>(false);
+  const esLoadMoreRunningRef = useRef(false);
 
   const esElasticCountAll = useMemo(() => {
     let cnt = 0;
@@ -110,13 +115,14 @@ export function useElasticSearch({
 
   /** Load next page of Elasticsearch results (invoked by ElasticStatusBar "load more" button) */
   async function esLoadMore(): Promise<void> {
-    if (!esHasMore || !lastEsForm) return;
+    if (!esHasMore || !lastEsForm || esLoadMoreRunningRef.current) return;
     // Fortsetzung benötigt entweder einen search_after-Token (PIT) ODER eine
     // aktive Session-ID (Scroll-Dialekt liefert KEIN nextSearchAfter und wird
     // ausschließlich über die pitSessionId fortgesetzt).
     const hasToken =
       Array.isArray(esNextSearchAfter) && esNextSearchAfter.length > 0;
     if (!esPitSessionId && !hasToken) return;
+    esLoadMoreRunningRef.current = true;
     setEsBusy(true);
     try {
       // "Weitere laden" lädt den verbleibenden Rest der Treffermenge in EINEM
@@ -155,7 +161,10 @@ export function useElasticSearch({
         } as any;
 
         const r = await typedElasticSearch(opts);
-        if (!r?.ok) break;
+        if (!r?.ok) {
+          throw new Error(r?.error || t("status.errorUnknown"));
+        }
+        assertElasticPaginationProgress(nextToken, r);
         hasMore = !!r.hasMore;
         nextToken = (r.nextSearchAfter as any) || null;
         carriedPit = r.pitSessionId || carriedPit;
@@ -181,11 +190,24 @@ export function useElasticSearch({
       }
     } catch (e) {
       logger.error("[Elastic] Load more failed:", e);
+      if (e instanceof ElasticPaginationStalledError) {
+        setEsHasMore(false);
+        if (esPitSessionId) {
+          await typedElasticClosePit(esPitSessionId).catch((closeError) => {
+            logger.warn(
+              "Closing stalled Elasticsearch pagination failed:",
+              closeError,
+            );
+          });
+        }
+        setEsPitSessionId(null);
+      }
       const errorMsg = e instanceof Error ? e.message : String(e);
       if (!handleFeatureError(errorMsg)) {
         showAlert(t("status.elasticError", { message: errorMsg }));
       }
     } finally {
+      esLoadMoreRunningRef.current = false;
       setEsBusy(false);
     }
   }

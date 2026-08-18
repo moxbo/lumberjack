@@ -19,6 +19,39 @@ export interface ElasticSearchResponse {
   error?: string;
 }
 
+export class ElasticPaginationStalledError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "ElasticPaginationStalledError";
+  }
+}
+
+export function assertElasticPaginationProgress(
+  previousToken: Array<string | number> | null,
+  response: ElasticSearchResponse,
+): void {
+  if (!response.hasMore) return;
+  const entries = Array.isArray(response.entries) ? response.entries : [];
+  if (entries.length === 0) {
+    throw new ElasticPaginationStalledError(
+      "Elasticsearch meldet weitere Treffer, liefert aber keine Einträge.",
+    );
+  }
+
+  const nextToken = Array.isArray(response.nextSearchAfter)
+    ? response.nextSearchAfter
+    : null;
+  if (
+    previousToken &&
+    nextToken &&
+    JSON.stringify(previousToken) === JSON.stringify(nextToken)
+  ) {
+    throw new ElasticPaginationStalledError(
+      "Elasticsearch hat denselben Pagination-Cursor erneut geliefert.",
+    );
+  }
+}
+
 export interface ExecuteElasticSearchDeps {
   elasticUrl: string;
   elasticSize: number;
@@ -164,7 +197,10 @@ export async function executeElasticSearch(
         pitSessionId: carriedPit || undefined,
       } as any;
       const r2 = await search(moreOpts);
-      if (!r2?.ok) break;
+      if (!r2?.ok) {
+        throw new Error(r2?.error || errorUnknownText);
+      }
+      assertElasticPaginationProgress(nextToken, r2);
       hasMore = !!r2.hasMore;
       nextToken = (r2.nextSearchAfter as any) || null;
       carriedPit = r2.pitSessionId || carriedPit;

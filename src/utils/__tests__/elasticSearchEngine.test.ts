@@ -1,5 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import {
+  assertElasticPaginationProgress,
+  ElasticPaginationStalledError,
   executeElasticSearch,
   type ExecuteElasticSearchDeps,
 } from "../elasticSearchEngine";
@@ -69,5 +71,59 @@ describe("executeElasticSearch", () => {
       ),
     ).rejects.toBe(error);
     expect(deps.addLoaded).not.toHaveBeenCalled();
+  });
+
+  it("stops when Elasticsearch repeats a search_after cursor", async () => {
+    expect(() =>
+      assertElasticPaginationProgress(["cursor-1"], {
+        ok: true,
+        entries: [{ message: "duplicate page" }],
+        hasMore: true,
+        nextSearchAfter: ["cursor-1"],
+      }),
+    ).toThrow(ElasticPaginationStalledError);
+  });
+
+  it("stops when Elasticsearch reports more hits with an empty page", async () => {
+    expect(() =>
+      assertElasticPaginationProgress(["cursor-1"], {
+        ok: true,
+        entries: [],
+        hasMore: true,
+        nextSearchAfter: ["cursor-2"],
+      }),
+    ).toThrow(ElasticPaginationStalledError);
+  });
+
+  it("aborts auto-pagination instead of looping on a repeated cursor", async () => {
+    const deps = createDeps(async (batch, available) =>
+      Math.min(batch.length, available),
+    );
+    deps.elasticSize = 2;
+    deps.search = vi
+      .fn()
+      .mockResolvedValueOnce({
+        ok: true,
+        entries: [{ message: "first" }],
+        hasMore: true,
+        nextSearchAfter: ["cursor-1"],
+        pitSessionId: "pit-1",
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        entries: [{ message: "same page" }],
+        hasMore: true,
+        nextSearchAfter: ["cursor-1"],
+        pitSessionId: "pit-1",
+      });
+
+    await expect(
+      executeElasticSearch(
+        { index: "logs", mode: "relative", duration: "15m" },
+        "append",
+        deps,
+      ),
+    ).rejects.toBeInstanceOf(ElasticPaginationStalledError);
+    expect(deps.search).toHaveBeenCalledTimes(2);
   });
 });
