@@ -25,6 +25,42 @@ export interface StatusSectionProps {
   t: (key: string, params?: Record<string, string>) => string;
 }
 
+type ImportProgress = NonNullable<StatusSectionProps["importProgress"]>;
+
+export function getImportProgressLabels(
+  progress: ImportProgress,
+  t: StatusSectionProps["t"],
+): string[] {
+  const labels: string[] = [];
+  if (
+    typeof progress.fileIndex === "number" &&
+    typeof progress.totalFiles === "number" &&
+    progress.totalFiles > 0
+  ) {
+    labels.push(
+      t("toolbar.importFileProgress", {
+        current: String(progress.fileIndex + 1),
+        total: String(progress.totalFiles),
+      }),
+    );
+  }
+  if ((progress.totalEntries || 0) > 0) {
+    labels.push(
+      t("toolbar.importEntryProgress", {
+        current: progress.processedEntries.toLocaleString(),
+        total: progress.totalEntries!.toLocaleString(),
+      }),
+    );
+  } else {
+    labels.push(
+      t("toolbar.importEntriesRead", {
+        count: progress.processedEntries.toLocaleString(),
+      }),
+    );
+  }
+  return labels;
+}
+
 export function StatusSection({
   busy,
   importProgress,
@@ -53,10 +89,9 @@ export function StatusSection({
       : importProgress?.totalEntries || 0;
   const progressPercent =
     progressMax > 0 ? Math.round((progressValue / progressMax) * 100) : 0;
-  const progressLabel =
-    importProgress && (importProgress.totalBytes || 0) > 0
-      ? `${importProgress.processedEntries.toLocaleString()} entries`
-      : null;
+  const progressLabels = importProgress
+    ? getImportProgressLabels(importProgress, t)
+    : [];
 
   return (
     <div
@@ -79,7 +114,10 @@ export function StatusSection({
                 aria-label={t("toolbar.busy")}
               />
               <span className="import-progress-text">
-                {progressPercent}%{progressLabel ? ` • ${progressLabel}` : ""}
+                {progressPercent}%
+                {progressLabels.length > 0
+                  ? ` • ${progressLabels.join(" • ")}`
+                  : ""}
               </span>
             </>
           )}
