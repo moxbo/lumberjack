@@ -24,6 +24,7 @@ import { patchSettingsQuiet } from "../utils/typedApi";
 import { fmtTimestamp } from "../utils/format";
 import { DiagnosticContextFilter } from "../store/dcFilter";
 import type { PagedEntryMetadata } from "./useEntryManagement";
+import type { ReadonlySequence } from "../utils/metadataSnapshot";
 import type { PagedLogRepository } from "../store/paged/PagedLogRepository";
 import type { PagedTimestamp } from "../store/paged/types";
 import { pagedLogRepository } from "../store/paged/session";
@@ -32,7 +33,7 @@ import logger from "../utils/logger";
 type PayloadRepository = Pick<PagedLogRepository, "getPayloads">;
 
 export interface UseContextMenuActionsOptions {
-  entries: PagedEntryMetadata[];
+  entries: ReadonlySequence<PagedEntryMetadata>;
   selected: Set<number>;
   setSelected: (fn: (prev: Set<number>) => Set<number>) => void;
   marksMap: Record<string, string>;

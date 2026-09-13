@@ -1,21 +1,23 @@
 import { entrySignature } from "./entryUtils";
+import type { ReadonlySequence } from "./metadataSnapshot";
+import type { IdPositions } from "../hooks/useIdPositions";
 
 export type MarkedPositionIndex = Map<string, number | number[]>;
 
 export function buildMarkedPositionIndex(
-  entries: unknown[],
-  filteredIndices: number[],
+  entries: ReadonlySequence<unknown>,
+  filteredIndices: ReadonlySequence<number>,
   limit = 100_000,
 ): MarkedPositionIndex {
   const index: MarkedPositionIndex = new Map();
   const scanLimit = Math.min(filteredIndices.length, limit);
   const visualPositionById = new Map<number, number>();
   for (let visualIndex = 0; visualIndex < scanLimit; visualIndex++) {
-    visualPositionById.set(filteredIndices[visualIndex]!, visualIndex);
+    visualPositionById.set(filteredIndices.at(visualIndex)!, visualIndex);
   }
 
   for (let entryIndex = 0; entryIndex < entries.length; entryIndex++) {
-    const candidate = entries[entryIndex];
+    const candidate = entries.at(entryIndex);
     const entry = candidate as { _id?: number } | undefined;
     if (!entry) continue;
     const visualIndex =
@@ -59,7 +61,7 @@ export function resolveMarkedPositionsById(
   getIdsBySignature: (
     signature: string,
   ) => number | readonly number[] | undefined,
-  visualPositionById: Int32Array,
+  visualPositionById: IdPositions,
   limit = 100_000,
 ): number[] {
   const positions: number[] = [];
@@ -67,8 +69,7 @@ export function resolveMarkedPositionsById(
     const ids = getIdsBySignature(signature);
     if (ids === undefined) continue;
     const append = (id: number): void => {
-      if (id >= visualPositionById.length) return;
-      const visualIndex = visualPositionById[id]! - 1;
+      const visualIndex = visualPositionById.get(id);
       if (visualIndex >= 0 && visualIndex < limit) positions.push(visualIndex);
     };
     if (typeof ids === "number") append(ids);

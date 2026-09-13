@@ -1,535 +1,245 @@
-/**
- * Hook for managing application settings
- */
-import { useState, useCallback, useEffect } from "preact/hooks";
+import { useEffect, useState } from "preact/hooks";
+import type { Settings } from "../types/ipc";
+import type { SettingsTab, ThemeMode } from "../types/renderer";
+import { useStableCallback } from "./useStableCallback";
+import {
+  normalizeSettingsForm,
+  settingsFormPatch,
+} from "../utils/settingsForm";
 import logger from "../utils/logger";
 import { rendererPerf } from "../utils/rendererPerf";
-import { MAX_ELASTIC_HISTORY } from "../constants";
-import { nativeAlert, nativeConfirm } from "../utils/nativeDialog";
+import { nativeConfirm } from "../utils/nativeDialog";
 import {
   getSettings,
   patchSettings,
-  patchSettingsQuiet,
   windowPermsGet,
   appRelaunch,
   autoUpdaterSetAllowPrerelease,
 } from "../utils/typedApi";
-import type { Settings } from "../types/ipc";
 
-export type ThemeMode = "system" | "light" | "dark";
-export type SettingsTab =
-  "tcp" | "http" | "elastic" | "logging" | "appearance" | "features";
+export type { ThemeMode, SettingsTab } from "../types/renderer";
+export type { SettingsFormState as SettingsForm } from "../types/renderer";
 
-export interface SettingsForm {
-  tcpPort: number;
-  httpUrl: string;
-  httpInterval: number;
-  logToFile: boolean;
-  logFilePath: string;
-  logMaxMB: number;
-  logMaxBackups: number;
-  themeMode: string;
-  elasticUrl: string;
-  elasticSize: number;
-  elasticUser: string;
-  elasticPassNew: string;
-  elasticPassClear: boolean;
-  elasticMaxParallel: number;
-  allowPrerelease: boolean;
-  heapSizeMB: number;
-}
-
-const INITIAL_FORM: SettingsForm = {
-  tcpPort: 5000,
-  httpUrl: "",
-  httpInterval: 5000,
-  logToFile: false,
-  logFilePath: "",
-  logMaxMB: 5,
-  logMaxBackups: 3,
-  themeMode: "system",
-  elasticUrl: "",
-  elasticSize: 1000,
-  elasticUser: "",
-  elasticPassNew: "",
-  elasticPassClear: false,
-  elasticMaxParallel: 1,
-  allowPrerelease: false,
-  heapSizeMB: 4096,
-};
-
-function applyThemeMode(mode: string | null | undefined): void {
+export function applyThemeMode(mode: string | null | undefined): void {
   const root = document.documentElement;
-  if (!mode || mode === "system") {
-    root.removeAttribute("data-theme");
-    return;
-  }
-  root.setAttribute("data-theme", mode);
+  if (!mode || mode === "system") root.removeAttribute("data-theme");
+  else root.setAttribute("data-theme", mode);
 }
 
-export function useSettings() {
-  // Theme
-  const [themeMode, setThemeMode] = useState<ThemeMode>("system");
+interface UseSettingsOptions {
+  t: (key: string, params?: Record<string, string | number>) => string;
+  showAlert: (message: string) => void;
+  onLoaded: (settings: Settings) => void;
+}
 
-  // TCP
-  const [tcpPort, setTcpPort] = useState<number>(5000);
-  const [tcpStatus, setTcpStatus] = useState<string>("TCP Port geschlossen");
-  const [canTcpControlWindow, setCanTcpControlWindow] = useState<boolean>(true);
-
-  // HTTP
-  const [httpUrl, setHttpUrl] = useState<string>("");
-  const [httpInterval, setHttpInterval] = useState<number>(5000);
-  const [httpStatus, setHttpStatus] = useState<string>("HTTP Polling inaktiv");
-
-  // Logging
-  const [logToFile, setLogToFile] = useState<boolean>(false);
-  const [logFilePath, setLogFilePath] = useState<string>("");
-  const [logMaxBytes, setLogMaxBytes] = useState<number>(5 * 1024 * 1024);
-  const [logMaxBackups, setLogMaxBackups] = useState<number>(3);
-
-  // Elasticsearch
-  const [elasticUrl, setElasticUrl] = useState<string>("");
-  const [elasticSize, setElasticSize] = useState<number>(1000);
-  const [elasticUser, setElasticUser] = useState<string>("");
-  const [elasticHasPass, setElasticHasPass] = useState<boolean>(false);
-  const [elasticMaxParallel, setElasticMaxParallel] = useState<number>(1);
-
-  // Auto-Update
-  const [allowPrerelease, setAllowPrerelease] = useState<boolean>(false);
-
-  // Elastic History
-  const [histAppName, setHistAppName] = useState<string[]>([]);
-  const [histEnvironment, setHistEnvironment] = useState<string[]>([]);
-  const [histIndex, setHistIndex] = useState<string[]>([]);
-
-  // Settings Modal
-  const [showSettings, setShowSettings] = useState<boolean>(false);
+export function useSettings({ t, showAlert, onLoaded }: UseSettingsOptions) {
+  const [settings, setSettings] = useState<Partial<Settings>>({});
+  const [settingsLoaded, setSettingsLoaded] = useState(false);
+  const [showSettings, setShowSettings] = useState(false);
   const [settingsTab, setSettingsTab] = useState<SettingsTab>("tcp");
-  const [form, setForm] = useState<SettingsForm>(INITIAL_FORM);
-  const [originalHeapSizeMB, setOriginalHeapSizeMB] = useState<number>(2048);
+  const [form, setForm] = useState(() => normalizeSettingsForm({}));
+  const [originalHeapSizeMB, setOriginalHeapSizeMB] = useState(4096);
+  const [canTcpControlWindow, setCanTcpControlWindow] = useState(true);
+  const current = normalizeSettingsForm(settings);
+  const themeMode = current.themeMode as ThemeMode;
+  const follow = settings.follow ?? false;
 
-  // Follow mode
-  const [follow, setFollow] = useState<boolean>(false);
+  const receiveSettings = useStableCallback((loaded: Settings) => {
+    setSettings((previous) => ({ ...previous, ...loaded }));
+    if (typeof loaded.themeMode === "string") {
+      applyThemeMode(normalizeSettingsForm(loaded).themeMode);
+    }
+  });
+  const notifyLoaded = useStableCallback(onLoaded);
 
-  // Add to elastic history
-  const addToHistory = useCallback(
-    (kind: "app" | "env" | "index", val: string) => {
-      const v = String(val || "").trim();
-      if (!v) return;
-
-      if (kind === "app") {
-        setHistAppName((prev) => {
-          const list = [v, ...prev.filter((x) => x !== v)].slice(
-            0,
-            MAX_ELASTIC_HISTORY,
-          );
-          patchSettingsQuiet({ histAppName: list });
-          return list;
-        });
-      } else if (kind === "env") {
-        setHistEnvironment((prev) => {
-          const list = [v, ...prev.filter((x) => x !== v)].slice(
-            0,
-            MAX_ELASTIC_HISTORY,
-          );
-          patchSettingsQuiet({ histEnvironment: list });
-          return list;
-        });
-      } else if (kind === "index") {
-        setHistIndex((prev) => {
-          const list = [v, ...prev.filter((x) => x !== v)].slice(
-            0,
-            MAX_ELASTIC_HISTORY,
-          );
-          patchSettingsQuiet({ histIndex: list });
-          return list;
-        });
-      }
-    },
-    [],
-  );
-
-  // Load settings on mount
   useEffect(() => {
-    const loadSettings = async () => {
+    let cancelled = false;
+    let splashTimer: ReturnType<typeof setTimeout> | undefined;
+    void (async () => {
       rendererPerf.mark("settings-load-start");
       try {
-        const r = await getSettings();
-        if (!r) {
-          logger.warn("Failed to load settings or settingsGet unavailable.");
-          return;
+        const loaded = await getSettings();
+        if (cancelled) return;
+        if (loaded) {
+          receiveSettings(loaded);
+          notifyLoaded(loaded);
+          const root = document.documentElement;
+          const detail = Number(loaded.detailHeight || 0);
+          if (detail)
+            root.style.setProperty(
+              "--detail-height",
+              `${Math.round(detail)}px`,
+            );
+          for (const [key, value] of [
+            ["--col-ts", loaded.colTs],
+            ["--col-lvl", loaded.colLvl],
+            ["--col-logger", loaded.colLogger],
+          ] as const) {
+            if (value != null)
+              root.style.setProperty(
+                key,
+                `${Math.round(Number(value) || 0)}px`,
+              );
+          }
+          rendererPerf.mark("settings-loaded");
+        } else {
+          logger.warn("Failed to load settings: no settings returned");
         }
-
-        // TCP
-        if (r.tcpPort != null) setTcpPort(Number(r.tcpPort) || 5000);
-
-        // HTTP
-        if (typeof r.httpUrl === "string") setHttpUrl(r.httpUrl);
-        const interval = r.httpPollInterval;
-        if (interval != null) setHttpInterval(Number(interval) || 5);
-
-        // Elastic History
-        if (Array.isArray(r.histAppName)) setHistAppName(r.histAppName);
-        if (Array.isArray(r.histEnvironment))
-          setHistEnvironment(r.histEnvironment);
-        if (Array.isArray(r.histIndex)) setHistIndex(r.histIndex);
-
-        // Theme
-        if (typeof r.themeMode === "string") {
-          const mode = ["light", "dark", "system"].includes(r.themeMode)
-            ? (r.themeMode as ThemeMode)
-            : "system";
-          setThemeMode(mode);
-          applyThemeMode(mode);
-        }
-
-        // Follow
-        if (typeof r.follow === "boolean") setFollow(r.follow);
-
-        // Layout (CSS variables)
-        const root = document.documentElement;
-        const detail = Number(r.detailHeight || 0);
-        if (detail) {
-          root.style.setProperty("--detail-height", `${Math.round(detail)}px`);
-        }
-        const colMap: Array<[string, unknown]> = [
-          ["--col-ts", r.colTs],
-          ["--col-lvl", r.colLvl],
-          ["--col-logger", r.colLogger],
-        ];
-        for (const [k, v] of colMap) {
-          if (v != null) {
-            root.style.setProperty(k, `${Math.round(Number(v) || 0)}px`);
+      } catch (error) {
+        logger.error("Error loading settings:", error);
+      } finally {
+        if (!cancelled) {
+          setSettingsLoaded(true);
+          const splash = document.getElementById("splash-screen");
+          if (splash) {
+            splash.classList.add("hidden");
+            splashTimer = setTimeout(() => splash.remove(), 300);
           }
         }
-
-        // Logging
-        setLogToFile(!!r.logToFile);
-        setLogFilePath(String(r.logFilePath || ""));
-        setLogMaxBytes(Number(r.logMaxBytes || 5 * 1024 * 1024));
-        setLogMaxBackups(Number(r.logMaxBackups || 3));
-
-        // Elasticsearch
-        setElasticUrl(String(r.elasticUrl || ""));
-        setElasticSize(Number(r.elasticSize || 1000));
-        setElasticUser(String(r.elasticUser || ""));
-        setElasticHasPass(!!String(r.elasticPassEnc || "").trim());
-        setElasticMaxParallel(Math.max(1, Number(r.elasticMaxParallel || 1)));
-
-        // Auto-Update
-        setAllowPrerelease(!!r.allowPrerelease);
-
-        rendererPerf.mark("settings-loaded");
-      } catch (e) {
-        logger.error("Error loading settings:", e);
       }
-
-      // Per-Window permissions
       try {
         const perms = await windowPermsGet();
-        if (perms?.ok) setCanTcpControlWindow(perms.canTcpControl !== false);
-      } catch (e) {
-        logger.warn("windowPermsGet failed:", e);
+        if (!cancelled && perms?.ok)
+          setCanTcpControlWindow(perms.canTcpControl !== false);
+      } catch (error) {
+        logger.warn("windowPermsGet failed:", error);
       }
+    })();
+    return () => {
+      cancelled = true;
+      clearTimeout(splashTimer);
     };
-
-    const idleId = requestIdleCallback(() => loadSettings(), { timeout: 100 });
-    return () => cancelIdleCallback(idleId);
   }, []);
 
-  // Open settings modal
-  const openSettingsModal = useCallback(
+  const openSettingsModal = useStableCallback(
     async (initialTab?: SettingsTab) => {
-      let curMode = themeMode;
-      let curTcpPort = tcpPort;
-      let curHttpUrl = httpUrl;
-      let curHttpInterval = httpInterval;
-      let curLogToFile = logToFile;
-      let curLogFilePath = logFilePath;
-      let curLogMaxBytes = logMaxBytes;
-      let curLogMaxBackups = logMaxBackups;
-      let curElasticUrl = elasticUrl;
-      let curElasticSize = elasticSize;
-      let curElasticUser = elasticUser;
-      let curElasticMaxParallel = elasticMaxParallel;
-      let curAllowPrerelease = allowPrerelease;
-      let curHeapSizeMB = 4096; // Default 4GB
-
+      let latest = settings;
       try {
-        const r = await getSettings();
-        if (r) {
-          if (typeof r.themeMode === "string") {
-            const mode = ["light", "dark", "system"].includes(r.themeMode)
-              ? r.themeMode
-              : "system";
-            curMode = mode as ThemeMode;
-            setThemeMode(mode as ThemeMode);
-            applyThemeMode(mode);
-          }
-          if (typeof r.follow === "boolean") setFollow(r.follow);
-          if (r.tcpPort != null) {
-            curTcpPort = Number(r.tcpPort) || 5000;
-            setTcpPort(curTcpPort);
-          }
-          if (typeof r.httpUrl === "string") {
-            curHttpUrl = r.httpUrl;
-            setHttpUrl(curHttpUrl);
-          }
-          const interval = r.httpPollInterval;
-          if (interval != null) {
-            curHttpInterval = Number(interval) || 5;
-            setHttpInterval(curHttpInterval);
-          }
-          if (typeof r.logToFile === "boolean") {
-            curLogToFile = r.logToFile;
-            setLogToFile(curLogToFile);
-          }
-          if (typeof r.logFilePath === "string") {
-            curLogFilePath = r.logFilePath;
-            setLogFilePath(curLogFilePath);
-          }
-          if (r.logMaxBytes != null) {
-            curLogMaxBytes = Number(r.logMaxBytes) || 5 * 1024 * 1024;
-            setLogMaxBytes(curLogMaxBytes);
-          }
-          if (r.logMaxBackups != null) {
-            curLogMaxBackups = Number(r.logMaxBackups) || 3;
-            setLogMaxBackups(curLogMaxBackups);
-          }
-          if (typeof r.elasticUrl === "string") {
-            curElasticUrl = r.elasticUrl;
-            setElasticUrl(curElasticUrl);
-          }
-          if (r.elasticSize != null) {
-            curElasticSize = Number(r.elasticSize) || 1000;
-            setElasticSize(curElasticSize);
-          }
-          if (typeof r.elasticUser === "string") {
-            curElasticUser = r.elasticUser;
-            setElasticUser(curElasticUser);
-          }
-          if (r.elasticMaxParallel != null) {
-            curElasticMaxParallel = Math.max(
-              1,
-              Number(r.elasticMaxParallel) || 1,
-            );
-            setElasticMaxParallel(curElasticMaxParallel);
-          }
-          if (typeof r.elasticPassEnc === "string") {
-            setElasticHasPass(!!r.elasticPassEnc.trim());
-          }
-          if (typeof r.allowPrerelease === "boolean") {
-            curAllowPrerelease = r.allowPrerelease;
-            setAllowPrerelease(curAllowPrerelease);
-          }
-          if (typeof r.heapSizeMB === "number") {
-            curHeapSizeMB = r.heapSizeMB;
-          }
+        const loaded = await getSettings();
+        if (loaded) {
+          latest = { ...latest, ...loaded };
+          receiveSettings(loaded);
         }
-      } catch (e) {
-        logger.warn("Failed to load settings for modal:", e);
+      } catch (error) {
+        logger.warn("Failed to load settings for modal:", error);
       }
-
-      setForm({
-        tcpPort: curTcpPort,
-        httpUrl: curHttpUrl,
-        httpInterval: curHttpInterval,
-        logToFile: curLogToFile,
-        logFilePath: curLogFilePath,
-        logMaxMB: Math.max(
-          1,
-          Math.round((curLogMaxBytes || 5 * 1024 * 1024) / (1024 * 1024)),
-        ),
-        logMaxBackups: curLogMaxBackups,
-        themeMode: curMode,
-        elasticUrl: curElasticUrl,
-        elasticSize: curElasticSize,
-        elasticUser: curElasticUser,
-        elasticPassNew: "",
-        elasticPassClear: false,
-        elasticMaxParallel: curElasticMaxParallel || 1,
-        allowPrerelease: curAllowPrerelease,
-        heapSizeMB: curHeapSizeMB,
-      });
-      setOriginalHeapSizeMB(curHeapSizeMB);
+      const nextForm = normalizeSettingsForm(latest);
+      setForm(nextForm);
+      setOriginalHeapSizeMB(nextForm.heapSizeMB);
       setSettingsTab(initialTab || "tcp");
       setShowSettings(true);
     },
-    [
-      themeMode,
-      tcpPort,
-      httpUrl,
-      httpInterval,
-      logToFile,
-      logFilePath,
-      logMaxBytes,
-      logMaxBackups,
-      elasticUrl,
-      elasticSize,
-      elasticUser,
-      elasticMaxParallel,
-      allowPrerelease,
-    ],
   );
 
-  // Save settings modal
-  const saveSettingsModal = useCallback(async () => {
-    const port = Number(form.tcpPort || 0);
-    if (!(port >= 1 && port <= 65535)) {
-      nativeAlert("Ungültiger TCP-Port");
-      return false;
+  const saveSettingsModal = useStableCallback(async () => {
+    const patch = settingsFormPatch(form, current.elasticMaxParallel);
+    if (!patch) {
+      showAlert(t("errors.invalidTcpPort"));
+      return;
     }
-
-    const interval = Math.max(1, Number(form.httpInterval || 5));
-    const toFile = form.logToFile;
-    const path = String(form.logFilePath || "").trim();
-    const maxMB = Math.max(1, Number(form.logMaxMB || 5));
-    const maxBytes = Math.round(maxMB * 1024 * 1024);
-    const backups = Math.max(0, Number(form.logMaxBackups || 0));
-    const mode = ["light", "dark", "system"].includes(form.themeMode)
-      ? form.themeMode
-      : "system";
-
-    const patch: Partial<Settings> = {
-      tcpPort: port,
-      httpUrl: String(form.httpUrl || "").trim(),
-      httpPollInterval: interval,
-      logToFile: toFile,
-      logFilePath: path,
-      logMaxBytes: maxBytes,
-      logMaxBackups: backups,
-      themeMode: mode as Settings["themeMode"],
-      elasticUrl: String(form.elasticUrl || "").trim(),
-      elasticSize: Math.max(1, Number(form.elasticSize || 1000)),
-      elasticUser: String(form.elasticUser || "").trim(),
-      elasticMaxParallel: Math.max(1, Number(form.elasticMaxParallel || 1)),
-      allowPrerelease: form.allowPrerelease,
-      heapSizeMB: Math.max(
-        512,
-        Math.min(8192, Number(form.heapSizeMB || 2048)),
-      ),
-    };
-
-    const newPass = String(form.elasticPassNew || "").trim();
-    if (form.elasticPassClear) patch.elasticPassClear = true;
-    else if (newPass) patch.elasticPassPlain = newPass;
-
     try {
-      const res = await patchSettings(patch);
-      if (!res.ok) {
-        nativeAlert(
-          "Speichern fehlgeschlagen: " + (res.error || "Unbekannter Fehler"),
+      const result = await patchSettings(patch);
+      if (!result?.ok) {
+        showAlert(
+          t("errors.saveFailed", {
+            message: result?.error || t("status.errorUnknown"),
+          }),
         );
-        return false;
+        return;
       }
-
-      setTcpPort(port);
-      setHttpUrl(String(form.httpUrl || "").trim());
-      setHttpInterval(interval);
-      setLogToFile(toFile);
-      setLogFilePath(path);
-      setLogMaxBytes(maxBytes);
-      setLogMaxBackups(backups);
-      setThemeMode(mode as ThemeMode);
-      applyThemeMode(mode);
-      setElasticUrl(String(form.elasticUrl || "").trim());
-      setElasticSize(Math.max(1, Number(form.elasticSize || 1000)));
-      setElasticUser(String(form.elasticUser || "").trim());
-      if (form.elasticPassClear) setElasticHasPass(false);
-      else if (newPass) setElasticHasPass(true);
-
-      // Update allowPrerelease state and notify auto-updater
-      setAllowPrerelease(form.allowPrerelease);
+      // Password plaintext belongs only in the IPC request, never in settings state.
+      const { elasticPassPlain, elasticPassClear, ...saved } = patch;
+      setSettings((previous) => ({
+        ...previous,
+        ...saved,
+        elasticPassEnc: elasticPassClear
+          ? ""
+          : elasticPassPlain
+            ? "present"
+            : previous.elasticPassEnc,
+      }));
+      applyThemeMode(patch.themeMode);
       try {
         await autoUpdaterSetAllowPrerelease(form.allowPrerelease);
-      } catch (e) {
-        logger.warn("Failed to update auto-updater allowPrerelease:", e);
+      } catch (error) {
+        logger.warn("Failed to update auto-updater allowPrerelease:", error);
       }
-
       setShowSettings(false);
-
-      // Check if heap size changed and ask for restart
-      const newHeapSize = Math.max(
-        512,
-        Math.min(8192, Number(form.heapSizeMB || 2048)),
-      );
-      if (newHeapSize !== originalHeapSizeMB) {
-        // Use setTimeout to allow the modal to close first
+      if (patch.heapSizeMB !== originalHeapSizeMB) {
         setTimeout(() => {
           void (async () => {
-            const shouldRestart = await nativeConfirm(
-              "Das Speicherlimit wurde geändert. Die Änderung wird erst nach einem Neustart wirksam.\n\nMöchten Sie die Anwendung jetzt neu starten?",
-            );
-            if (shouldRestart) {
+            if (
+              await nativeConfirm(t("settings.performance.restartRequired"))
+            ) {
               void appRelaunch();
             }
           })();
         }, 100);
       }
-
-      return true;
-    } catch (e) {
-      logger.error("Failed to save settings:", e);
-      nativeAlert(
-        "Speichern fehlgeschlagen: " + ((e as any)?.message || String(e)),
+    } catch (error) {
+      logger.error("Failed to save settings:", error);
+      showAlert(
+        t("errors.saveFailed", {
+          message: error instanceof Error ? error.message : String(error),
+        }),
       );
-      return false;
     }
-  }, [form, originalHeapSizeMB]);
+  });
 
-  const closeSettingsModal = useCallback(() => {
+  const setHttpUrl = useStableCallback((httpUrl: string) =>
+    setSettings((previous) => ({ ...previous, httpUrl })),
+  );
+  const setHttpInterval = useStableCallback((httpPollInterval: number) =>
+    setSettings((previous) => ({ ...previous, httpPollInterval })),
+  );
+  const setFollow = useStableCallback(
+    (value: boolean | ((previous: boolean) => boolean)) =>
+      setSettings((previous) => ({
+        ...previous,
+        follow:
+          typeof value === "function" ? value(previous.follow ?? false) : value,
+      })),
+  );
+  const setThemeMode = useStableCallback((themeMode: ThemeMode) =>
+    setSettings((previous) => ({ ...previous, themeMode })),
+  );
+  const setHttpTailEmitInitial = useStableCallback(
+    (httpTailEmitInitial: boolean) =>
+      setSettings((previous) => ({ ...previous, httpTailEmitInitial })),
+  );
+  const setHttpTailAllowInsecureSSL = useStableCallback(
+    (httpTailAllowInsecureSSL: boolean) =>
+      setSettings((previous) => ({ ...previous, httpTailAllowInsecureSSL })),
+  );
+  const closeSettingsModal = useStableCallback(() => {
     applyThemeMode(themeMode);
     setShowSettings(false);
-  }, [themeMode]);
+  });
 
   return {
-    // Theme
+    settingsLoaded,
+    tcpPort: current.tcpPort,
+    canTcpControlWindow,
+    setCanTcpControlWindow,
+    httpUrl: current.httpUrl,
+    setHttpUrl,
+    httpInterval: current.httpInterval,
+    setHttpInterval,
+    httpTailEmitInitial: settings.httpTailEmitInitial ?? false,
+    setHttpTailEmitInitial,
+    httpTailAllowInsecureSSL: settings.httpTailAllowInsecureSSL ?? false,
+    setHttpTailAllowInsecureSSL,
+    elasticUrl: current.elasticUrl,
+    elasticSize: current.elasticSize,
+    elasticUser: current.elasticUser,
+    elasticHasPass: !!settings.elasticPassEnc?.trim(),
+    elasticMaxParallel: current.elasticMaxParallel,
+    follow,
+    setFollow,
     themeMode,
     setThemeMode,
     applyThemeMode,
-
-    // TCP
-    tcpPort,
-    setTcpPort,
-    tcpStatus,
-    setTcpStatus,
-    canTcpControlWindow,
-    setCanTcpControlWindow,
-
-    // HTTP
-    httpUrl,
-    setHttpUrl,
-    httpInterval,
-    setHttpInterval,
-    httpStatus,
-    setHttpStatus,
-
-    // Logging
-    logToFile,
-    logFilePath,
-    logMaxBytes,
-    logMaxBackups,
-
-    // Elasticsearch
-    elasticUrl,
-    elasticSize,
-    elasticUser,
-    elasticHasPass,
-    elasticMaxParallel,
-
-    // Elastic History
-    histAppName,
-    histEnvironment,
-    histIndex,
-    addToHistory,
-
-    // Follow mode
-    follow,
-    setFollow,
-
-    // Settings Modal
     showSettings,
-    setShowSettings,
     settingsTab,
     setSettingsTab,
     form,

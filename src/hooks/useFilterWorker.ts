@@ -13,6 +13,10 @@
 import { useState, useEffect, useRef, useCallback } from "preact/hooks";
 import { msgMatches, type SearchMode } from "../utils/msgFilter";
 import { entrySignature } from "../utils/entryUtils";
+import {
+  MetadataSnapshot,
+  type ReadonlySequence,
+} from "../utils/metadataSnapshot";
 import { compileDcFilter, matchesCompiledDcFilter } from "../utils/dcMatch";
 import {
   filterIsAvailable,
@@ -79,7 +83,7 @@ export interface UseFilterWorkerResult {
    *                 selbst gepflegt werden muss (Performance-Quick-Win #2).
    */
   filterEntries: (
-    entries: unknown[],
+    entries: ReadonlySequence<unknown>,
     options: FilterOptions,
     marksMap?: Record<string, string>,
     config?: PagedFilterConfig,
@@ -123,14 +127,14 @@ export interface SlimEntry {
  * `_mark`-Property tragen müssen.
  */
 export function projectToSlimEntries(
-  entries: unknown[],
+  entries: ReadonlySequence<unknown>,
   marksMap?: Record<string, string>,
   includeMdc = false,
 ): SlimEntry[] {
   const result: SlimEntry[] = new Array(entries.length);
   const hasMarks = !!marksMap && Object.keys(marksMap).length > 0;
   for (let i = 0; i < entries.length; i++) {
-    const e = entries[i] as Record<string, unknown> | null;
+    const e = entries.at(i) as Record<string, unknown> | null;
     if (!e) {
       result[i] = {};
       continue;
@@ -165,17 +169,17 @@ export function projectToSlimEntries(
 }
 
 export function resolveFilteredEntryIds(
-  entries: unknown[],
+  entries: ReadonlySequence<unknown>,
   filteredOffsets: readonly number[],
 ): number[] {
   return filteredOffsets.map((offset) => {
-    const entry = entries[offset] as { _id?: unknown } | null | undefined;
+    const entry = entries.at(offset) as { _id?: unknown } | null | undefined;
     return typeof entry?._id === "number" ? entry._id : offset;
   });
 }
 
 function computeSearchMatchIndices(
-  entries: unknown[],
+  entries: ReadonlySequence<unknown>,
   filteredIndices: number[],
   options: FilterOptions,
 ): number[] {
@@ -187,7 +191,7 @@ function computeSearchMatchIndices(
   const matches: number[] = [];
   const limit = Math.min(filteredIndices.length, 50_000);
   for (let visualIndex = 0; visualIndex < limit; visualIndex++) {
-    const entry = entries[filteredIndices[visualIndex]!] as Record<
+    const entry = entries.at(filteredIndices[visualIndex]!) as Record<
       string,
       unknown
     > | null;
@@ -244,7 +248,7 @@ export function useFilterWorker(): UseFilterWorkerResult {
   // Filtern NICHT erneut den kompletten (ggf. 300k+) Datensatz zu klonen.
   // Wir merken uns die Array-Referenz + Länge, um Anhänge (Streaming) von
   // einem kompletten Austausch zu unterscheiden.
-  const syncedEntriesRef = useRef<unknown[] | null>(null);
+  const syncedEntriesRef = useRef<ReadonlySequence<unknown> | null>(null);
   const syncedLenRef = useRef<number>(0);
   const syncedIncludesMdcRef = useRef<boolean | null>(null);
   const projectionBridgeRef = useRef<ProjectionBridge | null>(null);
@@ -392,7 +396,7 @@ export function useFilterWorker(): UseFilterWorkerResult {
    */
   const syncEntriesToWorker = useCallback(
     (
-      entries: unknown[],
+      entries: ReadonlySequence<unknown>,
       marksMap: Record<string, string> | undefined,
       forceFull: boolean,
       includeMdc: boolean,
@@ -417,20 +421,12 @@ export function useFilterWorker(): UseFilterWorkerResult {
         return true;
       }
 
-      // Append erkennen: gleiche Präfix-Objekte am Anfang und an der bisherigen
-      // Grenze deuten auf reines Anhängen hin (immutable State-Update beim
-      // Streaming erzeugt ein neues Array mit identischen vorhandenen Elementen).
-      let appendOnly = false;
-      if (
+      // Only the immutable backing identity proves the entire prefix unchanged.
+      const appendOnly =
         !requiresFullSync &&
-        prevArr !== null &&
-        prevLen > 0 &&
-        entries.length >= prevLen &&
-        entries[0] === prevArr[0] &&
-        entries[prevLen - 1] === prevArr[prevLen - 1]
-      ) {
-        appendOnly = true;
-      }
+        entries instanceof MetadataSnapshot &&
+        prevArr instanceof MetadataSnapshot &&
+        entries.isAppendOf(prevArr);
 
       const BATCH = MAX_ENTRIES_PER_MESSAGE;
 
@@ -449,14 +445,19 @@ export function useFilterWorker(): UseFilterWorkerResult {
         }
       } else {
         // Kompletter Austausch (erstes Laden, Filterwechsel mit Marks, Reset…).
-        const slim = projectToSlimEntries(entries, marksMap, includeMdc);
-        // Erste Batch ersetzt den Cache, weitere hängen an.
-        const first = slim.length <= BATCH ? slim : slim.slice(0, BATCH);
-        worker.postMessage({ type: "setEntries", entries: first });
-        for (let start = BATCH; start < slim.length; start += BATCH) {
+        // Project and transfer bounded pages, including an empty reset page.
+        for (
+          let start = 0;
+          start < Math.max(1, entries.length);
+          start += BATCH
+        ) {
           worker.postMessage({
-            type: "appendEntries",
-            entries: slim.slice(start, start + BATCH),
+            type: start === 0 ? "setEntries" : "appendEntries",
+            entries: projectToSlimEntries(
+              entries.slice(start, start + BATCH),
+              marksMap,
+              includeMdc,
+            ),
           });
         }
       }
@@ -472,7 +473,7 @@ export function useFilterWorker(): UseFilterWorkerResult {
   // Synchronous filter function (fallback for small datasets)
   const filterSync = useCallback(
     (
-      entries: unknown[],
+      entries: ReadonlySequence<unknown>,
       options: FilterOptions,
       marksMap?: Record<string, string>,
     ): {
@@ -504,7 +505,7 @@ export function useFilterWorker(): UseFilterWorkerResult {
         : [];
 
       for (let i = 0; i < entries.length; i++) {
-        const e = entries[i] as Record<string, unknown> | null;
+        const e = entries.at(i) as Record<string, unknown> | null;
         filterStats.total++;
         if (!e) continue;
 
@@ -592,7 +593,7 @@ export function useFilterWorker(): UseFilterWorkerResult {
   // Main filter function - uses UtilityProcess, Web Worker, or sync based on availability
   const filterEntries = useCallback(
     (
-      entries: unknown[],
+      entries: ReadonlySequence<unknown>,
       options: FilterOptions,
       marksMap?: Record<string, string>,
       config?: PagedFilterConfig,

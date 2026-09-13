@@ -13,6 +13,7 @@ import {
   usePagedLogHydration,
 } from "../../hooks/usePagedLogHydration";
 import logger from "../../utils/logger";
+import type { ReadonlySequence } from "../../utils/metadataSnapshot";
 import { LogRow } from "../LogRow";
 
 const ROW_HEIGHT = 36;
@@ -26,9 +27,9 @@ export interface VirtualizedLogListHandle {
 }
 
 export interface VirtualizedLogListProps {
-  entries?: readonly object[];
+  entries?: ReadonlySequence<object>;
   repository?: LogPayloadRepository;
-  filteredIdx: number[];
+  filteredIdx: ReadonlySequence<number>;
   selected: Set<number>;
   marksMap: Record<string, string>;
   search: string;
@@ -85,7 +86,7 @@ const VirtualizedLogListWithRef = forwardRef<
   const estimateSize = useCallback(() => ROW_HEIGHT, []);
   const getItemKey = useCallback(
     (index: number) => {
-      const globalIdx = filteredIdx[index];
+      const globalIdx = filteredIdx.at(index);
       return globalIdx !== undefined ? `row-${globalIdx}` : `row-temp-${index}`;
     },
     [filteredIdx],
@@ -160,7 +161,7 @@ const VirtualizedLogListWithRef = forwardRef<
     () =>
       repository
         ? virtualItems
-            .map((virtualItem) => filteredIdx[virtualItem.index])
+            .map((virtualItem) => filteredIdx.at(virtualItem.index))
             .filter((id): id is number => id !== undefined)
         : [],
     [filteredIdx, repository, virtualItems],
@@ -234,10 +235,10 @@ const VirtualizedLogListWithRef = forwardRef<
           const visualIndex = virtualItem.index;
           if (visualIndex < 0 || visualIndex >= filteredIdx.length) return null;
 
-          const globalIdx = filteredIdx[visualIndex]!;
+          const globalIdx = filteredIdx.at(visualIndex)!;
           const entry = repository
             ? hydratedPayloads.get(globalIdx)
-            : (entries[globalIdx] as Record<string, unknown> | undefined);
+            : (entries.at(globalIdx) as Record<string, unknown> | undefined);
           if (!entry) {
             return (
               <div

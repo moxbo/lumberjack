@@ -7,17 +7,20 @@ import { getRendererLogEntryPool } from "../store/RendererLogEntryPool";
 import { LoggingStore } from "../store/loggingStore";
 import { DiagnosticContextFilter } from "../store/dcFilter";
 import { msgMatches as msgMatchesFn } from "./msgFilter";
+import { MetadataSnapshot, type ReadonlySequence } from "./metadataSnapshot";
 
 // Global debug reference for console access
-let debugEntriesRef: { current: any[] } | null = null;
-let debugFilteredIdxRef: { current: number[] } | null = null;
+let debugEntriesRef: { current: ReadonlySequence<any> } | null = null;
+let debugFilteredIdxRef: { current: ReadonlySequence<number> } | null = null;
 
-export function setDebugEntriesRef(ref: { current: any[] } | null): void {
+export function setDebugEntriesRef(
+  ref: { current: ReadonlySequence<any> } | null,
+): void {
   debugEntriesRef = ref;
 }
 
 export function setDebugFilteredIdxRef(
-  ref: { current: number[] } | null,
+  ref: { current: ReadonlySequence<number> } | null,
 ): void {
   debugFilteredIdxRef = ref;
 }
@@ -32,7 +35,8 @@ export function setupDebugFunctions(): void {
      */
     findInEntries: (term: string, searchAll = false) => {
       const entries = debugEntriesRef?.current || [];
-      const filteredIdx = debugFilteredIdxRef?.current || [];
+      const filteredIdx: ReadonlySequence<number> =
+        debugFilteredIdxRef?.current || [];
       const termLower = term.toLowerCase();
 
       const isFilterActive = filteredIdx.length < entries.length;
@@ -56,19 +60,23 @@ export function setupDebugFunctions(): void {
       if (searchAll) {
         // Search all entries
         for (let i = 0; i < entries.length; i++) {
-          const e = entries[i];
+          const e = entries.at(i);
           if (!e) continue;
           const msg = String(e.message || "").toLowerCase();
           const raw = JSON.stringify(e.raw || e).toLowerCase();
 
           if (msg.includes(termLower) || raw.includes(termLower)) {
-            found.push(i);
+            found.push(typeof e._id === "number" ? e._id : i);
           }
         }
       } else {
         // Search only filtered entries (more performant)
         for (const idx of filteredIdx) {
-          const e = entries[idx];
+          const offset =
+            entries instanceof MetadataSnapshot
+              ? entries.ids.positionOf(idx)
+              : idx;
+          const e = offset < 0 ? undefined : entries.at(offset);
           if (!e) continue;
           const msg = String(e.message || "").toLowerCase();
           const raw = JSON.stringify(e.raw || e).toLowerCase();
@@ -87,7 +95,7 @@ export function setupDebugFunctions(): void {
           "'" +
           (searchAll && isFilterActive
             ? " (of which " +
-              found.filter((i) => filteredIdx.includes(i)).length +
+              found.filter((i) => filteredIdx.indexOf(i) >= 0).length +
               " are visible)"
             : ""),
       );
@@ -128,13 +136,10 @@ export function setupDebugFunctions(): void {
     stats: () => {
       const entries = debugEntriesRef?.current || [];
       const filteredIdx = debugFilteredIdxRef?.current || [];
-      const totalSize = entries.reduce(
-        (sum, e) =>
-          sum + new TextEncoder().encode(String(e?.message || "")).length,
-        0,
-      );
+      let totalSize = 0;
       const levels: Record<string, number> = {};
       entries.forEach((e) => {
+        totalSize += new TextEncoder().encode(String(e?.message || "")).length;
         const lvl = String(e?.level || "UNKNOWN").toUpperCase();
         levels[lvl] = (levels[lvl] || 0) + 1;
       });

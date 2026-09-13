@@ -17,12 +17,10 @@ import { canonicalDcKey, DiagnosticContextFilter } from "../store/dcFilter";
 import { DragAndDropManager } from "../utils/dnd";
 import { TimeFilter } from "../store/timeFilter";
 import { lazy, Suspense } from "preact/compat";
-import type { Settings } from "../types/ipc";
 import {
   getSettings,
   patchSettings,
   patchSettingsQuiet,
-  windowPermsGet,
   openFiles as typedOpenFiles,
   parseRawDrops as typedParseRawDrops,
   streamAck as typedStreamAck,
@@ -34,10 +32,6 @@ import {
   httpLoadOnce as typedHttpLoadOnce,
   httpStartPoll as typedHttpStartPoll,
   httpStopPoll as typedHttpStopPoll,
-  chooseExportPath as typedChooseExportPath,
-  saveExportFile as typedSaveExportFile,
-  autoUpdaterSetAllowPrerelease as typedAutoUpdaterSetAllowPrerelease,
-  appRelaunch as typedAppRelaunch,
   onAppend as typedOnAppend,
   onMenu as typedOnMenu,
   onStreamChunk as typedOnStreamChunk,
@@ -49,20 +43,16 @@ import {
 import type {
   ElasticFormState,
   HttpPollFormState,
-  ThemeMode,
-  SettingsTab,
-  SettingsFormState,
   FilterStats,
 } from "../types/renderer";
 import type { StreamParseChunk, StreamParsePathsResult } from "../types/ipc";
 import { MDCListener } from "../store/mdcListener";
 import { clearHighlightCache } from "./LogRow";
 import { clearTimestampCache, fmtTimestamp } from "../utils/format";
-import {
-  exportToCsv,
-  exportToMarkdown,
-  exportToNdjson,
-} from "../utils/exportFormats";
+import { exportCurrentView as streamCurrentView } from "../utils/exportCurrentView";
+import type { ReadonlySequence } from "../utils/metadataSnapshot";
+import { useIdPositions } from "../hooks/useIdPositions";
+import { useSettings } from "../hooks/useSettings";
 import {
   setupDebugFunctions,
   setDebugEntriesRef,
@@ -192,9 +182,6 @@ export default function App(): JSX.Element {
     tRef.current = t;
   }, [t]);
 
-  // Track when initial settings are loaded for skeleton UI
-  const [settingsLoaded, setSettingsLoaded] = useState<boolean>(false);
-
   // Persistenz: Markierungen (signature -> color)
   const [marksMap, setMarksMap] = useState<Record<string, string>>({});
   const marksMapRef = useRef<Record<string, string>>(marksMap);
@@ -292,6 +279,7 @@ export default function App(): JSX.Element {
   const {
     entries,
     entryGeneration,
+    getDataGeneration,
     appendEntries,
     appendEntriesAsync,
     clearEntries,
@@ -311,20 +299,6 @@ export default function App(): JSX.Element {
 
   const [selected, setSelected] = useState<Set<number>>(new Set());
   const lastClicked = useRef<number | null>(null);
-
-  // Follow-Modus
-  const [follow, setFollow] = useState<boolean>(false);
-
-  // Theme Mode
-  const [themeMode, setThemeMode] = useState<ThemeMode>("system");
-  function applyThemeMode(mode: string | null | undefined): void {
-    const root = document.documentElement;
-    if (!mode || mode === "system") {
-      root.removeAttribute("data-theme");
-      return;
-    }
-    root.setAttribute("data-theme", mode);
-  }
 
   // Use the refactored filter state hook
   const filterState = useFilterState();
@@ -438,45 +412,63 @@ export default function App(): JSX.Element {
     t,
     getLastEsForm: () => lastEsFormRef.current,
   });
+  const {
+    settingsLoaded,
+    tcpPort,
+    canTcpControlWindow,
+    setCanTcpControlWindow,
+    httpUrl,
+    setHttpUrl,
+    httpInterval,
+    setHttpInterval,
+    httpTailEmitInitial,
+    setHttpTailEmitInitial,
+    httpTailAllowInsecureSSL,
+    setHttpTailAllowInsecureSSL,
+    elasticUrl,
+    elasticSize,
+    elasticHasPass,
+    follow,
+    setFollow,
+    themeMode,
+    setThemeMode,
+    applyThemeMode,
+    showSettings,
+    settingsTab,
+    setSettingsTab,
+    form,
+    setForm,
+    openSettingsModal,
+    saveSettingsModal,
+    closeSettingsModal,
+  } = useSettings({
+    t,
+    showAlert,
+    onLoaded: (settings) => {
+      if (Array.isArray(settings.histAppName))
+        setHistAppName(settings.histAppName);
+      if (Array.isArray(settings.histEnvironment))
+        setHistEnvironment(settings.histEnvironment);
+      if (Array.isArray(settings.histIndex)) setHistIndex(settings.histIndex);
+      setTimeForm((previous) => ({
+        ...previous,
+        environmentCase: settings.lastEnvironmentCase || "original",
+      }));
+      if (settings.marksMap && typeof settings.marksMap === "object") {
+        setMarksMap(settings.marksMap);
+      }
+      if (Array.isArray(settings.customMarkColors))
+        setCustomColors(settings.customMarkColors);
+      if (typeof settings.onlyMarked === "boolean")
+        setOnlyMarked(settings.onlyMarked);
+    },
+  });
   const [tcpStatus, setTcpStatus] = useState<string>(t("status.tcpStopped"));
   const [httpStatus, setHttpStatus] = useState<string>(
     t("status.httpPollStopped"),
   );
   const [httpPollId, setHttpPollId] = useState<number | null>(null);
-  const [tcpPort, setTcpPort] = useState<number>(5000);
-  const [canTcpControlWindow, setCanTcpControlWindow] = useState<boolean>(true);
-
-  const [httpUrl, setHttpUrl] = useState<string>("");
-  const [httpInterval, setHttpInterval] = useState<number>(5000);
-  // HTTP-Tail-Dialog: zuletzt verwendete Optionen (werden persistiert und beim
-  // Öffnen des Dialogs vorbelegt, damit nach einem Neustart nichts verloren geht).
-  const [httpTailEmitInitial, setHttpTailEmitInitial] =
-    useState<boolean>(false);
-  const [httpTailAllowInsecureSSL, setHttpTailAllowInsecureSSL] =
-    useState<boolean>(false);
   const [httpTailAuthHeader, setHttpTailAuthHeader] = useState<string>("");
-  const [showSettings, setShowSettings] = useState<boolean>(false);
-  const [settingsTab, setSettingsTab] = useState<SettingsTab>("tcp");
-  const [form, setForm] = useState<SettingsFormState>({
-    tcpPort: 5000,
-    httpUrl: "",
-    httpInterval: 5000,
-    logToFile: false,
-    logFilePath: "",
-    logMaxMB: 5,
-    logMaxBackups: 3,
-    themeMode: "system",
-    elasticUrl: "",
-    elasticSize: 1000,
-    elasticUser: "",
-    elasticPassNew: "",
-    elasticPassClear: false,
-    elasticMaxParallel: 1,
-    allowPrerelease: false,
-    heapSizeMB: 4096,
-  });
-  // Store original heap size to detect changes requiring restart
-  const [originalHeapSizeMB, setOriginalHeapSizeMB] = useState<number>(4096);
   // NEU: hält das tatsächlich beim Start verwendete Poll-Intervall (für stabilen Countdown)
   const [currentPollInterval, setCurrentPollInterval] = useState<number | null>(
     null,
@@ -490,7 +482,7 @@ export default function App(): JSX.Element {
     interval: 5000,
   });
 
-  async function openHttpLoadDialog() {
+  const openHttpLoadDialog = useStableCallback(async () => {
     let url = httpUrl;
     try {
       // Load fresh settings to ensure we have current httpUrl
@@ -504,8 +496,8 @@ export default function App(): JSX.Element {
     }
     setHttpLoadUrl(String(url || ""));
     setShowHttpLoadDlg(true);
-  }
-  async function openHttpPollDialog() {
+  });
+  const openHttpPollDialog = useStableCallback(async () => {
     let url = httpUrl;
     let interval = httpInterval;
     try {
@@ -530,13 +522,13 @@ export default function App(): JSX.Element {
       interval: Number(interval || 5),
     });
     setShowHttpPollDlg(true);
-  }
+  });
 
   // Öffnet den HTTP-Tail-Dialog und belegt ihn mit den zuletzt verwendeten
   // Werten vor (URL, Intervall, Optionen und – falls hinterlegt – dem
   // verschlüsselt gespeicherten Auth-Header). So geht nach einem Neustart
   // die zuletzt genutzte Tail-Konfiguration nicht verloren.
-  async function openHttpTailDialog() {
+  const openHttpTailDialog = useStableCallback(async () => {
     try {
       const r = await getSettings();
       if (r) {
@@ -566,20 +558,7 @@ export default function App(): JSX.Element {
       logger.warn("Failed to load settings for HTTP tail dialog:", e);
     }
     setShowHttpTailDialog(true);
-  }
-
-  // Logging-Settings
-  const [logToFile, setLogToFile] = useState<boolean>(false);
-  const [logFilePath, setLogFilePath] = useState<string>("");
-  const [logMaxBytes, setLogMaxBytes] = useState<number>(5 * 1024 * 1024);
-  const [logMaxBackups, setLogMaxBackups] = useState<number>(3);
-
-  // Elasticsearch
-  const [elasticUrl, setElasticUrl] = useState<string>("");
-  const [elasticSize, setElasticSize] = useState<number>(1000);
-  const [elasticUser, setElasticUser] = useState<string>("");
-  const [elasticHasPass, setElasticHasPass] = useState<boolean>(false);
-  const [elasticMaxParallel, setElasticMaxParallel] = useState<number>(1);
+  });
 
   /**
    * Hydratisiert `marksMap` aus frisch importierten Einträgen, die bereits
@@ -964,28 +943,16 @@ export default function App(): JSX.Element {
     usesPagedStorage,
     entryGeneration,
     filterIsActive,
+    repository,
   ]);
 
-  const unfilteredIds = useMemo(
-    () => entries.map((entry) => entry._id),
-    [entries],
-  );
+  const unfilteredIds = entries.ids;
   const filteredIdx = filterIsActive ? workerFilteredIdx : unfilteredIds;
 
-  // Stable IDs are dense but no longer monotonic after timestamp sorting.
-  // A compact typed reverse vector keeps navigation O(1) without Map overhead.
-  const visualPositionById = useMemo(() => {
-    const positions = new Int32Array(entries.length + 1);
-    for (let index = 0; index < filteredIdx.length; index++) {
-      const id = filteredIdx[index]!;
-      if (id < positions.length) positions[id] = index + 1;
-    }
-    return positions;
-  }, [entries.length, filteredIdx]);
+  const visualPositionById = useIdPositions(filteredIdx);
   const viOfGlobal = useCallback(
     (g: number | null | undefined): number => {
-      if (g == null || g >= visualPositionById.length) return -1;
-      return visualPositionById[g]! - 1;
+      return g == null ? -1 : visualPositionById.get(g);
     },
     [visualPositionById],
   );
@@ -1018,31 +985,32 @@ export default function App(): JSX.Element {
   }, [workerFilterStats, onlyMarked, stdFiltersEnabled, filter]);
 
   // Refs to track current values for menu handlers (avoid stale closures)
-  const filteredIdxRef = useRef<number[]>(filteredIdx);
-  const entriesRef = useRef<any[]>(entries);
+  const filteredIdxRef = useRef<ReadonlySequence<number>>(filteredIdx);
+  const entriesRef = useRef(entries);
+  filteredIdxRef.current = filteredIdx;
+  entriesRef.current = entries;
+  marksMapRef.current = marksMap;
   // marksMapRef ist nötig, weil der Application-Menu-Handler (typedOnMenu)
   // einmalig in einem useEffect mit []-Deps registriert wird. Ohne diesen Ref
   // würde `exportCurrentView` über den Menu-Pfad auf eine stale `marksMap`-
   // Closure zugreifen → exportierte Einträge hätten `markColor: null`,
   // obwohl sie sichtbar markiert sind.
   useEffect(() => {
-    filteredIdxRef.current = filteredIdx;
     // Update debug reference
     setDebugFilteredIdxRef(filteredIdxRef);
   }, [filteredIdx]);
   useEffect(() => {
-    entriesRef.current = entries;
     // Update debug reference
     setDebugEntriesRef(entriesRef);
   }, [entries]);
   useEffect(() => {
-    marksMapRef.current = marksMap;
+    if (!settingsLoaded) return;
     try {
       patchSettingsQuiet({ marksMap });
     } catch {
       // Session marks remain available in component state.
     }
-  }, [marksMap]);
+  }, [marksMap, settingsLoaded]);
 
   const countTotal = entries.length;
   const countFiltered = filteredIdx.length;
@@ -1077,7 +1045,7 @@ export default function App(): JSX.Element {
   }, []);
 
   // Bei Filteränderung: ausgewählten Eintrag sichtbar halten, wenn er noch in der Liste ist
-  const prevFilteredIdxRef = useRef<number[]>(filteredIdx);
+  const prevFilteredIdxRef = useRef<ReadonlySequence<number>>(filteredIdx);
   const selectedRef = useRef<Set<number>>(selected);
   const pendingSelectedAfterFilterRef = useRef<number | null>(null);
   // Track previous filter criteria to distinguish filter changes from new entries
@@ -1184,7 +1152,7 @@ export default function App(): JSX.Element {
   function gotoListStart(): void {
     if (!filteredIdx.length) return;
     const targetVi = 0;
-    const globalIdx = filteredIdx[targetVi]!;
+    const globalIdx = filteredIdx.at(targetVi)!;
     setSelected(new Set([globalIdx]));
     lastClicked.current = globalIdx;
     // In den sichtbaren Bereich scrollen
@@ -1196,7 +1164,7 @@ export default function App(): JSX.Element {
   function gotoListEnd(): void {
     if (!filteredIdx.length) return;
     const targetVi = filteredIdx.length - 1;
-    const globalIdx = filteredIdx[targetVi]!;
+    const globalIdx = filteredIdx.at(targetVi)!;
     setSelected(new Set([globalIdx]));
     lastClicked.current = globalIdx;
     // In den sichtbaren Bereich scrollen
@@ -1224,7 +1192,7 @@ export default function App(): JSX.Element {
               const [lo, hi] = a < b ? [a, b] : [b, a];
               next = new Set<number>();
               for (let vi = lo; vi <= hi; vi++) {
-                next.add(filteredIdx[vi]!);
+                next.add(filteredIdx.at(vi)!);
               }
             } else next = new Set([idx]);
           } else if (meta) {
@@ -1344,7 +1312,7 @@ export default function App(): JSX.Element {
         targetVi = prev >= 0 ? prev : first; // kein vorheriger → am ersten stehen bleiben
       }
     }
-    const globalIdx: number = filteredIdx[targetVi]!;
+    const globalIdx: number = filteredIdx.at(targetVi)!;
     setSelected(new Set([globalIdx]));
     lastClicked.current = globalIdx;
     scrollToIndexCenter(targetVi);
@@ -1355,7 +1323,7 @@ export default function App(): JSX.Element {
    * vi = virtual index (position in filteredIdx).
    */
   function gotoBookmark(vi: number) {
-    const globalIdx = filteredIdx[vi];
+    const globalIdx = filteredIdx.at(vi);
     if (globalIdx == null) return;
     setSelected(new Set([globalIdx]));
     lastClicked.current = globalIdx;
@@ -1369,7 +1337,7 @@ export default function App(): JSX.Element {
     let cancelled = false;
     const positions = markedIdx.slice(0, 200);
     const ids = positions
-      .map((visualIndex) => filteredIdx[visualIndex])
+      .map((visualIndex) => filteredIdx.at(visualIndex))
       .filter((id): id is number => id !== undefined);
     if (ids.length === 0) {
       setBookmarkItems([]);
@@ -1381,7 +1349,7 @@ export default function App(): JSX.Element {
         if (cancelled) return;
         setBookmarkItems(
           positions.flatMap((vi) => {
-            const id = filteredIdx[vi];
+            const id = filteredIdx.at(vi);
             const entry = id === undefined ? undefined : payloads.get(id);
             if (!entry) return [];
             const message = String(entry.message || "");
@@ -1431,7 +1399,7 @@ export default function App(): JSX.Element {
         targetVi = prev >= 0 ? prev : first; // kein vorheriger → am ersten stehen bleiben
       }
     }
-    const globalIdx: number = filteredIdx[targetVi]!;
+    const globalIdx: number = filteredIdx.at(targetVi)!;
     setSelected(new Set([globalIdx]));
     lastClicked.current = globalIdx;
     scrollToIndexCenter(targetVi);
@@ -1453,7 +1421,7 @@ export default function App(): JSX.Element {
     if (targetVi < 0) targetVi = 0;
     if (targetVi > filteredIdx.length - 1) targetVi = filteredIdx.length - 1;
 
-    const targetGlobal = filteredIdx[targetVi]!;
+    const targetGlobal = filteredIdx.at(targetVi)!;
     if (!extend) {
       setSelected(new Set([targetGlobal]));
       lastClicked.current = targetGlobal;
@@ -1542,7 +1510,7 @@ export default function App(): JSX.Element {
   useEffect(() => {
     if (!follow) return;
     if (!filteredIdx.length) return;
-    const lastGlobalIdx = filteredIdx[filteredIdx.length - 1] as number;
+    const lastGlobalIdx = filteredIdx.at(-1)!;
     setSelected(new Set([lastGlobalIdx]));
     // Sicherstellen, dass der letzte Eintrag korrekt sichtbar ist (oberhalb des Detail-Overlays)
     setTimeout(() => {
@@ -1594,325 +1562,6 @@ export default function App(): JSX.Element {
   useEffect(() => {
     handleFeatureErrorRef.current = handleFeatureError;
   }, [handleFeatureError]);
-
-  // Settings laden - OPTIMIZED: Settings are pre-cached in preload script,
-  // so settingsGet() returns immediately from cache without IPC round-trip
-  useEffect(() => {
-    const loadSettings = async () => {
-      rendererPerf.mark("settings-load-start");
-      try {
-        const r = await getSettings();
-        if (!r) {
-          logger.warn("Failed to load settings: no settings returned");
-          setSettingsLoaded(true);
-          return;
-        }
-        if (r.tcpPort != null) setTcpPort(Number(r.tcpPort) || 5000);
-        if (typeof r.httpUrl === "string") setHttpUrl(r.httpUrl);
-        // Support both httpPollInterval (persisted) and httpInterval (legacy)
-        const interval = r.httpPollInterval;
-        if (interval != null) setHttpInterval(Number(interval) || 5);
-        // HTTP-Tail-Optionen für die Dialog-Vorbelegung übernehmen
-        if (typeof r.httpTailEmitInitial === "boolean")
-          setHttpTailEmitInitial(r.httpTailEmitInitial);
-        if (typeof r.httpTailAllowInsecureSSL === "boolean")
-          setHttpTailAllowInsecureSSL(r.httpTailAllowInsecureSSL);
-        // Entfernt: Laden einer persistierten Logger-Historie, damit Verlauf nur temporär ist
-        // if (Array.isArray(r.histLogger)) setHistLogger(r.histLogger);
-        if (Array.isArray(r.histAppName)) setHistAppName(r.histAppName);
-        if (Array.isArray(r.histEnvironment))
-          setHistEnvironment(r.histEnvironment);
-        // NEW: load histIndex
-        if (Array.isArray(r.histIndex)) setHistIndex(r.histIndex);
-        // Merke zuletzt verwendeten Environment-Case für Fallback im Dialog
-        const lastEnvCase = r.lastEnvironmentCase || "original";
-        setTimeForm((prev) => ({
-          ...prev,
-          environmentCase: String(lastEnvCase || "original"),
-        }));
-        if (typeof r.themeMode === "string") {
-          const mode = ["light", "dark", "system"].includes(r.themeMode)
-            ? r.themeMode
-            : "system";
-          setThemeMode(mode);
-          applyThemeMode(mode);
-        }
-        if (typeof r.follow === "boolean") setFollow(r.follow);
-        // followSmooth ist immer true, wird nicht aus Settings geladen
-        const root = document.documentElement;
-        const detail = Number(r.detailHeight || 0);
-        if (detail)
-          root.style.setProperty("--detail-height", `${Math.round(detail)}px`);
-        const map: Array<[string, unknown]> = [
-          ["--col-ts", r.colTs],
-          ["--col-lvl", r.colLvl],
-          ["--col-logger", r.colLogger],
-        ];
-        for (const [k, v] of map)
-          if (v != null)
-            root.style.setProperty(k, `${Math.round(Number(v) || 0)}px`);
-        setLogToFile(!!r.logToFile);
-        setLogFilePath(String(r.logFilePath || ""));
-        setLogMaxBytes(Number(r.logMaxBytes || 5 * 1024 * 1024));
-        setLogMaxBackups(Number(r.logMaxBackups || 3));
-        setElasticUrl(String(r.elasticUrl || ""));
-        setElasticSize(Number(r.elasticSize || 1000));
-        setElasticUser(String(r.elasticUser || ""));
-        setElasticHasPass(!!String(r.elasticPassEnc || "").trim());
-        setElasticMaxParallel(Math.max(1, Number(r.elasticMaxParallel || 1)));
-        if (r.marksMap && typeof r.marksMap === "object")
-          setMarksMap(r.marksMap as Record<string, string>);
-        if (Array.isArray(r.customMarkColors))
-          setCustomColors(r.customMarkColors as string[]);
-        if (typeof r.onlyMarked === "boolean") setOnlyMarked(r.onlyMarked);
-        rendererPerf.mark("settings-loaded");
-      } catch (e) {
-        logger.error("Error loading settings:", e);
-      } finally {
-        setSettingsLoaded(true);
-        // Hide the splash screen now that app is ready
-        const splash = document.getElementById("splash-screen");
-        if (splash) {
-          splash.classList.add("hidden");
-          // Remove from DOM after transition completes
-          setTimeout(() => splash.remove(), 300);
-        }
-      }
-      // Per-Window Berechtigungen laden
-      try {
-        const perms = await windowPermsGet();
-        if (perms?.ok) setCanTcpControlWindow(perms.canTcpControl !== false);
-      } catch (e) {
-        logger.warn("windowPermsGet failed:", e);
-      }
-    };
-
-    // Call directly - no need for requestIdleCallback since settings are pre-cached
-    void loadSettings();
-  }, []);
-  // ...existing code...
-  async function openSettingsModal(
-    initialTab?: "tcp" | "http" | "elastic" | "logging" | "appearance",
-  ) {
-    // Load fresh settings from main process to ensure we have current values
-    let curMode = themeMode;
-    let curTcpPort = tcpPort;
-    let curHttpUrl = httpUrl;
-    let curHttpInterval = httpInterval;
-    let curLogToFile = logToFile;
-    let curLogFilePath = logFilePath;
-    let curLogMaxBytes = logMaxBytes;
-    let curLogMaxBackups = logMaxBackups;
-    let curElasticUrl = elasticUrl;
-    let curElasticSize = elasticSize;
-    let curElasticUser = elasticUser;
-    let curElasticMaxParallel = elasticMaxParallel;
-    let curAllowPrerelease = false;
-    let curHeapSizeMB = 4096;
-
-    try {
-      const r = await getSettings();
-      if (r) {
-        // Update local state AND form values from fresh settings
-        if (typeof r.themeMode === "string") {
-          const mode = ["light", "dark", "system"].includes(r.themeMode)
-            ? r.themeMode
-            : "system";
-          curMode = mode;
-          setThemeMode(mode);
-          applyThemeMode(mode);
-        }
-        if (typeof r.follow === "boolean") setFollow(r.follow);
-        // followSmooth ist immer true, wird nicht aus Settings geladen
-
-        // Load all form values from settings
-        if (r.tcpPort != null) {
-          curTcpPort = Number(r.tcpPort) || 5000;
-          setTcpPort(curTcpPort);
-        }
-        if (typeof r.httpUrl === "string") {
-          curHttpUrl = r.httpUrl;
-          setHttpUrl(curHttpUrl);
-        }
-        const interval = r.httpPollInterval;
-        if (interval != null) {
-          curHttpInterval = Number(interval) || 5;
-          setHttpInterval(curHttpInterval);
-        }
-        if (typeof r.logToFile === "boolean") {
-          curLogToFile = r.logToFile;
-          setLogToFile(curLogToFile);
-        }
-        if (typeof r.logFilePath === "string") {
-          curLogFilePath = r.logFilePath;
-          setLogFilePath(curLogFilePath);
-        }
-        if (r.logMaxBytes != null) {
-          curLogMaxBytes = Number(r.logMaxBytes) || 5 * 1024 * 1024;
-          setLogMaxBytes(curLogMaxBytes);
-        }
-        if (r.logMaxBackups != null) {
-          curLogMaxBackups = Number(r.logMaxBackups) || 3;
-          setLogMaxBackups(curLogMaxBackups);
-        }
-        if (typeof r.elasticUrl === "string") {
-          curElasticUrl = r.elasticUrl;
-          setElasticUrl(curElasticUrl);
-        }
-        if (r.elasticSize != null) {
-          curElasticSize = Number(r.elasticSize) || 1000;
-          setElasticSize(curElasticSize);
-        }
-        if (typeof r.elasticUser === "string") {
-          curElasticUser = r.elasticUser;
-          setElasticUser(curElasticUser);
-        }
-        if (r.elasticMaxParallel != null) {
-          curElasticMaxParallel = Math.max(
-            1,
-            Number(r.elasticMaxParallel) || 1,
-          );
-          setElasticMaxParallel(curElasticMaxParallel);
-        }
-        if (typeof r.elasticPassEnc === "string") {
-          setElasticHasPass(!!r.elasticPassEnc.trim());
-        }
-        if (typeof r.allowPrerelease === "boolean") {
-          curAllowPrerelease = r.allowPrerelease;
-        }
-        if (typeof r.heapSizeMB === "number") {
-          curHeapSizeMB = r.heapSizeMB;
-        }
-      }
-    } catch (e) {
-      logger.warn("Failed to load settings for modal:", e);
-    }
-    setForm({
-      tcpPort: curTcpPort,
-      httpUrl: curHttpUrl,
-      httpInterval: curHttpInterval,
-      logToFile: curLogToFile,
-      logFilePath: curLogFilePath,
-      logMaxMB: Math.max(
-        1,
-        Math.round((curLogMaxBytes || 5 * 1024 * 1024) / (1024 * 1024)),
-      ),
-      logMaxBackups: curLogMaxBackups,
-      themeMode: curMode,
-      elasticUrl: curElasticUrl,
-      elasticSize: curElasticSize,
-      elasticUser: curElasticUser,
-      elasticPassNew: "",
-      elasticPassClear: false,
-      elasticMaxParallel: curElasticMaxParallel || 1,
-      allowPrerelease: curAllowPrerelease,
-      heapSizeMB: curHeapSizeMB,
-    });
-    setOriginalHeapSizeMB(curHeapSizeMB);
-    setSettingsTab(initialTab || "tcp");
-    setShowSettings(true);
-  }
-  async function saveSettingsModal() {
-    const port = Number(form.tcpPort || 0);
-    if (!(port >= 1 && port <= 65535)) {
-      showAlert(t("errors.invalidTcpPort"));
-      return;
-    }
-    const interval = Math.max(1, Number(form.httpInterval || 5));
-    const toFile = form.logToFile;
-    const path = String(form.logFilePath || "").trim();
-    const maxMB = Math.max(1, Number(form.logMaxMB || 5));
-    const maxBytes = Math.round(maxMB * 1024 * 1024);
-    const backups = Math.max(0, Number(form.logMaxBackups || 0));
-    const mode: ThemeMode = ["light", "dark", "system"].includes(form.themeMode)
-      ? (form.themeMode as ThemeMode)
-      : "system";
-    const patch: Partial<Settings> = {
-      tcpPort: port,
-      httpUrl: String(form.httpUrl || "").trim(),
-      httpPollInterval: interval,
-      logToFile: toFile,
-      logFilePath: path,
-      logMaxBytes: maxBytes,
-      logMaxBackups: backups,
-      themeMode: mode,
-      elasticUrl: String(form.elasticUrl || "").trim(),
-      elasticSize: Math.max(1, Number(form.elasticSize || 1000)),
-      elasticUser: String(form.elasticUser || "").trim(),
-      elasticMaxParallel: Math.max(
-        1,
-        Number(form.elasticMaxParallel || elasticMaxParallel || 1),
-      ),
-      allowPrerelease: form.allowPrerelease,
-      heapSizeMB: Math.max(
-        512,
-        Math.min(8192, Number(form.heapSizeMB || 4096)),
-      ),
-    };
-    const newPass = String(form.elasticPassNew || "").trim();
-    if (form.elasticPassClear) patch["elasticPassClear"] = true;
-    else if (newPass) patch["elasticPassPlain"] = newPass;
-    try {
-      const res = await patchSettings(patch);
-      if (!res || !res.ok) {
-        showAlert(
-          t("errors.saveFailed", {
-            message: res?.error || t("status.errorUnknown"),
-          }),
-        );
-        return;
-      }
-      setTcpPort(port);
-      setHttpUrl(String(form.httpUrl || "").trim());
-      setHttpInterval(interval);
-      setLogToFile(toFile);
-      setLogFilePath(path);
-      setLogMaxBytes(maxBytes);
-      setLogMaxBackups(backups);
-      setThemeMode(mode);
-      applyThemeMode(mode);
-      setElasticUrl(String(form.elasticUrl || "").trim());
-      setElasticSize(Math.max(1, Number(form.elasticSize || 1000)));
-      setElasticUser(String(form.elasticUser || "").trim());
-      if (form.elasticPassClear) setElasticHasPass(false);
-      else if (newPass) setElasticHasPass(true);
-
-      // Update auto-updater with new allowPrerelease setting
-      try {
-        await typedAutoUpdaterSetAllowPrerelease(form.allowPrerelease);
-      } catch (e) {
-        logger.warn("Failed to update auto-updater allowPrerelease:", e);
-      }
-
-      setShowSettings(false);
-
-      // Check if heap size changed and ask for restart
-      const newHeapSize = Math.max(
-        512,
-        Math.min(8192, Number(form.heapSizeMB || 4096)),
-      );
-      if (newHeapSize !== originalHeapSizeMB) {
-        // Use setTimeout to allow the modal to close first
-        setTimeout(() => {
-          void (async () => {
-            const shouldRestart = await nativeConfirm(
-              t("settings.performance.restartRequired"),
-            );
-            if (shouldRestart) {
-              void typedAppRelaunch();
-            }
-          })();
-        }, 100);
-      }
-    } catch (e) {
-      logger.error("Failed to save settings:", e);
-      showAlert(
-        t("errors.saveFailed", {
-          message: e instanceof Error ? e.message : String(e),
-        }),
-      );
-    }
-  }
 
   // Refs to access current values without triggering useEffect re-runs
   const httpPollIdRef = useRef<number | null>(httpPollId);
@@ -2361,238 +2010,38 @@ export default function App(): JSX.Element {
     // HTTP/TCP Status wird NICHT zurückgesetzt, da Verbindungen noch aktiv sein können
   }
 
-  /**
-   * Export the current filtered view as HTML with colors
-   */
-  async function exportCurrentView() {
-    // Use refs to get current values (avoid stale closures from menu handlers)
-    const currentFilteredIdx = filteredIdxRef.current;
-    const currentEntries = entriesRef.current;
-    // Auch marksMap muss über Ref gelesen werden – der App-Menu-Handler
-    // (typedOnMenu) wird einmalig mit []-Deps registriert und würde sonst
-    // permanent das initiale `{}` sehen → markColor wäre beim Export `null`.
-    const currentMarksMap = marksMapRef.current;
-
-    if (currentFilteredIdx.length === 0) {
+  const exportCurrentView = useStableCallback(async () => {
+    if (filteredIdxRef.current.length === 0) {
       showAlert(t("errors.exportNoEntries"));
       return;
     }
 
     try {
-      // First, show save dialog to let user choose format and path
-      const pathResult = await typedChooseExportPath();
-      if (!pathResult.ok || !pathResult.filePath) {
-        // User canceled or error
-        if (pathResult.error && pathResult.error !== "canceled") {
-          showAlert(t("errors.exportFailed", { message: pathResult.error }));
-        }
-        return;
-      }
-
-      const format = pathResult.format || "ndjson";
-      const exportEntries: any[] = [];
-      for (let start = 0; start < currentFilteredIdx.length; start += 256) {
-        const ids = currentFilteredIdx.slice(start, start + 256);
-        const page = await repository.getPayloads(ids);
-        for (const id of ids) {
-          const entry = page.get(id);
-          if (entry) exportEntries.push(entry);
-        }
-      }
-      const exportEntriesHydrated = exportEntries;
-
-      let content: string;
-
-      if (format === "json") {
-        // JSON export - include mark color explicitly
-        const jsonEntries = exportEntriesHydrated.map((e) => ({
-          timestamp: e?.timestamp,
-          level: e?.level,
-          logger: e?.logger,
-          thread: e?.thread,
-          message: e?.message,
-          source: e?.source,
-          traceId: e?.traceId,
-          spanId: e?.spanId,
-          stackTrace: e?.stackTrace,
-          mdc: e?.mdc,
-          // #2: Mark-Farbe primär aus marksMap (Single-Source-of-Truth).
-          markColor:
-            (e ? currentMarksMap[entrySignature(e)] : undefined) ||
-            e?._mark ||
-            null,
-        }));
-        content = JSON.stringify(jsonEntries, null, 2);
-      } else if (format === "txt") {
-        // Plain text export
-        const lines = exportEntries.map((e) => {
-          const ts = fmtTimestamp(e?.timestamp);
-          const lvl = String(e?.level || "").padEnd(5);
-          const loggerVal = String(e?.logger || "");
-          const msg = String(e?.message || "");
-          return `${ts} [${lvl}] ${loggerVal} - ${msg}`;
-        });
-        content = lines.join("\n");
-      } else if (format === "ndjson" || format === "csv" || format === "md") {
-        // Strukturierte Formate über exportFormats-Utilities. Mark-Farbe muss
-        // dafür auf jedem Eintrag als `_mark` anliegen – wir injizieren sie
-        // aus marksMap (Single-Source-of-Truth), damit auch in der aktuellen
-        // Session manuell gesetzte Marks (die nicht mehr direkt in `e._mark`
-        // landen) korrekt exportiert werden.
-        const enriched = exportEntriesHydrated.map((e) => {
-          const mark = e
-            ? currentMarksMap[entrySignature(e)] ||
-              (e._mark as string | undefined)
-            : undefined;
-          return mark ? { ...e, _mark: mark } : e;
-        });
-        if (format === "ndjson") {
-          content = exportToNdjson(enriched);
-        } else if (format === "csv") {
-          content = exportToCsv(enriched);
-        } else {
-          content = exportToMarkdown(enriched, {
-            exportedAt: new Date().toISOString(),
-            total: currentEntries.length,
-          });
-        }
-      } else {
-        // HTML export with styling
-        const cssVars = getComputedStyle(document.documentElement);
-        const bgColor =
-          cssVars.getPropertyValue("--color-bg-default").trim() || "#f5f5f7";
-        const textColor =
-          cssVars.getPropertyValue("--color-text-primary").trim() || "#1d1d1f";
-        const bgPaper =
-          cssVars.getPropertyValue("--color-bg-paper").trim() || "#ffffff";
-
-        const levelColors: Record<string, string> = {
-          TRACE:
-            cssVars.getPropertyValue("--color-level-trace").trim() || "#8b5cf6",
-          DEBUG:
-            cssVars.getPropertyValue("--color-level-debug").trim() || "#06b6d4",
-          INFO:
-            cssVars.getPropertyValue("--color-level-info").trim() || "#10b981",
-          WARN:
-            cssVars.getPropertyValue("--color-level-warn").trim() || "#f59e0b",
-          WARNING:
-            cssVars.getPropertyValue("--color-level-warn").trim() || "#f59e0b",
-          ERROR:
-            cssVars.getPropertyValue("--color-level-error").trim() || "#ef4444",
-          FATAL:
-            cssVars.getPropertyValue("--color-level-fatal").trim() || "#dc2626",
-        };
-
-        const rows = exportEntries.map((e) => {
-          const ts = fmtTimestamp(e?.timestamp);
-          const lvl = String(e?.level || "").toUpperCase();
-          const loggerName = String(e?.logger || "");
-          const msg = String(e?.message || "")
-            .replace(/&/g, "&amp;")
-            .replace(/</g, "&lt;")
-            .replace(/>/g, "&gt;");
-          const markColor =
-            (e ? currentMarksMap[entrySignature(e)] : undefined) ||
-            (e?._mark as string | undefined);
-          const levelColor = levelColors[lvl] || textColor;
-
-          const rowStyle = markColor
-            ? `border-left: 4px solid ${markColor}; background: ${markColor}22;`
-            : "border-left: 4px solid transparent;";
-
-          return `<tr style="${rowStyle}">
-            <td style="white-space: nowrap; padding: 4px 8px;">${ts}</td>
-            <td style="padding: 4px 8px; text-align: center;"><span style="color: ${levelColor}; font-weight: 600;">${lvl}</span></td>
-            <td style="padding: 4px 8px; color: #666;">${loggerName}</td>
-            <td style="padding: 4px 8px; font-family: monospace; white-space: pre-wrap; word-break: break-word;">${msg}</td>
-          </tr>`;
-        });
-
-        content = `<!DOCTYPE html>
-<html lang="${locale}">
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Lumberjack Export - ${new Date().toLocaleString()}</title>
-  <style>
-    * { box-sizing: border-box; }
-    body {
-      font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", Roboto, sans-serif;
-      background: ${bgColor};
-      color: ${textColor};
-      margin: 0;
-      padding: 20px;
-    }
-    h1 { margin-bottom: 10px; }
-    .meta { color: #666; margin-bottom: 20px; font-size: 14px; }
-    table {
-      width: 100%;
-      border-collapse: collapse;
-      background: ${bgPaper};
-      border-radius: 8px;
-      overflow: hidden;
-      box-shadow: 0 1px 4px rgba(0,0,0,0.06);
-    }
-    th {
-      background: ${bgColor};
-      padding: 12px 8px;
-      text-align: left;
-      font-weight: 600;
-      border-bottom: 1px solid #ddd;
-    }
-    tr:hover { background: rgba(0,0,0,0.02); }
-    td { border-bottom: 1px solid #eee; vertical-align: top; }
-    .level-trace { color: ${levelColors.TRACE}; }
-    .level-debug { color: ${levelColors.DEBUG}; }
-    .level-info { color: ${levelColors.INFO}; }
-    .level-warn { color: ${levelColors.WARN}; }
-    .level-error { color: ${levelColors.ERROR}; }
-    .level-fatal { color: ${levelColors.FATAL}; }
-    @media print {
-      body { background: white; padding: 10px; }
-      table { box-shadow: none; }
-    }
-  </style>
-</head>
-<body>
-  <h1> Lumberjack Log Export</h1>
-  <div class="meta">
-    ${t("export.exported")}: ${new Date().toLocaleString()}<br>
-    ${t("export.entries")}: ${exportEntries.length} (${t("export.filteredOf", { total: String(currentEntries.length) })})
-  </div>
-  <table>
-    <thead>
-      <tr>
-        <th style="width: 180px;">${t("list.header.timestamp")}</th>
-        <th style="width: 80px; text-align: center;">${t("list.header.level")}</th>
-        <th style="width: 200px;">${t("list.header.logger")}</th>
-        <th>${t("list.header.message")}</th>
-      </tr>
-    </thead>
-    <tbody>
-      ${rows.join("\n")}
-    </tbody>
-  </table>
-</body>
-</html>`;
-      }
-
-      // Save the file
-      const result = await typedSaveExportFile(pathResult.filePath, content);
-      if (!result.ok) {
-        showAlert(t("errors.exportFailed", { message: result.error || "" }));
-      } else {
-        // Non-blocking success feedback
-        const fileName =
-          pathResult.filePath.split(/[\\/]/).pop() || pathResult.filePath;
-        toaster.success(
-          t("export.success", {
-            count: String(exportEntries.length),
-            file: fileName,
-          }) ||
-            `Export erfolgreich: ${exportEntries.length} Einträge → ${fileName}`,
-        );
-      }
+      const result = await streamCurrentView({
+        ids: filteredIdxRef.current,
+        marks: marksMapRef.current,
+        total: entriesRef.current.length,
+        repository,
+        getDataGeneration,
+        fmtTimestamp: (value) =>
+          fmtTimestamp(
+            typeof value === "string" ||
+              typeof value === "number" ||
+              value instanceof Date
+              ? value
+              : undefined,
+          ),
+        locale,
+        t,
+      });
+      if (result.canceled) return;
+      const fileName = result.filePath.split(/[\\/]/).pop() || result.filePath;
+      toaster.success(
+        t("export.success", {
+          count: String(result.count),
+          file: fileName,
+        }) || `Export erfolgreich: ${result.count} Einträge → ${fileName}`,
+      );
     } catch (err) {
       logger.error("Export failed:", err);
       showAlert(
@@ -2601,7 +2050,7 @@ export default function App(): JSX.Element {
         }),
       );
     }
-  }
+  });
 
   async function httpMenuStopPoll() {
     // Use ref value instead of state value to avoid stale closures
@@ -2740,7 +2189,7 @@ export default function App(): JSX.Element {
     },
 
     // Dialogs
-    onOpenSettings: () => setShowSettings(true),
+    onOpenSettings: () => void openSettingsModal(),
     onOpenElastic: () => openTimeFilterDialog(),
     onOpenHelp: () => setShowHelpDlg(true),
     onOpenAlerts: () => setShowAlertsDialog(true),
@@ -3094,7 +2543,7 @@ export default function App(): JSX.Element {
           onCanTcpControlWindowChange={setCanTcpControlWindow}
           onLocaleChange={setLocale}
           onSave={saveSettingsModal}
-          onClose={() => setShowSettings(false)}
+          onClose={closeSettingsModal}
           applyThemeMode={applyThemeMode}
         />
       </Suspense>

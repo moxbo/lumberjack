@@ -28,6 +28,7 @@ import { clearRegexCache } from "../utils/highlight";
 import logger from "../utils/logger";
 import { IPC_BATCH_SIZE } from "../constants";
 import type { ProjectionBridge } from "../workers/projectionBridge";
+import { MetadataStore } from "../utils/metadataSnapshot";
 
 interface UseEntryManagementOptions {
   marksMap: Record<string, string>;
@@ -53,43 +54,6 @@ export interface PagedEntryMetadata {
   mdc?: Record<string, unknown> | null;
 }
 
-export function mergeSortedMetadata(
-  previous: PagedEntryMetadata[],
-  incoming: PagedEntryMetadata[],
-): PagedEntryMetadata[] {
-  if (previous.length === 0) return incoming;
-  if (incoming.length === 0) return previous;
-  if (compareByTimestampId(previous[previous.length - 1]!, incoming[0]!) <= 0) {
-    for (const entry of incoming) previous.push(entry);
-    return previous;
-  }
-  const result = new Array<PagedEntryMetadata>(
-    previous.length + incoming.length,
-  );
-  let previousIndex = 0;
-  let incomingIndex = 0;
-  let outputIndex = 0;
-  while (previousIndex < previous.length && incomingIndex < incoming.length) {
-    if (
-      compareByTimestampId(
-        previous[previousIndex]!,
-        incoming[incomingIndex]!,
-      ) <= 0
-    ) {
-      result[outputIndex++] = previous[previousIndex++]!;
-    } else {
-      result[outputIndex++] = incoming[incomingIndex++]!;
-    }
-  }
-  while (previousIndex < previous.length) {
-    result[outputIndex++] = previous[previousIndex++]!;
-  }
-  while (incomingIndex < incoming.length) {
-    result[outputIndex++] = incoming[incomingIndex++]!;
-  }
-  return result;
-}
-
 export function getMetadataPublishDelay(entryCount: number): number {
   if (entryCount >= 500_000) return 250;
   if (entryCount >= 100_000) return 100;
@@ -100,7 +64,10 @@ export function useEntryManagement({
   marksMap,
   projectionBridgeRef: externalBridgeRef,
 }: UseEntryManagementOptions) {
-  const [entries, setMetadataEntries] = useState<PagedEntryMetadata[]>([]);
+  const metadataStoreRef = useRef(new MetadataStore());
+  const [entries, setMetadataEntries] = useState(() =>
+    metadataStoreRef.current.publish(),
+  );
   const [storageError, setStorageError] = useState<Error | null>(null);
   const initialUsesPagedStorage = pagedLogRepository.isAvailable();
   const [usesPagedStorage, setUsesPagedStorage] = useState(
@@ -114,7 +81,6 @@ export function useEntryManagement({
   );
   const projectionBridgeRef = externalBridgeRef ?? { current: null };
   const metadataByIdRef = useRef<Array<PagedEntryMetadata | undefined>>([]);
-  const sortedMetadataRef = useRef<PagedEntryMetadata[]>([]);
   const publishedMetadataCountRef = useRef(0);
   const metadataPublishTimerRef = useRef<ReturnType<typeof setTimeout> | null>(
     null,
@@ -144,14 +110,14 @@ export function useEntryManagement({
       clearTimeout(metadataPublishTimerRef.current);
       metadataPublishTimerRef.current = null;
     }
-    const snapshot = sortedMetadataRef.current.slice();
+    const snapshot = metadataStoreRef.current.publish();
     publishedMetadataCountRef.current = snapshot.length;
     setMetadataEntries(snapshot);
   }, []);
 
   const scheduleMetadataPublish = useCallback((): void => {
     const unpublishedCount =
-      sortedMetadataRef.current.length - publishedMetadataCountRef.current;
+      metadataStoreRef.current.length - publishedMetadataCountRef.current;
     if (publishedMetadataCountRef.current === 0 || unpublishedCount >= 20_000) {
       publishMetadata();
       return;
@@ -159,7 +125,7 @@ export function useEntryManagement({
     if (metadataPublishTimerRef.current === null) {
       metadataPublishTimerRef.current = setTimeout(
         publishMetadata,
-        getMetadataPublishDelay(sortedMetadataRef.current.length),
+        getMetadataPublishDelay(metadataStoreRef.current.length),
       );
     }
   }, [publishMetadata]);
@@ -263,24 +229,26 @@ export function useEntryManagement({
           );
         }
 
+        if (generation !== generationRef.current) return;
         repositoryRef.current = fallback;
         repository = fallback;
         usesPagedStorageRef.current = false;
         setUsesPagedStorage(false);
-        const enrichedEntries = sortedMetadataRef.current.map((item) => {
-          const payload = recoveredEntries.get(item._id);
-          const enriched: PagedEntryMetadata = {
-            ...item,
-            thread: payload?.thread ?? null,
-            message: payload?.message ?? "",
-            mdc: payload?.mdc ?? null,
-          };
-          metadataByIdRef.current[item._id] = enriched;
-          return enriched;
-        });
-        sortedMetadataRef.current = enrichedEntries;
-        publishedMetadataCountRef.current = enrichedEntries.length;
-        setMetadataEntries(enrichedEntries);
+        const enrichedEntries = metadataStoreRef.current
+          .publish()
+          .map((item) => {
+            const payload = recoveredEntries.get(item._id);
+            const enriched: PagedEntryMetadata = {
+              ...item,
+              thread: payload?.thread ?? null,
+              message: payload?.message ?? "",
+              mdc: payload?.mdc ?? null,
+            };
+            metadataByIdRef.current[item._id] = enriched;
+            return enriched;
+          });
+        metadataStoreRef.current.replace(enrichedEntries);
+        publishMetadata();
         logger.warn(
           "Paged log storage failed; switched to in-memory storage",
           cause,
@@ -321,6 +289,7 @@ export function useEntryManagement({
           existing = await repository.findExistingSignatures(candidates);
         } catch (error) {
           await fallBackToMemory(error);
+          if (generation !== generationRef.current) return 0;
           existing = await repository.findExistingSignatures(candidates);
         }
       }
@@ -365,6 +334,7 @@ export function useEntryManagement({
         ids = await repository.putMany(accepted);
       } catch (error) {
         await fallBackToMemory(error);
+        if (generation !== generationRef.current) return 0;
         ids = await repository.putMany(accepted);
       }
       if (generation !== generationRef.current) return 0;
@@ -419,17 +389,14 @@ export function useEntryManagement({
           }
         }
       }
-      metadata.sort(compareByTimestampId as any);
+      metadata.sort(compareByTimestampId);
 
-      sortedMetadataRef.current = mergeSortedMetadata(
-        sortedMetadataRef.current,
-        metadata,
-      );
+      metadataStoreRef.current.appendSorted(metadata);
       scheduleMetadataPublish();
       setStorageError(null);
       return metadata.length;
     },
-    [scheduleMetadataPublish],
+    [publishMetadata, scheduleMetadataPublish],
   );
 
   const drainQueue = useCallback(async (): Promise<void> => {
@@ -519,14 +486,14 @@ export function useEntryManagement({
       );
     }
     metadataByIdRef.current = [];
-    sortedMetadataRef.current = [];
+    metadataStoreRef.current.clear();
     publishedMetadataCountRef.current = 0;
     if (metadataPublishTimerRef.current !== null) {
       clearTimeout(metadataPublishTimerRef.current);
       metadataPublishTimerRef.current = null;
     }
     idsBySignatureRef.current.clear();
-    setMetadataEntries([]);
+    setMetadataEntries(metadataStoreRef.current.publish());
     clearHighlightCache();
     clearTimestampCache();
     clearTimestampParseCache();
@@ -554,6 +521,7 @@ export function useEntryManagement({
     (id: number) => metadataByIdRef.current[id],
     [],
   );
+  const getDataGeneration = useCallback(() => generationRef.current, []);
   const getIdsBySignature = useCallback(
     (signature: string): number | readonly number[] | undefined =>
       idsBySignatureRef.current.get(signature),
@@ -563,6 +531,7 @@ export function useEntryManagement({
   return {
     entries,
     entryGeneration: generationRef.current,
+    getDataGeneration,
     appendEntries,
     appendEntriesAsync,
     clearEntries,

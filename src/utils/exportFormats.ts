@@ -1,11 +1,15 @@
 /**
  * Export formatters for log entries.
- * Pure functions: take entries + options, return string content.
- *
- * The HTML formatter remains in App.tsx (needs CSS-Variable access via DOM);
- * everything else lives here so it can be unit-tested in isolation.
+ * Pure formatters and incremental serialization. Streaming retains at most one
+ * serialized entry; legacy string-returning helpers remain for small callers.
  */
-import type { LogEntry } from "../types/ipc";
+import type { ExportFormat, LogEntry } from "../types/ipc";
+import {
+  htmlFooter,
+  htmlHeader,
+  htmlRow,
+  type HtmlExportOptions,
+} from "./htmlExport";
 
 export interface ExportEntry extends Partial<LogEntry> {
   _mark?: string;
@@ -42,8 +46,8 @@ function mdCell(v: unknown): string {
   return s.replace(/\|/g, "\\|").replace(/\r?\n/g, " ⏎ ");
 }
 
-export function exportToJson(entries: ExportEntry[]): string {
-  const out = entries.map((e) => ({
+function jsonEntry(e: ExportEntry) {
+  return {
     timestamp: e?.timestamp,
     level: e?.level,
     logger: e?.logger,
@@ -55,62 +59,50 @@ export function exportToJson(entries: ExportEntry[]): string {
     stackTrace: e?.stackTrace,
     mdc: e?.mdc,
     markColor: e?._mark || null,
-  }));
-  return JSON.stringify(out, null, 2);
+  };
+}
+
+export function exportToJson(entries: ExportEntry[]): string {
+  return JSON.stringify(entries.map(jsonEntry), null, 2);
 }
 
 /** Newline-delimited JSON: one entry per line, streamable. */
 export function exportToNdjson(entries: ExportEntry[]): string {
-  return entries
-    .map((e) =>
-      JSON.stringify({
-        timestamp: e?.timestamp,
-        level: e?.level,
-        logger: e?.logger,
-        thread: e?.thread,
-        message: e?.message,
-        source: e?.source,
-        traceId: e?.traceId,
-        spanId: e?.spanId,
-        stackTrace: e?.stackTrace,
-        mdc: e?.mdc,
-        markColor: e?._mark || null,
-      }),
-    )
-    .join("\n");
+  return entries.map((e) => JSON.stringify(jsonEntry(e))).join("\n");
 }
 
-export function exportToCsv(entries: ExportEntry[]): string {
-  const header = [
-    "timestamp",
-    "level",
-    "logger",
-    "thread",
-    "message",
-    "source",
-    "traceId",
-    "spanId",
-    "markColor",
+const CSV_HEADER = [
+  "timestamp",
+  "level",
+  "logger",
+  "thread",
+  "message",
+  "source",
+  "traceId",
+  "spanId",
+  "markColor",
+]
+  .map(csvField)
+  .join(",");
+function csvRow(e: ExportEntry): string {
+  return [
+    fmtTs(e?.timestamp),
+    e?.level ?? "",
+    e?.logger ?? "",
+    e?.thread ?? "",
+    e?.message ?? "",
+    e?.source ?? "",
+    e?.traceId ?? "",
+    e?.spanId ?? "",
+    e?._mark ?? "",
   ]
     .map(csvField)
     .join(",");
-  const lines = entries.map((e) =>
-    [
-      fmtTs(e?.timestamp),
-      e?.level ?? "",
-      e?.logger ?? "",
-      e?.thread ?? "",
-      e?.message ?? "",
-      e?.source ?? "",
-      e?.traceId ?? "",
-      e?.spanId ?? "",
-      e?._mark ?? "",
-    ]
-      .map(csvField)
-      .join(","),
-  );
+}
+
+export function exportToCsv(entries: ExportEntry[]): string {
   // Prepend BOM so Excel detects UTF-8 reliably.
-  return "\uFEFF" + header + "\n" + lines.join("\n");
+  return "\uFEFF" + CSV_HEADER + "\n" + entries.map(csvRow).join("\n");
 }
 
 export function exportToMarkdown(
@@ -149,4 +141,61 @@ export function exportToTxt(
       return `${ts} [${lvl}] ${loggerVal} - ${msg}`;
     })
     .join("\n");
+}
+
+export interface StreamExportOptions {
+  count: number;
+  total?: number;
+  exportedAt?: string;
+  fmtTimestamp: (value: unknown) => string;
+  html?: HtmlExportOptions;
+}
+
+/** No aggregate payload array or output string is constructed by this path. */
+export async function* streamExport(
+  format: ExportFormat,
+  entries: AsyncIterable<ExportEntry> | Iterable<ExportEntry>,
+  options: StreamExportOptions,
+): AsyncGenerator<string> {
+  if (format === "json") yield options.count ? "[\n" : "[]";
+  else if (format === "csv") yield "\uFEFF" + CSV_HEADER + "\n";
+  else if (format === "md") {
+    const header = ["# Lumberjack Log Export", ""];
+    if (options.exportedAt) header.push(`_Exported: ${options.exportedAt}_`);
+    if (options.total != null)
+      header.push(`_Entries: ${options.count} of ${options.total}_`);
+    header.push(
+      "",
+      "| Timestamp | Level | Logger | Message |",
+      "| --- | --- | --- | --- |",
+    );
+    yield header.join("\n");
+  } else if (format === "html") {
+    if (!options.html) throw new Error("HTML export options are required");
+    yield htmlHeader(options.html);
+  } else if (format !== "ndjson" && format !== "txt") {
+    throw new Error(`Unsupported export format: ${String(format)}`);
+  }
+
+  let count = 0;
+  for await (const entry of entries) {
+    if (count >= options.count) throw new Error("Export entry count changed");
+    if (format === "json") {
+      if (count) yield ",\n";
+      yield JSON.stringify(jsonEntry(entry), null, 2).replace(/^/gm, "  ");
+    } else {
+      if (count || format === "md") yield "\n";
+      if (format === "ndjson") yield JSON.stringify(jsonEntry(entry));
+      else if (format === "csv") yield csvRow(entry);
+      else if (format === "txt")
+        yield exportToTxt([entry], options.fmtTimestamp);
+      else if (format === "md") {
+        yield `| ${mdCell(fmtTs(entry.timestamp))} | ${mdCell(entry.level)} | ${mdCell(entry.logger)} | ${mdCell(entry.message)} |`;
+      } else yield htmlRow(entry, options.html!, options.fmtTimestamp);
+    }
+    count++;
+  }
+  if (count !== options.count) throw new Error("Export entry count changed");
+  if (format === "json" && count) yield "\n]";
+  if (format === "html") yield htmlFooter;
 }

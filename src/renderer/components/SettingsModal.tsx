@@ -4,7 +4,10 @@
 import { useEffect, useState } from "preact/hooks";
 import { type Locale, useI18n } from "../../utils/i18n";
 import logger from "../../utils/logger";
-import type { SettingsForm, SettingsTab } from "../../hooks";
+import type {
+  SettingsFormState as SettingsForm,
+  SettingsTab,
+} from "../../types/renderer";
 import { useFeatureFlags } from "../../hooks";
 import { FeatureFlagsPanel } from "./FeatureFlagsPanel";
 import type { JSX } from "preact";
@@ -967,7 +970,7 @@ export function SettingsModal({
                     <select
                       id="heapSizeMB"
                       className="settings-select"
-                      value={String(form.heapSizeMB || 2048)}
+                      value={String(form.heapSizeMB || 4096)}
                       onChange={(e) => {
                         const newValue = parseInt(e.currentTarget.value, 10);
                         onFormChange({
@@ -978,10 +981,10 @@ export function SettingsModal({
                     >
                       <option value="512">512 MB</option>
                       <option value="1024">1 GB</option>
-                      <option value="2048">
-                        2 GB ({t("settings.performance.default")})
+                      <option value="2048">2 GB</option>
+                      <option value="4096">
+                        4 GB ({t("settings.performance.default")})
                       </option>
-                      <option value="4096">4 GB</option>
                       <option value="8192">8 GB</option>
                     </select>
                   </div>

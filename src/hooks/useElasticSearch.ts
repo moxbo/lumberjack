@@ -13,7 +13,8 @@
  * dedupe caches and LoggingStore) stay in App via the `onReplaceReset`
  * callback, so this hook does not need to own entry-management internals.
  */
-import { useState, useMemo, useRef } from "preact/hooks";
+import { useState, useRef } from "preact/hooks";
+import type { MetadataSnapshot } from "../utils/metadataSnapshot";
 import logger from "../utils/logger";
 import type { ElasticSearchOptions } from "../types/ipc";
 import type { ElasticFormState } from "../types/renderer";
@@ -30,7 +31,7 @@ import {
 } from "../utils/elasticSearchEngine";
 
 export interface UseElasticSearchOptions {
-  entries: any[];
+  entries: MetadataSnapshot;
   appendEntries: (
     entries: any[],
     options?: { ignoreExistingForElastic?: boolean },
@@ -74,14 +75,7 @@ export function useElasticSearch({
   const [esBusy, setEsBusy] = useState<boolean>(false);
   const esLoadMoreRunningRef = useRef(false);
 
-  const esElasticCountAll = useMemo(() => {
-    let cnt = 0;
-    for (const e of entries) {
-      const src = e?.source;
-      if (typeof src === "string" && src.startsWith("elastic://")) cnt++;
-    }
-    return cnt;
-  }, [entries]);
+  const esElasticCountAll = entries.elasticCount;
 
   const esLoaded = esLoadedCount;
   const esTarget = Math.max(1, Number(elasticSize || 0));

@@ -3,9 +3,10 @@
  */
 import { useCallback, useEffect } from "preact/hooks";
 import logger from "../utils/logger";
+import type { ReadonlySequence } from "../utils/metadataSnapshot";
 
 interface UseKeyboardNavigationOptions {
-  filteredIdx: number[];
+  filteredIdx: ReadonlySequence<number>;
   searchMatchIdx: number[];
   markedIdx: number[];
   selectedOneIdx: number | null;
@@ -72,7 +73,7 @@ export function useKeyboardNavigation({
         }
       }
 
-      const globalIdx: number = filteredIdx[targetVi!]!;
+      const globalIdx: number = filteredIdx.at(targetVi!)!;
       setSelected(() => new Set([globalIdx]));
       lastClicked.current = globalIdx;
       scrollToIndexCenter(targetVi!);
@@ -112,7 +113,7 @@ export function useKeyboardNavigation({
         }
       }
 
-      const globalIdx: number = filteredIdx[targetVi!]!;
+      const globalIdx: number = filteredIdx.at(targetVi!)!;
       setSelected(() => new Set([globalIdx]));
       lastClicked.current = globalIdx;
       scrollToIndexCenter(targetVi!);

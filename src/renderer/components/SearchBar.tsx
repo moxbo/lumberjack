@@ -10,6 +10,7 @@ import { useEffect, useRef, useState } from "preact/hooks";
 import type { RefObject } from "preact";
 import type { JSX } from "preact/jsx-runtime";
 import { useI18n } from "../../utils/i18n";
+import type { ReadonlySequence } from "../../utils/metadataSnapshot";
 
 export interface SearchBarProps {
   search: string;
@@ -40,7 +41,7 @@ export interface SearchBarProps {
   // Search match navigation
   searchMatchIdx: number[];
   selectedOneIdx: number | null;
-  filteredIdx: number[];
+  filteredIdx: ReadonlySequence<number>;
   gotoSearchMatch: (dir: number) => void;
   // i18n
   t: (key: string, params?: Record<string, string>) => string;
