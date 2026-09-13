@@ -51,7 +51,7 @@ export default defineConfig({
   },
   build: {
     // Optimize build for faster startup
-    minify: "esbuild",
+    minify: "oxc",
     target: "esnext",
     // Reduce chunk warnings
     chunkSizeWarningLimit: 1000,
@@ -69,7 +69,7 @@ export default defineConfig({
     //   wird. Mess-Ergebnis: 312 KB → 215 KB initial JS (-31 %).
     //   Lazy-Chunks werden bei tatsächlichem Bedarf in <1 ms nachgeladen.
     modulePreload: false,
-    rollupOptions: {
+    rolldownOptions: {
       // electron-log und adm-zip sind ausschließlich Main-Process-Module.
       // Schützt davor, dass sie versehentlich ins Renderer-Bundle landen,
       // falls jemand sie importiert (würde sonst Node-Internals ziehen).

@@ -4,7 +4,7 @@ A fast, lightweight Electron-based log viewer with powerful filtering capabiliti
 
 [![Version](https://img.shields.io/github/v/release/moxbo/lumberjack)](https://github.com/moxbo/lumberjack/releases/latest)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
-[![Electron](https://img.shields.io/badge/electron-41.x-brightgreen.svg)](https://electronjs.org)
+[![Electron](https://img.shields.io/badge/electron-44.x-brightgreen.svg)](https://electronjs.org)
 [![CI](https://github.com/moxbo/lumberjack/actions/workflows/ci.yml/badge.svg)](https://github.com/moxbo/lumberjack/actions/workflows/ci.yml)
 [![codecov](https://codecov.io/gh/moxbo/lumberjack/branch/main/graph/badge.svg)](https://codecov.io/gh/moxbo/lumberjack)
 [![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](CONTRIBUTING.md)
@@ -425,4 +425,3 @@ Quick guide:
 ## 🔒 Security
 
 Found a security vulnerability? See [SECURITY.md](SECURITY.md).
-
