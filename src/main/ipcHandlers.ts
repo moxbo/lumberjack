@@ -292,6 +292,14 @@ export async function streamPathsWithBackpressure({
   }
 }
 
+export function isJsonArrayLinePayload(lines: readonly string[]): boolean {
+  for (const line of lines) {
+    const content = line.trimStart();
+    if (content.length > 0) return content.startsWith("[");
+  }
+  return false;
+}
+
 export function registerIpcHandlers(
   settingsService: SettingsService,
   networkService: NetworkService,
@@ -307,7 +315,7 @@ export function registerIpcHandlers(
   enqueueWatchEntries?: (
     entries: LogEntry[],
     senderWebContentsId: number,
-  ) => void,
+  ) => void | Promise<void>,
 ): void {
   const sharedApi = getSharedMainApi();
   const streamSessions = new Map<
@@ -1747,7 +1755,14 @@ export function registerIpcHandlers(
                 const data = lines.join("\n");
                 const entries = parseTextLines(fileName, data);
                 if (entries.length > 0 && enqueueWatchEntries) {
-                  enqueueWatchEntries(entries, senderId);
+                  void Promise.resolve(
+                    enqueueWatchEntries(entries, senderId),
+                  ).catch((error) => {
+                    log.warn(
+                      "[watch] append failed:",
+                      error instanceof Error ? error.message : String(error),
+                    );
+                  });
                 }
                 emitWatchStatus(senderId, {
                   type: "lines",
@@ -1838,13 +1853,25 @@ export function registerIpcHandlers(
   function emitHttpTailStatus(
     senderId: number,
     payload: {
-      type: "started" | "stopped" | "rotated" | "error" | "lines" | "progress";
+      type:
+        | "started"
+        | "stopped"
+        | "rotated"
+        | "error"
+        | "lines"
+        | "progress"
+        | "paused"
+        | "resumed"
+        | "scheduled";
       id: number;
       url: string;
       lineCount?: number;
       offset?: number;
       total?: number;
       message?: string;
+      paused?: boolean;
+      nextPollAt?: number;
+      intervalMs?: number;
     },
   ): void {
     for (const win of BrowserWindow.getAllWindows()) {
@@ -1898,16 +1925,13 @@ export function registerIpcHandlers(
             onLines: async (lines: string[]) => {
               if (lines.length === 0) return;
               try {
-                const data = lines.join("\n");
-                // Decide JSON vs text once on the whole chunk.
-                const trimmed = data.trim();
                 // Only a single JSON *array* must be parsed as one unit – it
                 // cannot be split by lines. NDJSON (one JSON object per line,
                 // starts with "{") is handled by parseTextLines, which tries
                 // JSON per line, so it can be chunked exactly like plain text
                 // and must NOT take the single-parse path (that would block the
                 // main process and freeze the app on large initial loads).
-                const isJsonArray = trimmed.startsWith("[");
+                const isJsonArray = isJsonArrayLinePayload(lines);
 
                 if (
                   isJsonArray ||
@@ -1915,11 +1939,12 @@ export function registerIpcHandlers(
                 ) {
                   // Small chunk (normal tailing tick) or a JSON array document
                   // that must be parsed as a single unit.
+                  const data = lines.join("\n");
                   const entries = isJsonArray
                     ? parseJsonFile(source, data)
                     : parseTextLines(source, data);
                   if (entries.length > 0 && enqueueWatchEntries) {
-                    enqueueWatchEntries(entries, senderId);
+                    await enqueueWatchEntries(entries, senderId);
                   }
                 } else {
                   // Large initial payload ("load existing content first") of
@@ -1947,7 +1972,7 @@ export function registerIpcHandlers(
                     );
                     const part = parseTextLines(source, slice.join("\n"));
                     if (part.length > 0 && enqueueWatchEntries) {
-                      enqueueWatchEntries(part, senderId);
+                      await enqueueWatchEntries(part, senderId);
                     }
                     // Report incremental progress so the UI status reflects the
                     // streaming load rather than a single end-of-parse jump.
@@ -1957,8 +1982,12 @@ export function registerIpcHandlers(
                       url: args.url,
                       lineCount: slice.length,
                     });
-                    // Yield between chunks (but not after the last one).
-                    if (i + HTTP_TAIL_PARSE_CHUNK_LINES < lines.length) {
+                    // An acknowledged renderer write already yields naturally.
+                    // Keep the explicit yield only when no append sink exists.
+                    if (
+                      !enqueueWatchEntries &&
+                      i + HTTP_TAIL_PARSE_CHUNK_LINES < lines.length
+                    ) {
                       await yieldToEventLoop();
                     }
                   }
@@ -1975,6 +2004,7 @@ export function registerIpcHandlers(
                   "[httpTail] parse failed:",
                   e instanceof Error ? e.message : String(e),
                 );
+                throw e;
               }
             },
             onError: (err: Error) => {
@@ -1999,6 +2029,24 @@ export function registerIpcHandlers(
                 url: args.url,
                 offset: p.offset,
                 total: p.total,
+              });
+            },
+            onBackpressure: (state) => {
+              emitHttpTailStatus(senderId, {
+                type: state.paused ? "paused" : "resumed",
+                id: tail.id,
+                url: args.url,
+                paused: state.paused,
+                intervalMs: state.intervalMs,
+              });
+            },
+            onScheduled: (state) => {
+              emitHttpTailStatus(senderId, {
+                type: "scheduled",
+                id: tail.id,
+                url: args.url,
+                nextPollAt: state.nextPollAt,
+                intervalMs: state.intervalMs,
               });
             },
           },

@@ -582,7 +582,9 @@ const noop = (): void => {};
  * Subscribe to log append events.
  * Returns a cleanup function.
  */
-export function onAppend(callback: (entries: LogEntry[]) => void): () => void {
+export function onAppend(
+  callback: (entries: LogEntry[]) => void | Promise<void>,
+): () => void {
   if (!window.api?.onAppend) return noop;
   try {
     return window.api.onAppend(callback);

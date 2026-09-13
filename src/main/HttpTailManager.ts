@@ -42,6 +42,10 @@ export interface HttpTailCallbacks {
    * Useful for status indicators in the UI.
    */
   onProgress?: (info: { offset: number; total?: number }) => void;
+  /** Called when slow downstream persistence pauses/resumes HTTP fetching. */
+  onBackpressure?: (info: { paused: boolean; intervalMs: number }) => void;
+  /** Called whenever the next regular poll has been scheduled. */
+  onScheduled?: (info: { nextPollAt: number; intervalMs: number }) => void;
 }
 
 export interface HttpTailOptions {
@@ -81,6 +85,8 @@ interface TailState {
   timeoutMs: number;
   fetchImpl: typeof fetch;
   callbacks: HttpTailCallbacks;
+  paused: boolean;
+  nextPollAt: number | null;
 }
 
 /**
@@ -104,11 +110,21 @@ export class HttpTailManager {
   private nextId = 1;
   private tails = new Map<number, TailState>();
 
-  list(): Array<{ id: number; url: string; offset: number }> {
+  list(): Array<{
+    id: number;
+    url: string;
+    offset: number;
+    paused: boolean;
+    nextPollAt: number | null;
+    intervalMs: number;
+  }> {
     return [...this.tails.values()].map((t) => ({
       id: t.id,
       url: t.url,
       offset: t.offset,
+      paused: t.paused,
+      nextPollAt: t.nextPollAt,
+      intervalMs: t.intervalMs,
     }));
   }
 
@@ -163,6 +179,8 @@ export class HttpTailManager {
       timeoutMs: options.timeoutMs ?? 15_000,
       fetchImpl: options.fetchImpl ?? globalThis.fetch,
       callbacks,
+      paused: false,
+      nextPollAt: null,
     };
     this.tails.set(id, state);
 
@@ -211,7 +229,13 @@ export class HttpTailManager {
 
   private scheduleNext(state: TailState): void {
     if (state.stopped) return;
+    state.nextPollAt = Date.now() + state.intervalMs;
+    state.callbacks.onScheduled?.({
+      nextPollAt: state.nextPollAt,
+      intervalMs: state.intervalMs,
+    });
     state.timer = setTimeout(() => {
+      state.nextPollAt = null;
       void this.tick(state);
     }, state.intervalMs);
   }
@@ -399,9 +423,36 @@ export class HttpTailManager {
       return;
     }
     const complete = combined.slice(0, lastNl + 1);
+    const previousPartial = state.partial;
     state.partial = combined.slice(lastNl + 1);
     const lines = splitTailLines(complete);
-    if (lines.length > 0) await state.callbacks.onLines(lines);
+    if (lines.length === 0) return;
+    let backpressureVisible = false;
+    const backpressureTimer = setTimeout(() => {
+      if (state.stopped) return;
+      backpressureVisible = true;
+      state.paused = true;
+      state.nextPollAt = null;
+      state.callbacks.onBackpressure?.({
+        paused: true,
+        intervalMs: state.intervalMs,
+      });
+    }, 100);
+    try {
+      await state.callbacks.onLines(lines);
+    } catch (error) {
+      state.partial = previousPartial;
+      throw error;
+    } finally {
+      clearTimeout(backpressureTimer);
+      if (backpressureVisible && !state.stopped) {
+        state.paused = false;
+        state.callbacks.onBackpressure?.({
+          paused: false,
+          intervalMs: state.intervalMs,
+        });
+      }
+    }
   }
 }
 

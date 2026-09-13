@@ -21,6 +21,9 @@ export interface StatusSectionProps {
   httpStatus: string;
   /** Number of currently active HTTP-Tail watchers (0 = hidden). */
   httpTailCount?: number;
+  httpTailPausedCount?: number;
+  httpTailNextPollSeconds?: number | null;
+  httpTailPausedIntervalSeconds?: number;
   nextPollIn: string;
   t: (key: string, params?: Record<string, string>) => string;
 }
@@ -61,12 +64,40 @@ export function getImportProgressLabels(
   return labels;
 }
 
+export function getHttpTailStatusLabels(
+  count: number,
+  pausedCount: number,
+  nextPollSeconds: number | null,
+  pausedIntervalSeconds: number,
+  t: StatusSectionProps["t"],
+): { state: string; next: string } {
+  return {
+    state:
+      pausedCount > 0
+        ? t("status.httpTailPaused", { count: String(pausedCount) })
+        : count > 1
+          ? t("status.httpTailingMulti", { count: String(count) })
+          : t("status.httpTailing"),
+    next:
+      pausedCount > 0
+        ? t("status.httpTailNextAfterResume", {
+            seconds: String(pausedIntervalSeconds),
+          })
+        : t("status.httpTailNextIn", {
+            seconds: String(nextPollSeconds ?? 0),
+          }),
+  };
+}
+
 export function StatusSection({
   busy,
   importProgress,
   tcpStatus,
   httpStatus,
   httpTailCount = 0,
+  httpTailPausedCount = 0,
+  httpTailNextPollSeconds = null,
+  httpTailPausedIntervalSeconds = 0,
   nextPollIn,
   t,
 }: StatusSectionProps): JSX.Element {
@@ -92,6 +123,13 @@ export function StatusSection({
   const progressLabels = importProgress
     ? getImportProgressLabels(importProgress, t)
     : [];
+  const httpTailLabels = getHttpTailStatusLabels(
+    httpTailCount,
+    httpTailPausedCount,
+    httpTailNextPollSeconds,
+    httpTailPausedIntervalSeconds,
+    t,
+  );
 
   return (
     <div
@@ -143,12 +181,18 @@ export function StatusSection({
       )}
       {/* HTTP-Tail Status - show when at least one tail is running */}
       {httpTailCount > 0 && (
-        <span id="httpTailStatus" className="status status-active">
-          <span aria-hidden="true">🟢 </span>
-          {httpTailCount > 1
-            ? t("status.httpTailingMulti", { count: String(httpTailCount) })
-            : t("status.httpTailing")}
+        <span
+          id="httpTailStatus"
+          className={`status ${httpTailPausedCount > 0 ? "status-warning" : "status-active"}`}
+        >
+          <span aria-hidden="true">
+            {httpTailPausedCount > 0 ? "🟡 " : "🟢 "}
+          </span>
+          {httpTailLabels.state}
         </span>
+      )}
+      {httpTailCount > 0 && (
+        <span className="status">{httpTailLabels.next}</span>
       )}
       {nextPollIn && (
         <span className="status" title={t("toolbar.nextPollInTooltip")}>

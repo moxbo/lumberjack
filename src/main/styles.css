@@ -344,6 +344,17 @@ body {
   font-weight: 500;
 }
 
+.toolbar .status-warning {
+  background: linear-gradient(
+    135deg,
+    rgba(245, 158, 11, 0.18),
+    rgba(245, 158, 11, 0.08)
+  );
+  color: var(--color-text-primary);
+  border: 1px solid rgba(245, 158, 11, 0.4);
+  font-weight: 500;
+}
+
 /* Stats/Counts mit Pill-Design - kompakter */
 .toolbar .counts {
   display: inline-flex;

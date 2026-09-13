@@ -159,9 +159,33 @@ const api: ElectronAPI = {
     ipcRenderer.invoke("elastic:closePit", sessionId),
 
   // Event listeners with proper cleanup
-  onAppend: (callback: (entries: LogEntry[]) => void): (() => void) => {
-    const listener = (_event: IpcRendererEvent, entries: LogEntry[]): void => {
-      callback(entries);
+  onAppend: (
+    callback: (entries: LogEntry[]) => void | Promise<void>,
+  ): (() => void) => {
+    const listener = (
+      _event: IpcRendererEvent,
+      payload:
+        | LogEntry[]
+        | {
+            batchId: string;
+            entries: LogEntry[];
+          },
+    ): void => {
+      const entries = Array.isArray(payload) ? payload : payload.entries;
+      const batchId = Array.isArray(payload) ? undefined : payload.batchId;
+      void Promise.resolve(callback(entries)).then(
+        () => {
+          if (batchId) ipcRenderer.send("logs:appendAck", { batchId });
+        },
+        (error) => {
+          if (batchId) {
+            ipcRenderer.send("logs:appendAck", {
+              batchId,
+              error: error instanceof Error ? error.message : String(error),
+            });
+          }
+        },
+      );
     };
     ipcRenderer.on("logs:append", listener);
     // Return cleanup function
@@ -517,7 +541,14 @@ const api: ElectronAPI = {
 
   httpTailList: (): Promise<{
     ok: boolean;
-    tails: Array<{ id: number; url: string; offset: number }>;
+    tails: Array<{
+      id: number;
+      url: string;
+      offset: number;
+      paused: boolean;
+      nextPollAt: number | null;
+      intervalMs: number;
+    }>;
   }> => ipcRenderer.invoke("httpTail:list"),
 
   httpTailGetAuthHeader: (): Promise<{
@@ -528,26 +559,49 @@ const api: ElectronAPI = {
 
   onHttpTailStatus: (
     callback: (payload: {
-      type: "started" | "stopped" | "rotated" | "error" | "lines" | "progress";
+      type:
+        | "started"
+        | "stopped"
+        | "rotated"
+        | "error"
+        | "lines"
+        | "progress"
+        | "paused"
+        | "resumed"
+        | "scheduled";
       id: number;
       url: string;
       lineCount?: number;
       offset?: number;
       total?: number;
       message?: string;
+      paused?: boolean;
+      nextPollAt?: number;
+      intervalMs?: number;
     }) => void,
   ): (() => void) => {
     const listener = (
       _e: IpcRendererEvent,
       payload: {
         type:
-          "started" | "stopped" | "rotated" | "error" | "lines" | "progress";
+          | "started"
+          | "stopped"
+          | "rotated"
+          | "error"
+          | "lines"
+          | "progress"
+          | "paused"
+          | "resumed"
+          | "scheduled";
         id: number;
         url: string;
         lineCount?: number;
         offset?: number;
         total?: number;
         message?: string;
+        paused?: boolean;
+        nextPollAt?: number;
+        intervalMs?: number;
       },
     ): void => {
       callback(payload);

@@ -1951,10 +1951,11 @@ export default function App(): JSX.Element {
               `[renderer-diag] Received IPC logs:append with ${newEntries?.length || 0} entries`,
             );
           }
-          void appendEntriesAsync(newEntries as any[])
+          const persistence = appendEntriesAsync(newEntries as any[])
             .then(() => announceAppend(newEntries as any[]))
             .catch((error) => {
               logger.error("Persisting appended IPC logs failed:", error);
+              throw error;
             });
           // Sprint 5: feed alert evaluator with new entries.
           try {
@@ -1964,6 +1965,7 @@ export default function App(): JSX.Element {
           } catch (e) {
             logger.warn("[alerts] evaluation failed:", e);
           }
+          return persistence;
         });
         offs.push(off);
       }
@@ -3152,6 +3154,9 @@ export default function App(): JSX.Element {
           tcpStatus={tcpStatus}
           httpStatus={httpStatus}
           httpTailCount={httpTail.tails.length}
+          httpTailPausedCount={httpTail.pausedCount}
+          httpTailNextPollSeconds={httpTail.nextPollSeconds}
+          httpTailPausedIntervalSeconds={httpTail.pausedIntervalSeconds}
           nextPollIn={nextPollIn}
           t={t}
         />

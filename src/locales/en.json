@@ -10,6 +10,9 @@
     "httpPollStopped": "Poll stopped",
     "httpTailing": "HTTP tail active",
     "httpTailingMulti": "HTTP tail active ({{count}})",
+    "httpTailPaused": "HTTP tail paused – processing backlog ({{count}})",
+    "httpTailNextIn": "Next tail request in {{seconds}} s",
+    "httpTailNextAfterResume": "Next request after processing + {{seconds}} s",
     "error": "Error: {{message}}",
     "errorUnknown": "unknown",
     "elasticError": "Elastic error: {{message}}"

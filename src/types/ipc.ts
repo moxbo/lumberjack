@@ -424,7 +424,9 @@ export type ElectronAPI = {
   httpGetAllowInsecureSSL: () => Promise<boolean>;
   elasticSearch: (options: ElasticSearchOptions) => Promise<ParseResult>;
   elasticClosePit: (sessionId: string) => Promise<Result<void>>;
-  onAppend: (callback: (entries: LogEntry[]) => void) => () => void;
+  onAppend: (
+    callback: (entries: LogEntry[]) => void | Promise<void>,
+  ) => () => void;
   onStreamChunk: (callback: (chunk: StreamParseChunk) => void) => () => void;
   onStreamComplete: (
     callback: (result: StreamParseComplete) => void,
@@ -546,7 +548,14 @@ export type ElectronAPI = {
   httpTailNotifyActiveCount: (count: number) => void;
   httpTailList: () => Promise<{
     ok: boolean;
-    tails: Array<{ id: number; url: string; offset: number }>;
+    tails: Array<{
+      id: number;
+      url: string;
+      offset: number;
+      paused: boolean;
+      nextPollAt: number | null;
+      intervalMs: number;
+    }>;
   }>;
   /**
    * Return the decrypted HTTP auth header stored in settings so the tail
@@ -559,13 +568,25 @@ export type ElectronAPI = {
   }>;
   onHttpTailStatus: (
     callback: (payload: {
-      type: "started" | "stopped" | "rotated" | "error" | "lines" | "progress";
+      type:
+        | "started"
+        | "stopped"
+        | "rotated"
+        | "error"
+        | "lines"
+        | "progress"
+        | "paused"
+        | "resumed"
+        | "scheduled";
       id: number;
       url: string;
       lineCount?: number;
       offset?: number;
       total?: number;
       message?: string;
+      paused?: boolean;
+      nextPollAt?: number;
+      intervalMs?: number;
     }) => void,
   ) => () => void;
 };

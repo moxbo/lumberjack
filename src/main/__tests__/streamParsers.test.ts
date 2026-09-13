@@ -6,7 +6,10 @@ import {
   parseTextLines,
   streamParseFile,
 } from "../parsers";
-import { streamPathsWithBackpressure } from "../ipcHandlers";
+import {
+  isJsonArrayLinePayload,
+  streamPathsWithBackpressure,
+} from "../ipcHandlers";
 
 const FIXTURE_DIR = path.join(
   process.cwd(),
@@ -44,6 +47,15 @@ async function collectStreamEntries(
 
 afterEach(async () => {
   await fs.promises.rm(FIXTURE_DIR, { recursive: true, force: true });
+});
+
+describe("isJsonArrayLinePayload", () => {
+  it("detects arrays without joining a large line collection", () => {
+    expect(
+      isJsonArrayLinePayload(["", "   [", '{"message":"test"}', "]"]),
+    ).toBe(true);
+    expect(isJsonArrayLinePayload(['{"message":"test"}', ""])).toBe(false);
+  });
 });
 
 describe("streamParseFile", () => {

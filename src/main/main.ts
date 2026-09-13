@@ -17,12 +17,12 @@ import {
 import * as path from "path";
 import * as fs from "fs";
 import { spawn } from "node:child_process";
+import { getHeapStatistics } from "node:v8";
 import log from "electron-log/main";
 import type { LogEntry } from "../types/ipc";
 import { SettingsService } from "../services/SettingsService";
 import { NetworkService } from "../services/NetworkService";
 import { PerformanceService } from "../services/PerformanceService";
-import { AdaptiveBatchService } from "../services/AdaptiveBatchService";
 import { AsyncFileWriter } from "../services/AsyncFileWriter";
 import { HealthMonitor } from "../services/HealthMonitor";
 import { LoggingStrategy, LogLevel } from "../services/LoggingStrategy";
@@ -323,7 +323,6 @@ if (process.platform === "win32") {
 const perfService = new PerformanceService();
 const settingsService = new SettingsService();
 const networkService = new NetworkService();
-const adaptiveBatchService = new AdaptiveBatchService();
 const healthMonitor = new HealthMonitor();
 const loggingStrategy = new LoggingStrategy();
 const featureFlags = new FeatureFlags();
@@ -666,16 +665,16 @@ function startMemoryManagement(): void {
     try {
       const mem = process.memoryUsage();
       const heapUsed = mem.heapUsed;
-      const heapTotal = mem.heapTotal;
-      const heapPercent = heapUsed / heapTotal;
+      const heapLimit = getHeapStatistics().heap_size_limit;
+      const heapPercent = heapLimit > 0 ? heapUsed / heapLimit : 0;
       const heapUsedMB = Math.round(heapUsed / (1024 * 1024));
-      const heapTotalMB = Math.round(heapTotal / (1024 * 1024));
+      const heapLimitMB = Math.round(heapLimit / (1024 * 1024));
 
       // Skip critical warning if heap is still small (V8 starts small and grows on demand)
       // or if absolute usage is low - percentage-based warnings are misleading in these cases
       const shouldWarn =
         heapPercent > MEMORY_CRITICAL_THRESHOLD &&
-        heapTotalMB >= MEMORY_MIN_HEAP_FOR_WARNING_MB &&
+        heapLimitMB >= MEMORY_MIN_HEAP_FOR_WARNING_MB &&
         heapUsedMB >= MEMORY_MIN_USAGE_FOR_WARNING_MB;
 
       // Send critical memory warning to renderer (once per minute max)
@@ -684,7 +683,7 @@ function startMemoryManagement(): void {
         if (now - lastMemoryWarningTime > MEMORY_WARNING_COOLDOWN_MS) {
           lastMemoryWarningTime = now;
           log.warn(
-            `[memory] Critical memory usage: ${heapUsedMB}MB / ${heapTotalMB}MB (${Math.round(heapPercent * 100)}%)`,
+            `[memory] Critical memory usage: ${heapUsedMB}MB / ${heapLimitMB}MB (${Math.round(heapPercent * 100)}%)`,
           );
 
           // Notify all renderer windows about critical memory
@@ -693,7 +692,7 @@ function startMemoryManagement(): void {
               if (!w.isDestroyed() && w.webContents) {
                 w.webContents.send("memory:critical", {
                   heapUsedMB,
-                  heapTotalMB,
+                  heapTotalMB: heapLimitMB,
                   heapPercent: Math.round(heapPercent * 100),
                 });
               }
@@ -755,86 +754,156 @@ function startMemoryManagement(): void {
 
 // truncateEntryForRenderer and prepareRenderBatch are now imported from ./util/logEntryUtils
 
-// [FREEZE FIX] Track batch sends for diagnostics
 const batchSendStats = { total: 0, failed: 0, lastSendTime: 0 };
+
+interface RendererBatchGroup {
+  remaining: number;
+  acknowledgedEntries: number;
+  resolve: () => void;
+  reject: (error: Error) => void;
+  settled: boolean;
+}
+
+interface QueuedRendererBatch {
+  batchId: string;
+  channel: string;
+  entries: LogEntry[];
+  group: RendererBatchGroup;
+}
+
+interface RendererBatchQueue {
+  wc: Electron.WebContents;
+  pending: QueuedRendererBatch[];
+  inFlight: QueuedRendererBatch | null;
+  timeout: NodeJS.Timeout | null;
+}
+
+const rendererBatchQueues = new Map<number, RendererBatchQueue>();
+let nextRendererBatchId = 1;
+const RENDERER_BATCH_ACK_TIMEOUT_MS = 120_000;
+
+class RendererBatchDeliveryError extends Error {
+  constructor(
+    message: string,
+    readonly acknowledgedEntries: number,
+  ) {
+    super(message);
+    this.name = "RendererBatchDeliveryError";
+  }
+}
+
+function failRendererBatchQueue(queue: RendererBatchQueue, error: Error): void {
+  if (queue.timeout) clearTimeout(queue.timeout);
+  queue.timeout = null;
+  const batches = queue.inFlight
+    ? [queue.inFlight, ...queue.pending]
+    : queue.pending;
+  queue.inFlight = null;
+  queue.pending = [];
+  rendererBatchQueues.delete(queue.wc.id);
+  const groups = new Set(batches.map((batch) => batch.group));
+  for (const group of groups) {
+    if (!group.settled) {
+      group.settled = true;
+      group.reject(
+        new RendererBatchDeliveryError(
+          error.message,
+          group.acknowledgedEntries,
+        ),
+      );
+    }
+  }
+}
+
+function drainRendererBatchQueue(queue: RendererBatchQueue): void {
+  if (queue.inFlight || queue.pending.length === 0) return;
+  if (queue.wc.isDestroyed()) {
+    failRendererBatchQueue(queue, new Error("Renderer was destroyed"));
+    return;
+  }
+  const batch = queue.pending.shift()!;
+  queue.inFlight = batch;
+  try {
+    queue.wc.send(batch.channel, {
+      batchId: batch.batchId,
+      entries: batch.entries,
+    });
+    batchSendStats.total++;
+    batchSendStats.lastSendTime = Date.now();
+    queue.timeout = setTimeout(() => {
+      failRendererBatchQueue(
+        queue,
+        new Error(
+          `Renderer did not acknowledge batch ${batch.batchId} within ${RENDERER_BATCH_ACK_TIMEOUT_MS}ms`,
+        ),
+      );
+    }, RENDERER_BATCH_ACK_TIMEOUT_MS);
+  } catch (error) {
+    batchSendStats.failed++;
+    failRendererBatchQueue(
+      queue,
+      error instanceof Error ? error : new Error(String(error)),
+    );
+  }
+}
+
+function acknowledgeRendererBatch(
+  webContentsId: number,
+  batchId: string,
+  error?: string,
+): void {
+  const queue = rendererBatchQueues.get(webContentsId);
+  const batch = queue?.inFlight;
+  if (!queue || !batch || batch.batchId !== batchId) return;
+  if (queue.timeout) clearTimeout(queue.timeout);
+  queue.timeout = null;
+  if (error) {
+    batchSendStats.failed++;
+    failRendererBatchQueue(queue, new Error(error));
+    return;
+  }
+  queue.inFlight = null;
+  batch.group.remaining--;
+  batch.group.acknowledgedEntries += batch.entries.length;
+  if (batch.group.remaining === 0 && !batch.group.settled) {
+    batch.group.settled = true;
+    batch.group.resolve();
+  }
+  if (queue.pending.length === 0) {
+    rendererBatchQueues.delete(webContentsId);
+  } else {
+    drainRendererBatchQueue(queue);
+  }
+}
+
 function sendBatchesAsyncTo(
   wc: Electron.WebContents,
   channel: string,
   batches: LogEntry[][],
-): void {
-  if (!batches || batches.length === 0) return;
-
-  const batchCount = batches.length;
-  const totalEntries = batches.reduce((sum, b) => sum + (b?.length || 0), 0);
-  const startTime = Date.now();
-
-  batches.forEach((batch, idx) => {
-    // Use adaptive delay from AdaptiveBatchService
-    const delay = adaptiveBatchService.getDelay() * idx;
-
-    setTimeout(() => {
-      try {
-        if (!wc || wc.isDestroyed?.()) {
-          try {
-            diagSilly("[freeze-diag] wc destroyed before batch send:", {
-              idx,
-              batchCount,
-            });
-          } catch {
-            /* empty */
-          }
-          return;
-        }
-
-        // Only log IPC batches at silly level (lowest) to avoid flooding console
-        diagSilly(
-          `[ipc-diag] Sending IPC batch on channel "${channel}": ${batch?.length || 0} entries`,
-        );
-        wc.send(channel, batch);
-        batchSendStats.total++;
-        batchSendStats.lastSendTime = Date.now();
-
-        // Adjust adaptive delay based on last batch
-        if (idx === batchCount - 1) {
-          // Adjust delay based on last batch processing time
-          const totalProcessingTime = Date.now() - startTime;
-          adaptiveBatchService.adjustDelay(
-            totalProcessingTime,
-            batchCount,
-            totalEntries,
-          );
-        }
-
-        // Log every 10th successful send or if batch takes too long
-        if (batchSendStats.total % 10 === 0) {
-          try {
-            const elapsed = Date.now() - startTime;
-            if (elapsed > 100) {
-              diagSilly("[freeze-diag] batch send taking time:", {
-                batchIdx: idx,
-                batchCount,
-                totalEntries,
-                elapsedMs: elapsed,
-                adaptiveDelay: adaptiveBatchService.getDelay(),
-              });
-            }
-          } catch {
-            /* empty */
-          }
-        }
-      } catch (e) {
-        batchSendStats.failed++;
-        // Ignorieren; erneuter Versand erfolgt später ggf. über Buffer
-        try {
-          if (batchSendStats.failed % 5 === 0) {
-            log.warn(
-              "[freeze-diag] batch send error (recurring):",
-              e instanceof Error ? e.message : String(e),
-            );
-          }
-        } catch {}
-      }
-    }, delay);
+): Promise<void> {
+  if (!batches || batches.length === 0) return Promise.resolve();
+  return new Promise<void>((resolve, reject) => {
+    const group: RendererBatchGroup = {
+      remaining: batches.length,
+      acknowledgedEntries: 0,
+      resolve,
+      reject,
+      settled: false,
+    };
+    let queue = rendererBatchQueues.get(wc.id);
+    if (!queue) {
+      queue = { wc, pending: [], inFlight: null, timeout: null };
+      rendererBatchQueues.set(wc.id, queue);
+    }
+    for (const entries of batches) {
+      queue.pending.push({
+        batchId: String(nextRendererBatchId++),
+        channel,
+        entries,
+        group,
+      });
+    }
+    drainRendererBatchQueue(queue);
   });
 }
 
@@ -1035,7 +1104,7 @@ function enqueueAppends(entries: LogEntry[]): void {
     pendingAppends.splice(0, pendingAppends.length - cap);
   }
 }
-function flushPendingAppends(): void {
+async function flushPendingAppends(): Promise<void> {
   if (!isRendererReady()) {
     diagSilly("[flush-diag] Renderer not ready, skipping flush");
     return;
@@ -1049,24 +1118,26 @@ function flushPendingAppends(): void {
   diagSilly(
     `[flush-diag] Flushing ${pendingAppends.length} pending appends to main window`,
   );
+  const entries = pendingAppends;
+  pendingAppends = [];
   try {
     const batches: LogEntry[][] = [];
-    for (let i = 0; i < pendingAppends.length; i += MAX_BATCH_ENTRIES) {
-      const slice = pendingAppends.slice(i, i + MAX_BATCH_ENTRIES);
+    for (let i = 0; i < entries.length; i += MAX_BATCH_ENTRIES) {
+      const slice = entries.slice(i, i + MAX_BATCH_ENTRIES);
       batches.push(prepareRenderBatch(slice));
     }
-    // gestaffelt senden, damit der Event-Loop atmen kann
-    sendBatchesAsyncTo(wc, "logs:append", batches);
+    await sendBatchesAsyncTo(wc, "logs:append", batches);
     diagSilly(`[flush-diag] Sent ${batches.length} batches to main window`);
   } catch (err) {
-    // nicht leeren, damit später erneut versucht werden kann
-    diagSilly(
-      "[flush-diag] Error flushing, will retry:",
+    const retryFrom =
+      err instanceof RendererBatchDeliveryError ? err.acknowledgedEntries : 0;
+    pendingAppends = entries.slice(retryFrom).concat(pendingAppends);
+    log.error(
+      "[flush-diag] Error flushing renderer append queue:",
       err instanceof Error ? err.message : String(err),
     );
-    return;
+    throw err;
   }
-  pendingAppends = [];
 }
 function isWindowReady(win: BrowserWindow | null | undefined): boolean {
   try {
@@ -1093,7 +1164,7 @@ function enqueueAppendsFor(winId: number, entries: LogEntry[]): void {
   if (updated.length > cap) updated.splice(0, updated.length - cap);
   pendingAppendsByWindow.set(winId, updated);
 }
-function flushPendingAppendsFor(win: BrowserWindow): void {
+async function flushPendingAppendsFor(win: BrowserWindow): Promise<void> {
   if (!isWindowReady(win)) {
     diagSilly(`[flush-diag] Window ${win.id} not ready, skipping flush`);
     return;
@@ -1104,24 +1175,28 @@ function flushPendingAppendsFor(win: BrowserWindow): void {
     `[flush-diag] Flushing ${buf.length} pending appends for window ${win.id}`,
   );
   const wc = win.webContents;
+  pendingAppendsByWindow.delete(win.id);
   try {
     const batches: LogEntry[][] = [];
     for (let i = 0; i < buf.length; i += MAX_BATCH_ENTRIES) {
       const slice = buf.slice(i, i + MAX_BATCH_ENTRIES);
       batches.push(prepareRenderBatch(slice));
     }
-    sendBatchesAsyncTo(wc, "logs:append", batches);
+    await sendBatchesAsyncTo(wc, "logs:append", batches);
     diagSilly(
       `[flush-diag] Sent ${batches.length} batches to window ${win.id}`,
     );
   } catch (e) {
+    const pending = pendingAppendsByWindow.get(win.id) || [];
+    const retryFrom =
+      e instanceof RendererBatchDeliveryError ? e.acknowledgedEntries : 0;
+    pendingAppendsByWindow.set(win.id, buf.slice(retryFrom).concat(pending));
     log.error(
       "flushPendingAppendsFor send failed:",
       e instanceof Error ? e.message : String(e),
     );
-    return;
+    throw e;
   }
-  pendingAppendsByWindow.delete(win.id);
 }
 
 // NetworkService callback → route to right window(s)
@@ -1150,7 +1225,12 @@ function sendAppend(entries: LogEntry[]): void {
       const slice = arr.slice(i, i + MAX_BATCH_ENTRIES);
       batches.push(prepareRenderBatch(slice));
     }
-    sendBatchesAsyncTo(wc, "logs:append", batches);
+    void sendBatchesAsyncTo(wc, "logs:append", batches).catch((error) => {
+      log.error(
+        "Direct renderer append failed:",
+        error instanceof Error ? error.message : String(error),
+      );
+    });
   };
 
   // TCP → owner window only
@@ -2036,12 +2116,18 @@ function createWindow(opts: { makePrimary?: boolean } = {}): BrowserWindow {
 
     // Flush window-specific logs
     try {
-      flushPendingAppendsFor(win);
+      void flushPendingAppendsFor(win).catch(() => {
+        // The flush function already restored the entries and logged the error.
+      });
     } catch {
       // Intentionally empty - ignore errors
     }
 
-    if (win === mainWindow) flushPendingAppends();
+    if (win === mainWindow) {
+      void flushPendingAppends().catch(() => {
+        // The flush function already restored the entries and logged the error.
+      });
+    }
 
     setTimeout(() => {
       if (!win.isDestroyed() && !win.isVisible()) win.show();
@@ -2505,7 +2591,7 @@ try {
     featureFlags,
     // Sprint 5 – C3: route tail-watcher entries through the same per-window
     // append pipeline as TCP/HTTP/Elasticsearch.
-    (entries: LogEntry[], senderWcId: number): void => {
+    async (entries: LogEntry[], senderWcId: number): Promise<void> => {
       try {
         const win = BrowserWindow.fromId(
           BrowserWindow.getAllWindows().find(
@@ -2520,19 +2606,22 @@ try {
           // "load existing content") stream chunk-by-chunk: each chunk is
           // drained immediately, so the buffer never accumulates beyond the
           // backpressure cap (which would otherwise drop earlier chunks).
-          flushPendingAppendsFor(win);
+          await flushPendingAppendsFor(win);
         } else {
           // Fallback: route to main window queue
           enqueueAppends(entries);
           if (mainWindow && !mainWindow.isDestroyed()) {
-            flushPendingAppends();
+            await flushPendingAppends();
           }
         }
       } catch (err) {
         log.warn(
-          "[watch] enqueue failed:",
+          "[watch] Renderer append failed; retained entries will be retried:",
           err instanceof Error ? err.message : String(err),
         );
+        // The flush function restores only the unacknowledged suffix. Do not
+        // rethrow here: HTTP tail would otherwise refetch the complete byte
+        // range and duplicate batches that were already persisted.
       }
     },
   );
@@ -2547,6 +2636,17 @@ try {
 // Fallback: react to tcp:status broadcasts
 try {
   const { ipcMain } = require("electron");
+
+  ipcMain.on(
+    "logs:appendAck",
+    (
+      event: Electron.IpcMainEvent,
+      payload: { batchId?: string; error?: string },
+    ) => {
+      if (typeof payload?.batchId !== "string") return;
+      acknowledgeRendererBatch(event.sender.id, payload.batchId, payload.error);
+    },
+  );
 
   ipcMain.on("tcp:status", () => {
     try {
@@ -2618,13 +2718,17 @@ function startFlushTimer(): void {
       }
 
       // Flush main window buffer
-      flushPendingAppends();
+      void flushPendingAppends().catch(() => {
+        // The flush function already restored the entries and logged the error.
+      });
 
       // Flush per-window buffers for multi-window scenarios
       for (const win of windows) {
         try {
           if (!win.isDestroyed()) {
-            flushPendingAppendsFor(win);
+            void flushPendingAppendsFor(win).catch(() => {
+              // The flush function already restored the entries and logged the error.
+            });
           }
         } catch {
           // Ignore errors for individual windows

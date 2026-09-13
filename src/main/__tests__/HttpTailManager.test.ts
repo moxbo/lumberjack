@@ -190,6 +190,62 @@ describe("HttpTailManager", () => {
     expect(received).toContain("a");
   });
 
+  it("reports persistence backpressure and schedules only after it clears", async () => {
+    server.body = "queued\n";
+    const mgr = new HttpTailManager();
+    const states: string[] = [];
+    mgr.start(
+      url,
+      {
+        onLines: async () => {
+          await delay(180);
+        },
+        onBackpressure: ({ paused }) => {
+          states.push(paused ? "paused" : "resumed");
+        },
+        onScheduled: () => {
+          states.push("scheduled");
+        },
+      },
+      { intervalMs: 250, emitInitial: true },
+    );
+
+    await delay(260);
+    const tail = mgr.list()[0]!;
+    mgr.stopAll();
+
+    expect(states.slice(0, 3)).toEqual(["paused", "resumed", "scheduled"]);
+    expect(tail.paused).toBe(false);
+    expect(tail.nextPollAt).toBeTypeOf("number");
+    expect(tail.intervalMs).toBe(250);
+  });
+
+  it("restores partial-line state when downstream persistence fails", async () => {
+    server.body = "first\npartial";
+    const mgr = new HttpTailManager();
+    const received: string[][] = [];
+    let attempts = 0;
+    mgr.start(
+      url,
+      {
+        onLines: async (lines) => {
+          attempts++;
+          if (attempts === 1) {
+            server.body += "-rest\n";
+            throw new Error("temporary persistence failure");
+          }
+          received.push(lines);
+        },
+      },
+      { intervalMs: 250, emitInitial: true },
+    );
+
+    await delay(700);
+    mgr.stopAll();
+
+    expect(received[0]).toEqual(["first", "partial-rest"]);
+  });
+
   it("buffers partial last line across ticks", async () => {
     server.body = "";
     const mgr = new HttpTailManager();
