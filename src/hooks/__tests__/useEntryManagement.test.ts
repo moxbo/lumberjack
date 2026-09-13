@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  getMetadataPublishDelay,
   mergeSortedMetadata,
   type PagedEntryMetadata,
 } from "../useEntryManagement";
@@ -29,6 +30,15 @@ describe("mergeSortedMetadata", () => {
     expect(merged).toBe(previous);
     expect(previous.map((item) => item._id)).toEqual([1, 2, 3, 4]);
     expect(merged.map((item) => item._id)).toEqual([1, 2, 3, 4]);
+  });
+
+  describe("getMetadataPublishDelay", () => {
+    it("reduces full snapshot frequency as the dataset grows", () => {
+      expect(getMetadataPublishDelay(99_999)).toBe(50);
+      expect(getMetadataPublishDelay(100_000)).toBe(100);
+      expect(getMetadataPublishDelay(499_999)).toBe(100);
+      expect(getMetadataPublishDelay(500_000)).toBe(250);
+    });
   });
 
   it("appends to a 400k chronological dataset without copying it", () => {

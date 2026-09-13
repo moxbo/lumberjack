@@ -23,6 +23,7 @@ import {
 import {
   compressPayloadEntry,
   decompressPayloadEntry,
+  shouldCompressPayloadEntry,
   type StoredPayloadEntry,
 } from "./payloadCompression";
 
@@ -122,13 +123,16 @@ export class PagedLogRepository {
       const records = entries.map((entry, index) =>
         preparePagedRecord(entry, ids[index]!),
       );
+      const recordsToCompress = records.filter((record) =>
+        shouldCompressPayloadEntry(record.payload.entry),
+      );
       let nextRecord = 0;
       const workers = Array.from(
-        { length: Math.min(8, records.length) },
+        { length: Math.min(8, recordsToCompress.length) },
         async () => {
-          while (nextRecord < records.length) {
+          while (nextRecord < recordsToCompress.length) {
             const index = nextRecord++;
-            const record = records[index]!;
+            const record = recordsToCompress[index]!;
             record.payload.entry = await compressPayloadEntry(
               record.payload.entry,
             );

@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   compressPayloadEntry,
   decompressPayloadEntry,
+  shouldCompressPayloadEntry,
 } from "../payloadCompression";
 import type { PayloadRecord } from "../types";
 
@@ -29,12 +30,14 @@ describe("paged payload compression", () => {
 
   it("leaves small payloads unmodified", async () => {
     const original = payload("short stack", "short message");
+    expect(shouldCompressPayloadEntry(original)).toBe(false);
     expect(await compressPayloadEntry(original)).toBe(original);
   });
 
   it("uses less storage for compressible heavy fields", async () => {
     const stackTrace = "at service.method\n".repeat(20_000);
     const original = payload(stackTrace, "");
+    expect(shouldCompressPayloadEntry(original, 1)).toBe(true);
     const compressed = await compressPayloadEntry(original, 1);
     expect(compressed._compressedHeavy!.data.byteLength).toBeLessThan(
       stackTrace.length,

@@ -90,6 +90,12 @@ export function mergeSortedMetadata(
   return result;
 }
 
+export function getMetadataPublishDelay(entryCount: number): number {
+  if (entryCount >= 500_000) return 250;
+  if (entryCount >= 100_000) return 100;
+  return 50;
+}
+
 export function useEntryManagement({
   marksMap,
   projectionBridgeRef: externalBridgeRef,
@@ -151,7 +157,10 @@ export function useEntryManagement({
       return;
     }
     if (metadataPublishTimerRef.current === null) {
-      metadataPublishTimerRef.current = setTimeout(publishMetadata, 50);
+      metadataPublishTimerRef.current = setTimeout(
+        publishMetadata,
+        getMetadataPublishDelay(sortedMetadataRef.current.length),
+      );
     }
   }, [publishMetadata]);
 

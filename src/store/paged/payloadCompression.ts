@@ -19,6 +19,20 @@ function supportsCompression(): boolean {
   );
 }
 
+export function shouldCompressPayloadEntry(
+  input: PayloadRecord["entry"],
+  threshold = PAYLOAD_COMPRESSION_THRESHOLD,
+): boolean {
+  const stackTrace =
+    typeof input.stackTrace === "string" ? input.stackTrace : undefined;
+  const fullMessage =
+    typeof input._fullMessage === "string" ? input._fullMessage : undefined;
+  return (
+    supportsCompression() &&
+    (stackTrace?.length ?? 0) + (fullMessage?.length ?? 0) >= threshold
+  );
+}
+
 async function transform(
   input: string | Uint8Array,
   stream: CompressionStream | DecompressionStream,
@@ -37,10 +51,7 @@ export async function compressPayloadEntry(
     typeof input.stackTrace === "string" ? input.stackTrace : undefined;
   const fullMessage =
     typeof input._fullMessage === "string" ? input._fullMessage : undefined;
-  if (
-    !supportsCompression() ||
-    (stackTrace?.length ?? 0) + (fullMessage?.length ?? 0) < threshold
-  ) {
+  if (!shouldCompressPayloadEntry(input, threshold)) {
     return input;
   }
 

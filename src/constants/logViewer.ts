@@ -24,7 +24,7 @@ export const TRIM_THRESHOLD_ENTRIES = MAX_RENDERER_ENTRIES * 0.95; // 950,000
 
 // IPC batching configuration to prevent renderer overload
 // Reduced from previous values to prevent UI freezes ("Keine Rückmeldung")
-export const IPC_BATCH_SIZE = 1000; // Max entries to process in one batch
+export const IPC_BATCH_SIZE = 2000; // Max entries per IndexedDB transaction
 export const IPC_PROCESS_INTERVAL = 16; // Min interval between processing batches (ms) - one frame at 60fps
 export const IPC_MAX_QUEUE_SIZE = 100_000; // Maximum queue size to prevent memory issues
 
