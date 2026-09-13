@@ -11,6 +11,14 @@ import type {
   ElasticSearchOptions,
   ExportPathResult,
   ExportResult,
+  ExportBeginRequest,
+  ExportBeginResult,
+  ExportWriteRequest,
+  ExportWriteResult,
+  ExportFinishRequest,
+  ExportFinishResult,
+  ExportSessionRequest,
+  ExportStreamResult,
   FeatureFlagsResult,
   FilterOptions,
   FilterResult,
@@ -250,6 +258,36 @@ export async function saveExportFile(
 }
 
 // ─────────────────────────── Log Parsing ───────────────────────────
+
+// Streaming operations deliberately reject transport/unavailable errors.
+// Callers must cancel their session and show an error, never report success.
+export async function exportBegin(
+  request: ExportBeginRequest,
+): Promise<ExportBeginResult> {
+  if (!window.api?.exportBegin) throw new Error("exportBegin unavailable");
+  return window.api.exportBegin(request);
+}
+
+export async function exportWrite(
+  request: ExportWriteRequest,
+): Promise<ExportWriteResult> {
+  if (!window.api?.exportWrite) throw new Error("exportWrite unavailable");
+  return window.api.exportWrite(request);
+}
+
+export async function exportFinish(
+  request: ExportFinishRequest,
+): Promise<ExportFinishResult> {
+  if (!window.api?.exportFinish) throw new Error("exportFinish unavailable");
+  return window.api.exportFinish(request);
+}
+
+export async function exportCancel(
+  request: ExportSessionRequest,
+): Promise<ExportStreamResult> {
+  if (!window.api?.exportCancel) throw new Error("exportCancel unavailable");
+  return window.api.exportCancel(request);
+}
 
 /**
  * Parse log files by path.

@@ -60,6 +60,7 @@ export type EntryConverterFn = (
  */
 export class NetworkService {
   private tcpServer: net.Server | null = null;
+  private tcpStopPromise: Promise<TcpStatus> | null = null;
   private tcpRunning = false;
   private tcpPort = 0;
   private httpPollers = new Map<number, HttpPollConfig>();
@@ -76,6 +77,7 @@ export class NetworkService {
   // Memory leak prevention constants
   private static readonly MAX_BUFFER_SIZE = 50 * 1024 * 1024; // 50MB max buffer per socket (increased for large messages)
   private static readonly SOCKET_TIMEOUT_MS = 5 * 60 * 1000; // 5 minutes timeout
+  private static readonly TCP_SHUTDOWN_GRACE_MS = 1000;
   private static readonly MAX_LINE_LENGTH = 20 * 1024 * 1024; // 20MB max line length (increased for large XML messages)
   private static readonly MAX_SEEN_ENTRIES = 10000; // Max deduplication entries per poller
 
@@ -475,6 +477,7 @@ export class NetworkService {
    * Stop TCP server
    */
   stopTcpServer(): Promise<TcpStatus> {
+    if (this.tcpStopPromise) return this.tcpStopPromise;
     if (!this.tcpServer) {
       return Promise.resolve({
         ok: false,
@@ -486,38 +489,54 @@ export class NetworkService {
     // Flush any pending batched entries before stopping
     this.flushTcpBatch();
 
-    return new Promise<TcpStatus>((resolve) => {
-      // Close all active sockets first
-      const socketsToClose = Array.from(this.activeSockets);
-      log.info(
-        `[tcp] Stopping server, closing ${socketsToClose.length} active socket(s)`,
-      );
+    this.tcpStopPromise = this.closeTcpServer(this.tcpServer).finally(() => {
+      this.tcpStopPromise = null;
+    });
+    return this.tcpStopPromise;
+  }
 
-      for (const socket of socketsToClose) {
+  private async closeTcpServer(server: net.Server): Promise<TcpStatus> {
+    const sockets = Array.from(this.activeSockets);
+    const socketsClosed = sockets.map(
+      (socket) =>
+        new Promise<void>((resolve) => socket.once("close", () => resolve())),
+    );
+    log.info(
+      `[tcp] Stopping server, closing ${sockets.length} active socket(s)`,
+    );
+
+    // A half-open peer can ignore our FIN indefinitely. Keep graceful shutdown
+    // first, but force-close remaining sockets after a bounded grace period.
+    const timer = setTimeout(() => {
+      for (const socket of sockets) {
+        if (!socket.closed) socket.destroy();
+      }
+    }, NetworkService.TCP_SHUTDOWN_GRACE_MS);
+    timer.unref();
+    try {
+      const serverClosed = new Promise<void>((resolve) => {
+        server.close(() => resolve());
+      });
+      for (const socket of sockets) {
         try {
           socket.end();
-        } catch (e) {
-          log.warn(
-            "Error closing socket:",
-            e instanceof Error ? e.message : String(e),
-          );
+        } catch (error) {
+          log.warn("Error ending TCP socket:", error);
+          socket.destroy();
         }
       }
-
-      this.activeSockets.clear();
-
-      this.tcpServer!.close(() => {
-        this.tcpServer = null;
-        this.tcpRunning = false;
-        this.tcpPort = 0;
-        log.info("TCP server stopped");
-        resolve({
-          ok: true,
-          message: "TCP server stopped",
-          running: false,
-        });
-      });
-    });
+      // server.close may fire before socket close callbacks. Those callbacks
+      // parse and emit trailing lines, so consumers must wait for both.
+      await Promise.all([serverClosed, ...socketsClosed]);
+      this.flushTcpBatch();
+      this.tcpServer = null;
+      this.tcpRunning = false;
+      this.tcpPort = 0;
+      log.info("TCP server stopped");
+      return { ok: true, message: "TCP server stopped", running: false };
+    } finally {
+      clearTimeout(timer);
+    }
   }
 
   /**

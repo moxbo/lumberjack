@@ -95,6 +95,11 @@ const api: ElectronAPI = {
   saveExportFile: (filePath: string, content: string): Promise<ExportResult> =>
     ipcRenderer.invoke("dialog:saveExportFile", filePath, content),
 
+  exportBegin: (request) => ipcRenderer.invoke("export:begin", request),
+  exportWrite: (request) => ipcRenderer.invoke("export:write", request),
+  exportFinish: (request) => ipcRenderer.invoke("export:finish", request),
+  exportCancel: (request) => ipcRenderer.invoke("export:cancel", request),
+
   exportView: (
     content: string,
     options: ExportViewOptions,

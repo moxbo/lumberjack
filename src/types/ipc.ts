@@ -302,6 +302,26 @@ export type MenuCommand =
  */
 export type ExportFormat = "html" | "txt" | "json" | "ndjson" | "csv" | "md";
 
+export const EXPORT_CHUNK_BYTES = 64 * 1024;
+export type ExportStreamResult<T = Record<never, never>> =
+  ({ ok: true } & T) | { ok: false; error: string };
+export interface ExportBeginRequest {
+  filePath: string;
+}
+export interface ExportSessionRequest {
+  sessionId: string;
+}
+export interface ExportWriteRequest extends ExportSessionRequest {
+  chunkIndex: number;
+  chunk: Uint8Array;
+}
+export interface ExportFinishRequest extends ExportSessionRequest {
+  chunkCount: number;
+}
+export type ExportBeginResult = ExportStreamResult<{ sessionId: string }>;
+export type ExportWriteResult = ExportStreamResult<{ chunkIndex: number }>;
+export type ExportFinishResult = ExportStreamResult<{ filePath: string }>;
+
 /**
  * Export options for saving the current view
  */
@@ -401,6 +421,10 @@ export type ElectronAPI = {
   chooseLogFile: () => Promise<string>;
   chooseExportPath: () => Promise<ExportPathResult>;
   saveExportFile: (filePath: string, content: string) => Promise<ExportResult>;
+  exportBegin: (request: ExportBeginRequest) => Promise<ExportBeginResult>;
+  exportWrite: (request: ExportWriteRequest) => Promise<ExportWriteResult>;
+  exportFinish: (request: ExportFinishRequest) => Promise<ExportFinishResult>;
+  exportCancel: (request: ExportSessionRequest) => Promise<ExportStreamResult>;
   exportView: (
     content: string,
     options: ExportViewOptions,

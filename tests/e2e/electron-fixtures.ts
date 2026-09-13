@@ -14,6 +14,7 @@ import {
 import { _electron as electron } from "playwright";
 import * as path from "path";
 import * as fs from "fs";
+import * as os from "os";
 import { fileURLToPath } from "url";
 
 // Get __dirname equivalent in ESM
@@ -24,9 +25,18 @@ const __dirname = path.dirname(__filename);
 export const test = base.extend<{
   electronApp: ElectronApplication;
   window: Page;
+  testUserData: string;
 }>({
   // eslint-disable-next-line no-empty-pattern
-  electronApp: async ({}, use) => {
+  testUserData: async ({}, use) => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), "lumberjack-e2e-"));
+    try {
+      await use(directory);
+    } finally {
+      fs.rmSync(directory, { recursive: true, force: true });
+    }
+  },
+  electronApp: async ({ testUserData }, use) => {
     // Resolve main entry from project root
     const projectRoot = path.resolve(__dirname, "../..");
     const mainPath = path.join(projectRoot, "dist-main/main.cjs");
@@ -61,6 +71,8 @@ export const test = base.extend<{
         ...process.env,
         NODE_ENV: "test",
         LUMBERJACK_E2E_TEST: "1",
+        LUMBERJACK_E2E_USER_DATA: testUserData,
+        PORTABLE_EXECUTABLE_DIR: "",
         // Disable hardware acceleration for CI stability
         LUMBERJACK_DISABLE_GPU: isCI ? "1" : "0",
         // Increase timeout for CI
@@ -69,11 +81,15 @@ export const test = base.extend<{
       timeout: isCI ? 120000 : 60000, // Longer timeout for CI
     });
 
-    // Use the fixture
-    await use(electronApp);
-
-    // Cleanup: close the app
-    await electronApp.close();
+    try {
+      const profile = await electronApp.evaluate(({ app }) =>
+        app.getPath("userData"),
+      );
+      expect(profile).toBe(testUserData);
+      await use(electronApp);
+    } finally {
+      await electronApp.close();
+    }
   },
 
   window: async ({ electronApp }, use) => {

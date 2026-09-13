@@ -16,6 +16,17 @@ import * as fs from "fs";
 import { WatchManager } from "./FileWatcher";
 import { HttpTailManager } from "./HttpTailManager";
 import { getSharedMainApi } from "./sharedMainApi";
+import { ExportFileService } from "./ExportFileService";
+import type {
+  ExportBeginRequest,
+  ExportBeginResult,
+  ExportWriteRequest,
+  ExportWriteResult,
+  ExportFinishRequest,
+  ExportFinishResult,
+  ExportSessionRequest,
+  ExportStreamResult,
+} from "../types/ipc";
 import { setLocale, t } from "../locales/mainI18n";
 import {
   DroppedFile,
@@ -316,8 +327,13 @@ export function registerIpcHandlers(
     entries: LogEntry[],
     senderWebContentsId: number,
   ) => void | Promise<void>,
+  onLoggingSettingsChanged?: () => Promise<void>,
+  onBeforeRelaunch?: () => Promise<void>,
 ): void {
   const sharedApi = getSharedMainApi();
+  const exportFiles = new ExportFileService((error) =>
+    log.error("Export cleanup failed:", error),
+  );
   const streamSessions = new Map<
     string,
     {
@@ -530,17 +546,20 @@ export function registerIpcHandlers(
           return { ok: false, error: validation.error };
         }
 
-        const updated = settingsService.update(clone);
-
         if (passClear) {
-          updated.elasticPassEnc = "";
+          clone.elasticPassEnc = "";
         } else if (passPlain && passPlain.trim()) {
-          updated.elasticPassEnc = settingsService.encryptSecret(
+          clone.elasticPassEnc = settingsService.encryptSecret(
             passPlain.trim(),
           );
         }
-        if (passClear || passPlain) {
-          settingsService.update(updated);
+        settingsService.update(clone);
+        if (
+          ["logToFile", "logFilePath", "logMaxBytes", "logMaxBackups"].some(
+            (key) => Object.hasOwn(clone, key),
+          )
+        ) {
+          await onLoggingSettingsChanged?.();
         }
 
         // Use async save to avoid blocking the main process
@@ -627,13 +646,15 @@ export function registerIpcHandlers(
   // Export view handler - choose path first, then save
   ipcMain.handle(
     "dialog:chooseExportPath",
-    async (): Promise<{
+    async (
+      event,
+    ): Promise<{
       ok: boolean;
       filePath?: string;
       format?: "html" | "txt" | "json" | "ndjson" | "csv" | "md";
       error?: string;
     }> => {
-      const mainWindow = BrowserWindow.getFocusedWindow();
+      const mainWindow = BrowserWindow.fromWebContents(event.sender);
       if (!mainWindow) {
         return { ok: false, error: t("main.errors.noWindow") };
       }
@@ -680,6 +701,7 @@ export function registerIpcHandlers(
         else if (ext === ".csv") format = "csv";
         else if (ext === ".md" || ext === ".markdown") format = "md";
 
+        exportFiles.authorize(event.sender, res.filePath);
         return { ok: true, filePath: res.filePath, format };
       } catch (err) {
         log.error(
@@ -694,7 +716,82 @@ export function registerIpcHandlers(
     },
   );
 
-  // Save export file handler
+  ipcMain.handle(
+    "export:begin",
+    async (event, request: ExportBeginRequest): Promise<ExportBeginResult> => {
+      try {
+        const sessionId = await exportFiles.begin(
+          event.sender,
+          request.filePath,
+        );
+        return { ok: true, sessionId };
+      } catch (error) {
+        return {
+          ok: false,
+          error: error instanceof Error ? error.message : String(error),
+        };
+      }
+    },
+  );
+  ipcMain.handle(
+    "export:write",
+    async (event, request: ExportWriteRequest): Promise<ExportWriteResult> => {
+      try {
+        await exportFiles.write(
+          event.sender,
+          request.sessionId,
+          request.chunkIndex,
+          request.chunk,
+        );
+        return { ok: true, chunkIndex: request.chunkIndex };
+      } catch (error) {
+        return {
+          ok: false,
+          error: error instanceof Error ? error.message : String(error),
+        };
+      }
+    },
+  );
+  ipcMain.handle(
+    "export:finish",
+    async (
+      event,
+      request: ExportFinishRequest,
+    ): Promise<ExportFinishResult> => {
+      try {
+        const filePath = await exportFiles.finish(
+          event.sender,
+          request.sessionId,
+          request.chunkCount,
+        );
+        return { ok: true, filePath };
+      } catch (error) {
+        return {
+          ok: false,
+          error: error instanceof Error ? error.message : String(error),
+        };
+      }
+    },
+  );
+  ipcMain.handle(
+    "export:cancel",
+    async (
+      event,
+      request: ExportSessionRequest,
+    ): Promise<ExportStreamResult> => {
+      try {
+        await exportFiles.cancel(event.sender, request.sessionId);
+        return { ok: true };
+      } catch (error) {
+        return {
+          ok: false,
+          error: error instanceof Error ? error.message : String(error),
+        };
+      }
+    },
+  );
+
+  // Legacy API retained for external callers; renderer exports use the bounded protocol above.
   ipcMain.handle(
     "dialog:saveExportFile",
     async (
@@ -1405,8 +1502,13 @@ export function registerIpcHandlers(
   });
 
   // App relaunch handler
-  ipcMain.handle("app:relaunch", () => {
+  ipcMain.handle("app:relaunch", async () => {
     log.info("[app] Relaunch requested by renderer");
+    try {
+      await onBeforeRelaunch?.();
+    } catch (error) {
+      log.error("[app] File logging flush failed before relaunch:", error);
+    }
     app.relaunch();
     app.exit(0);
     return { ok: true };

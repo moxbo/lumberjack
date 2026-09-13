@@ -23,7 +23,8 @@ import type { LogEntry } from "../types/ipc";
 import { SettingsService } from "../services/SettingsService";
 import { NetworkService } from "../services/NetworkService";
 import { PerformanceService } from "../services/PerformanceService";
-import { AsyncFileWriter } from "../services/AsyncFileWriter";
+import { FileLoggingService } from "../services/FileLoggingService";
+import { WindowAppendQueue } from "../services/WindowAppendQueue";
 import { HealthMonitor } from "../services/HealthMonitor";
 import { LoggingStrategy, LogLevel } from "../services/LoggingStrategy";
 import { FeatureFlags } from "../services/FeatureFlags";
@@ -69,6 +70,13 @@ import {
 // Track startup time for performance monitoring
 const processStartTime = Date.now();
 const isMultiInstanceLaunch = process.argv.includes(MULTI_INSTANCE_FLAG);
+if (
+  process.env.LUMBERJACK_E2E_TEST === "1" &&
+  process.env.LUMBERJACK_E2E_USER_DATA
+) {
+  app.setPath("userData", process.env.LUMBERJACK_E2E_USER_DATA);
+  app.setPath("sessionData", process.env.LUMBERJACK_E2E_USER_DATA);
+}
 const configuredHeapSizeMB = loadHeapSizeSync();
 
 // Independent Electron processes must not share Chromium's session profile.
@@ -631,13 +639,13 @@ function applyWindowTitles(): void {
 
 // Buffers with adaptive memory limits
 let MAX_PENDING_APPENDS = DEFAULT_MAX_PENDING_APPENDS;
-let pendingAppends: LogEntry[] = [];
+const pendingAppends = new WindowAppendQueue<LogEntry>();
 const pendingMenuCmdsByWindow = new Map<
   number,
   Array<{ type: string; tab?: string }>
 >();
 let lastFocusedWindowId: number | null = null;
-const pendingAppendsByWindow = new Map<number, LogEntry[]>();
+const pendingAppendsByWindow = new Map<number, WindowAppendQueue<LogEntry>>();
 
 /**
  * Active HTTP-tail count reported by each renderer window. The native
@@ -719,9 +727,9 @@ function startMemoryManagement(): void {
           MAX_PENDING_APPENDS = newLimit;
 
           // Trim existing buffers if needed
-          if (pendingAppends.length > MAX_PENDING_APPENDS) {
-            const overflow = pendingAppends.length - MAX_PENDING_APPENDS;
-            pendingAppends.splice(0, overflow);
+          pendingAppends.cap(MAX_PENDING_APPENDS);
+          for (const queue of pendingAppendsByWindow.values()) {
+            queue.cap(MAX_PENDING_APPENDS);
           }
         }
       } else if (
@@ -908,144 +916,48 @@ function sendBatchesAsyncTo(
 }
 
 // File logging
-let logStream: fs.WriteStream | null = null;
-let asyncFileWriter: AsyncFileWriter | null = null;
-let logBytes = 0;
+const fileLogging = new FileLoggingService();
+async function stopSourcesAndCloseFileLogging(): Promise<void> {
+  try {
+    networkService.stopAllHttpPollers();
+    await networkService.stopTcpServer();
+  } finally {
+    await fileLogging.close();
+  }
+}
+
+const fileLoggingReady = settingsLoadPromise
+  .then(() => configureFileLogging())
+  .catch((error) => {
+    log.error("[file-logging] Initial configuration failed:", error);
+  });
 function defaultLogFilePath(): string {
   const base = app.getPath("userData");
   return path.join(base, "lumberjack.log");
 }
-function closeLogStream(): void {
-  try {
-    logStream?.end?.();
-  } catch (e) {
-    log.error(
-      "Fehler beim Schließen des Log-Streams:",
-      e instanceof Error ? e.message : String(e),
-    );
-  }
-  logStream = null;
-
-  // Just release async file writer reference without clearing queue
-  // Pending writes will be lost but this is expected during rotation
-  asyncFileWriter = null;
-
-  logBytes = 0;
-}
-function openLogStream(): void {
+function configureFileLogging(): Promise<void> {
   const settings = settingsService.get();
-  if (!settings.logToFile) return;
-  const p =
-    (settings.logFilePath && String(settings.logFilePath).trim()) ||
-    defaultLogFilePath();
-  try {
-    fs.mkdirSync(path.dirname(p), { recursive: true });
-    const st = fs.existsSync(p) ? fs.statSync(p) : null;
-    logBytes = st ? st.size : 0;
-    logStream = fs.createWriteStream(p, { flags: "a" });
-
-    // Initialize AsyncFileWriter for non-blocking writes
-    asyncFileWriter = new AsyncFileWriter(p);
-  } catch (err) {
-    log.error(
-      "Log-Datei kann nicht geöffnet werden:",
-      err instanceof Error ? err.message : String(err),
-    );
-    closeLogStream();
-  }
-}
-function rotateIfNeeded(extraBytes: number): void {
-  const settings = settingsService.get();
-  const max = Math.max(1024 * 1024, Number(settings.logMaxBytes || 0) || 0);
-  if (!max) return;
-  if (logBytes + extraBytes <= max) return;
-  try {
-    closeLogStream();
-    const p =
+  return fileLogging.configure({
+    enabled: !!settings.logToFile,
+    filepath:
       (settings.logFilePath && String(settings.logFilePath).trim()) ||
-      defaultLogFilePath();
-    const backups = Math.max(0, Number(settings.logMaxBackups || 0) || 0);
-    for (let i = backups - 1; i >= 1; i--) {
-      const src = `${p}.${i}`;
-      const dst = `${p}.${i + 1}`;
-      if (fs.existsSync(src)) {
-        try {
-          fs.renameSync(src, dst);
-        } catch (e) {
-          log.error(
-            "Log rotation rename failed:",
-            e instanceof Error ? e.message : String(e),
-          );
-        }
-      }
-    }
-    if (backups >= 1 && fs.existsSync(p)) {
-      try {
-        fs.renameSync(p, `${p}.1`);
-      } catch (e) {
-        log.error(
-          "Log rotation rename failed:",
-          e instanceof Error ? e.message : String(e),
-        );
-      }
-    }
-  } catch (e) {
-    log.error(
-      "Log rotation failed:",
-      e instanceof Error ? e.message : String(e),
-    );
-  }
-  openLogStream();
+      defaultLogFilePath(),
+    maxBytes: Math.max(1024 * 1024, Number(settings.logMaxBytes) || 0),
+    maxBackups: Math.max(0, Math.floor(Number(settings.logMaxBackups) || 0)),
+  });
 }
-function writeEntriesToFile(entries: LogEntry[]): void {
-  try {
-    const settings = settingsService.get();
-    if (!settings.logToFile) return;
-    if (!entries || !entries.length) return;
-    if (!logStream) openLogStream();
-    if (!logStream) return;
+async function writeEntriesToFile(entries: LogEntry[]): Promise<void> {
+  if (!settingsService.get().logToFile || !entries?.length) return;
+  const data = entries.map((entry) => JSON.stringify(entry) + "\n").join("");
+  await fileLogging.write(data);
+}
 
-    // Pre-serialize all entries and calculate total size
-    const lines: string[] = [];
-    let totalBytes = 0;
-    for (const e of entries) {
-      const line = JSON.stringify(e) + "\n";
-      lines.push(line);
-      totalBytes += line.length;
-    }
-
-    // Check rotation once for the entire batch
-    rotateIfNeeded(totalBytes);
-    if (!logStream) openLogStream();
-    if (!logStream) return;
-
-    // Use AsyncFileWriter if available for non-blocking writes
-    if (asyncFileWriter) {
-      // Write all lines as a single batch
-      const batch = lines.join("");
-      asyncFileWriter.write(batch).catch((err) => {
-        // Only log if it's not a queue-cleared situation (expected during rotation)
-        const msg = err instanceof Error ? err.message : String(err);
-        if (msg !== "Queue cleared") {
-          log.error("Async write failed:", msg);
-        }
-      });
-      logBytes += totalBytes;
-    } else {
-      // Fallback to sync writes if AsyncFileWriter not available
-      for (const line of lines) {
-        if (!logStream) openLogStream();
-        if (!logStream) return;
-        logStream.write(line);
-      }
-      logBytes += totalBytes;
-    }
-  } catch (err) {
-    log.error(
-      "Fehler beim Schreiben in Logdatei:",
-      err instanceof Error ? err.message : String(err),
-    );
-  }
+function exitAfterFileLogging(code: number): void {
+  void stopSourcesAndCloseFileLogging()
+    .catch((error) => {
+      console.error("[file-logging] Exit flush failed:", error);
+    })
+    .then(() => process.exit(code));
 }
 
 // Menu command routing (per-window)
@@ -1091,53 +1003,10 @@ function isRendererReady(): boolean {
 }
 function enqueueAppends(entries: LogEntry[]): void {
   if (!Array.isArray(entries) || entries.length === 0) return;
-  // concat (not push(...spread)) to stay safe for very large bulk batches –
-  // a spread of tens of thousands of args can overflow the call stack.
-  pendingAppends = pendingAppends.concat(entries);
-  // Backpressure: bound the buffer, but NEVER drop entries that belong to the
-  // current enqueue call. This is essential for bulk/initial loads such as the
-  // HTTP-tail "load existing content first" option, where the whole file can
-  // arrive in a single call with far more than MAX_PENDING_APPENDS entries.
-  // Only previously-buffered overflow (sustained live streaming) is dropped.
-  const cap = Math.max(MAX_PENDING_APPENDS, entries.length);
-  if (pendingAppends.length > cap) {
-    pendingAppends.splice(0, pendingAppends.length - cap);
-  }
+  pendingAppends.enqueue(entries, MAX_PENDING_APPENDS);
 }
 async function flushPendingAppends(): Promise<void> {
-  if (!isRendererReady()) {
-    diagSilly("[flush-diag] Renderer not ready, skipping flush");
-    return;
-  }
-  if (!pendingAppends.length) return;
-  const wc = mainWindow?.webContents;
-  if (!wc) {
-    diagSilly("[flush-diag] No webContents, skipping flush");
-    return;
-  }
-  diagSilly(
-    `[flush-diag] Flushing ${pendingAppends.length} pending appends to main window`,
-  );
-  const entries = pendingAppends;
-  pendingAppends = [];
-  try {
-    const batches: LogEntry[][] = [];
-    for (let i = 0; i < entries.length; i += MAX_BATCH_ENTRIES) {
-      const slice = entries.slice(i, i + MAX_BATCH_ENTRIES);
-      batches.push(prepareRenderBatch(slice));
-    }
-    await sendBatchesAsyncTo(wc, "logs:append", batches);
-    diagSilly(`[flush-diag] Sent ${batches.length} batches to main window`);
-  } catch (err) {
-    const retryFrom =
-      err instanceof RendererBatchDeliveryError ? err.acknowledgedEntries : 0;
-    pendingAppends = entries.slice(retryFrom).concat(pendingAppends);
-    log.error(
-      "[flush-diag] Error flushing renderer append queue:",
-      err instanceof Error ? err.message : String(err),
-    );
-    throw err;
-  }
+  if (mainWindow) await flushAppendQueue(mainWindow, pendingAppends);
 }
 function isWindowReady(win: BrowserWindow | null | undefined): boolean {
   try {
@@ -1153,46 +1022,40 @@ function isWindowReady(win: BrowserWindow | null | undefined): boolean {
 }
 function enqueueAppendsFor(winId: number, entries: LogEntry[]): void {
   if (!entries || !entries.length) return;
-  const list = pendingAppendsByWindow.get(winId) || [];
-  const updated = list.concat(entries);
-  // Backpressure: bound the buffer, but NEVER drop entries from the current
-  // enqueue call. Bulk/initial loads (e.g. HTTP-tail "load existing content
-  // first") can hand us the entire file in one call with more than
-  // MAX_PENDING_APPENDS entries – those must all reach the renderer. Only
-  // previously-buffered overflow from sustained live streaming is dropped.
-  const cap = Math.max(MAX_PENDING_APPENDS, entries.length);
-  if (updated.length > cap) updated.splice(0, updated.length - cap);
-  pendingAppendsByWindow.set(winId, updated);
+  let queue = pendingAppendsByWindow.get(winId);
+  if (!queue) {
+    queue = new WindowAppendQueue<LogEntry>();
+    pendingAppendsByWindow.set(winId, queue);
+  }
+  queue.enqueue(entries, MAX_PENDING_APPENDS);
 }
 async function flushPendingAppendsFor(win: BrowserWindow): Promise<void> {
-  if (!isWindowReady(win)) {
-    diagSilly(`[flush-diag] Window ${win.id} not ready, skipping flush`);
-    return;
-  }
-  const buf = pendingAppendsByWindow.get(win.id);
-  if (!buf || !buf.length) return;
-  diagSilly(
-    `[flush-diag] Flushing ${buf.length} pending appends for window ${win.id}`,
-  );
-  const wc = win.webContents;
-  pendingAppendsByWindow.delete(win.id);
+  const queue = pendingAppendsByWindow.get(win.id);
+  if (queue) await flushAppendQueue(win, queue);
+}
+
+async function flushAppendQueue(
+  win: BrowserWindow,
+  queue: WindowAppendQueue<LogEntry>,
+): Promise<void> {
+  if (!isWindowReady(win)) return;
   try {
-    const batches: LogEntry[][] = [];
-    for (let i = 0; i < buf.length; i += MAX_BATCH_ENTRIES) {
-      const slice = buf.slice(i, i + MAX_BATCH_ENTRIES);
-      batches.push(prepareRenderBatch(slice));
-    }
-    await sendBatchesAsyncTo(wc, "logs:append", batches);
-    diagSilly(
-      `[flush-diag] Sent ${batches.length} batches to window ${win.id}`,
+    await queue.flush(
+      async (blocks) => {
+        const batches = Array.from(
+          blocks.batches(MAX_BATCH_ENTRIES),
+          prepareRenderBatch,
+        );
+        await sendBatchesAsyncTo(win.webContents, "logs:append", batches);
+      },
+      (error) =>
+        error instanceof RendererBatchDeliveryError
+          ? error.acknowledgedEntries
+          : 0,
     );
   } catch (e) {
-    const pending = pendingAppendsByWindow.get(win.id) || [];
-    const retryFrom =
-      e instanceof RendererBatchDeliveryError ? e.acknowledgedEntries : 0;
-    pendingAppendsByWindow.set(win.id, buf.slice(retryFrom).concat(pending));
     log.error(
-      "flushPendingAppendsFor send failed:",
+      `[flush-diag] Window ${win.id} append failed:`,
       e instanceof Error ? e.message : String(e),
     );
     throw e;
@@ -1201,12 +1064,10 @@ async function flushPendingAppendsFor(win: BrowserWindow): Promise<void> {
 
 // NetworkService callback → route to right window(s)
 function sendAppend(entries: LogEntry[]): void {
-  try {
-    // volle Daten in Datei (ohne Kürzung)
-    writeEntriesToFile(entries);
-  } catch {
-    // Intentionally empty - ignore errors
-  }
+  // NetworkService's synchronous callback requires lossless queue admission.
+  void writeEntriesToFile(entries).catch((error) => {
+    log.error("[file-logging] Network entries could not be persisted:", error);
+  });
 
   const isTcpEntry = (e: LogEntry) =>
     typeof e?.source === "string" && e.source.startsWith("tcp:");
@@ -2344,12 +2205,15 @@ function createWindow(opts: { makePrimary?: boolean } = {}): BrowserWindow {
   win.on("closed", () => {
     windows.delete(win);
     windowMeta.delete(win.id);
+    pendingAppendsByWindow.get(win.id)?.dispose();
     pendingAppendsByWindow.delete(win.id);
     loadedWindows.delete(win.id); // Remove from loaded windows set
     httpTailCountByWindow.delete(win.id);
     if (tcpOwnerWindowId != null && tcpOwnerWindowId === win.id) {
       try {
-        void networkService.stopTcpServer();
+        void networkService.stopTcpServer().catch((error) => {
+          log.error("[file-logging] TCP stop failed:", error);
+        });
       } catch {
         // Intentionally empty - ignore errors
       }
@@ -2555,8 +2419,7 @@ function createWindow(opts: { makePrimary?: boolean } = {}): BrowserWindow {
     // are loaded AND the renderer signals ready – see tryInstallMenu().
     installPlaceholderMenu();
     await settingsLoadPromise;
-    const s = settingsService.get();
-    if (s.logToFile) openLogStream();
+    await fileLoggingReady;
     settingsLoadedForMenu = true;
     tryInstallMenu();
   });
@@ -2624,6 +2487,8 @@ try {
         // range and duplicate batches that were already persisted.
       }
     },
+    configureFileLogging,
+    stopSourcesAndCloseFileLogging,
   );
   log.info("[diag] IPC handlers registered successfully");
 } catch (err) {
@@ -2890,12 +2755,12 @@ try {
             try {
               app.quit();
             } catch {
-              process.exit(0);
+              exitAfterFileLogging(0);
             }
           }, LOG_FLUSH_TIMEOUT_MS);
         } catch (e) {
           console.error(`[FATAL] Error handling ${signal}:`, e);
-          process.exit(0);
+          exitAfterFileLogging(0);
         }
       });
     } catch (e) {
@@ -3177,8 +3042,27 @@ app.on("before-quit", async (e) => {
 });
 
 // Extra diagnostics
+let fileLoggingShutdown: Promise<void> | null = null;
+let fileLoggingShutdownComplete = false;
 try {
   app.on("will-quit", (e) => {
+    // Electron does not await async event handlers. Prevent exit until accepted
+    // file writes have settled; a second quit pass performs the normal cleanup.
+    if (!fileLoggingShutdownComplete) {
+      e.preventDefault();
+      if (!fileLoggingShutdown) {
+        fileLoggingShutdown = stopSourcesAndCloseFileLogging()
+          .catch((error) => {
+            log.error("[file-logging] Shutdown flush failed:", error);
+          })
+          .then(() => {
+            fileLoggingShutdownComplete = true;
+            // Resume after Electron has unwound the prevented will-quit event.
+            setImmediate(() => app.quit());
+          });
+      }
+      return;
+    }
     try {
       log.info("[diag] will-quit fired; defaultPrevented=", e.defaultPrevented);
 
