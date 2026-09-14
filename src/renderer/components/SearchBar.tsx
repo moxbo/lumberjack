@@ -11,6 +11,7 @@ import type { RefObject } from "preact";
 import type { JSX } from "preact/jsx-runtime";
 import { useI18n } from "../../utils/i18n";
 import type { ReadonlySequence } from "../../utils/metadataSnapshot";
+import { shouldNavigateCommittedSearch } from "../progressiveSearch";
 
 export interface SearchBarProps {
   search: string;
@@ -42,6 +43,7 @@ export interface SearchBarProps {
   searchMatchIdx: number[];
   selectedOneIdx: number | null;
   filteredIdx: ReadonlySequence<number>;
+  positionOfId?: (id: number) => number;
   gotoSearchMatch: (dir: number) => void;
   // i18n
   t: (key: string, params?: Record<string, string>) => string;
@@ -70,6 +72,7 @@ export function SearchBar({
   searchMatchIdx,
   selectedOneIdx,
   filteredIdx,
+  positionOfId,
   gotoSearchMatch,
   t,
 }: SearchBarProps): JSX.Element {
@@ -92,11 +95,15 @@ export function SearchBar({
           ref={searchInputRef as any}
           type="search"
           value={searchVal}
-          onInput={(e) => setSearchVal(e.currentTarget.value)}
+          onInput={(e) => {
+            setSearchVal(e.currentTarget.value);
+            if (!e.currentTarget.value) setSearch("");
+          }}
           onKeyDown={(e) => {
             const key = (e as any).key;
             // Handle Enter: select highlighted item or go to next match
             if (key === "Enter") {
+              e.preventDefault();
               if (
                 showSearchHist &&
                 searchHistHighlightIdx >= 0 &&
@@ -114,7 +121,9 @@ export function SearchBar({
                 const val = (e.currentTarget as any).value as string;
                 setSearch(val);
                 addFilterHistory("search", val);
-                gotoSearchMatch(1);
+                if (shouldNavigateCommittedSearch(val, search)) {
+                  gotoSearchMatch(1);
+                }
               }
               return;
             }
@@ -394,7 +403,8 @@ export function SearchBar({
           ? (() => {
               const curVi =
                 selectedOneIdx != null
-                  ? filteredIdx.indexOf(selectedOneIdx)
+                  ? (positionOfId?.(selectedOneIdx) ??
+                    filteredIdx.indexOf(selectedOneIdx))
                   : -1;
               const currentMatchPos =
                 curVi >= 0 ? searchMatchIdx.indexOf(curVi) : -1;

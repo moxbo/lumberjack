@@ -3,6 +3,7 @@ import { forwardRef, memo } from "preact/compat";
 import {
   useCallback,
   useImperativeHandle,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -15,6 +16,7 @@ import {
 import logger from "../../utils/logger";
 import type { ReadonlySequence } from "../../utils/metadataSnapshot";
 import { LogRow } from "../LogRow";
+import { anchoredScrollOffset } from "../progressiveSearch";
 
 const ROW_HEIGHT = 36;
 
@@ -34,6 +36,9 @@ export interface VirtualizedLogListProps {
   marksMap: Record<string, string>;
   search: string;
   follow: boolean;
+  queryKey?: string;
+  positionOfId?: (id: number) => number;
+  onUserInteraction?: () => void;
   listRef: { current: HTMLDivElement | null };
   onDisableFollow: () => void;
   onKeyDown: (event: KeyboardEvent) => void;
@@ -57,6 +62,9 @@ const VirtualizedLogListWithRef = forwardRef<
     marksMap,
     search,
     follow,
+    queryKey,
+    positionOfId,
+    onUserInteraction,
     listRef,
     onDisableFollow,
     onKeyDown,
@@ -73,6 +81,14 @@ const VirtualizedLogListWithRef = forwardRef<
     null,
   );
   const isProgrammaticScrollRef = useRef(false);
+  const interactionVersion = useRef(0);
+  const currentView = useRef({ filteredIdx, positionOfId, queryKey });
+  currentView.current = { filteredIdx, positionOfId, queryKey };
+  const handleUserInteraction = useCallback(() => {
+    interactionVersion.current++;
+    isProgrammaticScrollRef.current = false;
+    onUserInteraction?.();
+  }, [onUserInteraction]);
 
   const setListElement = useCallback(
     (element: HTMLDivElement | null) => {
@@ -103,6 +119,30 @@ const VirtualizedLogListWithRef = forwardRef<
     getItemKey,
     measureElement: undefined,
   } as any);
+  const previousList = useRef({ ids: filteredIdx, queryKey });
+  useLayoutEffect(() => {
+    const previous = previousList.current;
+    previousList.current = { ids: filteredIdx, queryKey };
+    if (
+      !scrollElement ||
+      previous.ids === filteredIdx ||
+      previous.queryKey !== queryKey
+    )
+      return;
+    const offset = anchoredScrollOffset(
+      previous.ids,
+      scrollElement.scrollTop,
+      positionOfId ?? ((id) => filteredIdx.indexOf(id)),
+      ROW_HEIGHT,
+    );
+    if (offset !== null && offset !== scrollElement.scrollTop) {
+      isProgrammaticScrollRef.current = true;
+      virtualizer.scrollToOffset(offset);
+      requestAnimationFrame(() => {
+        isProgrammaticScrollRef.current = false;
+      });
+    }
+  }, [filteredIdx, queryKey, positionOfId, scrollElement, virtualizer]);
 
   const handleScroll = useCallback(
     (event: Event) => {
@@ -124,12 +164,26 @@ const VirtualizedLogListWithRef = forwardRef<
         virtualizer.scrollToIndex(index, { align });
       },
       scrollToIndexCenter(index) {
+        const id = currentView.current.filteredIdx.at(index);
+        const query = currentView.current.queryKey;
+        const interaction = interactionVersion.current;
         isProgrammaticScrollRef.current = true;
         virtualizer.scrollToIndex(index, { align: "auto" });
 
         requestAnimationFrame(() => {
+          if (
+            query !== currentView.current.queryKey ||
+            interaction !== interactionVersion.current ||
+            id === undefined
+          ) {
+            isProgrammaticScrollRef.current = false;
+            return;
+          }
+          const currentIndex =
+            currentView.current.positionOfId?.(id) ??
+            currentView.current.filteredIdx.indexOf(id);
           const rowElement = scrollElement?.querySelector(
-            `[data-vi="${index}"]`,
+            `[data-vi="${currentIndex}"]`,
           ) as HTMLElement | null;
           if (rowElement) {
             rowElement.scrollIntoView({
@@ -143,9 +197,24 @@ const VirtualizedLogListWithRef = forwardRef<
         });
       },
       scrollAfterFilterChange(index) {
+        const id = currentView.current.filteredIdx.at(index);
+        const query = currentView.current.queryKey;
+        const interaction = interactionVersion.current;
         isProgrammaticScrollRef.current = true;
         requestAnimationFrame(() => {
-          virtualizer.scrollToIndex(index, { align: "center" });
+          if (
+            query !== currentView.current.queryKey ||
+            interaction !== interactionVersion.current ||
+            id === undefined
+          ) {
+            isProgrammaticScrollRef.current = false;
+            return;
+          }
+          const currentIndex =
+            currentView.current.positionOfId?.(id) ??
+            currentView.current.filteredIdx.indexOf(id);
+          if (currentIndex >= 0)
+            virtualizer.scrollToIndex(currentIndex, { align: "center" });
           requestAnimationFrame(() => {
             isProgrammaticScrollRef.current = false;
           });
@@ -184,7 +253,13 @@ const VirtualizedLogListWithRef = forwardRef<
       tabIndex={0}
       role="listbox"
       aria-label={t("list.ariaLabel")}
-      onKeyDown={onKeyDown as any}
+      onKeyDown={(event) => {
+        handleUserInteraction();
+        onKeyDown(event as any);
+      }}
+      onWheel={handleUserInteraction}
+      onTouchStart={handleUserInteraction}
+      onPointerDown={handleUserInteraction}
       onScroll={handleScroll as any}
       onMouseDown={(event) => {
         try {

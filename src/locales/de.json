@@ -2,6 +2,12 @@
   "app": {
     "title": "Lumberjack"
   },
+  "searchProgress": {
+    "label": "Suchfortschritt",
+    "starting": "Suche wird gestartet …",
+    "running": "{{processed}} / {{total}} durchsucht · {{matches}} Treffer",
+    "complete": "{{total}} durchsucht · {{matches}} Treffer"
+  },
   "status": {
     "tcpActive": "TCP: Port {{port}} aktiv",
     "tcpStopped": "TCP gestoppt",

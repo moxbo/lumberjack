@@ -35,3 +35,23 @@ payloads in bounded pages, and streams all supported formats through the typed
 preload API. Each byte chunk is acknowledged before the next is submitted.
 The main process publishes the temporary file only after a successful finish;
 errors and window destruction cancel the export and clean up the partial file.
+
+## Progressive search
+
+`useFilterWorker` publishes cumulative result snapshots, stable `searchMatchIds`,
+and `progress` (`processed`, `total`, `matches`). Query identity includes navigation
+text/mode, filters, relevant marks, database and data generation. New queries and
+`cancelFiltering()` invalidate obsolete results; same-query appends queue behind
+the current scan so continuous input cannot starve results.
+
+The worker scans projection pages rather than loading all messages before
+filtering. It publishes the first page immediately and throttles subsequent
+updates. Passing references retain IDs, timestamps and match flags, not message
+text; the optional transferred projection cache is bounded and missing pages are
+read from IndexedDB. Navigation search has no 50,000-row cutoff.
+
+The search field still commits on Enter and navigates within the current log
+view; it does not turn navigation search into a message filter. App maps match
+IDs to current visual positions because partial worker positions can differ
+from the full list. New matches preserve stable-ID selection and the viewport
+anchor, and manual interaction cancels any pending automatic navigation.

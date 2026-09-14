@@ -109,6 +109,8 @@ import {
 import type { VirtualizedLogListHandle } from "./components";
 import { SkeletonLoader } from "./components/SkeletonLoader";
 import { ElasticStatusBar } from "./components/ElasticStatusBar";
+import { FilterProgressStatus } from "./components/FilterProgressStatus";
+import { searchMatchPositions } from "./progressiveSearch";
 import { JSX } from "preact/jsx-runtime";
 import { buildDemoEntries, LOGBACK_TCP_SNIPPET } from "./onboardingData";
 
@@ -164,6 +166,7 @@ const TraceTimeline = lazy(() =>
 
 // Initialize debug functions on module load
 setupDebugFunctions();
+const EMPTY_FILTER_IDS: number[] = [];
 
 export default function App(): JSX.Element {
   // Track component initialization (only once via ref to avoid re-marking on every render)
@@ -331,7 +334,16 @@ export default function App(): JSX.Element {
   // auslösen → bei 100k–300k Einträgen friert die Oberfläche beim gleichzeitigen
   // Tippen/Einstellen ein. Das Throttling veröffentlicht den ersten Block
   // sofort und bündelt danach Bursts auf höchstens einen Filterlauf je 120 ms.
-  const visibleEntries = useThrottledValue(entries, 120);
+  const filterInput = useMemo(
+    () => ({ entries, generation: entryGeneration }),
+    [entries, entryGeneration],
+  );
+  const throttledFilterInput = useThrottledValue(filterInput, 120);
+  // Never submit an older snapshot under the generation of a cleared dataset.
+  const visibleEntries =
+    throttledFilterInput.generation === entryGeneration
+      ? throttledFilterInput.entries
+      : entries;
 
   // History popovers - using extracted hook
   const {
@@ -830,10 +842,13 @@ export default function App(): JSX.Element {
   // Use Filter Worker for large datasets (>10,000 entries)
   const {
     filteredIndices: workerFilteredIdx,
-    searchMatchIndices: workerSearchMatchIdx,
+    searchMatchIds: workerSearchMatchIds,
+    isFiltering,
+    progress: filterProgress,
     stats: workerFilterStats,
     error: filterWorkerError,
     filterEntries,
+    cancelFiltering,
     projectionBridge,
   } = useFilterWorker();
 
@@ -853,13 +868,71 @@ export default function App(): JSX.Element {
     onlyMarked ||
     dcFilterActive ||
     TimeFilter.isEnabled();
+  const queryActive = filterIsActive || !!search.trim();
+  const queryKey = useMemo(
+    () =>
+      JSON.stringify({
+        stdFiltersEnabled,
+        filter,
+        dcVersion,
+        timeVersion,
+        onlyMarked,
+        markedSignatures: onlyMarked ? Object.keys(marksMap).sort() : [],
+        navigationSearch: search,
+        navigationSearchMode: searchMode,
+        entryGeneration,
+        databaseName: repository.databaseName,
+      }),
+    [
+      stdFiltersEnabled,
+      filter,
+      dcVersion,
+      timeVersion,
+      onlyMarked,
+      onlyMarked ? marksMap : null,
+      search,
+      searchMode,
+      entryGeneration,
+      repository,
+    ],
+  );
+  const [submittedQueryKey, setSubmittedQueryKey] = useState<string | null>(
+    null,
+  );
+  const resultsCurrent = queryKey === submittedQueryKey;
+  const searchRunning = queryActive && (!resultsCurrent || isFiltering);
+  const pendingFirstSearchRef = useRef<string | null>(null);
+  const pendingSelectedAfterFilterRef = useRef<number | null>(null);
+  const cancelAutomaticNavigation = useCallback(() => {
+    pendingFirstSearchRef.current = null;
+    pendingSelectedAfterFilterRef.current = null;
+  }, []);
+  const commitSearch = useCallback(
+    (value: string) => {
+      if (value === search) return;
+      cancelFiltering();
+      setSubmittedQueryKey(null);
+      pendingFirstSearchRef.current = value.trim() ? value : null;
+      pendingSelectedAfterFilterRef.current = null;
+      setSearch(value);
+    },
+    [search, setSearch, cancelFiltering],
+  );
+  const commitSearchMode = useCallback(
+    (mode: typeof searchMode) => {
+      if (mode === searchMode) return;
+      cancelFiltering();
+      setSubmittedQueryKey(null);
+      pendingFirstSearchRef.current = search.trim() ? search : null;
+      pendingSelectedAfterFilterRef.current = null;
+      setSearchMode(mode);
+    },
+    [search, searchMode, setSearchMode, cancelFiltering],
+  );
 
   useEffect(() => {
     if (filterWorkerError) showAlert(filterWorkerError.message);
   }, [filterWorkerError, showAlert]);
-
-  // Track if we have ever triggered filtering (to show loading state on initial large load)
-  const hasTriggeredFilterRef = useRef(false);
 
   // Trigger filtering when dependencies change
   useEffect(() => {
@@ -880,9 +953,17 @@ export default function App(): JSX.Element {
     const timeFilterFrom = timeState.from || undefined;
     const timeFilterTo = timeState.to || undefined;
 
-    if (!filterIsActive && !String(search || "").trim()) return;
+    if (
+      (!filterIsActive && !String(search || "").trim()) ||
+      !visibleEntries.length
+    ) {
+      cancelFiltering();
+      setSubmittedQueryKey(queryKey);
+      if (!visibleEntries.length) cancelAutomaticNavigation();
+      return;
+    }
 
-    hasTriggeredFilterRef.current = true;
+    setSubmittedQueryKey(queryKey);
     const filterGeneration = JSON.stringify({
       stdFiltersEnabled,
       filter,
@@ -893,6 +974,8 @@ export default function App(): JSX.Element {
       timeFilterFrom,
       timeFilterTo,
       markedSignatures: onlyMarked ? Object.keys(marksMap).sort() : [],
+      navigationSearch: search,
+      navigationSearchMode: searchMode,
     });
     filterEntries(
       visibleEntries,
@@ -944,10 +1027,17 @@ export default function App(): JSX.Element {
     entryGeneration,
     filterIsActive,
     repository,
+    queryKey,
+    cancelFiltering,
+    cancelAutomaticNavigation,
   ]);
 
   const unfilteredIds = entries.ids;
-  const filteredIdx = filterIsActive ? workerFilteredIdx : unfilteredIds;
+  const filteredIdx = filterIsActive
+    ? resultsCurrent
+      ? workerFilteredIdx
+      : EMPTY_FILTER_IDS
+    : unfilteredIds;
 
   const visualPositionById = useIdPositions(filteredIdx);
   const viOfGlobal = useCallback(
@@ -1017,6 +1107,8 @@ export default function App(): JSX.Element {
   const countSelected = selected.size;
 
   const clearAllFilters = useCallback(() => {
+    cancelFiltering();
+    cancelAutomaticNavigation();
     setSearch("");
     setFilter({
       level: "",
@@ -1033,7 +1125,13 @@ export default function App(): JSX.Element {
     }
     TimeFilter.reset();
     DiagnosticContextFilter.reset();
-  }, [setFilter, setOnlyMarked, setSearch]);
+  }, [
+    setFilter,
+    setOnlyMarked,
+    setSearch,
+    cancelFiltering,
+    cancelAutomaticNavigation,
+  ]);
 
   const handleDisableFollow = useCallback(() => {
     setFollow(false);
@@ -1043,11 +1141,14 @@ export default function App(): JSX.Element {
       logger.warn("Persisting follow flag failed:", err);
     }
   }, []);
+  const handleManualNavigation = useCallback(() => {
+    cancelAutomaticNavigation();
+    if (queryActive && follow) handleDisableFollow();
+  }, [cancelAutomaticNavigation, queryActive, follow, handleDisableFollow]);
 
   // Bei Filteränderung: ausgewählten Eintrag sichtbar halten, wenn er noch in der Liste ist
   const prevFilteredIdxRef = useRef<ReadonlySequence<number>>(filteredIdx);
   const selectedRef = useRef<Set<number>>(selected);
-  const pendingSelectedAfterFilterRef = useRef<number | null>(null);
   // Track previous filter criteria to distinguish filter changes from new entries
   const prevFilterCriteriaRef = useRef({
     stdFiltersEnabled,
@@ -1056,6 +1157,8 @@ export default function App(): JSX.Element {
     timeVersion,
     onlyMarked,
     searchMode,
+    search,
+    entryGeneration,
   });
 
   // Halte selectedRef aktuell
@@ -1074,11 +1177,17 @@ export default function App(): JSX.Element {
       prevCriteria.dcVersion !== dcVersion ||
       prevCriteria.timeVersion !== timeVersion ||
       prevCriteria.onlyMarked !== onlyMarked ||
-      prevCriteria.searchMode !== searchMode;
+      prevCriteria.searchMode !== searchMode ||
+      prevCriteria.search !== search;
 
-    if (filterCriteriaChanged) {
-      pendingSelectedAfterFilterRef.current =
-        lastClicked.current ?? Array.from(selectedRef.current).pop() ?? null;
+    if (prevCriteria.entryGeneration !== entryGeneration) {
+      cancelAutomaticNavigation();
+    } else if (filterCriteriaChanged) {
+      pendingSelectedAfterFilterRef.current = search.trim()
+        ? null
+        : (lastClicked.current ??
+          Array.from(selectedRef.current).pop() ??
+          null);
     }
 
     prevFilteredIdxRef.current = filteredIdx;
@@ -1089,9 +1198,11 @@ export default function App(): JSX.Element {
       timeVersion,
       onlyMarked,
       searchMode,
+      search,
+      entryGeneration,
     };
 
-    if (!filteredListChanged) return;
+    if (!filteredListChanged || !resultsCurrent) return;
 
     // Teilergebnisse enthalten den ausgewählten Eintrag möglicherweise noch
     // nicht. Das Ziel bleibt daher bis zu einem späteren Worker-Ergebnis aktiv.
@@ -1103,6 +1214,8 @@ export default function App(): JSX.Element {
     if (viIndex >= 0) {
       pendingSelectedAfterFilterRef.current = null;
       virtualListRef.current?.scrollAfterFilterChange(viIndex);
+    } else if (!searchRunning) {
+      pendingSelectedAfterFilterRef.current = null;
     }
   }, [
     filteredIdx,
@@ -1112,6 +1225,12 @@ export default function App(): JSX.Element {
     timeVersion,
     onlyMarked,
     searchMode,
+    search,
+    entryGeneration,
+    resultsCurrent,
+    searchRunning,
+    viOfGlobal,
+    cancelAutomaticNavigation,
   ]);
 
   // Diagnostic logging removed - was causing render loops and performance issues on Windows
@@ -1120,6 +1239,7 @@ export default function App(): JSX.Element {
   // Stabile Callbacks für LogRow, um unnötige Re-Renders zu vermeiden
   const handleRowSelect = useCallback(
     (idx: number, shift: boolean, meta: boolean) => {
+      handleManualNavigation();
       try {
         toggleSelectIndex(idx, shift, meta);
         try {
@@ -1129,18 +1249,19 @@ export default function App(): JSX.Element {
         logger.error("onClick handler error:", err);
       }
     },
-    [toggleSelectIndex],
+    [toggleSelectIndex, handleManualNavigation],
   );
 
   const handleRowContextMenu = useCallback(
     (ev: MouseEvent, idx: number) => {
+      handleManualNavigation();
       try {
         openContextMenu(ev, idx);
       } catch (err) {
         logger.error("onContextMenu handler error:", err);
       }
     },
-    [openContextMenu],
+    [openContextMenu, handleManualNavigation],
   );
 
   // Stabilisierter Highlight-Callback
@@ -1150,6 +1271,7 @@ export default function App(): JSX.Element {
   );
 
   function gotoListStart(): void {
+    handleManualNavigation();
     if (!filteredIdx.length) return;
     const targetVi = 0;
     const globalIdx = filteredIdx.at(targetVi)!;
@@ -1162,6 +1284,7 @@ export default function App(): JSX.Element {
     } catch {}
   }
   function gotoListEnd(): void {
+    handleManualNavigation();
     if (!filteredIdx.length) return;
     const targetVi = filteredIdx.length - 1;
     const globalIdx = filteredIdx.at(targetVi)!;
@@ -1285,12 +1408,32 @@ export default function App(): JSX.Element {
     [getIdsBySignature, marksMap, visualPositionById],
   );
 
-  // Der Filter-Worker ermittelt dieselben, auf 50k begrenzten visuellen
-  // Trefferindizes im selben Durchlauf wie `filteredIdx`. Dadurch entfällt der
-  // zusätzliche O(n)-Scan mit `msgMatches` im Renderer-Hauptthread.
-  const searchMatchIdx = workerSearchMatchIdx;
+  const searchMatchIdx = useMemo(
+    () =>
+      resultsCurrent && search.trim()
+        ? searchMatchPositions(workerSearchMatchIds, viOfGlobal)
+        : EMPTY_FILTER_IDS,
+    [resultsCurrent, search, workerSearchMatchIds, viOfGlobal],
+  );
+  useEffect(() => {
+    if (
+      !resultsCurrent ||
+      pendingFirstSearchRef.current !== search ||
+      !searchMatchIdx.length
+    )
+      return;
+    pendingFirstSearchRef.current = null;
+    pendingSelectedAfterFilterRef.current = null;
+    const vi = searchMatchIdx[0]!;
+    const id = filteredIdx.at(vi);
+    if (id === undefined) return;
+    setSelected(new Set([id]));
+    lastClicked.current = id;
+    scrollToIndexCenter(vi);
+  }, [resultsCurrent, search, searchMatchIdx, filteredIdx]);
 
   function gotoMarked(dir: number) {
+    handleManualNavigation();
     if (!markedIdx.length) return;
     const curVi = selectedOneIdx != null ? viOfGlobal(selectedOneIdx) : -1;
     const first = markedIdx[0]!;
@@ -1378,6 +1521,7 @@ export default function App(): JSX.Element {
   }, [markedIdx, filteredIdx, marksMap, repository]);
 
   function gotoSearchMatch(dir: number) {
+    handleManualNavigation();
     if (!searchMatchIdx.length) return;
     const curVi = selectedOneIdx != null ? viOfGlobal(selectedOneIdx) : -1;
     const first = searchMatchIdx[0]!;
@@ -1507,21 +1651,32 @@ export default function App(): JSX.Element {
   );
 
   // Follow mode auto-select
+  const lastFollowedEntryCountRef = useRef(entries.length);
   useEffect(() => {
-    if (!follow) return;
+    if (!follow) {
+      lastFollowedEntryCountRef.current = entries.length;
+      return;
+    }
+    if (searchRunning) return;
+    const entriesAppended = entries.length > lastFollowedEntryCountRef.current;
+    lastFollowedEntryCountRef.current = entries.length;
+    // Refining a query is not a tail append. Keep both manual selection and
+    // its viewport on completion, but resume following subsequent live input.
+    if (queryActive && !entriesAppended) return;
     if (!filteredIdx.length) return;
     const lastGlobalIdx = filteredIdx.at(-1)!;
     setSelected(new Set([lastGlobalIdx]));
     // Sicherstellen, dass der letzte Eintrag korrekt sichtbar ist (oberhalb des Detail-Overlays)
-    setTimeout(() => {
+    const timer = setTimeout(() => {
       scrollToIndexCenter(filteredIdx.length - 1);
     }, 0);
+    return () => clearTimeout(timer);
     // Abhängigkeit nur auf das tatsächliche Filterergebnis `filteredIdx`:
     // dieses spiegelt bereits neue Einträge UND jede Filteränderung wider.
     // Vorher hing der Effekt am rohen `filter`-Objekt und lief so bei JEDEM
     // Tastendruck im Filterfeld (setSelected + Scroll) – auch während das
     // eigentliche Filtern noch debounced war.
-  }, [filteredIdx, follow]);
+  }, [filteredIdx, follow, queryActive, searchRunning, entries.length]);
 
   function addMdcToFilter(k: string, v: string) {
     try {
@@ -2573,9 +2728,9 @@ export default function App(): JSX.Element {
         />
         <SearchBar
           search={search}
-          setSearch={setSearch}
+          setSearch={commitSearch}
           searchMode={searchMode}
-          setSearchMode={setSearchMode}
+          setSearchMode={commitSearchMode}
           showSearchOptions={showSearchOptions}
           setShowSearchOptions={setShowSearchOptions}
           fltHistSearch={fltHistSearch}
@@ -2594,9 +2749,23 @@ export default function App(): JSX.Element {
           searchMatchIdx={searchMatchIdx}
           selectedOneIdx={selectedOneIdx}
           filteredIdx={filteredIdx}
+          positionOfId={viOfGlobal}
           gotoSearchMatch={gotoSearchMatch}
           t={t}
         />
+        {queryActive && !filterWorkerError && (
+          <FilterProgressStatus
+            key={queryKey}
+            running={searchRunning}
+            progress={
+              resultsCurrent
+                ? filterProgress
+                : { processed: 0, total: entries.length, matches: 0 }
+            }
+            locale={locale}
+            t={t}
+          />
+        )}
         <StatusSection
           busy={busy}
           importProgress={importProgress}
@@ -2772,6 +2941,9 @@ export default function App(): JSX.Element {
           marksMap={marksMap}
           search={search}
           follow={follow}
+          queryKey={queryKey}
+          positionOfId={viOfGlobal}
+          onUserInteraction={handleManualNavigation}
           onDisableFollow={handleDisableFollow}
           onKeyDown={stableOnListKeyDown}
           onRowSelect={handleRowSelect}
@@ -2897,22 +3069,25 @@ export default function App(): JSX.Element {
                 </div>
               </div>
             ))}
-          {countFiltered === 0 && entries.length > 0 && (
-            <div className="list-empty">
-              <div className="list-empty-icon">🔎</div>
-              <div className="list-empty-title">{t("list.noMatchTitle")}</div>
-              <div className="list-empty-hint">{t("list.noMatchHint")}</div>
-              <div className="list-empty-actions">
-                <button
-                  type="button"
-                  className="btn-primary"
-                  onClick={clearAllFilters}
-                >
-                  ✕ {t("list.actionResetFilters")}
-                </button>
+          {countFiltered === 0 &&
+            entries.length > 0 &&
+            !searchRunning &&
+            !filterWorkerError && (
+              <div className="list-empty">
+                <div className="list-empty-icon">🔎</div>
+                <div className="list-empty-title">{t("list.noMatchTitle")}</div>
+                <div className="list-empty-hint">{t("list.noMatchHint")}</div>
+                <div className="list-empty-actions">
+                  <button
+                    type="button"
+                    className="btn-primary"
+                    onClick={clearAllFilters}
+                  >
+                    ✕ {t("list.actionResetFilters")}
+                  </button>
+                </div>
               </div>
-            </div>
-          )}
+            )}
         </VirtualizedLogList>
 
         {/* Overlay: Divider + Detailbereich */}
