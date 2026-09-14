@@ -44,9 +44,8 @@ const EPOCH_MS = new Date("2026-01-01T00:00:00.000Z").getTime();
  * Build `n` PassingReference objects whose timestamps are 1 ms apart,
  * starting at `tsBaseMs`.  IDs start at `idOffset + 1`.
  *
- * The message / messageLower fields are set so entries within the first
- * 50 000 are searchable (mirrors the SEARCHABLE_REFERENCE_LIMIT applied by
- * mergePassingReferences).
+ * Legacy message fields exercise compatibility; production scans retain only
+ * compact timestamp/ID references with precomputed navigation-match flags.
  */
 function makeRefs(
   n: number,

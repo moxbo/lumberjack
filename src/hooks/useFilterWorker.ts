@@ -26,6 +26,11 @@ import {
   createProjectionBridge,
   type ProjectionBridge,
 } from "../workers/projectionBridge";
+import type { FilterProgress } from "../types/filterProgress";
+import type {
+  FilterResponse,
+  FilterErrorResponse,
+} from "../workers/filterWorker";
 
 export interface FilterOptions {
   stdFiltersEnabled: boolean;
@@ -69,7 +74,9 @@ export interface PagedFilterConfig {
 export interface UseFilterWorkerResult {
   filteredIndices: number[];
   searchMatchIndices: number[];
+  searchMatchIds: number[];
   isFiltering: boolean;
+  progress: FilterProgress | null;
   stats: FilterStats | null;
   /** IndexedDB/worker failures. Paged failures never masquerade as empty results. */
   error: Error | null;
@@ -88,6 +95,7 @@ export interface UseFilterWorkerResult {
     marksMap?: Record<string, string>,
     config?: PagedFilterConfig,
   ) => void;
+  cancelFiltering: () => void;
   /** True wenn UtilityProcess verwendet wird, false für Web Worker/Sync */
   useUtilityProcess: boolean;
   /** Bridge for direct projection transfer to the filter worker. null when no worker. */
@@ -171,10 +179,11 @@ export function projectToSlimEntries(
 export function resolveFilteredEntryIds(
   entries: ReadonlySequence<unknown>,
   filteredOffsets: readonly number[],
+  baseOffset = 0,
 ): number[] {
   return filteredOffsets.map((offset) => {
     const entry = entries.at(offset) as { _id?: unknown } | null | undefined;
-    return typeof entry?._id === "number" ? entry._id : offset;
+    return typeof entry?._id === "number" ? entry._id : baseOffset + offset;
   });
 }
 
@@ -189,8 +198,11 @@ function computeSearchMatchIndices(
   // UtilityProcess filtering still returns legacy array indices, so this helper
   // intentionally treats filteredIndices as direct offsets into `entries`.
   const matches: number[] = [];
-  const limit = Math.min(filteredIndices.length, 50_000);
-  for (let visualIndex = 0; visualIndex < limit; visualIndex++) {
+  for (
+    let visualIndex = 0;
+    visualIndex < filteredIndices.length;
+    visualIndex++
+  ) {
     const entry = entries.at(filteredIndices[visualIndex]!) as Record<
       string,
       unknown
@@ -206,15 +218,7 @@ function computeSearchMatchIndices(
   return matches;
 }
 
-/**
- * Hook that uses UtilityProcess (Electron 40+) or Web Worker for filtering large datasets.
- * Falls back to synchronous filtering for kleinere Datensätze oder wenn UtilityProcess nicht verfügbar ist.
- *
- * Priorität:
- * 1. UtilityProcess (beste Performance, separater Prozess)
- * 2. Web Worker (Fallback, läuft im Renderer-Thread-Pool)
- * 3. Synchron (für kleine Datensätze < 5000 Einträge)
- */
+/** Worker-first filtering with progressive, cancellable fallback pages. */
 export function useFilterWorker(): UseFilterWorkerResult {
   const [filteredIndices, setFilteredIndices] = useState<number[]>([]);
   const [searchMatchIndices, setSearchMatchIndices] = useState<number[]>([]);
@@ -222,22 +226,19 @@ export function useFilterWorker(): UseFilterWorkerResult {
   const [stats, setStats] = useState<FilterStats | null>(null);
   const [error, setError] = useState<Error | null>(null);
   const [useUtilityProcess, setUseUtilityProcess] = useState(false);
+  const [searchMatchIds, setSearchMatchIds] = useState<number[]>([]);
+  const [progress, setProgress] = useState<FilterProgress | null>(null);
 
   const workerRef = useRef<Worker | null>(null);
   const pendingRequestRef = useRef<number>(0);
   const pendingGenerationRef = useRef<string | number | undefined>(undefined);
-  // ID des zuletzt tatsächlich angewendeten Ergebnisses. Der (Single-Thread-)
-  // Worker beantwortet Requests strikt in Reihenfolge, daher kommen Ergebnisse
-  // mit monoton steigender requestId zurück. Wir wenden jedes Ergebnis an, das
-  // NEUER als das zuletzt angewendete ist – nicht nur exakt das allerletzte.
-  //
-  // Vorher wurde nur `requestId === pendingRequestRef.current` angewendet. Bei
-  // kontinuierlichem/schnellem Datenzufluss (Streaming, große Bulk-Ladungen)
-  // liegt jedoch immer schon ein neuerer Request an, während der Worker noch
-  // ein älteres Ergebnis zurückliefert → JEDES Ergebnis wurde als "veraltet"
-  // verworfen. Folge: "Gesamt" stieg, "Gefiltert" blieb stehen und es wurden
-  // keine Einträge angezeigt (auch ohne aktiven Filter).
+  // Accept partial snapshots from the current query, including a running scan
+  // of an earlier append, but never from a replaced query or cleared dataset.
   const lastAppliedRequestRef = useRef<number>(0);
+  const cancelledThroughRef = useRef(0);
+  const targetCountRef = useRef(0);
+  const previousSourceRef = useRef<ReadonlySequence<unknown> | null>(null);
+  const sourceRevisionRef = useRef(0);
   const utilityProcessAvailableRef = useRef<boolean | null>(null);
 
   // Monoton steigender Request-Zähler. Date.now() kann bei schnellen Filtern
@@ -254,6 +255,28 @@ export function useFilterWorker(): UseFilterWorkerResult {
   const projectionBridgeRef = useRef<ProjectionBridge | null>(null);
   const [projectionBridge, setProjectionBridge] =
     useState<ProjectionBridge | null>(null);
+  const fallbackRunningRef = useRef(false);
+  const queuedFallbackRef = useRef<(() => Promise<void>) | null>(null);
+
+  const cancelFiltering = useCallback(() => {
+    const requestId = ++requestSeqRef.current;
+    pendingRequestRef.current = requestId;
+    cancelledThroughRef.current = requestId;
+    pendingGenerationRef.current = undefined;
+    queuedFallbackRef.current = null;
+    setFilteredIndices([]);
+    setSearchMatchIndices([]);
+    setSearchMatchIds([]);
+    setProgress(null);
+    setStats(null);
+    setIsFiltering(false);
+    setError(null);
+    try {
+      workerRef.current?.postMessage({ type: "cancel", requestId });
+    } catch (cause) {
+      setError(cause instanceof Error ? cause : new Error(String(cause)));
+    }
+  }, []);
 
   // Check if UtilityProcess is available on mount
   useEffect(() => {
@@ -299,56 +322,46 @@ export function useFilterWorker(): UseFilterWorkerResult {
       projectionBridgeRef.current = createProjectionBridge(workerRef.current);
       setProjectionBridge(projectionBridgeRef.current);
 
-      workerRef.current.onmessage = (event: MessageEvent) => {
-        const {
-          type,
-          filteredIndices: indices,
-          searchMatchIndices: workerSearchMatchIndices,
-          stats: workerStats,
-          requestId,
-          paged,
-          message,
-          generation,
-          partial,
-        } = event.data;
+      workerRef.current.onmessage = (
+        event: MessageEvent<FilterResponse | FilterErrorResponse>,
+      ) => {
+        const data = event.data;
+        const { requestId, generation } = data;
         if (
-          type === "error" &&
-          paged === true &&
-          requestId === pendingRequestRef.current
+          typeof requestId !== "number" ||
+          requestId <= cancelledThroughRef.current ||
+          generation !== pendingGenerationRef.current ||
+          requestId < lastAppliedRequestRef.current
         ) {
-          setError(new Error(message || "Paged filtering failed"));
-          setIsFiltering(false);
           return;
         }
-        // Monoton anwenden: jedes Ergebnis, das neuer ist als das zuletzt
-        // angewendete, übernehmen. So bleibt die gefilterte Ansicht auch bei
-        // kontinuierlichem Datenzufluss live, statt einzufrieren, weil ein
-        // noch neuerer Request bereits aussteht.
-        const isApplicablePagedResult =
-          paged === true &&
-          typeof requestId === "number" &&
-          generation === pendingGenerationRef.current &&
-          requestId >= lastAppliedRequestRef.current;
-        const isApplicableLegacyResult =
-          paged !== true &&
-          typeof requestId === "number" &&
-          requestId > lastAppliedRequestRef.current;
-        if (
-          type === "result" &&
-          typeof requestId === "number" &&
-          (isApplicablePagedResult || isApplicableLegacyResult)
-        ) {
-          lastAppliedRequestRef.current = requestId;
-          setError(null);
-          setFilteredIndices(indices);
-          setSearchMatchIndices(workerSearchMatchIndices || []);
-          setStats(workerStats);
-          // isFiltering erst zurücksetzen, wenn das aktuell jüngste Ergebnis da
-          // ist – sonst würde der Ladeindikator bei jedem Zwischenergebnis
-          // flackern, obwohl noch Requests ausstehen.
-          if (!partial && requestId >= pendingRequestRef.current) {
+        if (data.type === "error") {
+          if (requestId === pendingRequestRef.current) {
+            setError(new Error(data.message));
             setIsFiltering(false);
           }
+          return;
+        }
+        if (data.type !== "result") return;
+        lastAppliedRequestRef.current = requestId;
+        setError(null);
+        setFilteredIndices(data.filteredIndices);
+        setSearchMatchIndices(data.searchMatchIndices);
+        setSearchMatchIds(
+          data.searchMatchIds ??
+            data.searchMatchIndices.map(
+              (index) => data.filteredIndices[index]!,
+            ),
+        );
+        if (data.progress) {
+          setProgress({
+            ...data.progress,
+            total: Math.max(data.progress.total, targetCountRef.current),
+          });
+        }
+        setStats(data.stats);
+        if (!data.partial && requestId >= pendingRequestRef.current) {
+          setIsFiltering(false);
         }
       };
 
@@ -359,6 +372,9 @@ export function useFilterWorker(): UseFilterWorkerResult {
       };
 
       return () => {
+        cancelledThroughRef.current = ++requestSeqRef.current;
+        pendingGenerationRef.current = undefined;
+        queuedFallbackRef.current = null;
         if (projectionBridgeRef.current) {
           projectionBridgeRef.current.dispose();
           projectionBridgeRef.current = null;
@@ -476,6 +492,7 @@ export function useFilterWorker(): UseFilterWorkerResult {
       entries: ReadonlySequence<unknown>,
       options: FilterOptions,
       marksMap?: Record<string, string>,
+      baseOffset = 0,
     ): {
       indices: number[];
       searchMatchIndices: number[];
@@ -503,6 +520,12 @@ export function useFilterWorker(): UseFilterWorkerResult {
       const compiledDcFilter = options.dcFilterEnabled
         ? compileDcFilter(options.dcFilterEntries)
         : [];
+      const fromTs = options.timeFilterFrom
+        ? Date.parse(options.timeFilterFrom)
+        : NaN;
+      const toTs = options.timeFilterTo
+        ? Date.parse(options.timeFilterTo)
+        : NaN;
 
       for (let i = 0; i < entries.length; i++) {
         const e = entries.at(i) as Record<string, unknown> | null;
@@ -561,7 +584,21 @@ export function useFilterWorker(): UseFilterWorkerResult {
           }
         }
 
-        // DC Filter support for synchronous filtering
+        if (
+          options.timeFilterEnabled &&
+          typeof e.source === "string" &&
+          e.source.startsWith("elastic://")
+        ) {
+          const timestamp =
+            typeof e.timestamp === "number"
+              ? e.timestamp
+              : Date.parse(String(e.timestamp ?? ""));
+          if (timestamp < fromTs || timestamp > toTs) {
+            filterStats.rejectedByTime++;
+            continue;
+          }
+        }
+
         if (options.dcFilterEnabled) {
           const mdc = e.mdc as Record<string, unknown> | null | undefined;
           if (!matchesCompiledDcFilter(mdc, compiledDcFilter)) {
@@ -572,11 +609,10 @@ export function useFilterWorker(): UseFilterWorkerResult {
 
         filterStats.passed++;
         const visualIndex = indices.length;
-        const id = typeof e._id === "number" ? (e._id as number) : i;
+        const id = typeof e._id === "number" ? e._id : baseOffset + i;
         indices.push(id);
         if (
           navigationSearch &&
-          visualIndex < 50_000 &&
           msgMatches(String(e.message ?? ""), navigationSearch, {
             mode: options.navigationSearchMode,
           })
@@ -590,7 +626,6 @@ export function useFilterWorker(): UseFilterWorkerResult {
     [],
   );
 
-  // Main filter function - uses UtilityProcess, Web Worker, or sync based on availability
   const filterEntries = useCallback(
     (
       entries: ReadonlySequence<unknown>,
@@ -599,20 +634,93 @@ export function useFilterWorker(): UseFilterWorkerResult {
       config?: PagedFilterConfig,
     ) => {
       const requestId = ++requestSeqRef.current;
+      const previousSource = previousSourceRef.current;
+      if (
+        !config?.paged &&
+        ((entries !== previousSource &&
+          !(
+            entries instanceof MetadataSnapshot &&
+            previousSource instanceof MetadataSnapshot &&
+            entries.isAppendOf(previousSource)
+          )) ||
+          entries.length < targetCountRef.current)
+      ) {
+        sourceRevisionRef.current++;
+      }
+      previousSourceRef.current = entries;
+      const generation = JSON.stringify({
+        options,
+        markedSignatures: options.onlyMarked
+          ? Object.keys(marksMap ?? {}).sort()
+          : [],
+        paged: config?.paged ?? false,
+        generation: config?.generation,
+        dataGeneration: config?.paged
+          ? config.dataGeneration
+          : sourceRevisionRef.current,
+        databaseName: config?.databaseName,
+      });
+      const queryChanged = generation !== pendingGenerationRef.current;
       pendingRequestRef.current = requestId;
-      pendingGenerationRef.current = config?.generation;
+      pendingGenerationRef.current = generation;
+      targetCountRef.current = config?.entryCount ?? entries.length;
       setError(null);
+      if (queryChanged) {
+        cancelledThroughRef.current = requestId - 1;
+        queuedFallbackRef.current = null;
+        setFilteredIndices([]);
+        setSearchMatchIndices([]);
+        setSearchMatchIds([]);
+        setStats(null);
+        setProgress({
+          processed: 0,
+          total: targetCountRef.current,
+          matches: 0,
+        });
+      } else {
+        setProgress((previous) =>
+          previous ? { ...previous, total: targetCountRef.current } : null,
+        );
+      }
+
+      const isCurrent = () =>
+        requestId > cancelledThroughRef.current &&
+        generation === pendingGenerationRef.current;
+      const publish = (
+        result: ReturnType<typeof filterSync>,
+        partial = false,
+      ) => {
+        if (!isCurrent() || requestId < lastAppliedRequestRef.current) return;
+        lastAppliedRequestRef.current = requestId;
+        setFilteredIndices(result.indices);
+        setSearchMatchIndices(result.searchMatchIndices);
+        setSearchMatchIds(
+          result.searchMatchIndices.map((index) => result.indices[index]!),
+        );
+        setStats(result.stats);
+        setProgress({
+          processed: result.stats.total,
+          total: targetCountRef.current,
+          matches: String(options.navigationSearch ?? "").trim()
+            ? result.searchMatchIndices.length
+            : result.stats.passed,
+        });
+        if (!partial && requestId === pendingRequestRef.current) {
+          setIsFiltering(false);
+        }
+      };
+
+      if (entries.length === 0) {
+        try {
+          workerRef.current?.postMessage({ type: "cancel", requestId });
+        } catch (cause) {
+          setError(cause instanceof Error ? cause : new Error(String(cause)));
+        }
+        publish(filterSync(entries, options, marksMap));
+        return;
+      }
 
       if (config?.paged) {
-        if (entries.length === 0) {
-          const empty = filterSync([], options, marksMap);
-          lastAppliedRequestRef.current = requestId;
-          setFilteredIndices([]);
-          setSearchMatchIndices([]);
-          setStats(empty.stats);
-          setIsFiltering(false);
-          return;
-        }
         const worker = workerRef.current;
         if (!worker) {
           setError(
@@ -630,7 +738,7 @@ export function useFilterWorker(): UseFilterWorkerResult {
             options,
             requestId,
             markedSignatures: marksMap ? Object.keys(marksMap) : [],
-            generation: config.generation,
+            generation,
             dataGeneration: config.dataGeneration,
             entryCount: config.entryCount,
             pageSize: config.pageSize,
@@ -647,35 +755,19 @@ export function useFilterWorker(): UseFilterWorkerResult {
         return;
       }
 
-      // For small datasets, use synchronous filtering (fastest for small data)
       if (entries.length <= WORKER_THRESHOLD) {
-        const result = filterSync(entries, options, marksMap);
-        // Monotonie wahren: als angewendete Request-ID markieren, damit ein
-        // spät eintreffendes älteres Worker-Ergebnis dieses frischere Resultat
-        // nicht überschreibt.
-        lastAppliedRequestRef.current = requestId;
-        setFilteredIndices(result.indices);
-        setSearchMatchIndices(result.searchMatchIndices);
-        setStats(result.stats);
-        setIsFiltering(false);
+        if (requestId > 1) {
+          try {
+            workerRef.current?.postMessage({ type: "cancel", requestId });
+          } catch (cause) {
+            setError(cause instanceof Error ? cause : new Error(String(cause)));
+          }
+        }
+        publish(filterSync(entries, options, marksMap));
         return;
       }
 
-      // Bevorzugter Pfad für große Datensätze: zustandsbehafteter Web Worker.
-      //
-      // Der Worker hält die Einträge bereits gecached, daher übertragen wir nur
-      // (a) ggf. neue Einträge inkrementell und (b) die kleine Optionen-
-      // Nachricht. Damit blockiert das Filtern den Renderer-Hauptthread NICHT
-      // mehr – der bisherige Sync-Fallback bei >50k Einträgen war die Hauptur-
-      // sache für Einfrieren der UI bei 300k+ Einträgen.
       if (workerRef.current) {
-        // Der Worker wertet `_mark` ausschließlich bei aktivem `onlyMarked` aus
-        // (siehe filterWorker.ts). Nur dann muss der projizierte `_mark`-Stand
-        // aktuell sein → kompletter Re-Sync. Solange die markierte Ansicht NICHT
-        // aktiv ist, beeinflussen Markierungen das Filterergebnis nicht, also
-        // genügt der inkrementelle Sync. Das vermeidet einen teuren Komplett-
-        // Transfer aller Einträge pro Filterlauf, sobald überhaupt Marks
-        // existieren (häufiger Fall bei großen Datenmengen).
         const forceFull = options.onlyMarked;
 
         try {
@@ -687,11 +779,12 @@ export function useFilterWorker(): UseFilterWorkerResult {
           );
           if (ok) {
             setIsFiltering(true);
-            // Nur die Optionen senden – Worker filtert den gecachten Datensatz.
             workerRef.current.postMessage({
               type: "filter",
               options,
               requestId,
+              generation,
+              dataGeneration: sourceRevisionRef.current,
             });
             return;
           }
@@ -702,109 +795,99 @@ export function useFilterWorker(): UseFilterWorkerResult {
             "[FilterWorker] Stateful worker sync failed, falling back:",
             errorMessage,
           );
-          // Cache als ungültig markieren, damit der nächste Versuch neu synct.
           syncedEntriesRef.current = null;
           syncedLenRef.current = 0;
           syncedIncludesMdcRef.current = null;
         }
       }
 
-      // Fallback 1: UtilityProcess (Electron 40+), nur wenn kein Web Worker da.
-      if (utilityProcessAvailableRef.current) {
-        setIsFiltering(true);
-
+      // Keep the fallback cooperative too. Coalesce appends behind the running
+      // scan; cancelling every append would starve results under continuous input.
+      setIsFiltering(true);
+      const runFallback = async () => {
+        fallbackRunningRef.current = true;
+        let useUtility = utilityProcessAvailableRef.current === true;
+        const accumulated = filterSync([], options, marksMap);
+        let lastPublishedAt = 0;
         try {
-          // Check if dataset is too large for IPC transfer
-          if (entries.length > MAX_ENTRIES_PER_MESSAGE) {
-            console.warn(
-              `[FilterWorker] Dataset too large for UtilityProcess (${entries.length} entries), falling back to sync`,
+          for (let start = 0; start < entries.length; start += 2_000) {
+            if (!isCurrent()) return;
+            const page = entries.slice(start, start + 2_000);
+            let pageResult: ReturnType<typeof filterSync> | undefined;
+            if (useUtility) {
+              try {
+                const response = await typedFilterEntries(
+                  projectToSlimEntries(page, marksMap, options.dcFilterEnabled),
+                  options,
+                );
+                if (!isCurrent()) return;
+                if (!response.ok) throw new Error(response.error);
+                pageResult = {
+                  indices: resolveFilteredEntryIds(
+                    page,
+                    response.filteredIndices,
+                    start,
+                  ),
+                  searchMatchIndices: computeSearchMatchIndices(
+                    page,
+                    response.filteredIndices,
+                    options,
+                  ),
+                  stats: response.stats,
+                };
+              } catch (cause) {
+                if (!isCurrent()) return;
+                console.warn(
+                  "[FilterWorker] UtilityProcess failed, using cooperative fallback:",
+                  cause,
+                );
+                useUtility = false;
+              }
+            }
+            pageResult ??= filterSync(page, options, marksMap, start);
+            const offset = accumulated.indices.length;
+            accumulated.indices.push(...pageResult.indices);
+            accumulated.searchMatchIndices.push(
+              ...pageResult.searchMatchIndices.map((index) => offset + index),
             );
-            const syncResult = filterSync(entries, options, marksMap);
-            lastAppliedRequestRef.current = requestId;
-            setFilteredIndices(syncResult.indices);
-            setSearchMatchIndices(syncResult.searchMatchIndices);
-            setStats(syncResult.stats);
-            setIsFiltering(false);
-            return;
+            for (const key of Object.keys(
+              accumulated.stats,
+            ) as (keyof FilterStats)[]) {
+              accumulated.stats[key] += pageResult.stats[key];
+            }
+            const done = start + page.length >= entries.length;
+            if (
+              start === 0 ||
+              done ||
+              performance.now() - lastPublishedAt >= 100
+            ) {
+              publish(
+                {
+                  indices: accumulated.indices.slice(),
+                  searchMatchIndices: accumulated.searchMatchIndices.slice(),
+                  stats: { ...accumulated.stats },
+                },
+                !done,
+              );
+              lastPublishedAt = performance.now();
+            }
+            if (!done)
+              await new Promise<void>((resolve) => setTimeout(resolve, 0));
           }
-
-          // Project to slim entries to prevent DataCloneError (out of memory)
-          const slimEntries = projectToSlimEntries(
-            entries,
-            marksMap,
-            options.dcFilterEnabled,
-          );
-
-          typedFilterEntries(slimEntries, options)
-            .then((result: import("../types/ipc").FilterResult) => {
-              // Nur anwenden, wenn dieses Ergebnis neuer ist als das zuletzt
-              // angewendete (Promises können out-of-order auflösen).
-              if (requestId > lastAppliedRequestRef.current) {
-                lastAppliedRequestRef.current = requestId;
-                if (result.ok) {
-                  setSearchMatchIndices(
-                    computeSearchMatchIndices(
-                      entries,
-                      result.filteredIndices,
-                      options,
-                    ),
-                  );
-                  setFilteredIndices(
-                    resolveFilteredEntryIds(entries, result.filteredIndices),
-                  );
-                  setStats(result.stats);
-                } else {
-                  // UtilityProcess failed, fall back to sync
-                  console.warn(
-                    "[FilterWorker] UtilityProcess failed, falling back to sync:",
-                    result.error,
-                  );
-                  const syncResult = filterSync(entries, options, marksMap);
-                  setFilteredIndices(syncResult.indices);
-                  setSearchMatchIndices(syncResult.searchMatchIndices);
-                  setStats(syncResult.stats);
-                }
-                if (requestId >= pendingRequestRef.current) {
-                  setIsFiltering(false);
-                }
-              }
-            })
-            .catch((error: unknown) => {
-              console.warn("[FilterWorker] UtilityProcess error:", error);
-              // Fall back to sync on error
-              if (requestId > lastAppliedRequestRef.current) {
-                lastAppliedRequestRef.current = requestId;
-                const syncResult = filterSync(entries, options, marksMap);
-                setFilteredIndices(syncResult.indices);
-                setSearchMatchIndices(syncResult.searchMatchIndices);
-                setStats(syncResult.stats);
-                if (requestId >= pendingRequestRef.current) {
-                  setIsFiltering(false);
-                }
-              }
-            });
-        } catch (error) {
-          // Handle DataCloneError or other IPC errors
-          const errorMessage =
-            error instanceof Error ? error.message : String(error);
-          console.warn("[FilterWorker] IPC call failed:", errorMessage);
-          const syncResult = filterSync(entries, options, marksMap);
-          lastAppliedRequestRef.current = requestId;
-          setFilteredIndices(syncResult.indices);
-          setSearchMatchIndices(syncResult.searchMatchIndices);
-          setStats(syncResult.stats);
-          setIsFiltering(false);
+        } catch (cause) {
+          if (isCurrent() && requestId === pendingRequestRef.current) {
+            setError(cause instanceof Error ? cause : new Error(String(cause)));
+            setIsFiltering(false);
+          }
+        } finally {
+          fallbackRunningRef.current = false;
+          const next = queuedFallbackRef.current;
+          queuedFallbackRef.current = null;
+          if (next) void next();
         }
-        return;
-      }
-
-      // Last resort: synchronous filtering
-      const result = filterSync(entries, options, marksMap);
-      lastAppliedRequestRef.current = requestId;
-      setFilteredIndices(result.indices);
-      setSearchMatchIndices(result.searchMatchIndices);
-      setStats(result.stats);
-      setIsFiltering(false);
+      };
+      if (fallbackRunningRef.current) queuedFallbackRef.current = runFallback;
+      else void runFallback();
     },
     [filterSync, syncEntriesToWorker],
   );
@@ -812,10 +895,13 @@ export function useFilterWorker(): UseFilterWorkerResult {
   return {
     filteredIndices,
     searchMatchIndices,
+    searchMatchIds,
     isFiltering,
+    progress,
     stats,
     error,
     filterEntries,
+    cancelFiltering,
     useUtilityProcess,
     projectionBridge,
   };

@@ -6,6 +6,8 @@ import {
 import { compileDcFilter, matchesCompiledDcFilter } from "../utils/dcMatch";
 import { msgMatches, type SearchMode } from "../utils/msgFilter";
 import { compareByTimestampId } from "../utils/sort";
+import type { FilterProgress } from "../types/filterProgress";
+export type { FilterProgress } from "../types/filterProgress";
 
 export interface FilterOptions {
   stdFiltersEnabled: boolean;
@@ -40,11 +42,13 @@ export interface FilterStats {
 export interface SetEntriesRequest {
   type: "setEntries";
   entries: unknown[];
+  dataGeneration?: string | number;
 }
 
 export interface AppendEntriesRequest {
   type: "appendEntries";
   entries: unknown[];
+  dataGeneration?: string | number;
 }
 
 export interface FilterRequest {
@@ -52,6 +56,8 @@ export interface FilterRequest {
   entries?: unknown[];
   options: FilterOptions;
   requestId?: number;
+  generation?: string | number;
+  dataGeneration?: string | number;
 }
 
 export interface PagedFilterRequest {
@@ -70,19 +76,23 @@ export interface FilterResponse {
   type: "result";
   filteredIndices: number[];
   searchMatchIndices: number[];
+  searchMatchIds?: number[];
+  progress?: FilterProgress;
   stats: FilterStats;
   requestId?: number;
   generation?: string | number;
+  dataGeneration?: string | number;
   paged?: boolean;
   partial?: boolean;
 }
 
 export interface FilterErrorResponse {
   type: "error";
-  requestId: number;
+  requestId?: number;
   message: string;
   generation?: string | number;
-  paged: true;
+  dataGeneration?: string | number;
+  paged?: boolean;
 }
 
 export interface TransferProjectionsRequest {
@@ -96,13 +106,14 @@ export interface ResetProjectionsRequest {
   type: "resetProjections";
 }
 
-type WorkerRequest =
+export type WorkerRequest =
   | SetEntriesRequest
   | AppendEntriesRequest
   | FilterRequest
   | PagedFilterRequest
   | TransferProjectionsRequest
-  | ResetProjectionsRequest;
+  | ResetProjectionsRequest
+  | { type: "cancel"; requestId: number };
 
 interface NormalizedProjectionFields {
   _id: number;
@@ -122,6 +133,7 @@ export interface PassingReference {
   id: number;
   _id: number;
   timestamp: unknown;
+  searchMatch?: boolean;
   message?: string;
   messageLower?: string;
 }
@@ -138,30 +150,20 @@ interface PreparedFilter {
 }
 
 const PAGED_SCAN_SIZE = 2_000;
-const SEARCHABLE_REFERENCE_LIMIT = 50_000;
-const PAGED_FILTER_YIELD_INTERVAL = 50_000;
+const PROGRESS_INTERVAL_MS = 100;
+const TRANSFER_CACHE_MAX_CHARS = 64 * 1024 * 1024;
+const TRANSFER_CACHE_MAX_RECORDS = 350_000;
 
 interface PagedFilterCache {
   databaseName?: string;
   generation?: string | number;
   dataGeneration?: string | number;
   scannedEntryCount: number;
-  lastScannedId?: number;
   references: PassingReference[];
   stats: FilterStats;
 }
 
 let pagedFilterCache: PagedFilterCache | null = null;
-
-interface PagedProjectionCache {
-  databaseName?: string;
-  dataGeneration?: string | number;
-  recordsById: CachedProjection[];
-  sortedRecords: CachedProjection[];
-  lastScannedId?: number;
-}
-
-let pagedProjectionCache: PagedProjectionCache | null = null;
 
 // ─── Transferred projection cache ────────────────────────────────────────────
 // Records pushed directly from the main thread via `transferProjections`.
@@ -172,6 +174,8 @@ interface TransferredProjectionCache {
   dataGeneration: string | number;
   recordsById: Map<number, CachedProjection>;
   sortedRecords: CachedProjection[];
+  retainedChars: number;
+  limited: boolean;
 }
 
 let transferredProjectionCache: TransferredProjectionCache | null = null;
@@ -203,6 +207,8 @@ export function handleTransferProjections(
       dataGeneration,
       recordsById: new Map(),
       sortedRecords: [],
+      retainedChars: 0,
+      limited: false,
     };
   }
 
@@ -211,8 +217,28 @@ export function handleTransferProjections(
 
   for (const record of records) {
     if (cache.recordsById.has(record.id)) continue; // idempotent: skip duplicates
+    if (cache.limited) break;
+    const chars =
+      (record.message?.length ?? 0) * 2 +
+      (record.logger?.length ?? 0) * 2 +
+      (record.thread?.length ?? 0) * 2 +
+      (record.signature?.length ?? 0) +
+      (record.source?.length ?? 0) +
+      String(record.timestamp ?? "").length +
+      Object.entries(record.mdc ?? {}).reduce(
+        (sum, [key, value]) => sum + key.length + String(value ?? "").length,
+        0,
+      );
+    if (
+      cache.recordsById.size >= TRANSFER_CACHE_MAX_RECORDS ||
+      cache.retainedChars + chars > TRANSFER_CACHE_MAX_CHARS
+    ) {
+      cache.limited = true;
+      break;
+    }
     const normalized = normalizeProjection(record);
     cache.recordsById.set(record.id, normalized);
+    cache.retainedChars += chars;
     newRecords.push(normalized);
   }
 
@@ -242,13 +268,11 @@ export function _getTransferredProjectionCache(): {
 
 /** Test-only: reset all worker-level caches. */
 export function _resetWorkerCaches(): void {
-  pagedProjectionCache = null;
-  pagedFilterCache = null;
-  transferredProjectionCache = null;
+  handleResetProjections();
 }
 
 export function handleResetProjections(): void {
-  pagedProjectionCache = null;
+  invalidateJobs();
   pagedFilterCache = null;
   transferredProjectionCache = null;
 }
@@ -369,28 +393,18 @@ export function mergePassingReferences(
   previous: PassingReference[],
   incoming: PassingReference[],
 ): PassingReference[] {
-  if (previous.length === 0) {
-    incoming.sort(compareByTimestampId);
-    for (
-      let index = SEARCHABLE_REFERENCE_LIMIT;
-      index < incoming.length;
-      index++
-    ) {
-      incoming[index]!.message = undefined;
-      incoming[index]!.messageLower = undefined;
-    }
-    return incoming;
-  }
-  if (incoming.length === 0) return previous;
   incoming.sort(compareByTimestampId);
+  return mergeSortedReferences(previous, incoming);
+}
+
+function mergeSortedReferences(
+  previous: PassingReference[],
+  incoming: PassingReference[],
+): PassingReference[] {
+  if (previous.length === 0) return incoming;
+  if (incoming.length === 0) return previous;
   if (compareByTimestampId(previous[previous.length - 1]!, incoming[0]!) <= 0) {
-    for (const entry of incoming) {
-      if (previous.length >= SEARCHABLE_REFERENCE_LIMIT) {
-        entry.message = undefined;
-        entry.messageLower = undefined;
-      }
-      previous.push(entry);
-    }
+    for (const entry of incoming) previous.push(entry);
     return previous;
   }
   const merged = new Array<PassingReference>(previous.length + incoming.length);
@@ -404,68 +418,83 @@ export function mergePassingReferences(
         incoming[incomingIndex]!,
       ) <= 0
     ) {
-      const entry = previous[previousIndex++]!;
-      if (outputIndex >= SEARCHABLE_REFERENCE_LIMIT) {
-        entry.message = undefined;
-        entry.messageLower = undefined;
-      }
-      merged[outputIndex++] = entry;
+      merged[outputIndex++] = previous[previousIndex++]!;
     } else {
-      const entry = incoming[incomingIndex++]!;
-      if (outputIndex >= SEARCHABLE_REFERENCE_LIMIT) {
-        entry.message = undefined;
-        entry.messageLower = undefined;
-      }
-      merged[outputIndex++] = entry;
+      merged[outputIndex++] = incoming[incomingIndex++]!;
     }
   }
   while (previousIndex < previous.length) {
-    const entry = previous[previousIndex++]!;
-    if (outputIndex >= SEARCHABLE_REFERENCE_LIMIT) {
-      entry.message = undefined;
-      entry.messageLower = undefined;
-    }
-    merged[outputIndex++] = entry;
+    merged[outputIndex++] = previous[previousIndex++]!;
   }
   while (incomingIndex < incoming.length) {
-    const entry = incoming[incomingIndex++]!;
-    if (outputIndex >= SEARCHABLE_REFERENCE_LIMIT) {
-      entry.message = undefined;
-      entry.messageLower = undefined;
-    }
-    merged[outputIndex++] = entry;
+    merged[outputIndex++] = incoming[incomingIndex++]!;
   }
   return merged;
 }
 
-function buildPagedResponse(
-  request: PagedFilterRequest,
-  references: PassingReference[],
-  stats: FilterStats,
-  partial = false,
-): FilterResponse {
-  const search = String(request.options.navigationSearch || "").trim();
-  const searchMatchIndices: number[] = [];
-  if (search) {
-    const matcher = createMessageMatcher(
-      search,
-      request.options.navigationSearchMode,
-    );
-    const limit = Math.min(references.length, SEARCHABLE_REFERENCE_LIMIT);
-    for (let visualIndex = 0; visualIndex < limit; visualIndex++) {
-      if (matcher(references[visualIndex]!)) {
-        searchMatchIndices.push(visualIndex);
+// Binary-sized sorted runs avoid merging or sorting the whole history per page.
+class ReferenceRuns {
+  private runs: Array<PassingReference[] | undefined> = [];
+
+  add(page: PassingReference[]): void {
+    if (!page.length) return;
+    page.sort(compareByTimestampId);
+    let tier = Math.floor(Math.log2(page.length));
+    while (this.runs[tier]) {
+      page = mergeSortedReferences(this.runs[tier]!, page);
+      this.runs[tier] = undefined;
+      tier = Math.max(tier + 1, Math.floor(Math.log2(page.length)));
+    }
+    this.runs[tier] = page;
+  }
+
+  snapshot(): PassingReference[] {
+    let result: PassingReference[] = [];
+    for (const run of this.runs) {
+      if (run) {
+        result = result.length
+          ? mergeSortedReferences(result, run)
+          : run.slice();
       }
     }
+    return result;
+  }
+}
+
+function buildResponse(
+  request: FilterRequest | PagedFilterRequest,
+  references: PassingReference[],
+  stats: FilterStats,
+  total: number,
+  partial = false,
+): FilterResponse {
+  const filteredIndices: number[] = [];
+  const searchMatchIndices: number[] = [];
+  const searchMatchIds: number[] = [];
+  for (const ref of references) {
+    if (ref.searchMatch) {
+      searchMatchIndices.push(filteredIndices.length);
+      searchMatchIds.push(ref.id);
+    }
+    filteredIndices.push(ref.id);
   }
   return {
     type: "result",
-    filteredIndices: references.map((entry) => entry.id),
+    filteredIndices,
     searchMatchIndices,
-    stats,
+    searchMatchIds,
+    stats: { ...stats },
+    progress: {
+      processed: stats.total,
+      total,
+      matches: request.options.navigationSearch?.trim()
+        ? searchMatchIds.length
+        : stats.passed,
+    },
     requestId: request.requestId,
     generation: request.generation,
-    paged: true,
+    dataGeneration: request.dataGeneration,
+    paged: request.type === "filterPaged",
     partial,
   };
 }
@@ -579,7 +608,7 @@ function entryPasses(
 
 /**
  * Pure paged-filter core. Each iterable item represents one IndexedDB page.
- * It intentionally retains only passing IDs/timestamps and search messages.
+ * It intentionally retains only passing IDs/timestamps and search flags.
  */
 export function filterProjectionPages(
   pages: Iterable<readonly ProjectionRecord[]>,
@@ -588,6 +617,10 @@ export function filterProjectionPages(
 ): FilterResponse {
   const stats = emptyStats();
   const prepared = prepareFilter(options);
+  const navigationMatcher = createMessageMatcher(
+    prepared.navigationSearch,
+    options.navigationSearchMode,
+  );
   const references: PassingReference[] = [];
 
   for (const page of pages) {
@@ -601,76 +634,31 @@ export function filterProjectionPages(
           id: entry.id,
           _id: entry.id,
           timestamp: entry.timestamp,
-          message: prepared.navigationSearch ? entry.message : undefined,
+          searchMatch: !!prepared.navigationSearch && navigationMatcher(entry),
         });
       }
     }
   }
 
   references.sort(compareByTimestampId);
-  const searchMatchIndices: number[] = [];
-  if (prepared.navigationSearch) {
-    const limit = Math.min(references.length, 50_000);
-    for (let visualIndex = 0; visualIndex < limit; visualIndex++) {
-      const ref = references[visualIndex]!;
-      if (
-        msgMatches(ref.message ?? "", prepared.navigationSearch, {
-          mode: options.navigationSearchMode,
-        })
-      ) {
-        searchMatchIndices.push(visualIndex);
-      }
-    }
-  }
-  return {
-    type: "result",
-    filteredIndices: references.map((entry) => entry.id),
-    searchMatchIndices,
+  return buildResponse(
+    {
+      type: "filterPaged",
+      options,
+      entryCount: stats.total,
+      requestId: 0,
+      markedSignatures: [],
+    },
+    references,
     stats,
-    paged: true,
-  };
-}
-
-function filterLegacyEntries(
-  entries: unknown[],
-  options: FilterOptions,
-): FilterResponse {
-  const stats = emptyStats();
-  const prepared = prepareFilter(options);
-  const filteredIndices: number[] = [];
-  const searchMatchIndices: number[] = [];
-
-  for (let index = 0; index < entries.length; index++) {
-    const entry = entries[index] as FilterableEntry | null;
-    stats.total++;
-    if (!entry || !entryPasses(entry, options, prepared, stats)) continue;
-    const visualIndex = filteredIndices.length;
-    const entryId = (entry as { _id?: unknown })._id;
-    const id = typeof entryId === "number" ? entryId : index;
-    filteredIndices.push(id);
-    if (
-      prepared.navigationSearch &&
-      visualIndex < 50_000 &&
-      msgMatches(String(entry.message ?? ""), prepared.navigationSearch, {
-        mode: options.navigationSearchMode,
-      })
-    ) {
-      searchMatchIndices.push(visualIndex);
-    }
-  }
-
-  return {
-    type: "result",
-    filteredIndices,
-    searchMatchIndices,
-    stats,
-  };
+    stats.total,
+  );
 }
 
 function readProjectionPage(
   db: IDBDatabase,
-  afterId: number | undefined,
-  pageSize: number,
+  firstId: number,
+  lastId: number,
 ): Promise<ProjectionRecord[]> {
   return new Promise((resolve, reject) => {
     let settled = false;
@@ -678,10 +666,7 @@ function readProjectionPage(
     let transaction: IDBTransaction;
     try {
       transaction = db.transaction(PROJECTION_STORE_NAME, "readonly");
-      const range =
-        afterId === undefined
-          ? undefined
-          : IDBKeyRange.lowerBound(afterId, true);
+      const range = IDBKeyRange.bound(firstId, lastId);
       const request = transaction
         .objectStore(PROJECTION_STORE_NAME)
         .openCursor(range, "next");
@@ -699,12 +684,7 @@ function readProjectionPage(
           return;
         }
         page.push(cursor.value as ProjectionRecord);
-        if (page.length < pageSize) {
-          cursor.continue();
-        } else if (!settled) {
-          settled = true;
-          resolve(page);
-        }
+        cursor.continue();
       };
       transaction.onabort = () => {
         if (!settled)
@@ -720,206 +700,173 @@ function readProjectionPage(
   });
 }
 
-async function loadPagedProjectionCache(
-  request: PagedFilterRequest,
-  pageSize: number,
-): Promise<{
-  cache: PagedProjectionCache;
-  appendedRecords: CachedProjection[];
-}> {
-  const canReuse =
-    pagedProjectionCache !== null &&
-    pagedProjectionCache.databaseName === request.databaseName &&
-    pagedProjectionCache.dataGeneration === request.dataGeneration &&
-    request.entryCount >= pagedProjectionCache.recordsById.length;
-  const cache: PagedProjectionCache = canReuse
-    ? pagedProjectionCache!
-    : {
-        databaseName: request.databaseName,
-        dataGeneration: request.dataGeneration,
-        recordsById: [],
-        sortedRecords: [],
-      };
-
-  if (request.entryCount === cache.recordsById.length) {
-    pagedProjectionCache = cache;
-    return { cache, appendedRecords: [] };
-  }
-
-  // ─── Attempt to satisfy from transferred projection cache ──────────────
-  // If the transferred cache matches database/generation and contains all
-  // expected records (no gaps), we can skip the IndexedDB read entirely.
-  const transferred = transferredProjectionCache;
-  if (
-    transferred !== null &&
-    transferred.databaseName === request.databaseName &&
-    transferred.dataGeneration === request.dataGeneration
-  ) {
-    const expectedNew = request.entryCount - cache.recordsById.length;
-    const lastScannedId = cache.lastScannedId ?? 0;
-
-    const appendedRecords: CachedProjection[] = [];
-    let minimumId = Number.POSITIVE_INFINITY;
-    let maximumId = lastScannedId;
-    for (const [id, record] of transferred.recordsById) {
-      if (id <= lastScannedId) continue;
-      appendedRecords.push(record);
-      if (id < minimumId) minimumId = id;
-      if (id > maximumId) maximumId = id;
-    }
-
-    const hasCompleteRange =
-      appendedRecords.length === expectedNew &&
-      (expectedNew === 0 ||
-        (minimumId === lastScannedId + 1 &&
-          maximumId === lastScannedId + expectedNew));
-
-    if (hasCompleteRange) {
-      // Transferred cache fully covers expected records – use it directly
-      for (const record of appendedRecords) cache.recordsById.push(record);
-      if (appendedRecords.length > 0) {
-        cache.lastScannedId = maximumId;
-      }
-      cache.sortedRecords = mergeProjectionRecords(
-        cache.sortedRecords,
-        appendedRecords.slice(),
-      );
-      pagedProjectionCache = cache;
-      return { cache, appendedRecords };
-    }
-    // Gap/count mismatch detected → fall through to IndexedDB recovery
-  }
-
-  // ─── IndexedDB fallback ────────────────────────────────────────────────
-  const appendedRecords: CachedProjection[] = [];
-  const db = await openPagedDatabase(undefined, request.databaseName);
-  try {
-    while (true) {
-      const page = await readProjectionPage(db, cache.lastScannedId, pageSize);
-      for (const entry of page) {
-        appendedRecords.push(normalizeProjection(entry));
-      }
-      if (page.length > 0) {
-        cache.lastScannedId = page[page.length - 1]!.id;
-      }
-      if (page.length < pageSize) break;
-    }
-  } finally {
-    db.close();
-  }
-
-  for (const record of appendedRecords) cache.recordsById.push(record);
-  cache.sortedRecords = mergeProjectionRecords(
-    cache.sortedRecords,
-    appendedRecords.slice(),
-  );
-  pagedProjectionCache = cache;
-  return { cache, appendedRecords };
-}
-
 function yieldWorker(): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, 0));
 }
 
-let latestPagedRequestId = 0;
+type SearchRequest = FilterRequest | PagedFilterRequest;
 
-async function filterPagedDatabase(
-  request: PagedFilterRequest,
-  onProgress?: (response: FilterResponse) => void,
-): Promise<FilterResponse | null> {
-  const pageSize =
-    request.pageSize !== undefined &&
-    Number.isSafeInteger(request.pageSize) &&
-    request.pageSize > 0
-      ? request.pageSize
-      : PAGED_SCAN_SIZE;
-  const { cache: projectionCache } = await loadPagedProjectionCache(
-    request,
-    pageSize,
-  );
-  if (request.requestId !== latestPagedRequestId) return null;
-
-  const canReuseFiltered =
-    pagedFilterCache !== null &&
-    pagedFilterCache.databaseName === request.databaseName &&
-    pagedFilterCache.generation === request.generation &&
-    pagedFilterCache.dataGeneration === request.dataGeneration &&
-    projectionCache.recordsById.length >= pagedFilterCache.scannedEntryCount;
-  const stats = canReuseFiltered
-    ? { ...pagedFilterCache!.stats }
-    : emptyStats();
-  const prepared = prepareFilter(request.options);
-  const previousReferences = canReuseFiltered
-    ? pagedFilterCache!.references
-    : [];
-  const appendedReferences: PassingReference[] = [];
-  const markedSignatures = new Set(request.markedSignatures);
-
-  if (
-    canReuseFiltered &&
-    projectionCache.recordsById.length === pagedFilterCache!.scannedEntryCount
-  ) {
-    return buildPagedResponse(request, previousReferences, stats);
-  }
-
-  const records = canReuseFiltered
-    ? projectionCache.recordsById.slice(pagedFilterCache!.scannedEntryCount)
-    : projectionCache.sortedRecords;
-  for (let index = 0; index < records.length; index++) {
-    const entry = records[index]!;
-    stats.total++;
-    if (
-      entryPasses(entry, request.options, prepared, stats, markedSignatures)
-    ) {
-      const retainMessage =
-        canReuseFiltered ||
-        appendedReferences.length < SEARCHABLE_REFERENCE_LIMIT;
-      appendedReferences.push({
-        id: entry.id,
-        _id: entry.id,
-        timestamp: entry.timestamp,
-        message: retainMessage ? entry.message : undefined,
-        messageLower: retainMessage ? entry.messageLower : undefined,
-      });
-    }
-
-    if (!canReuseFiltered && index + 1 === Math.min(pageSize, records.length)) {
-      onProgress?.(
-        buildPagedResponse(
-          request,
-          appendedReferences.slice(),
-          { ...stats },
-          true,
-        ),
-      );
-    }
-    if ((index + 1) % PAGED_FILTER_YIELD_INTERVAL === 0) {
-      await yieldWorker();
-      if (request.requestId !== latestPagedRequestId) return null;
-    }
-  }
-
-  const references = canReuseFiltered
-    ? mergePassingReferences(previousReferences, appendedReferences)
-    : appendedReferences;
-  if (request.requestId !== latestPagedRequestId) return null;
-  pagedFilterCache = {
-    databaseName: request.databaseName,
-    generation: request.generation,
-    dataGeneration: request.dataGeneration,
-    scannedEntryCount: projectionCache.recordsById.length,
-    lastScannedId: projectionCache.lastScannedId,
-    references,
-    stats: { ...stats },
-  };
-  return buildPagedResponse(request, references, stats);
+interface FilterJob {
+  request: SearchRequest;
+  cancelled: boolean;
+  total: number;
+  batches?: unknown[][];
 }
 
-let cachedEntries: unknown[] = [];
-let pagedFilterRunning = false;
-let queuedPagedRequest: PagedFilterRequest | null = null;
-let activePagedGeneration: string | number | undefined;
-let activePagedDataGeneration: string | number | undefined;
+let cachedEntryBatches: unknown[][] = [];
+let cachedEntryCount = 0;
+let cachedDataGeneration: string | number | undefined;
+let activeJob: FilterJob | null = null;
+let queuedJob: FilterJob | null = null;
+let newestRequestId = -1;
+
+function invalidateJobs(): void {
+  if (activeJob) activeJob.cancelled = true;
+  queuedJob = null;
+}
+
+async function* legacyPages(job: FilterJob): AsyncGenerator<unknown[]> {
+  let remaining = job.total;
+  for (const batch of job.batches ?? []) {
+    for (let start = 0; start < batch.length && remaining > 0;) {
+      if (job.cancelled) return;
+      const size = Math.min(PAGED_SCAN_SIZE, remaining, batch.length - start);
+      yield batch.slice(start, start + size);
+      start += size;
+      remaining -= size;
+    }
+    if (!remaining) break;
+  }
+}
+
+async function* projectionPages(
+  job: FilterJob,
+  start: number,
+): AsyncGenerator<{ records: ProjectionRecord[]; processed: number }> {
+  const request = job.request as PagedFilterRequest;
+  const pageSize =
+    Number.isSafeInteger(request.pageSize) && request.pageSize! > 0
+      ? Math.min(request.pageSize!, PAGED_SCAN_SIZE)
+      : PAGED_SCAN_SIZE;
+  const transferred =
+    transferredProjectionCache?.databaseName === request.databaseName &&
+    transferredProjectionCache?.dataGeneration === request.dataGeneration
+      ? transferredProjectionCache
+      : null;
+  let db: IDBDatabase | undefined;
+  try {
+    for (let offset = start; offset < job.total; offset += pageSize) {
+      if (job.cancelled) return;
+      const end = Math.min(job.total, offset + pageSize);
+      let records: ProjectionRecord[] = [];
+      if (transferred) {
+        for (let id = offset + 1; id <= end; id++) {
+          const record = transferred.recordsById.get(id);
+          if (!record) break;
+          records.push(record);
+        }
+      }
+      if (records.length !== end - offset) {
+        db ??= await openPagedDatabase(undefined, request.databaseName);
+        if (job.cancelled) return;
+        records = await readProjectionPage(db, offset + 1, end);
+      }
+      if (job.cancelled) return;
+      yield { records, processed: end };
+    }
+  } finally {
+    db?.close();
+  }
+}
+
+async function runFilter(
+  job: FilterJob,
+  publish: (response: FilterResponse) => void,
+): Promise<FilterResponse | null> {
+  const request = job.request;
+  const paged = request.type === "filterPaged";
+  const cached =
+    paged &&
+    pagedFilterCache !== null &&
+    pagedFilterCache?.databaseName === request.databaseName &&
+    pagedFilterCache?.generation === request.generation &&
+    pagedFilterCache?.dataGeneration === request.dataGeneration &&
+    pagedFilterCache.scannedEntryCount <= job.total
+      ? pagedFilterCache
+      : null;
+  const stats = cached ? { ...cached.stats } : emptyStats();
+  const prepared = prepareFilter(request.options);
+  const navigationMatcher = createMessageMatcher(
+    prepared.navigationSearch,
+    request.options.navigationSearchMode,
+  );
+  const marked = paged ? new Set(request.markedSignatures) : undefined;
+  const runs = new ReferenceRuns();
+  let processed = cached?.scannedEntryCount ?? 0;
+  let published = false;
+  let lastPublished = 0;
+  let references = cached?.references ?? [];
+
+  const snapshot = (): PassingReference[] => {
+    // Cached references are immutable until completion, even if this job is
+    // cancelled while handling an append.
+    return mergeSortedReferences(references.slice(), runs.snapshot());
+  };
+  const scanPage = (records: readonly unknown[], end: number): void => {
+    const incoming: PassingReference[] = [];
+    for (let index = 0; index < records.length; index++) {
+      const entry = records[index] as FilterableEntry | null;
+      if (
+        !entry ||
+        !entryPasses(entry, request.options, prepared, stats, marked)
+      )
+        continue;
+      const id = paged ? entry.id! : (entry._id ?? processed + index);
+      incoming.push({
+        id,
+        _id: id,
+        timestamp: entry.timestamp,
+        searchMatch: !!prepared.navigationSearch && navigationMatcher(entry),
+      });
+    }
+    processed = end;
+    stats.total = processed;
+    runs.add(incoming);
+    const now = performance.now();
+    if (!published || now - lastPublished >= PROGRESS_INTERVAL_MS) {
+      publish(buildResponse(request, snapshot(), stats, job.total, true));
+      published = true;
+      lastPublished = performance.now();
+    }
+  };
+
+  if (paged) {
+    for await (const page of projectionPages(job, processed)) {
+      if (job.cancelled) return null;
+      scanPage(page.records, page.processed);
+      await yieldWorker();
+    }
+  } else {
+    for await (const page of legacyPages(job)) {
+      if (job.cancelled) return null;
+      scanPage(page, processed + page.length);
+      await yieldWorker();
+    }
+  }
+  if (job.cancelled) return null;
+  references = snapshot();
+  if (paged) {
+    pagedFilterCache = {
+      databaseName: request.databaseName,
+      generation: request.generation,
+      dataGeneration: request.dataGeneration,
+      scannedEntryCount: processed,
+      references,
+      stats: { ...stats },
+    };
+  }
+  return buildResponse(request, references, stats, job.total);
+}
 
 const workerScope =
   typeof self === "undefined"
@@ -930,59 +877,76 @@ const workerScope =
       });
 
 if (workerScope) {
-  const runPagedRequest = (request: PagedFilterRequest): void => {
-    pagedFilterRunning = true;
-    activePagedGeneration = request.generation;
-    activePagedDataGeneration = request.dataGeneration;
-    latestPagedRequestId = request.requestId;
-    void filterPagedDatabase(request, (progress) =>
-      workerScope.postMessage(progress),
-    )
+  const startJob = (job: FilterJob): void => {
+    activeJob = job;
+    const request = job.request;
+    void runFilter(job, (progress) => {
+      if (!job.cancelled) workerScope.postMessage(progress);
+    })
       .then((result) => {
-        if (result) workerScope.postMessage(result);
+        if (result && !job.cancelled) workerScope.postMessage(result);
       })
       .catch((error: unknown) => {
-        workerScope.postMessage({
-          type: "error",
-          requestId: request.requestId,
-          message: error instanceof Error ? error.message : String(error),
-          generation: request.generation,
-          paged: true,
-        });
+        if (!job.cancelled)
+          workerScope.postMessage({
+            type: "error",
+            requestId: request.requestId,
+            message: error instanceof Error ? error.message : String(error),
+            generation: request.generation,
+            dataGeneration: request.dataGeneration,
+            paged: request.type === "filterPaged",
+          });
       })
       .finally(() => {
-        pagedFilterRunning = false;
-        activePagedGeneration = undefined;
-        activePagedDataGeneration = undefined;
-        const queued = queuedPagedRequest;
-        queuedPagedRequest = null;
-        if (queued) runPagedRequest(queued);
+        activeJob = null;
+        const queued = queuedJob;
+        queuedJob = null;
+        if (queued) startJob(queued);
       });
   };
 
   workerScope.onmessage = (event: MessageEvent<WorkerRequest>) => {
     const data = event.data;
+    if (data.type === "cancel") {
+      newestRequestId = Math.max(newestRequestId, data.requestId);
+      if (activeJob && (activeJob.request.requestId ?? -1) <= data.requestId) {
+        activeJob.cancelled = true;
+      }
+      if (queuedJob && (queuedJob.request.requestId ?? -1) <= data.requestId)
+        queuedJob = null;
+      return;
+    }
     if (data.type === "setEntries") {
-      cachedEntries = data.entries || [];
+      invalidateJobs();
+      cachedEntryBatches = [data.entries || []];
+      cachedEntryCount = data.entries?.length ?? 0;
+      cachedDataGeneration = data.dataGeneration;
       return;
     }
     if (data.type === "appendEntries") {
       const incoming = data.entries || [];
-      for (let i = 0; i < incoming.length; i++) {
-        cachedEntries.push(incoming[i]);
+      if (
+        data.dataGeneration !== undefined &&
+        data.dataGeneration !== cachedDataGeneration
+      ) {
+        invalidateJobs();
+        cachedEntryBatches = [];
+        cachedEntryCount = 0;
+        cachedDataGeneration = data.dataGeneration;
       }
-      return;
-    }
-    if (data.type === "filter") {
-      const result = filterLegacyEntries(
-        data.entries ?? cachedEntries,
-        data.options,
-      );
-      result.requestId = data.requestId;
-      workerScope.postMessage(result);
+      if (incoming.length) cachedEntryBatches.push(incoming);
+      cachedEntryCount += incoming.length;
       return;
     }
     if (data.type === "transferProjections") {
+      if (
+        activeJob?.request.type === "filterPaged" &&
+        (activeJob.request.databaseName !== data.databaseName ||
+          activeJob.request.dataGeneration !== data.dataGeneration)
+      ) {
+        invalidateJobs();
+        pagedFilterCache = null;
+      }
       handleTransferProjections(
         data.records,
         data.databaseName,
@@ -995,17 +959,40 @@ if (workerScope) {
       return;
     }
 
-    if (pagedFilterRunning) {
-      queuedPagedRequest = data as PagedFilterRequest;
+    if (data.requestId !== undefined) {
+      if (data.requestId <= newestRequestId) return;
+      newestRequestId = data.requestId;
+    }
+    const job: FilterJob = {
+      request: data,
+      cancelled: false,
+      total:
+        data.type === "filterPaged"
+          ? Math.max(0, Math.floor(data.entryCount))
+          : (data.entries?.length ?? cachedEntryCount),
+      batches:
+        data.type === "filter"
+          ? data.entries
+            ? [data.entries]
+            : cachedEntryBatches
+          : undefined,
+    };
+    if (activeJob) {
+      queuedJob = job;
+      const active = activeJob.request;
       if (
-        (data as PagedFilterRequest).generation !== activePagedGeneration ||
-        (data as PagedFilterRequest).dataGeneration !==
-          activePagedDataGeneration
+        active.type !== data.type ||
+        active.generation !== data.generation ||
+        active.dataGeneration !== data.dataGeneration ||
+        (active.type === "filterPaged" &&
+          data.type === "filterPaged" &&
+          active.databaseName !== data.databaseName) ||
+        job.total < activeJob.total
       ) {
-        latestPagedRequestId = (data as PagedFilterRequest).requestId;
+        activeJob.cancelled = true;
       }
     } else {
-      runPagedRequest(data as PagedFilterRequest);
+      startJob(job);
     }
   };
 }

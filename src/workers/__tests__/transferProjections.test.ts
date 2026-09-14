@@ -269,8 +269,7 @@ describe("transferProjections – handleTransferProjections", () => {
 
       const state = _getTransferredProjectionCache();
       expect(state!.count).toBe(3);
-      // The gap (records 1-2 missing) will trigger IDB fallback in
-      // loadPagedProjectionCache because count < entryCount
+      // Pages containing missing records fall back to IndexedDB.
     });
   });
 

@@ -188,7 +188,7 @@ describe("filterProjectionPages", () => {
     });
   });
 
-  it("does not evaluate search positions beyond 50 000 sorted results", () => {
+  it("evaluates navigation search beyond 50 000 sorted results", () => {
     const pages: ProjectionRecord[][] = [];
     const PAGE = 1000;
     for (let base = 0; base < 51; base++) {
@@ -211,7 +211,13 @@ describe("filterProjectionPages", () => {
     );
 
     expect(result.filteredIndices.length).toBe(50_001);
-    expect(result.searchMatchIndices).toEqual([]);
+    expect(result.searchMatchIndices).toEqual([50_000]);
+    expect(result.searchMatchIds).toEqual([50_001]);
+    expect(result.progress).toEqual({
+      processed: 50_001,
+      total: 50_001,
+      matches: 1,
+    });
     const ids = result.filteredIndices;
     for (let i = 1; i < ids.length; i++) {
       expect(ids[i]!).toBeGreaterThan(ids[i - 1]!);
