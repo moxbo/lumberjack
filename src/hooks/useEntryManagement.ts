@@ -4,14 +4,12 @@
  */
 import { useCallback, useEffect, useRef, useState } from "preact/hooks";
 import { LoggingStore } from "../store/loggingStore";
-import { InMemoryLogRepository } from "../store/paged/InMemoryLogRepository";
 import {
   pagedLogRepository,
   startPagedSessionLifecycle,
 } from "../store/paged/session";
 import {
   createProjectionRecord,
-  type PagedLogEntry,
   type PagedTimestamp,
   type ProjectionRecord,
 } from "../store/paged";
@@ -29,10 +27,16 @@ import logger from "../utils/logger";
 import { IPC_BATCH_SIZE } from "../constants";
 import type { ProjectionBridge } from "../workers/projectionBridge";
 import { MetadataStore } from "../utils/metadataSnapshot";
+import {
+  DEFAULT_INGESTION_LIMITS,
+  IngestionBudget,
+  type IngestionLimits,
+} from "./ingestionBudget";
 
 interface UseEntryManagementOptions {
   marksMap: Record<string, string>;
   projectionBridgeRef?: { current: ProjectionBridge | null };
+  ingestionLimits?: Partial<IngestionLimits>;
 }
 
 interface AppendEntriesOptions {
@@ -63,6 +67,7 @@ export function getMetadataPublishDelay(entryCount: number): number {
 export function useEntryManagement({
   marksMap,
   projectionBridgeRef: externalBridgeRef,
+  ingestionLimits,
 }: UseEntryManagementOptions) {
   const metadataStoreRef = useRef(new MetadataStore());
   const [entries, setMetadataEntries] = useState(() =>
@@ -70,9 +75,7 @@ export function useEntryManagement({
   );
   const [storageError, setStorageError] = useState<Error | null>(null);
   const initialUsesPagedStorage = pagedLogRepository.isAvailable();
-  const [usesPagedStorage, setUsesPagedStorage] = useState(
-    initialUsesPagedStorage,
-  );
+  const usesPagedStorage = true;
   const marksMapRef = useRef(marksMap);
   marksMapRef.current = marksMap;
   const hasLegacyMarksRef = useRef(false);
@@ -86,11 +89,16 @@ export function useEntryManagement({
     null,
   );
   const idsBySignatureRef = useRef<Map<string, number | number[]>>(new Map());
-  const usesPagedStorageRef = useRef(usesPagedStorage);
-  usesPagedStorageRef.current = usesPagedStorage;
-  const repositoryRef = useRef<
-    typeof pagedLogRepository | InMemoryLogRepository
-  >(initialUsesPagedStorage ? pagedLogRepository : new InMemoryLogRepository());
+  const repositoryRef = useRef(pagedLogRepository);
+  const pausedErrorRef = useRef<Error | null>(null);
+  const mountedRef = useRef(true);
+  const budgetRef = useRef(
+    new IngestionBudget({
+      ...DEFAULT_INGESTION_LIMITS,
+      ...ingestionLimits,
+    }),
+  );
+  const producersRef = useRef(new Set<{ cancel: (error: Error) => void }>());
 
   const generationRef = useRef(0);
   const operationTailRef = useRef<Promise<void> | null>(null);
@@ -104,6 +112,40 @@ export function useEntryManagement({
     }>
   >([]);
   const drainingRef = useRef(false);
+  const cancelPending = useCallback((error: Error) => {
+    const queued = queueRef.current;
+    queueRef.current = [];
+    for (const batch of queued) {
+      batch.entries = [];
+      batch.reject(error);
+    }
+    for (const producer of producersRef.current) producer.cancel(error);
+    producersRef.current.clear();
+  }, []);
+  const pauseStorage = useCallback(
+    (cause: unknown, generation: number) => {
+      const normalized =
+        cause instanceof Error ? cause : new Error(String(cause));
+      const error =
+        normalized === pausedErrorRef.current
+          ? normalized
+          : new Error(
+              `Log storage failed: ${normalized.message}. Ingestion is paused. Existing logs remain available for browsing and export. Clear logs successfully before importing again.`,
+              { cause: normalized },
+            );
+      if (generation === generationRef.current && mountedRef.current) {
+        pausedErrorRef.current = error;
+        setStorageError(error);
+        cancelPending(error);
+        logger.error(
+          "Log storage failed; ingestion paused until a successful clear:",
+          error,
+        );
+      }
+      return error;
+    },
+    [cancelPending],
+  );
 
   const publishMetadata = useCallback((): void => {
     if (metadataPublishTimerRef.current !== null) {
@@ -131,45 +173,41 @@ export function useEntryManagement({
   }, [publishMetadata]);
 
   if (operationTailRef.current === null) {
-    if (!pagedLogRepository.isAvailable()) {
-      const memRepo = new InMemoryLogRepository();
-      repositoryRef.current = memRepo;
-      usesPagedStorageRef.current = false;
-      operationTailRef.current = memRepo.clear();
-    } else {
-      operationTailRef.current = pagedLogRepository.clear().catch((error) => {
-        const memRepo = new InMemoryLogRepository();
-        repositoryRef.current = memRepo;
-        usesPagedStorageRef.current = false;
-        setUsesPagedStorage(false);
-        logger.warn(
-          "Paged log storage initialization failed; using in-memory storage",
-          error,
-        );
-        return memRepo.clear();
+    const generation = generationRef.current;
+    operationTailRef.current = Promise.resolve()
+      .then(() => {
+        if (!mountedRef.current || generation !== generationRef.current) return;
+        if (!pagedLogRepository.isAvailable()) {
+          throw new Error("IndexedDB is unavailable; log ingestion is paused.");
+        }
+        return pagedLogRepository.clear();
+      })
+      .catch((error) => {
+        pauseStorage(error, generation);
       });
-    }
   }
 
   useEffect(() => {
-    if (!initialUsesPagedStorage) {
-      return () => {
-        if (metadataPublishTimerRef.current !== null) {
-          clearTimeout(metadataPublishTimerRef.current);
-        }
-      };
-    }
-    const stopLifecycle = startPagedSessionLifecycle((error) => {
-      logger.error("Maintaining paged log session failed:", error);
-    });
+    const stopLifecycle = initialUsesPagedStorage
+      ? startPagedSessionLifecycle((error) => {
+          logger.error("Maintaining paged log session failed:", error);
+        })
+      : () => undefined;
     return () => {
+      mountedRef.current = false;
+      generationRef.current++;
+      cancelPending(
+        new Error("Log append cancelled because the view was closed"),
+      );
       if (metadataPublishTimerRef.current !== null) {
         clearTimeout(metadataPublishTimerRef.current);
       }
       stopLifecycle();
-      void pagedLogRepository.destroy().catch((error) => {
-        logger.error("Cleaning up paged log storage failed:", error);
-      });
+      void operationTailRef.current
+        ?.then(() => pagedLogRepository.destroy())
+        .catch((error) => {
+          logger.error("Cleaning up paged log storage failed:", error);
+        });
     };
   }, []);
 
@@ -180,80 +218,14 @@ export function useEntryManagement({
       generation: number,
     ): Promise<number> => {
       if (newEntries.length === 0) return 0;
-      let repository = repositoryRef.current;
-
-      const fallBackToMemory = async (cause: unknown) => {
-        if (repository instanceof InMemoryLogRepository) throw cause;
-
-        const fallback = new InMemoryLogRepository();
-        const recoveredEntries = new Map<number, PagedLogEntry>();
-        const existingMetadata = metadataByIdRef.current.filter(
-          (item): item is PagedEntryMetadata => item !== undefined,
-        );
-        try {
-          for (
-            let start = 0;
-            start < existingMetadata.length;
-            start += IPC_BATCH_SIZE
-          ) {
-            const page = existingMetadata.slice(start, start + IPC_BATCH_SIZE);
-            const payloads = await repository.getPayloads(
-              page.map((item) => item._id),
-            );
-            const entries = page
-              .map((item): PagedLogEntry | null => {
-                const entry = payloads.get(item._id);
-                if (!entry) return null;
-                return {
-                  ...entry,
-                  _id: item._id,
-                  timestamp: item.timestamp,
-                  message: String(entry.message ?? ""),
-                  source: item.source,
-                };
-              })
-              .filter((entry): entry is PagedLogEntry => entry !== null);
-            if (entries.length !== page.length) {
-              throw new Error("Not all paged log entries could be recovered");
-            }
-            await fallback.putMany(entries);
-            for (const entry of entries) {
-              recoveredEntries.set(entry._id!, entry);
-            }
-          }
-        } catch (fallbackError) {
-          throw new AggregateError(
-            [cause, fallbackError],
-            "Paged log storage failed and in-memory recovery was incomplete",
-            { cause: fallbackError },
-          );
+      const assertActive = () => {
+        if (!mountedRef.current || generation !== generationRef.current) {
+          throw new Error("Log append cancelled because the dataset changed");
         }
-
-        if (generation !== generationRef.current) return;
-        repositoryRef.current = fallback;
-        repository = fallback;
-        usesPagedStorageRef.current = false;
-        setUsesPagedStorage(false);
-        const enrichedEntries = metadataStoreRef.current
-          .publish()
-          .map((item) => {
-            const payload = recoveredEntries.get(item._id);
-            const enriched: PagedEntryMetadata = {
-              ...item,
-              thread: payload?.thread ?? null,
-              message: payload?.message ?? "",
-              mdc: payload?.mdc ?? null,
-            };
-            metadataByIdRef.current[item._id] = enriched;
-            return enriched;
-          });
-        metadataStoreRef.current.replace(enrichedEntries);
-        publishMetadata();
-        logger.warn(
-          "Paged log storage failed; switched to in-memory storage",
-          cause,
-        );
+        if (pausedErrorRef.current) throw pausedErrorRef.current;
       };
+      assertActive();
+      const repository = repositoryRef.current;
 
       const batchKeys = new Set<string>();
       const candidates: Array<{ source: string; signature: string }> = [];
@@ -285,15 +257,9 @@ export function useEntryManagement({
 
       let existing = new Set<string>();
       if (candidates.length > 0) {
-        try {
-          existing = await repository.findExistingSignatures(candidates);
-        } catch (error) {
-          await fallBackToMemory(error);
-          if (generation !== generationRef.current) return 0;
-          existing = await repository.findExistingSignatures(candidates);
-        }
+        existing = await repository.findExistingSignatures(candidates);
       }
-      if (generation !== generationRef.current) return 0;
+      assertActive();
       const accepted = prepared
         .filter(
           ({ source, signature, deduplicate, ignoreExisting }) =>
@@ -329,19 +295,10 @@ export function useEntryManagement({
         if (mark) entry._mark = mark;
       }
 
-      let ids: number[];
-      try {
-        ids = await repository.putMany(accepted);
-      } catch (error) {
-        await fallBackToMemory(error);
-        if (generation !== generationRef.current) return 0;
-        ids = await repository.putMany(accepted);
-      }
-      if (generation !== generationRef.current) return 0;
+      const ids = await repository.putMany(accepted);
+      assertActive();
 
-      // Publish projections directly to the filter worker (paged storage only).
-      // In-memory fallback must not publish because the worker cannot use them.
-      if (usesPagedStorageRef.current && projectionBridgeRef.current) {
+      if (projectionBridgeRef.current) {
         const projections: ProjectionRecord[] = accepted.map((entry, index) =>
           createProjectionRecord(entry, ids[index]!),
         );
@@ -366,11 +323,6 @@ export function useEntryManagement({
               ? entry._mark
               : undefined,
         };
-        if (!usesPagedStorageRef.current) {
-          base.thread = entry.thread ?? null;
-          base.message = entry.message ?? "";
-          base.mdc = entry.mdc ?? null;
-        }
         return base;
       });
       for (let index = 0; index < metadata.length; index++) {
@@ -393,10 +345,9 @@ export function useEntryManagement({
 
       metadataStoreRef.current.appendSorted(metadata);
       scheduleMetadataPublish();
-      setStorageError(null);
       return metadata.length;
     },
-    [publishMetadata, scheduleMetadataPublish],
+    [scheduleMetadataPublish],
   );
 
   const drainQueue = useCallback(async (): Promise<void> => {
@@ -417,50 +368,93 @@ export function useEntryManagement({
           const stored = await operation;
           batch.resolve(stored ?? 0);
         } catch (error) {
-          const normalized =
-            error instanceof Error ? error : new Error(String(error));
-          setStorageError(normalized);
-          logger.error("Paged log append failed:", normalized);
+          const normalized = pauseStorage(error, batch.generation);
           batch.reject(normalized);
+        } finally {
+          batch.entries = [];
         }
       }
     } finally {
       drainingRef.current = false;
       if (queueRef.current.length > 0) void drainQueue();
     }
-  }, [processBatch]);
+  }, [processBatch, pauseStorage]);
 
   const appendEntriesAsync = useCallback(
     (newEntries: any[], options?: AppendEntriesOptions): Promise<number> => {
+      const generation = generationRef.current;
+      if (!mountedRef.current) {
+        return Promise.reject(new Error("Log view is closed"));
+      }
+      if (pausedErrorRef.current) {
+        const error = new Error(pausedErrorRef.current.message, {
+          cause: pausedErrorRef.current,
+        });
+        setStorageError(error);
+        return Promise.reject(error);
+      }
       if (!Array.isArray(newEntries) || newEntries.length === 0) {
         return Promise.resolve(0);
       }
-      const generation = generationRef.current;
-      const completions: Promise<number>[] = [];
-      let processed = 0;
-      for (let start = 0; start < newEntries.length; start += IPC_BATCH_SIZE) {
-        const batchEntries = newEntries.slice(start, start + IPC_BATCH_SIZE);
-        completions.push(
-          new Promise<number>((resolve, reject) => {
-            queueRef.current.push({
-              entries: batchEntries,
-              options,
-              generation,
-              resolve,
-              reject,
-            });
-          }).then((stored) => {
-            processed += batchEntries.length;
-            options?.onProgress?.(processed, newEntries.length);
-            return stored;
-          }),
-        );
+      let release: () => void;
+      try {
+        release = budgetRef.current.reserve(newEntries);
+      } catch (cause) {
+        const error = cause instanceof Error ? cause : new Error(String(cause));
+        setStorageError(error);
+        return Promise.reject(error);
       }
-      void drainQueue();
-      return Promise.all(completions).then((counts) => {
-        let total = 0;
-        for (const count of counts) total += count;
-        return total;
+      return new Promise<number>((resolveProducer, rejectProducer) => {
+        const producer = {
+          entries: newEntries,
+          cancelled: false,
+          cancel: (error: Error) => {
+            producer.cancelled = true;
+            producer.entries = [];
+            rejectProducer(error);
+          },
+        };
+        newEntries = [];
+        producersRef.current.add(producer);
+        void (async () => {
+          let storedTotal = 0;
+          const total = producer.entries.length;
+          try {
+            for (let start = 0; start < total; start += IPC_BATCH_SIZE) {
+              if (producer.cancelled || generation !== generationRef.current) {
+                throw new Error(
+                  "Log append cancelled because the dataset changed",
+                );
+              }
+              const count = Math.min(IPC_BATCH_SIZE, total - start);
+              storedTotal += await new Promise<number>((resolve, reject) => {
+                queueRef.current.push({
+                  entries: producer.entries.slice(start, start + count),
+                  options,
+                  generation,
+                  resolve,
+                  reject,
+                });
+                void drainQueue();
+              });
+              if (producer.cancelled || generation !== generationRef.current) {
+                throw new Error(
+                  "Log append cancelled because the dataset changed",
+                );
+              }
+              options?.onProgress?.(start + count, total);
+            }
+            resolveProducer(storedTotal);
+          } catch (error) {
+            rejectProducer(
+              error instanceof Error ? error : new Error(String(error)),
+            );
+          } finally {
+            producer.entries = [];
+            producersRef.current.delete(producer);
+            release();
+          }
+        })();
       });
     },
     [drainQueue],
@@ -468,54 +462,73 @@ export function useEntryManagement({
 
   const appendEntries = useCallback(
     (newEntries: any[], options?: AppendEntriesOptions) => {
-      void appendEntriesAsync(newEntries, options).catch(() => {
-        // The hook already records and exposes the storage error to the UI.
+      const generation = generationRef.current;
+      void appendEntriesAsync(newEntries, options).catch((error) => {
+        if (mountedRef.current && generation === generationRef.current) {
+          setStorageError(
+            error instanceof Error ? error : new Error(String(error)),
+          );
+        }
       });
     },
     [appendEntriesAsync],
   );
 
   const clearEntries = useCallback(() => {
-    generationRef.current++;
-    projectionBridgeRef.current?.reset();
-    const cancelled = queueRef.current;
-    queueRef.current = [];
-    for (const batch of cancelled) {
-      batch.reject(
-        new Error("Log append cancelled because entries were cleared"),
-      );
-    }
-    metadataByIdRef.current = [];
-    metadataStoreRef.current.clear();
-    publishedMetadataCountRef.current = 0;
+    const generation = ++generationRef.current;
+    const clearingError = new Error(
+      "Log ingestion is paused while storage is cleared",
+    );
+    pausedErrorRef.current = clearingError;
+    cancelPending(
+      new Error("Log append cancelled because entries were cleared"),
+    );
     if (metadataPublishTimerRef.current !== null) {
       clearTimeout(metadataPublishTimerRef.current);
       metadataPublishTimerRef.current = null;
     }
-    idsBySignatureRef.current.clear();
-    setMetadataEntries(metadataStoreRef.current.publish());
-    clearHighlightCache();
-    clearTimestampCache();
-    clearTimestampParseCache();
-    clearRegexCache();
-    try {
-      LoggingStore.reset();
-    } catch (error) {
-      logger.error("LoggingStore.reset error:", error);
-    }
-
     const previous = operationTailRef.current ?? Promise.resolve();
     const repository = repositoryRef.current;
-    operationTailRef.current = previous
-      .then(() => repository.clear())
-      .then(() => setStorageError(null))
+    const operation = previous
+      .then(() => {
+        if (!mountedRef.current || generation !== generationRef.current) {
+          throw new Error("Log clear cancelled because the dataset changed");
+        }
+        if (!repository.isAvailable())
+          throw new Error("IndexedDB is unavailable");
+        return repository.clear();
+      })
+      .then(() => {
+        if (!mountedRef.current || generation !== generationRef.current) {
+          throw new Error("Log clear cancelled because the dataset changed");
+        }
+        projectionBridgeRef.current?.reset();
+        metadataByIdRef.current = [];
+        metadataStoreRef.current.clear();
+        publishedMetadataCountRef.current = 0;
+        idsBySignatureRef.current.clear();
+        setMetadataEntries(metadataStoreRef.current.publish());
+        clearHighlightCache();
+        clearTimestampCache();
+        clearTimestampParseCache();
+        clearRegexCache();
+        try {
+          LoggingStore.reset();
+        } catch (error) {
+          logger.error("LoggingStore.reset error:", error);
+        }
+        pausedErrorRef.current = null;
+        setStorageError(null);
+      })
       .catch((error) => {
-        const normalized =
-          error instanceof Error ? error : new Error(String(error));
-        setStorageError(normalized);
-        logger.error("Paged log clear failed:", normalized);
+        if (mountedRef.current && generation === generationRef.current) {
+          publishMetadata();
+        }
+        throw pauseStorage(error, generation);
       });
-  }, []);
+    operationTailRef.current = operation.catch(() => undefined);
+    return operation;
+  }, [cancelPending, pauseStorage, publishMetadata]);
 
   const getMetadata = useCallback(
     (id: number) => metadataByIdRef.current[id],

@@ -17,6 +17,7 @@ import { WatchManager } from "./FileWatcher";
 import { HttpTailManager } from "./HttpTailManager";
 import { getSharedMainApi } from "./sharedMainApi";
 import { ExportFileService } from "./ExportFileService";
+import { IPC_BATCH_SIZE } from "../constants/logViewer";
 import type {
   ExportBeginRequest,
   ExportBeginResult,
@@ -334,6 +335,7 @@ export function registerIpcHandlers(
   const exportFiles = new ExportFileService((error) =>
     log.error("Export cleanup failed:", error),
   );
+  const startingStreams = new Set<number>();
   const streamSessions = new Map<
     string,
     {
@@ -346,6 +348,7 @@ export function registerIpcHandlers(
       ready: Promise<void>;
       resolveReady: () => void;
       onDestroyed: () => void;
+      readyTimeout: ReturnType<typeof setTimeout>;
     }
   >();
 
@@ -353,6 +356,7 @@ export function registerIpcHandlers(
     const session = streamSessions.get(sessionId);
     if (!session) return;
     session.resolveReady();
+    clearTimeout(session.readyTimeout);
     streamSessions.delete(sessionId);
     try {
       session.sender.removeListener("destroyed", session.onDestroyed);
@@ -372,6 +376,23 @@ export function registerIpcHandlers(
     cleanupStreamSession(sessionId);
   }
 
+  function failStreamSession(sessionId: string, error: Error): void {
+    const session = streamSessions.get(sessionId);
+    if (!session) return;
+    try {
+      if (!session.sender.isDestroyed()) {
+        session.sender.send("logs:streamError", {
+          sessionId,
+          error: error.message,
+        });
+      }
+    } catch (notificationError) {
+      log.warn("[stream] Failure notification failed:", notificationError);
+    } finally {
+      cancelStreamSession(sessionId);
+    }
+  }
+
   function waitForStreamAck(
     sessionId: string,
     chunkIndex: number,
@@ -386,7 +407,22 @@ export function registerIpcHandlers(
     }
     const key = String(chunkIndex);
     return new Promise<void>((resolve, reject) => {
-      session.ackWaiters.set(key, { resolve, reject });
+      const timer = setTimeout(() => {
+        session.ackWaiters.delete(key);
+        const error = new Error("Stream persistence acknowledgement timed out");
+        failStreamSession(sessionId, error);
+        reject(error);
+      }, 30_000);
+      session.ackWaiters.set(key, {
+        resolve: () => {
+          clearTimeout(timer);
+          resolve();
+        },
+        reject: (error) => {
+          clearTimeout(timer);
+          reject(error);
+        },
+      });
     });
   }
 
@@ -886,6 +922,7 @@ export function registerIpcHandlers(
     (event, { sessionId }: { sessionId: string }) => {
       const session = streamSessions.get(sessionId);
       if (!session || session.sender !== event.sender) return;
+      clearTimeout(session.readyTimeout);
       session.resolveReady();
     },
   );
@@ -921,9 +958,35 @@ export function registerIpcHandlers(
       event,
       filePaths: string[],
     ): Promise<ParseResult | StreamParseStartResult> => {
+      if (
+        startingStreams.has(event.sender.id) ||
+        startingStreams.size + streamSessions.size >= 16 ||
+        Array.from(streamSessions.values()).some(
+          (session) => session.sender === event.sender,
+        )
+      ) {
+        return {
+          ok: false,
+          error:
+            "Stream admission capacity exceeded; finish or cancel the current import",
+        };
+      }
+      startingStreams.add(event.sender.id);
       try {
         const parsers = getParsers();
         const plans = await planStreamParseFiles(filePaths, parsers);
+        if (
+          streamSessions.size >= 16 ||
+          Array.from(streamSessions.values()).some(
+            (session) => session.sender === event.sender,
+          )
+        ) {
+          return {
+            ok: false,
+            error:
+              "Stream admission capacity exceeded; finish or cancel the current import",
+          };
+        }
         const shouldStream = plans.some((plan) => plan.streamable);
         if (!shouldStream) {
           await yieldToEventLoop();
@@ -946,6 +1009,12 @@ export function registerIpcHandlers(
         };
 
         sender.once("destroyed", onDestroyed);
+        const readyTimeout = setTimeout(() => {
+          failStreamSession(
+            sessionId,
+            new Error("Stream renderer readiness timed out"),
+          );
+        }, 30_000);
         streamSessions.set(sessionId, {
           sender,
           abortController,
@@ -953,6 +1022,7 @@ export function registerIpcHandlers(
           ready,
           resolveReady,
           onDestroyed,
+          readyTimeout,
         });
 
         void ready
@@ -969,7 +1039,19 @@ export function registerIpcHandlers(
                   throw createAbortError();
                 }
                 const ack = waitForStreamAck(sessionId, chunk.chunkIndex);
-                session.sender.send("logs:streamChunk", chunk);
+                try {
+                  session.sender.send("logs:streamChunk", chunk);
+                } catch (error) {
+                  session.ackWaiters
+                    .get(String(chunk.chunkIndex))
+                    ?.reject(
+                      error instanceof Error ? error : new Error(String(error)),
+                    );
+                  failStreamSession(
+                    sessionId,
+                    error instanceof Error ? error : new Error(String(error)),
+                  );
+                }
                 await ack;
               },
               sendComplete: (result) => {
@@ -984,6 +1066,9 @@ export function registerIpcHandlers(
               },
             }),
           )
+          .catch((error: unknown) => {
+            log.warn("[stream] Delivery failed:", error);
+          })
           .finally(() => {
             cleanupStreamSession(sessionId);
           });
@@ -998,6 +1083,8 @@ export function registerIpcHandlers(
           ok: false,
           error: err instanceof Error ? err.message : String(err),
         };
+      } finally {
+        startingStreams.delete(event.sender.id);
       }
     },
   );
@@ -1246,7 +1333,7 @@ export function registerIpcHandlers(
   ipcMain.handle(
     "http:startPoll",
     async (
-      _event,
+      event,
       { url, intervalSec }: { url: string; intervalSec: number },
     ) => {
       // Check if HTTP_POLLING feature is enabled
@@ -1258,7 +1345,25 @@ export function registerIpcHandlers(
           error: reason ? `${msg}: ${reason}` : msg,
         };
       }
-      return await networkService.httpStartPoll(url, intervalSec);
+      return await networkService.httpStartPoll(
+        url,
+        intervalSec,
+        (id, error) => {
+          try {
+            if (!event.sender.isDestroyed())
+              event.sender.send("http:pollError", {
+                id,
+                url,
+                error: error.message,
+              });
+          } catch (notificationError) {
+            log.warn(
+              "[http:poll] Failure notification failed:",
+              notificationError,
+            );
+          }
+        },
+      );
     },
   );
 
@@ -1302,12 +1407,11 @@ export function registerIpcHandlers(
 
         const url = opts.url || settings.elasticUrl || "";
         const requestedSize = Number(opts.size ?? settings.elasticSize ?? 1000);
-        // Page size for each ES request (max 10000 per ES default, but we paginate)
-        // Use smaller page size for pagination efficiency
+        // One producer page must fit the renderer's sequential admission unit.
         const pageSize = Math.max(
           1,
           Math.min(
-            10000,
+            IPC_BATCH_SIZE,
             Number.isFinite(requestedSize) ? requestedSize : 1000,
           ),
         );
@@ -1851,20 +1955,13 @@ export function registerIpcHandlers(
         const watcher = watchManager.start(
           args.filePath,
           {
-            onLines: (lines: string[]) => {
+            onLines: async (lines: string[]) => {
               if (lines.length === 0) return;
               try {
                 const data = lines.join("\n");
                 const entries = parseTextLines(fileName, data);
                 if (entries.length > 0 && enqueueWatchEntries) {
-                  void Promise.resolve(
-                    enqueueWatchEntries(entries, senderId),
-                  ).catch((error) => {
-                    log.warn(
-                      "[watch] append failed:",
-                      error instanceof Error ? error.message : String(error),
-                    );
-                  });
+                  await enqueueWatchEntries(entries, senderId);
                 }
                 emitWatchStatus(senderId, {
                   type: "lines",
@@ -1877,6 +1974,7 @@ export function registerIpcHandlers(
                   "[watch] parse failed:",
                   e instanceof Error ? e.message : String(e),
                 );
+                throw e;
               }
             },
             onError: (err: Error) => {

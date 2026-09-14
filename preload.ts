@@ -13,6 +13,7 @@ import type {
   ExportResult,
   ExportViewOptions,
   HttpPollResult,
+  HttpPollError,
   LogEntry,
   MenuCommand,
   ParseResult,
@@ -149,6 +150,13 @@ const api: ElectronAPI = {
   httpStopPoll: (id: number): Promise<Result<void>> =>
     ipcRenderer.invoke("http:stopPoll", id),
 
+  onHttpPollError: (callback: (error: HttpPollError) => void): (() => void) => {
+    const listener = (_event: IpcRendererEvent, error: HttpPollError) =>
+      callback(error);
+    ipcRenderer.on("http:pollError", listener);
+    return () => ipcRenderer.removeListener("http:pollError", listener);
+  },
+
   // HTTP insecure SSL options
   httpSetAllowInsecureSSL: (allow: boolean): Promise<{ ok: boolean }> =>
     ipcRenderer.invoke("http:setAllowInsecureSSL", allow),
@@ -178,19 +186,21 @@ const api: ElectronAPI = {
     ): void => {
       const entries = Array.isArray(payload) ? payload : payload.entries;
       const batchId = Array.isArray(payload) ? undefined : payload.batchId;
-      void Promise.resolve(callback(entries)).then(
-        () => {
-          if (batchId) ipcRenderer.send("logs:appendAck", { batchId });
-        },
-        (error) => {
-          if (batchId) {
-            ipcRenderer.send("logs:appendAck", {
-              batchId,
-              error: error instanceof Error ? error.message : String(error),
-            });
-          }
-        },
-      );
+      void Promise.resolve()
+        .then(() => callback(entries))
+        .then(
+          () => {
+            if (batchId) ipcRenderer.send("logs:appendAck", { batchId });
+          },
+          (error) => {
+            if (batchId) {
+              ipcRenderer.send("logs:appendAck", {
+                batchId,
+                error: error instanceof Error ? error.message : String(error),
+              });
+            }
+          },
+        );
     };
     ipcRenderer.on("logs:append", listener);
     // Return cleanup function

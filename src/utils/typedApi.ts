@@ -23,6 +23,7 @@ import type {
   FilterOptions,
   FilterResult,
   HttpPollResult,
+  HttpPollError,
   LogEntry,
   MenuCommand,
   ParseResult,
@@ -674,6 +675,12 @@ export function onTcpStatus(callback: (status: TcpStatus) => void): () => void {
   } catch {
     return noop;
   }
+}
+
+export function onHttpPollError(
+  callback: (error: HttpPollError) => void,
+): () => void {
+  return window.api?.onHttpPollError?.(callback) ?? noop;
 }
 
 /**

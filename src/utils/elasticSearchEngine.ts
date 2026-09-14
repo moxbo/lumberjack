@@ -67,7 +67,7 @@ export interface ExecuteElasticSearchDeps {
     options?: { ignoreExistingForElastic?: boolean; messageFilter?: string },
   ) => Promise<number>;
   /** Reset entry store on a "replace" search (clear entries, caches, LoggingStore). */
-  onReplaceReset: () => void;
+  onReplaceReset: () => void | Promise<void>;
   setHasMore: (v: boolean) => void;
   setNextSearchAfter: (v: Array<string | number> | null) => void;
   setPitSessionId: (v: string | null) => void;
@@ -167,7 +167,7 @@ export async function executeElasticSearch(
       // Vollständiges Zurücksetzen: alle vorhandenen Einträge entfernen,
       // Dedupe-Caches und LoggingStore leeren (App-seitig, damit dieser
       // Hook keine Entry-Management-Interna besitzen muss).
-      onReplaceReset();
+      await onReplaceReset();
     }
 
     // Anhängen mit Kappung

@@ -163,8 +163,10 @@ describe("serialized file logging", () => {
       FileWriterBackpressureError,
     );
     await first;
-    // A lone oversized batch remains supported.
-    await writer.write("oversized");
+    await expect(writer.write("oversized")).rejects.toBeInstanceOf(
+      FileWriterBackpressureError,
+    );
+    await writer.write("next");
     const a = writer.write("");
     const b = writer.write("");
     await expect(writer.write("")).rejects.toBeInstanceOf(
@@ -175,7 +177,7 @@ describe("serialized file logging", () => {
       FileWriterBackpressureError,
     );
     await writer.close();
-    expect(await fs.promises.readFile(filepath, "utf8")).toBe("ééoversized");
+    expect(await fs.promises.readFile(filepath, "utf8")).toBe("éénext");
   });
 
   it("persists more than 256 concurrent writes by default without admission drops", async () => {
@@ -190,7 +192,7 @@ describe("serialized file logging", () => {
     expect(service.getStats().writeCount).toBe(300);
   });
 
-  it("admits more than 8 MiB of pending data by default", async () => {
+  it("admits bounded pending data by default", async () => {
     const writer = new AsyncFileWriter(filepath);
     const chunk = "x".repeat(5 * 1024 * 1024);
     await Promise.all([
@@ -216,13 +218,13 @@ describe("serialized file logging", () => {
       },
     });
     network.setLogCallback((entries) => {
-      writes.push(
-        writer
-          .write(entries.map((entry) => entry.message + "\n").join(""))
-          .catch((error: unknown) => {
-            errors.push(error);
-          }),
-      );
+      const write = writer
+        .write(entries.map((entry) => entry.message + "\n").join(""))
+        .catch((error: unknown) => {
+          errors.push(error);
+        });
+      writes.push(write);
+      return write;
     });
     const status = await network.startTcpServer(0);
     expect(status.ok).toBe(true);

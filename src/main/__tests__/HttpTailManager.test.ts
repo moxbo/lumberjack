@@ -220,11 +220,12 @@ describe("HttpTailManager", () => {
     expect(tail.intervalMs).toBe(250);
   });
 
-  it("restores partial-line state when downstream persistence fails", async () => {
+  it("reports and stops on downstream failure without replaying an ambiguous prefix", async () => {
     server.body = "first\npartial";
     const mgr = new HttpTailManager();
     const received: string[][] = [];
     let attempts = 0;
+    const errors: string[] = [];
     mgr.start(
       url,
       {
@@ -236,6 +237,7 @@ describe("HttpTailManager", () => {
           }
           received.push(lines);
         },
+        onError: (error) => errors.push(error.message),
       },
       { intervalMs: 250, emitInitial: true },
     );
@@ -243,7 +245,108 @@ describe("HttpTailManager", () => {
     await delay(700);
     mgr.stopAll();
 
-    expect(received[0]).toEqual(["first", "partial-rest"]);
+    expect(received).toEqual([]);
+    expect(attempts).toBe(1);
+    expect(errors).toEqual(["temporary persistence failure"]);
+    expect(mgr.list()).toEqual([]);
+  });
+
+  it("keeps bounded JSON array documents intact across response chunks", async () => {
+    const chunks = ['[\n{"message":"first"},\n', '{"message":"second"}\n]'];
+    const body = new ReadableStream<Uint8Array>({
+      pull(controller) {
+        const chunk = chunks.shift();
+        if (chunk == null) controller.close();
+        else controller.enqueue(new TextEncoder().encode(chunk));
+      },
+    });
+    const mgr = new HttpTailManager();
+    const received: string[][] = [];
+    mgr.start(
+      url,
+      {
+        onLines: (lines) => {
+          received.push(lines);
+        },
+      },
+      {
+        emitInitial: true,
+        intervalMs: 10_000,
+        fetchImpl: async () => new Response(body),
+      },
+    );
+    await delay(100);
+    mgr.stopAll();
+    expect(received).toEqual([
+      ["[", '{"message":"first"},', '{"message":"second"}', "]"],
+    ]);
+  });
+
+  it("does not read the next response chunk while persistence is blocked", async () => {
+    let release!: () => void;
+    const blocked = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let pulls = 0;
+    const body = new ReadableStream<Uint8Array>(
+      {
+        pull(controller) {
+          pulls++;
+          if (pulls > 3) controller.close();
+          else controller.enqueue(new TextEncoder().encode(`${pulls}\n`));
+        },
+      },
+      { highWaterMark: 0 },
+    );
+    const mgr = new HttpTailManager();
+    const received: string[] = [];
+    mgr.start(
+      url,
+      {
+        onLines: async (lines) => {
+          received.push(...lines);
+          await blocked;
+        },
+      },
+      {
+        emitInitial: true,
+        intervalMs: 10_000,
+        fetchImpl: async () => new Response(body),
+      },
+    );
+    try {
+      await delay(100);
+      expect(received).toEqual(["1"]);
+      expect(pulls).toBe(1);
+      release();
+      await delay(100);
+      expect(received).toEqual(["1", "2", "3"]);
+    } finally {
+      release();
+      mgr.stopAll();
+    }
+  });
+
+  it("rejects oversized unterminated lines rather than growing carry indefinitely", async () => {
+    server.body = "x".repeat(1024 * 1024 + 1);
+    const errors: string[] = [];
+    const received: string[] = [];
+    const mgr = new HttpTailManager();
+    mgr.start(
+      url,
+      {
+        onLines: (lines) => {
+          received.push(...lines);
+        },
+        onError: (error) => errors.push(error.message),
+      },
+      { emitInitial: true },
+    );
+    await delay(200);
+    expect(received).toEqual([]);
+    expect(errors[0]).toContain("1 MiB");
+    expect(mgr.list()).toEqual([]);
+    mgr.stopAll();
   });
 
   it("buffers partial last line across ticks", async () => {

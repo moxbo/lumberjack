@@ -15,7 +15,7 @@ import { StringDecoder } from "string_decoder";
 
 export interface WatcherCallbacks {
   /** Called with newly-arrived raw text lines (without trailing \n). */
-  onLines: (lines: string[]) => void;
+  onLines: (lines: string[]) => unknown;
   /** Optional error sink. */
   onError?: (err: Error) => void;
   /** Optional truncation/rotation notification. */
@@ -66,6 +66,8 @@ export class WatchManager {
     cbs: WatcherCallbacks,
     opts: WatcherOptions = {},
   ): ActiveWatcher {
+    if (this.watchers.size >= 16)
+      throw new Error("File watcher capacity exceeded");
     const stat = fs.statSync(filePath);
     if (!stat.isFile()) {
       throw new Error("Not a regular file: " + filePath);
@@ -86,17 +88,40 @@ export class WatchManager {
     };
 
     const interval = Math.max(50, opts.pollIntervalMs ?? DEFAULT_POLL_MS);
-    const maxRead = Math.max(64 * 1024, opts.maxReadBytes ?? DEFAULT_MAX_READ);
+    const maxRead = Math.min(
+      DEFAULT_MAX_READ,
+      Math.max(64 * 1024, opts.maxReadBytes ?? DEFAULT_MAX_READ),
+    );
 
-    const onChange: fs.StatsListener = (curr, prev) => {
-      void this.process(watcher, cbs, maxRead, curr, prev).catch((err) => {
-        cbs.onError?.(err instanceof Error ? err : new Error(String(err)));
-      });
+    let busy = false;
+    let stopped = false;
+    let latest: fs.Stats | null = null;
+    const onChange: fs.StatsListener = (curr) => {
+      latest = curr;
+      if (busy || stopped) return;
+      busy = true;
+      void (async () => {
+        while (latest && !stopped) {
+          const next = latest;
+          latest = null;
+          await this.process(watcher, cbs, maxRead, next);
+        }
+      })()
+        .catch((err: unknown) => {
+          watcher.stop();
+          cbs.onError?.(err instanceof Error ? err : new Error(String(err)));
+        })
+        .finally(() => {
+          busy = false;
+        });
     };
 
     fs.watchFile(filePath, { interval, persistent: true }, onChange);
 
     watcher.stop = (): void => {
+      stopped = true;
+      latest = null;
+      watcher.carry = "";
       fs.unwatchFile(filePath, onChange);
       this.watchers.delete(id);
     };
@@ -106,9 +131,7 @@ export class WatchManager {
     // If emitInitial is set, kick off a first read immediately so callers see
     // the existing content without waiting for the next poll tick.
     if (opts.emitInitial && stat.size > 0) {
-      void this.process(watcher, cbs, maxRead, stat, stat).catch((err) => {
-        cbs.onError?.(err instanceof Error ? err : new Error(String(err)));
-      });
+      onChange(stat, stat);
     }
 
     return watcher;
@@ -141,7 +164,6 @@ export class WatchManager {
     cbs: WatcherCallbacks,
     maxRead: number,
     curr: fs.Stats,
-    _prev: fs.Stats,
   ): Promise<void> {
     // Truncation / rotation: file shrank → restart from 0
     if (curr.size < w.lastSize) {
@@ -160,14 +182,14 @@ export class WatchManager {
       // change event (or the initial emit) must fully catch up to curr.size –
       // otherwise large existing files or big appends would only be partially
       // read, because fs.watchFile does not fire again while the size is stable.
-      while (w.offset < curr.size) {
+      while (this.watchers.has(w.id) && w.offset < curr.size) {
         const start = w.offset;
         const end = Math.min(curr.size, start + maxRead);
         const length = end - start;
         const buf = Buffer.alloc(length);
         const { bytesRead } = await fd.read(buf, 0, length, start);
         if (bytesRead <= 0) break;
-        w.offset = start + bytesRead;
+        if (!this.watchers.has(w.id)) return;
         // Decoder keeps any incomplete multi-byte sequence at the chunk boundary.
         const text = w.carry + w.decoder.write(buf.subarray(0, bytesRead));
         const newlineIdx = text.lastIndexOf("\n");
@@ -175,7 +197,11 @@ export class WatchManager {
           // No newline yet → keep buffering. Cap the carry size to avoid OOM
           // for pathological inputs without line breaks.
           const MAX_CARRY = 1024 * 1024;
-          w.carry = text.length > MAX_CARRY ? text.slice(-MAX_CARRY) : text;
+          if (Buffer.byteLength(text, "utf8") > MAX_CARRY) {
+            throw new Error("File watcher line exceeds 1 MiB; watcher stopped");
+          }
+          w.carry = text;
+          w.offset = start + bytesRead;
           continue;
         }
         const completePart = text.slice(0, newlineIdx);
@@ -185,7 +211,14 @@ export class WatchManager {
           .map((s) => (s.endsWith("\r") ? s.slice(0, -1) : s));
         // Drop empty last item from a trailing newline
         if (lines.length > 0 && lines[lines.length - 1] === "") lines.pop();
-        if (lines.length > 0) cbs.onLines(lines);
+        if (
+          lines.some((line) => Buffer.byteLength(line, "utf8") > 1024 * 1024) ||
+          Buffer.byteLength(w.carry, "utf8") > 1024 * 1024
+        ) {
+          throw new Error("File watcher line exceeds 1 MiB; watcher stopped");
+        }
+        if (lines.length > 0) await cbs.onLines(lines);
+        w.offset = start + bytesRead;
       }
     } finally {
       await fd.close().catch(() => undefined);

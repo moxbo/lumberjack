@@ -6,10 +6,10 @@ import path from "path";
 import { createRequire } from "module";
 import https from "https";
 import http from "http";
-import * as readline from "readline";
 import log from "electron-log/main";
 import zlib from "zlib";
 import { buildElasticMessageQuery } from "../utils/esMessageQuery";
+import { estimatePayloadBytes } from "../utils/estimatePayloadBytes";
 
 // Keep-Alive Agents für HTTP/HTTPS (inkl. unsicherem TLS)
 const HTTP_KEEPALIVE_AGENT = new http.Agent({ keepAlive: true, maxSockets: 8 });
@@ -425,35 +425,70 @@ async function* streamParseFile(
   const stat = await fs.promises.stat(filePath);
   if (stat.isDirectory()) return;
 
-  const chunkSize = Math.max(
-    1,
-    options.chunkSize ?? DEFAULT_STREAM_PARSE_CHUNK_SIZE,
+  const chunkSize = Math.min(
+    1000,
+    Math.max(1, options.chunkSize ?? DEFAULT_STREAM_PARSE_CHUNK_SIZE),
   );
   const totalBytes = stat.size;
   const stream = fs.createReadStream(filePath, {
     encoding: "utf8",
-    highWaterMark: options.highWaterMark,
-  });
-  const lines = readline.createInterface({
-    input: stream,
-    crlfDelay: Infinity,
+    highWaterMark: Math.min(64 * 1024, options.highWaterMark ?? 64 * 1024),
   });
   const onAbort = (): void => {
     stream.destroy(createAbortError());
-    lines.close();
   };
   options.signal?.addEventListener("abort", onAbort, { once: true });
 
   let pending: Entry[] = [];
+  let pendingBytes = 0;
+
+  async function* boundedLines(): AsyncGenerator<string> {
+    let carry = "";
+    for await (const chunk of stream) {
+      carry += String(chunk);
+      let newline: number;
+      while ((newline = carry.indexOf("\n")) >= 0) {
+        const line = carry.slice(0, newline);
+        carry = carry.slice(newline + 1);
+        if (Buffer.byteLength(line, "utf8") > 1024 * 1024) {
+          throw new Error("Streamed log line exceeds 1 MiB");
+        }
+        yield line.endsWith("\r") ? line.slice(0, -1) : line;
+      }
+      if (Buffer.byteLength(carry, "utf8") > 1024 * 1024) {
+        throw new Error("Streamed log line exceeds 1 MiB");
+      }
+    }
+    if (carry) yield carry;
+  }
 
   try {
-    for await (const line of lines) {
+    for await (const line of boundedLines()) {
       if (options.signal?.aborted) throw createAbortError();
       const entry = parseTextLine(filePath, line);
-      if (entry) pending.push(entry);
-      if (pending.length >= chunkSize) {
+      if (entry) {
+        const bytes = estimatePayloadBytes(entry, 8 * 1024 * 1024);
+        if (!Number.isFinite(bytes)) {
+          throw new Error("Log entry exceeds 8 MiB decoded-payload limit");
+        }
+        if (pending.length && pendingBytes + bytes > 2 * 1024 * 1024) {
+          yield {
+            entries: pending,
+            bytesRead: Math.min(stream.bytesRead, totalBytes),
+            totalBytes,
+            done: false,
+            filePath,
+          };
+          pending = [];
+          pendingBytes = 0;
+        }
+        pending.push(entry);
+        pendingBytes += bytes;
+      }
+      if (pending.length >= chunkSize || pendingBytes >= 2 * 1024 * 1024) {
         const current = pending;
         pending = [];
+        pendingBytes = 0;
         yield {
           entries: current,
           bytesRead: Math.min(stream.bytesRead, totalBytes),
@@ -485,7 +520,6 @@ async function* streamParseFile(
     }
   } finally {
     options.signal?.removeEventListener("abort", onAbort);
-    lines.close();
     if (!stream.destroyed) stream.destroy();
   }
 }
@@ -720,6 +754,11 @@ const DIALECT_CACHE_TTL_MS = 60 * 60 * 1000;
 
 // Type alias for HTTP response
 type HttpResponse = { status: number; text: string; json: unknown };
+const MAX_ELASTIC_RESPONSE_BYTES = 16 * 1024 * 1024;
+const MAX_ELASTIC_REQUESTS = 8;
+let activeElasticRequests = 0;
+
+class ElasticResponseLimitError extends Error {}
 
 // HTTP JSON request with timeout + keep-alive + streaming decompression
 async function httpJsonRequest(
@@ -730,7 +769,13 @@ async function httpJsonRequest(
   allowInsecureTLS?: boolean,
   timeoutMs?: number,
 ): Promise<{ status: number; text: string; json: unknown }> {
-  return new Promise((resolve, reject) => {
+  if (activeElasticRequests >= MAX_ELASTIC_REQUESTS) {
+    throw new ElasticResponseLimitError(
+      "Elasticsearch request capacity exceeded; retry after pending requests",
+    );
+  }
+  activeElasticRequests++;
+  return new Promise<HttpResponse>((resolve, reject) => {
     try {
       const u = new URL(urlStr);
       const isHttps = u.protocol === "https:";
@@ -774,7 +819,20 @@ async function httpJsonRequest(
         // ("incorrect header check") and potential data loss when the piped stream
         // errored (e.g. proxy already decompressed but left content-encoding header).
         const chunks: Buffer[] = [];
-        res.on("data", (c: Buffer) => chunks.push(c));
+        let responseBytes = 0;
+        res.on("data", (c: Buffer) => {
+          responseBytes += c.byteLength;
+          if (responseBytes > MAX_ELASTIC_RESPONSE_BYTES) {
+            chunks.length = 0;
+            req.destroy(
+              new ElasticResponseLimitError(
+                "Elasticsearch response exceeds 16 MiB; reduce page size",
+              ),
+            );
+            return;
+          }
+          chunks.push(c);
+        });
         res.on("end", () => {
           if (timer) clearTimeout(timer);
           const encoding = (
@@ -784,22 +842,43 @@ async function httpJsonRequest(
           let buf: Buffer = raw;
           try {
             if (encoding === "gzip" || encoding === "x-gzip") {
-              buf = zlib.gunzipSync(raw);
+              buf = zlib.gunzipSync(raw, {
+                maxOutputLength: MAX_ELASTIC_RESPONSE_BYTES,
+              });
             } else if (encoding === "deflate") {
               // Some servers send raw deflate instead of zlib-wrapped;
               // try zlib-wrapped first, fall back to raw deflate
               try {
-                buf = zlib.inflateSync(raw);
-              } catch {
-                buf = zlib.inflateRawSync(raw);
+                buf = zlib.inflateSync(raw, {
+                  maxOutputLength: MAX_ELASTIC_RESPONSE_BYTES,
+                });
+              } catch (error) {
+                if (
+                  (error as NodeJS.ErrnoException).code ===
+                  "ERR_BUFFER_TOO_LARGE"
+                )
+                  throw error;
+                buf = zlib.inflateRawSync(raw, {
+                  maxOutputLength: MAX_ELASTIC_RESPONSE_BYTES,
+                });
               }
             } else if (
               encoding === "br" &&
               typeof zlib.brotliDecompressSync === "function"
             ) {
-              buf = zlib.brotliDecompressSync(raw);
+              buf = zlib.brotliDecompressSync(raw, {
+                maxOutputLength: MAX_ELASTIC_RESPONSE_BYTES,
+              });
             }
           } catch (e) {
+            if ((e as NodeJS.ErrnoException).code === "ERR_BUFFER_TOO_LARGE") {
+              reject(
+                new ElasticResponseLimitError(
+                  "Decompressed Elasticsearch response exceeds 16 MiB; reduce page size",
+                ),
+              );
+              return;
+            }
             // Decompression failed – server may have sent uncompressed data
             // despite content-encoding header (e.g. reverse proxy already
             // decompressed). Fall back to raw data which is likely valid JSON.
@@ -833,6 +912,8 @@ async function httpJsonRequest(
     } catch (err) {
       reject(err instanceof Error ? err : new Error(String(err)));
     }
+  }).finally(() => {
+    activeElasticRequests--;
   });
 }
 
@@ -852,6 +933,7 @@ async function requestWithRetry(
         return res;
       }
     } catch (e) {
+      if (e instanceof ElasticResponseLimitError) throw e;
       if (attempt >= opts.maxRetries) throw e;
     }
     const delay = Math.round(opts.backoffBaseMs * Math.pow(2, attempt));

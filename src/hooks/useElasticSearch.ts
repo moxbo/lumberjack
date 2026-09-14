@@ -44,7 +44,7 @@ export interface UseElasticSearchOptions {
   t: (key: string, params?: Record<string, string | number>) => string;
   addToHistory: (kind: "app" | "env" | "index", val: string) => void;
   closeTimeDialog: () => void;
-  onReplaceReset: () => void;
+  onReplaceReset: () => void | Promise<void>;
 }
 
 export function useElasticSearch({

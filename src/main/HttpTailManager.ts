@@ -22,6 +22,11 @@
  *     FileWatcher, with partial-line buffering.
  */
 
+import { StringDecoder } from "string_decoder";
+import { responseChunks } from "../services/ResponseStream";
+
+class TailDeliveryError extends Error {}
+
 export interface HttpTailCallbacks {
   /**
    * Called whenever new complete lines are available.
@@ -76,6 +81,7 @@ interface TailState {
   offset: number;
   /** Partial last line that didn't end with a newline. */
   partial: string;
+  decoder: StringDecoder;
   timer: NodeJS.Timeout | null;
   abort: AbortController | null;
   stopped: boolean;
@@ -154,6 +160,7 @@ export class HttpTailManager {
     callbacks: HttpTailCallbacks,
     options: HttpTailOptions = {},
   ): { id: number; url: string } {
+    if (this.tails.size >= 16) throw new Error("HTTP tail capacity exceeded");
     if (!url || typeof url !== "string") {
       throw new Error("url required");
     }
@@ -170,6 +177,7 @@ export class HttpTailManager {
       url,
       offset: 0,
       partial: "",
+      decoder: new StringDecoder("utf8"),
       timer: null,
       abort: null,
       stopped: false,
@@ -196,12 +204,7 @@ export class HttpTailManager {
   ): Promise<void> {
     try {
       if (emitInitial) {
-        // Fetch the full body and emit the existing content in a single
-        // onLines call. Keeping it as one call preserves the downstream
-        // backpressure invariant (the whole payload is enqueued in one go and
-        // therefore never partially dropped). Responsiveness during the heavy
-        // parse is handled by the consumer, which parses in chunks and yields
-        // to the event loop – the manager awaits that work via consume().
+        // Stream existing content; read the next chunk only after sink ACK.
         await this.fetchAndEmit(state, /*fromOffset=*/ 0);
       } else {
         // Discover size only: HEAD request. If HEAD is not supported,
@@ -284,61 +287,102 @@ export class HttpTailManager {
         // self-signed certs; ignored in browser environments / tests.
         rejectUnauthorized: state.allowInsecureSSL ? false : undefined,
       });
+      clearTimeout(timeout);
 
       // 416 Range Not Satisfiable can mean two very different things:
       //   (a) the file shrank below our offset (real rotation), OR
       //   (b) we are simply at EOF (offset === total, no new bytes yet).
       // Disambiguate via a size probe before resetting.
       if (res.status === 416) {
+        await res.body?.cancel();
         const probed = await this.discoverSize(state);
         if (probed != null && probed < fromOffset) {
           if (!state.stopped) state.callbacks.onRotated?.();
           state.offset = 0;
           state.partial = "";
+          state.decoder = new StringDecoder("utf8");
         }
         // If probed >= offset (or unknown) → still at EOF, just wait.
         state.callbacks.onProgress?.({ offset: state.offset, total: probed });
         return;
       }
       if (!res.ok && res.status !== 206) {
+        await res.body?.cancel();
         throw new Error(`HTTP ${String(res.status)} ${res.statusText}`);
       }
 
       const total = parseTotalFromHeaders(res);
-      // IMPORTANT: the `Range: bytes=` header is byte-based, so the offset we
-      // track must be measured in *bytes*, not in UTF-16 code units. Using
-      // `text.length` (from `res.text()`) drifts as soon as the body contains
-      // any multi-byte UTF-8 character (e.g. German umlauts), causing the next
-      // Range request to start mid-line and emit bogus fragments like `"}`/`}`.
-      const bytes = Buffer.from(await res.arrayBuffer());
-      const byteLen = bytes.byteLength;
-      const text = bytes.toString("utf8");
-
-      // 200 OK on a Range request usually means the server ignored the
-      // Range header (no Range support). In that case `text` is the full
-      // body, and we have to detect rotation manually.
       const isFullResponse = res.status === 200 && fromOffset > 0;
-      if (isFullResponse) {
-        if (byteLen < fromOffset) {
-          // Body shrank → rotation. Emit full text from byte 0.
-          if (!state.stopped) state.callbacks.onRotated?.();
-          state.offset = 0;
-          state.partial = "";
-          await this.consume(state, text);
-          state.offset = byteLen;
-        } else {
-          // Body grew – emit only the slice past our offset. Slice on the
-          // byte buffer (offset is byte-based) before decoding to text.
-          const newPart = bytes.subarray(fromOffset).toString("utf8");
-          await this.consume(state, newPart);
-          state.offset = byteLen;
+      let skip = isFullResponse ? fromOffset : 0;
+      if (isFullResponse && total != null && total < fromOffset) {
+        state.callbacks.onRotated?.();
+        state.offset = 0;
+        state.partial = "";
+        state.decoder = new StringDecoder("utf8");
+        skip = 0;
+      }
+      let bodyBytes = 0;
+      let inspectDocument = state.offset === 0;
+      let jsonDocument: string | null = null;
+      let documentBytes = 0;
+      for await (const chunk of responseChunks(
+        res,
+        state.timeoutMs,
+        ac.signal,
+      )) {
+        if (state.stopped) return;
+        bodyBytes += chunk.byteLength;
+        const skipped = Math.min(skip, chunk.byteLength);
+        skip -= skipped;
+        const fresh = chunk.subarray(skipped);
+        if (!fresh.byteLength) continue;
+        const text = state.decoder.write(Buffer.from(fresh));
+        if (inspectDocument && text.trimStart()) {
+          inspectDocument = false;
+          if (
+            /^\[\s*(?:\{|\[|\]|"|\d|-|true|false|null|$)/.test(text.trimStart())
+          ) {
+            jsonDocument = "";
+          }
         }
-      } else {
-        // 206 Partial Content (or initial 200 with fromOffset===0).
+        if (jsonDocument !== null) {
+          documentBytes += fresh.byteLength;
+          if (documentBytes > 1024 * 1024) {
+            throw new TailDeliveryError(
+              "HTTP tail JSON array exceeds 1 MiB; use NDJSON for streaming",
+            );
+          }
+          jsonDocument += text;
+          continue;
+        }
         await this.consume(state, text);
-        state.offset = fromOffset + byteLen;
+        state.offset += fresh.byteLength;
+        state.callbacks.onProgress?.({ offset: state.offset, total });
+      }
+      if (jsonDocument !== null) {
+        // A JSON array is a document, not independently parseable line chunks.
+        // Keep small documents compatible, reject large ones before delivery.
+        await this.consume(
+          state,
+          jsonDocument.endsWith("\n") ? jsonDocument : `${jsonDocument}\n`,
+        );
+        state.offset += documentBytes;
+      }
+      if (isFullResponse && bodyBytes < fromOffset && skip > 0) {
+        // Unknown-length non-Range response shrank. Replay from zero on the
+        // next tick, without retaining the skipped body in memory.
+        state.callbacks.onRotated?.();
+        state.offset = 0;
+        state.partial = "";
+        state.decoder = new StringDecoder("utf8");
       }
       state.callbacks.onProgress?.({ offset: state.offset, total });
+    } catch (error) {
+      if (error instanceof TailDeliveryError && !state.stopped) {
+        state.callbacks.onError?.(error);
+        this.stop(state.id);
+      }
+      throw error;
     } finally {
       clearTimeout(timeout);
       state.abort = null;
@@ -391,19 +435,25 @@ export class HttpTailManager {
             if (totalStr !== "*") {
               const n = Number.parseInt(totalStr, 10);
               if (Number.isFinite(n) && n >= 0) {
-                // Drain the 1-byte body to free the connection.
-                await probe.text();
+                await probe.body?.cancel();
                 return n;
               }
             }
           }
         }
-        await probe.text();
+        await probe.body?.cancel();
       } else if (probe.ok) {
         // No Range support – fall back to full GET, return body length in
         // *bytes* (consistent with the byte-based offset tracking).
-        const buf = Buffer.from(await probe.arrayBuffer());
-        return buf.byteLength;
+        let bytes = 0;
+        for await (const chunk of responseChunks(
+          probe,
+          state.timeoutMs,
+          ac.signal,
+        )) {
+          bytes += chunk.byteLength;
+        }
+        return bytes;
       }
     } finally {
       clearTimeout(timeout);
@@ -416,6 +466,13 @@ export class HttpTailManager {
   private async consume(state: TailState, chunk: string): Promise<void> {
     if (chunk.length === 0) return;
     const combined = state.partial + chunk;
+    if (
+      combined
+        .split("\n")
+        .some((line) => Buffer.byteLength(line, "utf8") > 1024 * 1024)
+    ) {
+      throw new TailDeliveryError("HTTP tail line exceeds 1 MiB; tail stopped");
+    }
     const lastNl = combined.lastIndexOf("\n");
     if (lastNl < 0) {
       // No complete line yet – buffer.
@@ -442,7 +499,10 @@ export class HttpTailManager {
       await state.callbacks.onLines(lines);
     } catch (error) {
       state.partial = previousPartial;
-      throw error;
+      throw new TailDeliveryError(
+        error instanceof Error ? error.message : String(error),
+        { cause: error },
+      );
     } finally {
       clearTimeout(backpressureTimer);
       if (backpressureVisible && !state.stopped) {

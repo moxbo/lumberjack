@@ -1,7 +1,13 @@
 /**
  * Hook for HTTP polling functionality
  */
-import { useState, useEffect, useCallback, useRef } from "preact/hooks";
+import {
+  useState,
+  useEffect,
+  useCallback,
+  useRef,
+  type StateUpdater,
+} from "preact/hooks";
 import logger from "../utils/logger";
 import {
   getSettings,
@@ -9,7 +15,27 @@ import {
   httpLoadOnce as typedHttpLoadOnce,
   httpStartPoll as typedHttpStartPoll,
   httpStopPoll as typedHttpStopPoll,
+  onHttpPollError,
 } from "../utils/typedApi";
+
+export function useHttpPollErrors(
+  setPollId: (value: StateUpdater<number | null>) => void,
+  setStatus: (message: string) => void,
+  showError?: (message: string) => void,
+) {
+  const lastFailedPollId = useRef<number | null>(null);
+  useEffect(
+    () =>
+      onHttpPollError((failure) => {
+        lastFailedPollId.current = failure.id;
+        setPollId((current) => (current === failure.id ? null : current));
+        setStatus(`${failure.url}: ${failure.error}`);
+        showError?.(`${failure.url}: ${failure.error}`);
+      }),
+    [setPollId, setStatus, showError],
+  );
+  return lastFailedPollId;
+}
 
 interface UseHttpPollingOptions {
   httpUrl: string;
@@ -17,7 +43,7 @@ interface UseHttpPollingOptions {
   setHttpUrl: (url: string) => void;
   setHttpInterval: (interval: number) => void;
   setHttpStatus: (status: string) => void;
-  appendEntries: (entries: any[]) => void;
+  appendEntries: (entries: any[]) => Promise<number>;
 }
 
 export function useHttpPolling({
@@ -29,6 +55,7 @@ export function useHttpPolling({
   appendEntries,
 }: UseHttpPollingOptions) {
   const [httpPollId, setHttpPollId] = useState<number | null>(null);
+  const lastFailedPollId = useHttpPollErrors(setHttpPollId, setHttpStatus);
   const [currentPollInterval, setCurrentPollInterval] = useState<number | null>(
     null,
   );
@@ -134,7 +161,7 @@ export function useHttpPolling({
         patchSettingsQuiet({ httpUrl: trimmedUrl });
         const res = await typedHttpLoadOnce(trimmedUrl);
         if (res.ok) {
-          appendEntries((res.entries || []) as any[]);
+          await appendEntries((res.entries || []) as any[]);
           setHttpStatus("");
         } else {
           setHttpStatus("Fehler: " + (res.error || "unbekannt"));
@@ -166,6 +193,7 @@ export function useHttpPolling({
           intervalSec: sec,
         });
         if (r.ok) {
+          if (r.id === lastFailedPollId.current) return;
           setHttpPollId(r.id!);
           setHttpStatus(`Polling #${r.id}`);
           // Convert to ms for internal timer tracking

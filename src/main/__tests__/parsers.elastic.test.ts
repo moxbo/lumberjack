@@ -1,6 +1,7 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import * as http from "http";
 import type { AddressInfo } from "net";
+import { gzipSync } from "zlib";
 import { fetchElasticPitPage } from "../parsers";
 
 describe("Elasticsearch 6 pagination", () => {
@@ -31,6 +32,16 @@ describe("Elasticsearch 6 pagination", () => {
         }
         if (req.url?.startsWith("/empty/_search")) {
           res.end(JSON.stringify({ hits: { total: 0, hits: [] } }));
+          return;
+        }
+        if (req.url?.startsWith("/oversized")) {
+          const body = Buffer.alloc(16 * 1024 * 1024 + 1, 120);
+          if (req.url.startsWith("/oversized-gzip/")) {
+            res.setHeader("content-encoding", "gzip");
+            res.end(gzipSync(body));
+          } else {
+            res.end(body);
+          }
           return;
         }
 
@@ -71,6 +82,26 @@ describe("Elasticsearch 6 pagination", () => {
   afterAll(async () => {
     await new Promise<void>((resolve) => server.close(() => resolve()));
   });
+
+  it.each(["oversized", "oversized-gzip"])(
+    "rejects %s bodies without local overload retries or partial results",
+    async (index) => {
+      await expect(
+        fetchElasticPitPage({
+          url: baseUrl,
+          index,
+          size: 1,
+          maxRetries: 4,
+          backoffBaseMs: 1,
+        }),
+      ).rejects.toThrow("16 MiB");
+      expect(
+        requests.filter((request) =>
+          request.url.startsWith(`/${index}/_search`),
+        ),
+      ).toHaveLength(1);
+    },
+  );
 
   it("detects ES 6 once, uses scroll directly and avoids an empty final page", async () => {
     const empty = await fetchElasticPitPage({

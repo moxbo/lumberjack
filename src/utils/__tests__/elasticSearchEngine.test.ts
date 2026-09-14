@@ -73,6 +73,35 @@ describe("executeElasticSearch", () => {
     expect(deps.addLoaded).not.toHaveBeenCalled();
   });
 
+  it("awaits the storage reset before appending replacement results", async () => {
+    let release!: () => void;
+    const reset = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const append = vi.fn().mockResolvedValue(1);
+    const deps = createDeps(append);
+    deps.onReplaceReset = () => reset;
+    const execution = executeElasticSearch({ index: "logs" }, "replace", deps);
+    await Promise.resolve();
+    expect(append).not.toHaveBeenCalled();
+    release();
+    await execution;
+    expect(append).toHaveBeenCalledOnce();
+  });
+
+  it("never appends replacement results after a failed storage reset", async () => {
+    const append = vi.fn().mockResolvedValue(1);
+    const deps = createDeps(append);
+    deps.onReplaceReset = async () => {
+      throw new Error("clear failed");
+    };
+    await expect(
+      executeElasticSearch({ index: "logs" }, "replace", deps),
+    ).rejects.toThrow("clear failed");
+    expect(append).not.toHaveBeenCalled();
+    expect(deps.addLoaded).not.toHaveBeenCalled();
+  });
+
   it("stops when Elasticsearch repeats a search_after cursor", async () => {
     expect(() =>
       assertElasticPaginationProgress(["cursor-1"], {

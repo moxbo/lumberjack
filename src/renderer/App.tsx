@@ -64,6 +64,7 @@ import { compactEntrySignature, entrySignature } from "../utils/entryUtils";
 import { compareByTimestampId } from "../utils/sort";
 import { resolveMarkedPositionsById } from "../utils/markedPositions";
 import { nativeConfirm } from "../utils/nativeDialog";
+import { useHttpPollErrors } from "../hooks/useHttpPolling";
 
 // Import refactored hooks
 import {
@@ -283,7 +284,6 @@ export default function App(): JSX.Element {
     entries,
     entryGeneration,
     getDataGeneration,
-    appendEntries,
     appendEntriesAsync,
     clearEntries,
     storageError,
@@ -480,6 +480,11 @@ export default function App(): JSX.Element {
     t("status.httpPollStopped"),
   );
   const [httpPollId, setHttpPollId] = useState<number | null>(null);
+  const lastFailedPollId = useHttpPollErrors(
+    setHttpPollId,
+    setHttpStatus,
+    showAlert,
+  );
   const [httpTailAuthHeader, setHttpTailAuthHeader] = useState<string>("");
   // NEU: hält das tatsächlich beim Start verwendete Poll-Intervall (für stabilen Countdown)
   const [currentPollInterval, setCurrentPollInterval] = useState<number | null>(
@@ -775,9 +780,9 @@ export default function App(): JSX.Element {
     t,
     addToHistory,
     closeTimeDialog: () => setShowTimeDialog(false),
-    onReplaceReset: () => {
+    onReplaceReset: async () => {
       // Vollständiges Zurücksetzen: alle vorhandenen Einträge entfernen
-      clearEntries();
+      await clearEntries();
       setSelected(new Set());
       // LoggingStore zurücksetzen (MDC etc.)
       try {
@@ -2137,16 +2142,21 @@ export default function App(): JSX.Element {
       void (async () => {
         const confirmed = await nativeConfirm(t("list.clearConfirmation"));
         if (!confirmed) return;
-        doClearLogs();
+        await doClearLogs();
       })();
       return;
     }
-    doClearLogs();
+    void doClearLogs();
   }
 
-  function doClearLogs() {
+  async function doClearLogs() {
     activeStreamCleanupRef.current?.();
-    clearEntries();
+    try {
+      await clearEntries();
+    } catch (error) {
+      logger.error("Clearing logs failed:", error);
+      return;
+    }
     setSelected(new Set());
     resetElasticSearchState();
     // Clear marksMap (session-only, not persisted)
@@ -2481,7 +2491,7 @@ export default function App(): JSX.Element {
         await patchSettings({ httpUrl: url });
         const res = await typedHttpLoadOnce(url);
         if (res.ok) {
-          appendEntries((res.entries || []) as any[]);
+          await appendEntriesAsync((res.entries || []) as any[]);
           setHttpStatus(""); // Clear error status on success
         } else {
           // Check if this is a feature-disabled error
@@ -2517,6 +2527,7 @@ export default function App(): JSX.Element {
         intervalSec: sec,
       });
       if (r.ok) {
+        if (r.id === lastFailedPollId.current) return;
         setHttpPollId(r.id!);
         setHttpStatus(t("status.httpPolling", { id: String(r.id) }));
         // Convert to ms for internal timer tracking
@@ -3040,12 +3051,16 @@ export default function App(): JSX.Element {
                   </button>
                   <button
                     type="button"
-                    onClick={() => {
+                    onClick={async () => {
                       const demo = buildDemoEntries();
-                      appendEntries(demo as any);
-                      toaster.success(
-                        t("list.demoLoaded", { count: String(demo.length) }),
-                      );
+                      try {
+                        await appendEntriesAsync(demo as any);
+                        toaster.success(
+                          t("list.demoLoaded", { count: String(demo.length) }),
+                        );
+                      } catch (error) {
+                        logger.error("Loading demo entries failed:", error);
+                      }
                     }}
                   >
                     🎬 {t("list.actionLoadDemo")}

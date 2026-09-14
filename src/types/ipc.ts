@@ -274,6 +274,12 @@ export interface HttpPollResult {
   error?: string;
 }
 
+export interface HttpPollError {
+  id: number;
+  url: string;
+  error: string;
+}
+
 /**
  * Menu command types
  */
@@ -457,6 +463,7 @@ export type ElectronAPI = {
   ) => () => void;
   onStreamError: (callback: (error: StreamParseError) => void) => () => void;
   onTcpStatus: (callback: (status: TcpStatus) => void) => () => void;
+  onHttpPollError: (callback: (error: HttpPollError) => void) => () => void;
   onMenu: (callback: (command: MenuCommand) => void) => () => void;
   logError: (errorData: unknown) => Promise<Result<void>>;
   // FeatureFlags

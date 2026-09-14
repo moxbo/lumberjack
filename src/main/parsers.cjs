@@ -50,7 +50,6 @@ var import_path = __toESM(require("path"), 1);
 var import_module = require("module");
 var import_https = __toESM(require("https"), 1);
 var import_http = __toESM(require("http"), 1);
-var readline = __toESM(require("readline"), 1);
 var import_main = __toESM(require("electron-log/main"), 1);
 var import_zlib = __toESM(require("zlib"), 1);
 
@@ -248,6 +247,77 @@ function buildElasticMessageQuery(expr, field = "message") {
     return { bool: { should: parts, minimum_should_match: 1 } };
   }
   return parseOr();
+}
+
+// src/utils/estimatePayloadBytes.ts
+function estimatePayloadBytes(value, maxBytes = Number.MAX_SAFE_INTEGER) {
+  let bytes = 0;
+  const seen = /* @__PURE__ */ new WeakSet();
+  function* children(object) {
+    if (object instanceof Map) {
+      for (const [key, item] of object) {
+        bytes += 32;
+        yield key;
+        yield item;
+      }
+    } else if (object instanceof Set) {
+      for (const item of object) {
+        bytes += 16;
+        yield item;
+      }
+    } else if (ArrayBuffer.isView(object)) {
+      yield object.buffer;
+      return;
+    } else if (object instanceof ArrayBuffer || typeof SharedArrayBuffer !== "undefined" && object instanceof SharedArrayBuffer) {
+      bytes += object.byteLength;
+    } else if (object instanceof Date) {
+      bytes += 8;
+    } else if (object instanceof RegExp) {
+      yield object.source;
+    } else if (typeof Blob !== "undefined" && object instanceof Blob) {
+      bytes += object.size;
+    } else if (Array.isArray(object)) {
+      bytes += object.length * 8;
+    } else if (Object.getPrototypeOf(object) !== Object.prototype && Object.getPrototypeOf(object) !== null) {
+      bytes = Infinity;
+      return;
+    }
+    for (const key in object) {
+      const descriptor = Object.getOwnPropertyDescriptor(object, key);
+      if (!descriptor) continue;
+      bytes += 24 + key.length * 2;
+      if (!("value" in descriptor)) {
+        bytes = Infinity;
+        return;
+      }
+      yield descriptor.value;
+    }
+  }
+  const stack = [[value][Symbol.iterator]()];
+  try {
+    while (stack.length > 0 && bytes <= maxBytes) {
+      const next = stack[stack.length - 1].next();
+      if (next.done) {
+        stack.pop();
+        continue;
+      }
+      const item = next.value;
+      if (typeof item === "string") bytes += 24 + item.length * 2;
+      else if (typeof item === "bigint") {
+        return Infinity;
+      } else if (typeof item === "function" || typeof item === "symbol") {
+        return Infinity;
+      } else if (item === null || typeof item !== "object") bytes += 8;
+      else if (!seen.has(item)) {
+        seen.add(item);
+        bytes += 64;
+        stack.push(children(item));
+      }
+    }
+  } catch {
+    return Infinity;
+  }
+  return bytes <= maxBytes ? bytes : Infinity;
 }
 
 // src/main/parsers.ts
@@ -533,33 +603,67 @@ async function getStreamParseStrategy(filePath, thresholdBytes = DEFAULT_STREAM_
 async function* streamParseFile(filePath, options = {}) {
   const stat = await import_fs.default.promises.stat(filePath);
   if (stat.isDirectory()) return;
-  const chunkSize = Math.max(
-    1,
-    options.chunkSize ?? DEFAULT_STREAM_PARSE_CHUNK_SIZE
+  const chunkSize = Math.min(
+    1e3,
+    Math.max(1, options.chunkSize ?? DEFAULT_STREAM_PARSE_CHUNK_SIZE)
   );
   const totalBytes = stat.size;
   const stream = import_fs.default.createReadStream(filePath, {
     encoding: "utf8",
-    highWaterMark: options.highWaterMark
-  });
-  const lines = readline.createInterface({
-    input: stream,
-    crlfDelay: Infinity
+    highWaterMark: Math.min(64 * 1024, options.highWaterMark ?? 64 * 1024)
   });
   const onAbort = () => {
     stream.destroy(createAbortError());
-    lines.close();
   };
   options.signal?.addEventListener("abort", onAbort, { once: true });
   let pending = [];
+  let pendingBytes = 0;
+  async function* boundedLines() {
+    let carry = "";
+    for await (const chunk of stream) {
+      carry += String(chunk);
+      let newline;
+      while ((newline = carry.indexOf("\n")) >= 0) {
+        const line = carry.slice(0, newline);
+        carry = carry.slice(newline + 1);
+        if (Buffer.byteLength(line, "utf8") > 1024 * 1024) {
+          throw new Error("Streamed log line exceeds 1 MiB");
+        }
+        yield line.endsWith("\r") ? line.slice(0, -1) : line;
+      }
+      if (Buffer.byteLength(carry, "utf8") > 1024 * 1024) {
+        throw new Error("Streamed log line exceeds 1 MiB");
+      }
+    }
+    if (carry) yield carry;
+  }
   try {
-    for await (const line of lines) {
+    for await (const line of boundedLines()) {
       if (options.signal?.aborted) throw createAbortError();
       const entry = parseTextLine(filePath, line);
-      if (entry) pending.push(entry);
-      if (pending.length >= chunkSize) {
+      if (entry) {
+        const bytes = estimatePayloadBytes(entry, 8 * 1024 * 1024);
+        if (!Number.isFinite(bytes)) {
+          throw new Error("Log entry exceeds 8 MiB decoded-payload limit");
+        }
+        if (pending.length && pendingBytes + bytes > 2 * 1024 * 1024) {
+          yield {
+            entries: pending,
+            bytesRead: Math.min(stream.bytesRead, totalBytes),
+            totalBytes,
+            done: false,
+            filePath
+          };
+          pending = [];
+          pendingBytes = 0;
+        }
+        pending.push(entry);
+        pendingBytes += bytes;
+      }
+      if (pending.length >= chunkSize || pendingBytes >= 2 * 1024 * 1024) {
         const current = pending;
         pending = [];
+        pendingBytes = 0;
         yield {
           entries: current,
           bytesRead: Math.min(stream.bytesRead, totalBytes),
@@ -589,7 +693,6 @@ async function* streamParseFile(filePath, options = {}) {
     }
   } finally {
     options.signal?.removeEventListener("abort", onAbort);
-    lines.close();
     if (!stream.destroyed) stream.destroy();
   }
 }
@@ -708,7 +811,18 @@ async function parsePathsAsync(paths) {
 var pitSessions = /* @__PURE__ */ new Map();
 var dialectCache = /* @__PURE__ */ new Map();
 var DIALECT_CACHE_TTL_MS = 60 * 60 * 1e3;
+var MAX_ELASTIC_RESPONSE_BYTES = 16 * 1024 * 1024;
+var MAX_ELASTIC_REQUESTS = 8;
+var activeElasticRequests = 0;
+var ElasticResponseLimitError = class extends Error {
+};
 async function httpJsonRequest(method, urlStr, body, headers, allowInsecureTLS, timeoutMs) {
+  if (activeElasticRequests >= MAX_ELASTIC_REQUESTS) {
+    throw new ElasticResponseLimitError(
+      "Elasticsearch request capacity exceeded; retry after pending requests"
+    );
+  }
+  activeElasticRequests++;
   return new Promise((resolve, reject) => {
     try {
       const u = new URL(urlStr);
@@ -738,7 +852,20 @@ async function httpJsonRequest(method, urlStr, body, headers, allowInsecureTLS, 
       }, timeoutMs) : null;
       const req = mod.request(opts, (res) => {
         const chunks = [];
-        res.on("data", (c) => chunks.push(c));
+        let responseBytes = 0;
+        res.on("data", (c) => {
+          responseBytes += c.byteLength;
+          if (responseBytes > MAX_ELASTIC_RESPONSE_BYTES) {
+            chunks.length = 0;
+            req.destroy(
+              new ElasticResponseLimitError(
+                "Elasticsearch response exceeds 16 MiB; reduce page size"
+              )
+            );
+            return;
+          }
+          chunks.push(c);
+        });
         res.on("end", () => {
           if (timer) clearTimeout(timer);
           const encoding = (res.headers["content-encoding"] || "").toLowerCase();
@@ -746,17 +873,35 @@ async function httpJsonRequest(method, urlStr, body, headers, allowInsecureTLS, 
           let buf = raw;
           try {
             if (encoding === "gzip" || encoding === "x-gzip") {
-              buf = import_zlib.default.gunzipSync(raw);
+              buf = import_zlib.default.gunzipSync(raw, {
+                maxOutputLength: MAX_ELASTIC_RESPONSE_BYTES
+              });
             } else if (encoding === "deflate") {
               try {
-                buf = import_zlib.default.inflateSync(raw);
-              } catch {
-                buf = import_zlib.default.inflateRawSync(raw);
+                buf = import_zlib.default.inflateSync(raw, {
+                  maxOutputLength: MAX_ELASTIC_RESPONSE_BYTES
+                });
+              } catch (error) {
+                if (error.code === "ERR_BUFFER_TOO_LARGE")
+                  throw error;
+                buf = import_zlib.default.inflateRawSync(raw, {
+                  maxOutputLength: MAX_ELASTIC_RESPONSE_BYTES
+                });
               }
             } else if (encoding === "br" && typeof import_zlib.default.brotliDecompressSync === "function") {
-              buf = import_zlib.default.brotliDecompressSync(raw);
+              buf = import_zlib.default.brotliDecompressSync(raw, {
+                maxOutputLength: MAX_ELASTIC_RESPONSE_BYTES
+              });
             }
           } catch (e) {
+            if (e.code === "ERR_BUFFER_TOO_LARGE") {
+              reject(
+                new ElasticResponseLimitError(
+                  "Decompressed Elasticsearch response exceeds 16 MiB; reduce page size"
+                )
+              );
+              return;
+            }
             import_main.default.warn(
               "httpJsonRequest: Dekomprimierung fehlgeschlagen, verwende Rohdaten:",
               e instanceof Error ? e.message : String(e)
@@ -787,6 +932,8 @@ async function httpJsonRequest(method, urlStr, body, headers, allowInsecureTLS, 
     } catch (err) {
       reject(err instanceof Error ? err : new Error(String(err)));
     }
+  }).finally(() => {
+    activeElasticRequests--;
   });
 }
 async function requestWithRetry(exec, opts) {
@@ -802,6 +949,7 @@ async function requestWithRetry(exec, opts) {
         return res;
       }
     } catch (e) {
+      if (e instanceof ElasticResponseLimitError) throw e;
       if (attempt >= opts.maxRetries) throw e;
     }
     const delay = Math.round(opts.backoffBaseMs * Math.pow(2, attempt));

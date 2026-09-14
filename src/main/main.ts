@@ -25,6 +25,7 @@ import { NetworkService } from "../services/NetworkService";
 import { PerformanceService } from "../services/PerformanceService";
 import { FileLoggingService } from "../services/FileLoggingService";
 import { WindowAppendQueue } from "../services/WindowAppendQueue";
+import { estimatePayloadBytes } from "../utils/estimatePayloadBytes";
 import { HealthMonitor } from "../services/HealthMonitor";
 import { LoggingStrategy, LogLevel } from "../services/LoggingStrategy";
 import { FeatureFlags } from "../services/FeatureFlags";
@@ -639,7 +640,8 @@ function applyWindowTitles(): void {
 
 // Buffers with adaptive memory limits
 let MAX_PENDING_APPENDS = DEFAULT_MAX_PENDING_APPENDS;
-const pendingAppends = new WindowAppendQueue<LogEntry>();
+const entryBytes = (entry: LogEntry): number =>
+  estimatePayloadBytes(entry, 8 * 1024 * 1024);
 const pendingMenuCmdsByWindow = new Map<
   number,
   Array<{ type: string; tab?: string }>
@@ -727,7 +729,6 @@ function startMemoryManagement(): void {
           MAX_PENDING_APPENDS = newLimit;
 
           // Trim existing buffers if needed
-          pendingAppends.cap(MAX_PENDING_APPENDS);
           for (const queue of pendingAppendsByWindow.values()) {
             queue.cap(MAX_PENDING_APPENDS);
           }
@@ -787,8 +788,9 @@ interface RendererBatchQueue {
 }
 
 const rendererBatchQueues = new Map<number, RendererBatchQueue>();
+const observedRenderers = new WeakSet<Electron.WebContents>();
 let nextRendererBatchId = 1;
-const RENDERER_BATCH_ACK_TIMEOUT_MS = 120_000;
+const RENDERER_BATCH_ACK_TIMEOUT_MS = 30_000;
 
 class RendererBatchDeliveryError extends Error {
   constructor(
@@ -890,6 +892,13 @@ function sendBatchesAsyncTo(
   batches: LogEntry[][],
 ): Promise<void> {
   if (!batches || batches.length === 0) return Promise.resolve();
+  if (wc.isDestroyed())
+    return Promise.reject(new Error("Renderer was destroyed"));
+  // All producers share the per-window append admission queue. Only one bounded
+  // batch is materialized here at a time, never an entire import's IPC payload.
+  if (rendererBatchQueues.has(wc.id)) {
+    return Promise.reject(new Error("Renderer delivery already in progress"));
+  }
   return new Promise<void>((resolve, reject) => {
     const group: RendererBatchGroup = {
       remaining: batches.length,
@@ -902,6 +911,17 @@ function sendBatchesAsyncTo(
     if (!queue) {
       queue = { wc, pending: [], inFlight: null, timeout: null };
       rendererBatchQueues.set(wc.id, queue);
+      if (!observedRenderers.has(wc)) {
+        observedRenderers.add(wc);
+        wc.once("destroyed", () => {
+          const pending = rendererBatchQueues.get(wc.id);
+          if (pending)
+            failRendererBatchQueue(
+              pending,
+              new Error("Renderer was destroyed"),
+            );
+        });
+      }
     }
     for (const entries of batches) {
       queue.pending.push({
@@ -921,6 +941,7 @@ async function stopSourcesAndCloseFileLogging(): Promise<void> {
   try {
     networkService.stopAllHttpPollers();
     await networkService.stopTcpServer();
+    await networkService.waitForPendingLogs();
   } finally {
     await fileLogging.close();
   }
@@ -948,8 +969,12 @@ function configureFileLogging(): Promise<void> {
 }
 async function writeEntriesToFile(entries: LogEntry[]): Promise<void> {
   if (!settingsService.get().logToFile || !entries?.length) return;
-  const data = entries.map((entry) => JSON.stringify(entry) + "\n").join("");
-  await fileLogging.write(data);
+  await fileLoggingReady;
+  for (const batch of renderBatches(entries)) {
+    await fileLogging.write(
+      batch.map((entry) => JSON.stringify(entry) + "\n").join(""),
+    );
+  }
 }
 
 function exitAfterFileLogging(code: number): void {
@@ -989,25 +1014,6 @@ function sendMenuCmd(
 }
 
 // Ready checks and buffers
-function isRendererReady(): boolean {
-  try {
-    if (!mainWindow) return false;
-    if (mainWindow.isDestroyed()) return false;
-    const wc = mainWindow.webContents;
-    if (!wc || wc.isDestroyed()) return false;
-    // Check if main window has finished loading at least once
-    return loadedWindows.has(mainWindow.id);
-  } catch {
-    return false;
-  }
-}
-function enqueueAppends(entries: LogEntry[]): void {
-  if (!Array.isArray(entries) || entries.length === 0) return;
-  pendingAppends.enqueue(entries, MAX_PENDING_APPENDS);
-}
-async function flushPendingAppends(): Promise<void> {
-  if (mainWindow) await flushAppendQueue(mainWindow, pendingAppends);
-}
 function isWindowReady(win: BrowserWindow | null | undefined): boolean {
   try {
     if (!win || win.isDestroyed()) return false;
@@ -1020,18 +1026,18 @@ function isWindowReady(win: BrowserWindow | null | undefined): boolean {
     return false;
   }
 }
-function enqueueAppendsFor(winId: number, entries: LogEntry[]): void {
-  if (!entries || !entries.length) return;
+function enqueueAppendsFor(winId: number, entries: LogEntry[]): Promise<void> {
+  if (!entries || !entries.length) return Promise.resolve();
   let queue = pendingAppendsByWindow.get(winId);
-  if (!queue) {
-    queue = new WindowAppendQueue<LogEntry>();
+  if (!queue || (queue.isDisposed && !queue.isFlushing)) {
+    queue = new WindowAppendQueue<LogEntry>(entryBytes);
     pendingAppendsByWindow.set(winId, queue);
   }
-  queue.enqueue(entries, MAX_PENDING_APPENDS);
+  return queue.enqueue(entries, MAX_PENDING_APPENDS);
 }
 async function flushPendingAppendsFor(win: BrowserWindow): Promise<void> {
   const queue = pendingAppendsByWindow.get(win.id);
-  if (queue) await flushAppendQueue(win, queue);
+  if (queue && !queue.isFlushing) await flushAppendQueue(win, queue);
 }
 
 async function flushAppendQueue(
@@ -1042,16 +1048,33 @@ async function flushAppendQueue(
   try {
     await queue.flush(
       async (blocks) => {
-        const batches = Array.from(
-          blocks.batches(MAX_BATCH_ENTRIES),
-          prepareRenderBatch,
-        );
-        await sendBatchesAsyncTo(win.webContents, "logs:append", batches);
+        let acknowledged = 0;
+        try {
+          for (const block of blocks.batches(MAX_BATCH_ENTRIES)) {
+            for (const batch of renderBatches(block)) {
+              if (queue.isDisposed)
+                throw new Error("Window delivery cancelled");
+              await sendBatchesAsyncTo(win.webContents, "logs:append", [
+                prepareRenderBatch(batch),
+              ]);
+              acknowledged += batch.length;
+            }
+          }
+        } catch (error) {
+          throw new RendererBatchDeliveryError(
+            error instanceof Error ? error.message : String(error),
+            acknowledged +
+              (error instanceof RendererBatchDeliveryError
+                ? error.acknowledgedEntries
+                : 0),
+          );
+        }
       },
       (error) =>
         error instanceof RendererBatchDeliveryError
           ? error.acknowledgedEntries
           : 0,
+      false,
     );
   } catch (e) {
     log.error(
@@ -1062,102 +1085,58 @@ async function flushAppendQueue(
   }
 }
 
-// NetworkService callback → route to right window(s)
-function sendAppend(entries: LogEntry[]): void {
-  // NetworkService's synchronous callback requires lossless queue admission.
-  void writeEntriesToFile(entries).catch((error) => {
-    log.error("[file-logging] Network entries could not be persisted:", error);
-  });
-
-  const isTcpEntry = (e: LogEntry) =>
-    typeof e?.source === "string" && e.source.startsWith("tcp:");
-  const tcpEntries: LogEntry[] = [];
-  const otherEntries: LogEntry[] = [];
-  for (const e of entries) (isTcpEntry(e) ? tcpEntries : otherEntries).push(e);
-
-  diagDebug(
-    `[tcp-diag] sendAppend called: ${entries.length} total, ${tcpEntries.length} TCP, ${otherEntries.length} other`,
-  );
-
-  const sendEntriesToWc = (wc: Electron.WebContents, arr: LogEntry[]): void => {
-    if (!Array.isArray(arr) || arr.length === 0) return;
-    const batches: LogEntry[][] = [];
-    for (let i = 0; i < arr.length; i += MAX_BATCH_ENTRIES) {
-      const slice = arr.slice(i, i + MAX_BATCH_ENTRIES);
-      batches.push(prepareRenderBatch(slice));
+function* renderBatches(
+  entries: readonly LogEntry[],
+): IterableIterator<LogEntry[]> {
+  let batch: LogEntry[] = [];
+  let bytes = 0;
+  for (const entry of entries) {
+    const size = entryBytes(entry);
+    if (size > 8 * 1024 * 1024)
+      throw new Error("Log entry exceeds 8 MiB decoded-payload delivery limit");
+    if (
+      batch.length &&
+      (bytes + size > 1024 * 1024 || batch.length >= MAX_BATCH_ENTRIES)
+    ) {
+      yield batch;
+      batch = [];
+      bytes = 0;
     }
-    void sendBatchesAsyncTo(wc, "logs:append", batches).catch((error) => {
-      log.error(
-        "Direct renderer append failed:",
-        error instanceof Error ? error.message : String(error),
-      );
-    });
-  };
+    batch.push(entry);
+    bytes += size;
+  }
+  if (batch.length) yield batch;
+}
 
-  // TCP → owner window only
+async function appendToWindow(
+  win: BrowserWindow | null,
+  entries: LogEntry[],
+): Promise<void> {
+  if (!win || win.isDestroyed())
+    throw new Error("No receiving window available");
+  // Split a bulk producer input rather than accepting only its prefix.
+  for (const batch of renderBatches(entries)) {
+    const delivered = enqueueAppendsFor(win.id, batch);
+    void flushPendingAppendsFor(win).catch(() => {});
+    await delivered;
+  }
+}
+
+// Resolve to the source only after required file logging AND renderer persistence.
+async function sendAppend(entries: LogEntry[]): Promise<void> {
+  await writeEntriesToFile(entries);
+  const tcpEntries = entries.filter((entry) =>
+    entry.source?.startsWith("tcp:"),
+  );
+  const otherEntries = entries.filter(
+    (entry) => !entry.source?.startsWith("tcp:"),
+  );
   if (tcpEntries.length) {
     const ownerId = getTcpOwnerWindowId();
-    diagDebug(`[tcp-diag] TCP owner window ID: ${ownerId}`);
-    const ownerWin =
-      ownerId != null ? BrowserWindow.fromId?.(ownerId) || null : null;
-    if (ownerWin && isWindowReady(ownerWin)) {
-      diagDebug(
-        `[tcp-diag] Sending ${tcpEntries.length} TCP entries directly to owner window ${ownerWin.id}`,
-      );
-      try {
-        sendEntriesToWc(ownerWin.webContents, tcpEntries);
-      } catch (err) {
-        diagDebug(
-          `[tcp-diag] Failed to send directly, enqueueing for window ${ownerWin.id}:`,
-          err instanceof Error ? err.message : String(err),
-        );
-        enqueueAppendsFor(ownerWin.id, tcpEntries);
-      }
-    } else if (ownerWin) {
-      diagDebug(
-        `[tcp-diag] Owner window ${ownerWin.id} not ready, enqueueing ${tcpEntries.length} TCP entries`,
-      );
-      enqueueAppendsFor(ownerWin.id, tcpEntries);
-    }
-    // else: no owner → route to main
-    else {
-      diagDebug(
-        `[tcp-diag] No owner window, routing ${tcpEntries.length} TCP entries to main window`,
-      );
-      otherEntries.push(...tcpEntries);
-    }
+    const owner = ownerId == null ? mainWindow : BrowserWindow.fromId(ownerId);
+    await appendToWindow(owner, tcpEntries);
   }
-
-  // Non-TCP → primary window (bestehendes Verhalten)
-  if (otherEntries.length) {
-    if (!isRendererReady()) {
-      diagDebug(
-        `[tcp-diag] Main renderer not ready, enqueueing ${otherEntries.length} entries`,
-      );
-      enqueueAppends(otherEntries);
-      return;
-    }
-    try {
-      const wc = mainWindow?.webContents as any;
-      if (wc) {
-        diagDebug(
-          `[tcp-diag] Sending ${otherEntries.length} entries to main window`,
-        );
-        sendEntriesToWc(wc, otherEntries);
-      } else {
-        diagDebug(
-          `[tcp-diag] No main window webContents, enqueueing ${otherEntries.length} entries`,
-        );
-        enqueueAppends(otherEntries);
-      }
-    } catch (err) {
-      diagDebug(
-        `[tcp-diag] Error sending to main window, enqueueing:`,
-        err instanceof Error ? err.message : String(err),
-      );
-      enqueueAppends(otherEntries);
-    }
-  }
+  if (otherEntries.length) await appendToWindow(mainWindow, otherEntries);
 }
 
 // Icon/dist path caching is now handled in ./util/iconResolver
@@ -1978,16 +1957,10 @@ function createWindow(opts: { makePrimary?: boolean } = {}): BrowserWindow {
     // Flush window-specific logs
     try {
       void flushPendingAppendsFor(win).catch(() => {
-        // The flush function already restored the entries and logged the error.
+        // The source receipts carry the logged terminal delivery error.
       });
     } catch {
       // Intentionally empty - ignore errors
-    }
-
-    if (win === mainWindow) {
-      void flushPendingAppends().catch(() => {
-        // The flush function already restored the entries and logged the error.
-      });
     }
 
     setTimeout(() => {
@@ -2429,9 +2402,7 @@ function createWindow(opts: { makePrimary?: boolean } = {}): BrowserWindow {
 
 // Startup wiring
 perfService.mark("main-loaded");
-networkService.setLogCallback((entries: LogEntry[]) => {
-  sendAppend(entries);
-});
+networkService.setLogCallback(sendAppend);
 setImmediate(() => {
   // Parsers injection for NetworkService
   const p = getParsers();
@@ -2455,37 +2426,12 @@ try {
     // Sprint 5 – C3: route tail-watcher entries through the same per-window
     // append pipeline as TCP/HTTP/Elasticsearch.
     async (entries: LogEntry[], senderWcId: number): Promise<void> => {
-      try {
-        const win = BrowserWindow.fromId(
-          BrowserWindow.getAllWindows().find(
-            (w) => w.webContents?.id === senderWcId,
-          )?.id ?? -1,
-        );
-        if (win && !win.isDestroyed()) {
-          enqueueAppendsFor(win.id, entries);
-          // Flush this window's buffer right away instead of waiting for the
-          // periodic 100ms timer. This delivers tail/watch entries with lower
-          // latency and – crucially – lets large initial loads (HTTP-tail
-          // "load existing content") stream chunk-by-chunk: each chunk is
-          // drained immediately, so the buffer never accumulates beyond the
-          // backpressure cap (which would otherwise drop earlier chunks).
-          await flushPendingAppendsFor(win);
-        } else {
-          // Fallback: route to main window queue
-          enqueueAppends(entries);
-          if (mainWindow && !mainWindow.isDestroyed()) {
-            await flushPendingAppends();
-          }
-        }
-      } catch (err) {
-        log.warn(
-          "[watch] Renderer append failed; retained entries will be retried:",
-          err instanceof Error ? err.message : String(err),
-        );
-        // The flush function restores only the unacknowledged suffix. Do not
-        // rethrow here: HTTP tail would otherwise refetch the complete byte
-        // range and duplicate batches that were already persisted.
-      }
+      const win = BrowserWindow.fromId(
+        BrowserWindow.getAllWindows().find(
+          (w) => w.webContents?.id === senderWcId,
+        )?.id ?? -1,
+      );
+      await appendToWindow(win, entries);
     },
     configureFileLogging,
     stopSourcesAndCloseFileLogging,
@@ -2558,7 +2504,7 @@ try {
 
 // [CRITICAL FIX] Periodic flush of pending appends to renderer
 // This ensures buffered log entries are sent to UI regularly
-// Without this timer, logs can be delayed indefinitely in pendingAppends buffer
+// Flush newly ready windows; active deliveries already drain their own queue.
 const PENDING_APPEND_FLUSH_INTERVAL_MS = 100; // Flush every 100ms for responsive UI
 let flushTimerCount = 0;
 let flushTimerStarted = false;
@@ -2570,29 +2516,23 @@ function startFlushTimer(): void {
   setInterval(() => {
     try {
       flushTimerCount++;
-      const hasPending = pendingAppends.length > 0;
       const hasWindowPending = Array.from(windows).some((w) => {
         const buf = pendingAppendsByWindow.get(w.id);
         return buf && buf.length > 0;
       });
 
-      if (flushTimerCount % 10 === 1 || hasPending || hasWindowPending) {
+      if (flushTimerCount % 10 === 1 || hasWindowPending) {
         diagSilly(
-          `[flush-timer] Run #${flushTimerCount}: pendingAppends=${pendingAppends.length}, windows=${windows.size}, hasWindowPending=${hasWindowPending}`,
+          `[flush-timer] Run #${flushTimerCount}: windows=${windows.size}, hasWindowPending=${hasWindowPending}`,
         );
       }
-
-      // Flush main window buffer
-      void flushPendingAppends().catch(() => {
-        // The flush function already restored the entries and logged the error.
-      });
 
       // Flush per-window buffers for multi-window scenarios
       for (const win of windows) {
         try {
           if (!win.isDestroyed()) {
             void flushPendingAppendsFor(win).catch(() => {
-              // The flush function already restored the entries and logged the error.
+              // The source receipts carry the logged terminal delivery error.
             });
           }
         } catch {

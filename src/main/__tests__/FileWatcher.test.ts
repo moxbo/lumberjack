@@ -194,6 +194,68 @@ describe("WatchManager", () => {
     expect(mgr.stop(w.id)).toBe(false);
   });
 
+  it("awaits the sink without overlapping change reads and cancels before the next chunk", async () => {
+    const file = path.join(tmpDir, "backpressure.log");
+    fs.writeFileSync(file, "line\n".repeat(40_000));
+    const mgr = new WatchManager();
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const batches: string[][] = [];
+    const watcher = mgr.start(
+      file,
+      {
+        onLines: async (lines) => {
+          batches.push(lines);
+          await gate;
+        },
+      },
+      { emitInitial: true, pollIntervalMs: 50, maxReadBytes: 64 * 1024 },
+    );
+    try {
+      await delay(80);
+      expect(batches).toHaveLength(1);
+      fs.appendFileSync(file, "new\n");
+      await delay(150);
+      expect(batches).toHaveLength(1);
+      mgr.stop(watcher.id);
+      release();
+      await delay(80);
+      expect(batches).toHaveLength(1);
+      expect(mgr.list()).toEqual([]);
+    } finally {
+      release();
+      mgr.stopAll();
+    }
+  });
+
+  it("stops and reports rejected persistence instead of reading or retrying later chunks", async () => {
+    const file = path.join(tmpDir, "failed-delivery.log");
+    fs.writeFileSync(file, "line\n".repeat(40_000));
+    const mgr = new WatchManager();
+    let calls = 0;
+    const errors: string[] = [];
+    mgr.start(
+      file,
+      {
+        onLines: async () => {
+          calls++;
+          throw new Error("disk full");
+        },
+        onError: (error) => errors.push(error.message),
+      },
+      { emitInitial: true, pollIntervalMs: 50, maxReadBytes: 64 * 1024 },
+    );
+    await delay(100);
+    fs.appendFileSync(file, "later\n");
+    await delay(100);
+    expect(calls).toBe(1);
+    expect(errors).toEqual(["disk full"]);
+    expect(mgr.list()).toEqual([]);
+    mgr.stopAll();
+  });
+
   it("throws when path is not a regular file", () => {
     const mgr = new WatchManager();
     expect(() => mgr.start(tmpDir, { onLines: () => {} })).toThrow();

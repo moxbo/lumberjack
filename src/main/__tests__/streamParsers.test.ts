@@ -1,5 +1,6 @@
 import fs from "fs";
 import path from "path";
+import { estimatePayloadBytes } from "../../utils/estimatePayloadBytes";
 import { afterEach, describe, expect, it } from "vitest";
 import {
   getStreamParseStrategy,
@@ -59,6 +60,35 @@ describe("isJsonArrayLinePayload", () => {
 });
 
 describe("streamParseFile", () => {
+  it("bounds parsed payload batches by bytes as well as count", async () => {
+    const line = JSON.stringify({ message: "x".repeat(256 * 1024) });
+    const filePath = await writeFixture(
+      "byte-batches.log",
+      `${line}\n`.repeat(8),
+    );
+    const chunks = await collectStreamEntries(filePath, 1000);
+    expect(chunks.flatMap((chunk) => chunk.entries)).toHaveLength(8);
+    expect(
+      chunks.filter((chunk) => chunk.entries.length).length,
+    ).toBeGreaterThan(1);
+    for (const chunk of chunks) {
+      expect(
+        chunk.entries.reduce(
+          (sum, entry) => sum + estimatePayloadBytes(entry),
+          0,
+        ),
+      ).toBeLessThanOrEqual(2 * 1024 * 1024);
+    }
+  });
+
+  it("rejects oversized unbroken lines before accumulating a whole file", async () => {
+    const filePath = await writeFixture(
+      "oversized-line.log",
+      "x".repeat(1024 * 1024 + 1),
+    );
+    await expect(collectStreamEntries(filePath, 1000)).rejects.toThrow("1 MiB");
+  });
+
   it("preserves UTF-8 lines and final line without trailing newline", async () => {
     const content = [
       '{"message":"one"}',

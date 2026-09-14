@@ -5,8 +5,11 @@
 
 import * as net from "net";
 import * as https from "https";
+import { createHash } from "crypto";
 import log from "electron-log/main";
 import type { LogEntry } from "../types/ipc";
+import { responseChunks } from "./ResponseStream";
+import { StringDecoder } from "string_decoder";
 
 /**
  * TCP Status
@@ -34,7 +37,7 @@ export interface HttpPollConfig {
 /**
  * Log entry callback
  */
-export type LogCallback = (entries: LogEntry[]) => void;
+export type LogCallback = (entries: LogEntry[]) => unknown;
 
 /**
  * JSON parser function type
@@ -75,32 +78,27 @@ export class NetworkService {
   private insecureHttpsAgent: https.Agent | null = null;
 
   // Memory leak prevention constants
-  private static readonly MAX_BUFFER_SIZE = 50 * 1024 * 1024; // 50MB max buffer per socket (increased for large messages)
+  private static readonly MAX_BUFFER_SIZE = 2 * 1024 * 1024;
   private static readonly SOCKET_TIMEOUT_MS = 5 * 60 * 1000; // 5 minutes timeout
   private static readonly TCP_SHUTDOWN_GRACE_MS = 1000;
-  private static readonly MAX_LINE_LENGTH = 20 * 1024 * 1024; // 20MB max line length (increased for large XML messages)
+  private static readonly MAX_LINE_LENGTH = 1024 * 1024;
   private static readonly MAX_SEEN_ENTRIES = 10000; // Max deduplication entries per poller
 
   // Additional robustness constants
   private static readonly HTTP_FETCH_TIMEOUT_MS = 30 * 1000; // 30 seconds HTTP timeout
-  private static readonly HTTP_MAX_RESPONSE_SIZE = 100 * 1024 * 1024; // 100MB max response size
-  private static readonly TCP_MAX_CONNECTIONS = 1000; // Max concurrent TCP connections
+  private static readonly HTTP_MAX_RESPONSE_SIZE = 16 * 1024 * 1024;
+  private static readonly TCP_MAX_CONNECTIONS = 16;
+  private static readonly HTTP_MAX_POLLERS = 4;
+  private httpFetches = 0;
+  private tcpDeliveries = new Set<Promise<void>>();
+  private logDeliveries = new Set<Promise<unknown>>();
 
   // Track active sockets for monitoring
   private activeSockets = new Set<net.Socket>();
 
-  // TCP batching for improved throughput
+  // Each socket holds at most one bounded parsed batch while awaiting persistence.
   private static readonly TCP_BATCH_SIZE = 500; // Max entries per batch
-  private static readonly TCP_BATCH_INTERVAL_MS = 16; // Flush interval in ms (~1 frame at 60fps) for near-instant display
-  private tcpBatchQueue: LogEntry[] = [];
-  private tcpBatchTimer: NodeJS.Timeout | null = null;
-
-  // HTTP batching for improved throughput (similar to TCP)
-  // Reduced batch size to prevent UI freezes ("Keine Rückmeldung")
   private static readonly HTTP_BATCH_SIZE = 100; // Max entries per batch (reduced from 500)
-  private static readonly HTTP_BATCH_INTERVAL_MS = 16; // Flush interval in ms (one frame at 60fps)
-  private httpBatchQueue: LogEntry[] = [];
-  private httpBatchTimer: NodeJS.Timeout | null = null;
 
   /**
    * Set the log callback function
@@ -137,88 +135,6 @@ export class NetworkService {
   }
 
   /**
-   * Queue a TCP entry for batched sending
-   * This significantly improves throughput for high-volume TCP streams
-   */
-  private queueTcpEntry(entry: LogEntry): void {
-    this.tcpBatchQueue.push(entry);
-
-    // Flush immediately if batch is full
-    if (this.tcpBatchQueue.length >= NetworkService.TCP_BATCH_SIZE) {
-      this.flushTcpBatch();
-      return;
-    }
-
-    // Schedule flush if not already scheduled
-    if (!this.tcpBatchTimer) {
-      this.tcpBatchTimer = setTimeout(() => {
-        this.flushTcpBatch();
-      }, NetworkService.TCP_BATCH_INTERVAL_MS);
-    }
-  }
-
-  /**
-   * Flush the TCP batch queue
-   */
-  private flushTcpBatch(): void {
-    if (this.tcpBatchTimer) {
-      clearTimeout(this.tcpBatchTimer);
-      this.tcpBatchTimer = null;
-    }
-
-    if (this.tcpBatchQueue.length === 0) {
-      return;
-    }
-
-    const batch = this.tcpBatchQueue;
-    this.tcpBatchQueue = [];
-
-    log.debug(`[tcp] Flushing batch of ${batch.length} entries`);
-    this.sendLogs(batch);
-  }
-
-  /**
-   * Queue HTTP entries for batched sending
-   * This significantly improves throughput for high-volume HTTP responses
-   */
-  private queueHttpEntries(entries: LogEntry[]): void {
-    this.httpBatchQueue.push(...entries);
-
-    // Flush immediately if batch is full
-    if (this.httpBatchQueue.length >= NetworkService.HTTP_BATCH_SIZE) {
-      this.flushHttpBatch();
-      return;
-    }
-
-    // Schedule flush if not already scheduled
-    if (!this.httpBatchTimer) {
-      this.httpBatchTimer = setTimeout(() => {
-        this.flushHttpBatch();
-      }, NetworkService.HTTP_BATCH_INTERVAL_MS);
-    }
-  }
-
-  /**
-   * Flush the HTTP batch queue
-   */
-  private flushHttpBatch(): void {
-    if (this.httpBatchTimer) {
-      clearTimeout(this.httpBatchTimer);
-      this.httpBatchTimer = null;
-    }
-
-    if (this.httpBatchQueue.length === 0) {
-      return;
-    }
-
-    const batch = this.httpBatchQueue;
-    this.httpBatchQueue = [];
-
-    log.debug(`[http] Flushing batch of ${batch.length} entries`);
-    this.sendLogs(batch);
-  }
-
-  /**
    * Set parser functions (injected from parsers module)
    */
   setParsers(parsers: {
@@ -234,9 +150,34 @@ export class NetworkService {
   /**
    * Send log entries to the callback
    */
-  private sendLogs(entries: LogEntry[]): void {
+  private async sendLogs(entries: LogEntry[]): Promise<void> {
     if (this.logCallback && entries.length > 0) {
-      this.logCallback(entries);
+      let timer!: ReturnType<typeof setTimeout>;
+      const delivery = Promise.race([
+        Promise.resolve().then(() => this.logCallback!(entries)),
+        new Promise<never>((_, reject) => {
+          timer = setTimeout(
+            () =>
+              reject(new Error("Log persistence acknowledgement timed out")),
+            30_000,
+          );
+        }),
+      ]);
+      this.logDeliveries.add(delivery);
+      try {
+        await delivery;
+      } finally {
+        clearTimeout(timer);
+        this.logDeliveries.delete(delivery);
+      }
+    } else if (entries.length) {
+      throw new Error("No log consumer available");
+    }
+  }
+
+  async waitForPendingLogs(): Promise<void> {
+    while (this.logDeliveries.size) {
+      await Promise.allSettled(this.logDeliveries);
     }
   }
 
@@ -294,17 +235,18 @@ export class NetworkService {
       // Set socket timeout to prevent hanging connections
       socket.setTimeout(NetworkService.SOCKET_TIMEOUT_MS);
 
-      // Process a single (already newline-delimited) line and queue it.
-      const processLine = (rawLine: string): void => {
+      socket.setEncoding("utf8");
+      let processing: Promise<void> | null = null;
+      let closed = false;
+      let failed = false;
+      const processLine = (rawLine: string): LogEntry | undefined => {
         const line = rawLine.trim();
         if (!line) return;
 
-        // Skip lines that are too long (potential attack or malformed data)
-        if (line.length > NetworkService.MAX_LINE_LENGTH) {
-          log.warn(
-            `[tcp] Line too long on ${socketId}, skipping. Length: ${line.length} bytes`,
+        if (Buffer.byteLength(line, "utf8") > NetworkService.MAX_LINE_LENGTH) {
+          throw new Error(
+            "TCP line exceeds 1 MiB; connection terminated without delivery acknowledgement",
           );
-          return;
         }
 
         // Parse JSON line, fallback to plain text
@@ -319,66 +261,79 @@ export class NetworkService {
           obj = { message: line };
         }
 
-        const entry = toEntry(obj, "", `tcp:${remoteAddr}:${remotePort}`);
-        this.queueTcpEntry(entry);
+        return toEntry(obj, "", `tcp:${remoteAddr}:${remotePort}`);
       };
 
-      // Cleanup function to be called on socket end/close
-      const cleanup = (): void => {
-        if (this.activeSockets.has(socket)) {
-          this.activeSockets.delete(socket);
-          log.debug(
-            `[tcp] Socket cleaned up: ${socketId} (active: ${this.activeSockets.size})`,
-          );
-        }
-        // Flush any remaining buffered line that wasn't newline-terminated,
-        // otherwise the last entry of a stream would never be displayed.
-        if (buffer.length > 0) {
-          try {
-            processLine(buffer);
-          } catch (err) {
+      const pump = (): void => {
+        if (processing || failed) return;
+        socket.pause();
+        const delivery = Promise.resolve()
+          .then(async () => {
+            while (!failed) {
+              const batch: LogEntry[] = [];
+              let bytes = 0;
+              let idx: number;
+              while (
+                batch.length < NetworkService.TCP_BATCH_SIZE &&
+                bytes < 1024 * 1024 &&
+                (idx = buffer.indexOf("\n")) >= 0
+              ) {
+                const line = buffer.slice(0, idx);
+                buffer = buffer.slice(idx + 1);
+                bytes += Buffer.byteLength(line, "utf8");
+                const entry = processLine(line);
+                if (entry) batch.push(entry);
+              }
+              if (
+                closed &&
+                buffer.length &&
+                buffer.indexOf("\n") < 0 &&
+                bytes < 1024 * 1024
+              ) {
+                const entry = processLine(buffer);
+                buffer = "";
+                if (entry) batch.push(entry);
+              }
+              if (batch.length) await this.sendLogs(batch);
+              if (buffer.indexOf("\n") < 0 && (!closed || !buffer.length))
+                break;
+            }
+          })
+          .catch((error: unknown) => {
+            failed = true;
+            buffer = "";
             log.error(
-              `[tcp] Error processing trailing data on ${socketId}:`,
-              err instanceof Error ? err.message : String(err),
+              `[tcp] Delivery failed on ${socketId}; connection terminated:`,
+              error,
             );
-          }
-          // Make sure the queued trailing entry is sent without waiting for the
-          // batch timer.
-          this.flushTcpBatch();
-        }
-        // Clear buffer to free memory
-        buffer = "";
-        // Remove all listeners to prevent memory leaks
-        socket.removeAllListeners();
+            socket.destroy(
+              error instanceof Error ? error : new Error(String(error)),
+            );
+          })
+          .finally(() => {
+            processing = null;
+            this.tcpDeliveries.delete(delivery);
+            if (!closed && !failed) socket.resume();
+            else if (!failed && buffer.length) pump();
+            else if (closed) this.activeSockets.delete(socket);
+          });
+        processing = delivery;
+        this.tcpDeliveries.add(delivery);
       };
 
-      socket.on("data", (chunk) => {
-        try {
-          // Prevent buffer from growing too large (memory leak prevention)
-          if (buffer.length > NetworkService.MAX_BUFFER_SIZE) {
-            log.warn(
-              `[tcp] Buffer overflow on ${socketId}, dropping oldest data. Buffer size: ${buffer.length} bytes`,
-            );
-            // Keep only the most recent data
-            buffer = buffer.slice(
-              buffer.length - NetworkService.MAX_BUFFER_SIZE / 2,
-            );
-          }
-
-          buffer += chunk.toString("utf8");
-          let idx: number;
-
-          while ((idx = buffer.indexOf("\n")) >= 0) {
-            const line = buffer.slice(0, idx);
-            buffer = buffer.slice(idx + 1);
-            processLine(line);
-          }
-        } catch (err) {
-          log.error(
-            `[tcp] Error processing data on ${socketId}:`,
-            err instanceof Error ? err.message : String(err),
+      socket.on("data", (chunk: string) => {
+        buffer += chunk;
+        if (
+          Buffer.byteLength(buffer, "utf8") > NetworkService.MAX_BUFFER_SIZE
+        ) {
+          failed = true;
+          buffer = "";
+          socket.destroy(
+            new Error("TCP buffer capacity exceeded; connection terminated"),
           );
+          return;
         }
+        pump();
       });
 
       socket.on("error", (err) => {
@@ -389,18 +344,22 @@ export class NetworkService {
 
       socket.on("timeout", () => {
         log.warn(`[tcp] Socket timeout on ${socketId}, closing connection`);
-        socket.end();
+        socket.destroy(new Error("TCP socket timed out"));
       });
 
       socket.on("close", (hadError) => {
         log.debug(
           `[tcp] Socket closed: ${socketId}${hadError ? " (with error)" : ""}`,
         );
-        cleanup();
+        closed = true;
+        pump();
+        if (failed && !processing) this.activeSockets.delete(socket);
       });
 
       socket.on("end", () => {
         log.debug(`[tcp] Socket ended: ${socketId}`);
+        closed = true;
+        pump();
       });
     });
 
@@ -486,9 +445,6 @@ export class NetworkService {
       });
     }
 
-    // Flush any pending batched entries before stopping
-    this.flushTcpBatch();
-
     this.tcpStopPromise = this.closeTcpServer(this.tcpServer).finally(() => {
       this.tcpStopPromise = null;
     });
@@ -499,7 +455,10 @@ export class NetworkService {
     const sockets = Array.from(this.activeSockets);
     const socketsClosed = sockets.map(
       (socket) =>
-        new Promise<void>((resolve) => socket.once("close", () => resolve())),
+        new Promise<void>((resolve) => {
+          if (socket.closed) resolve();
+          else socket.once("close", () => resolve());
+        }),
     );
     log.info(
       `[tcp] Stopping server, closing ${sockets.length} active socket(s)`,
@@ -528,7 +487,8 @@ export class NetworkService {
       // server.close may fire before socket close callbacks. Those callbacks
       // parse and emit trailing lines, so consumers must wait for both.
       await Promise.all([serverClosed, ...socketsClosed]);
-      this.flushTcpBatch();
+      // Includes trailing-line delivery and its awaited file persistence.
+      while (this.tcpDeliveries.size) await Promise.all(this.tcpDeliveries);
       this.tcpServer = null;
       this.tcpRunning = false;
       this.tcpPort = 0;
@@ -588,12 +548,14 @@ export class NetworkService {
         }
 
         let data = "";
+        let bytes = 0;
         res.setEncoding("utf8");
 
         res.on("data", (chunk: string) => {
           data += chunk;
+          bytes += Buffer.byteLength(chunk, "utf8");
           // Check size limit during download
-          if (data.length > NetworkService.HTTP_MAX_RESPONSE_SIZE) {
+          if (bytes > NetworkService.HTTP_MAX_RESPONSE_SIZE) {
             req.destroy();
             reject(
               new Error(
@@ -622,6 +584,7 @@ export class NetworkService {
         reject(new Error("Request aborted"));
       };
       signal.addEventListener("abort", onAbort, { once: true });
+      req.once("close", () => signal.removeEventListener("abort", onAbort));
 
       req.end();
     });
@@ -633,6 +596,23 @@ export class NetworkService {
    * @param externalSignal - Optional AbortSignal to allow external cancellation (e.g., on poll stop)
    */
   private async httpFetchText(
+    url: string,
+    externalSignal?: AbortSignal,
+  ): Promise<string> {
+    if (this.httpFetches >= NetworkService.HTTP_MAX_POLLERS) {
+      throw new Error(
+        "HTTP admission capacity exceeded; retry after pending requests",
+      );
+    }
+    this.httpFetches++;
+    try {
+      return await this.fetchText(url, externalSignal);
+    } finally {
+      this.httpFetches--;
+    }
+  }
+
+  private async fetchText(
     url: string,
     externalSignal?: AbortSignal,
   ): Promise<string> {
@@ -692,6 +672,7 @@ export class NetworkService {
         });
 
         if (!res.ok) {
+          await res.body?.cancel();
           throw new Error(`HTTP ${res.status}: ${res.statusText}`);
         }
 
@@ -700,22 +681,30 @@ export class NetworkService {
         if (contentLength) {
           const size = parseInt(contentLength, 10);
           if (size > NetworkService.HTTP_MAX_RESPONSE_SIZE) {
+            await res.body?.cancel();
             throw new Error(
               `Response too large: ${size} bytes (max: ${NetworkService.HTTP_MAX_RESPONSE_SIZE})`,
             );
           }
         }
 
-        // Read response with size limit check
-        const text = await res.text();
-        if (text.length > NetworkService.HTTP_MAX_RESPONSE_SIZE) {
-          log.warn(
-            `[http:fetch] Response size ${text.length} exceeds limit ${NetworkService.HTTP_MAX_RESPONSE_SIZE}, truncating`,
-          );
-          return text.slice(0, NetworkService.HTTP_MAX_RESPONSE_SIZE);
+        const decoder = new StringDecoder("utf8");
+        let text = "";
+        let bytes = 0;
+        for await (const chunk of responseChunks(
+          res,
+          NetworkService.HTTP_FETCH_TIMEOUT_MS,
+          controller.signal,
+        )) {
+          bytes += chunk.byteLength;
+          if (bytes > NetworkService.HTTP_MAX_RESPONSE_SIZE) {
+            throw new Error(
+              `Response too large (max: ${NetworkService.HTTP_MAX_RESPONSE_SIZE})`,
+            );
+          }
+          text += decoder.write(Buffer.from(chunk));
         }
-
-        return text;
+        return text + decoder.end();
       } catch (err) {
         if (err instanceof Error && err.name === "AbortError") {
           // Check if it was external abort (poll stopped) vs timeout
@@ -783,15 +772,19 @@ export class NetworkService {
   private dedupeNewEntries(entries: LogEntry[], seen: Set<string>): LogEntry[] {
     const fresh: LogEntry[] = [];
     for (const e of entries) {
-      const key = JSON.stringify([
-        e.timestamp,
-        e.level,
-        e.logger,
-        e.thread,
-        e.message,
-        e.traceId,
-        e.source,
-      ]);
+      const key = createHash("sha256")
+        .update(
+          JSON.stringify([
+            e.timestamp,
+            e.level,
+            e.logger,
+            e.thread,
+            e.message,
+            e.traceId,
+            e.source,
+          ]),
+        )
+        .digest("hex");
       if (!seen.has(key)) {
         seen.add(key);
         fresh.push(e);
@@ -847,6 +840,7 @@ export class NetworkService {
   async httpStartPoll(
     url: string,
     intervalSec: number,
+    onError?: (id: number, error: Error) => void,
   ): Promise<{ ok: boolean; id?: number; error?: string }> {
     // Convert seconds to milliseconds, minimum 1 second (1000ms)
     const intervalMs = Math.max(1, intervalSec) * 1000;
@@ -856,6 +850,9 @@ export class NetworkService {
     );
 
     try {
+      if (this.httpPollers.size >= NetworkService.HTTP_MAX_POLLERS) {
+        throw new Error("HTTP poller capacity exceeded");
+      }
       if (!this.parseJsonFile || !this.parseTextLines || !this.toEntry) {
         throw new Error("Parser functions not set");
       }
@@ -925,24 +922,38 @@ export class NetworkService {
             return;
           }
 
-          const fresh = this.dedupeNewEntries(entries, seen);
-          if (fresh.length) {
-            // For large batches, chunk the queuing to prevent blocking
-            if (fresh.length > 200) {
-              const chunkSize = 100;
-              for (let i = 0; i < fresh.length; i += chunkSize) {
-                // Check before each chunk
-                if (!isPollerActive()) {
-                  return;
-                }
-                const chunk = fresh.slice(i, i + chunkSize);
-                this.queueHttpEntries(chunk);
-                // Yield between chunks to keep UI responsive
-                await yieldToEventLoop();
+          for (
+            let i = 0;
+            i < entries.length;
+            i += NetworkService.HTTP_BATCH_SIZE
+          ) {
+            if (!isPollerActive()) return;
+            const nextSeen = new Set(seen);
+            const fresh = this.dedupeNewEntries(
+              entries.slice(i, i + NetworkService.HTTP_BATCH_SIZE),
+              nextSeen,
+            );
+            if (fresh.length) {
+              try {
+                await this.sendLogs(fresh);
+              } catch (error) {
+                if (!isPollerActive()) return;
+                // Persistence may have accepted a prefix. Never refetch/replay
+                // the whole range after an ambiguous or terminal consumer error.
+                log.error(
+                  `[http:poll] ${url} stopped after delivery failure:`,
+                  error,
+                );
+                this.httpStopPoll(id);
+                onError?.(
+                  id,
+                  error instanceof Error ? error : new Error(String(error)),
+                );
+                return;
               }
-            } else {
-              this.queueHttpEntries(fresh);
             }
+            seen.clear();
+            for (const key of nextSeen) seen.add(key);
           }
         } catch (err) {
           // Don't log/retry if poller was stopped (abort error)
@@ -1025,7 +1036,6 @@ export class NetworkService {
     }
 
     // Flush any pending batched entries before stopping
-    this.flushHttpBatch();
 
     log.info(
       `[http:poll] Stopping poller ${id}: setting stopped=true, aborting fetch, clearing timer`,
@@ -1055,7 +1065,6 @@ export class NetworkService {
    */
   stopAllHttpPollers(): void {
     // Flush any pending batched entries before stopping
-    this.flushHttpBatch();
 
     for (const poller of this.httpPollers.values()) {
       // Mark as stopped first to prevent new ticks

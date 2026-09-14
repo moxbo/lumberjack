@@ -1,6 +1,7 @@
 import * as fs from "fs";
 
 export interface FileWriterQueueLimits {
+  /** UTF-8 output bytes, not decoded heap size (ASCII strings may cost 2x). */
   maxQueuedBytes?: number;
   maxQueuedWrites?: number;
 }
@@ -14,9 +15,8 @@ export class FileWriterBackpressureError extends Error {
 
 /**
  * Writes resolve only after appendFile completes. Await write() for backpressure.
- * Queue limits are opt-in: synchronous producers keep the historical lossless
- * admission behavior by default. At explicit limits, excess writes reject.
- * A single oversized write is allowed only when no other write is pending.
+ * Admission is bounded, including active writes. Producers must await write()
+ * and propagate failures; a rejected write has not been accepted for persistence.
  */
 export class AsyncFileWriter {
   protected filepath: string;
@@ -36,9 +36,14 @@ export class AsyncFileWriter {
 
   constructor(filepath: string, limits: FileWriterQueueLimits = {}) {
     this.filepath = filepath;
-    this.maxQueuedBytes = limits.maxQueuedBytes ?? Infinity;
-    this.maxQueuedWrites = limits.maxQueuedWrites ?? Infinity;
-    if (this.maxQueuedBytes <= 0 || this.maxQueuedWrites < 1) {
+    this.maxQueuedBytes = limits.maxQueuedBytes ?? 16 * 1024 * 1024;
+    this.maxQueuedWrites = limits.maxQueuedWrites ?? 1024;
+    if (
+      !Number.isFinite(this.maxQueuedBytes) ||
+      !Number.isFinite(this.maxQueuedWrites) ||
+      this.maxQueuedBytes <= 0 ||
+      this.maxQueuedWrites < 1
+    ) {
       throw new Error("File writer queue limits must be positive");
     }
   }
@@ -46,6 +51,9 @@ export class AsyncFileWriter {
   protected enqueueOperation(operation: () => Promise<void>): Promise<void> {
     if (!this.accepting) {
       return Promise.reject(new Error("File writer is closed"));
+    }
+    if (this.pendingOperations >= this.maxQueuedWrites) {
+      return Promise.reject(new FileWriterBackpressureError());
     }
     return this.enqueue(operation);
   }
@@ -72,9 +80,8 @@ export class AsyncFileWriter {
     }
     const bytes = Buffer.byteLength(data, "utf8");
     if (
-      this.pendingWrites >= this.maxQueuedWrites ||
-      (this.pendingWrites > 0 &&
-        this.pendingBytes + bytes > this.maxQueuedBytes)
+      this.pendingOperations >= this.maxQueuedWrites ||
+      this.pendingBytes + bytes > this.maxQueuedBytes
     ) {
       const error = new FileWriterBackpressureError();
       this.firstFailure ??= error;
