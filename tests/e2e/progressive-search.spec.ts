@@ -153,6 +153,7 @@ test("shows real partial matches, rejects superseded results and preserves the v
   await search.press("Enter");
   await expect(window.locator(".filter-progress")).toHaveCount(0);
   await window.evaluate(() => globalThis.window.searchTestControl.arm());
+  await window.locator(".filter-toggle-btn").click();
   await window.locator("#filterLevel").selectOption("ERROR");
   await expect(window.locator("#countFiltered")).toHaveText("1000");
   await expect(status).toHaveText(/2[.,]000 \/ 6[.,]001 (durchsucht|searched)/);

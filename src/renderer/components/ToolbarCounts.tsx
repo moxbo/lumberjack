@@ -11,6 +11,7 @@ export interface ToolbarCountsProps {
   countSelected: number;
   lastFilterStats: FilterStats | null;
   entriesLength: number;
+  clearing?: boolean;
   onClearLogs: () => void;
   t: (key: string, params?: Record<string, string>) => string;
 }
@@ -21,6 +22,7 @@ function ToolbarCountsComponent({
   countSelected,
   lastFilterStats,
   entriesLength,
+  clearing = false,
   onClearLogs,
   t,
 }: ToolbarCountsProps) {
@@ -75,7 +77,11 @@ function ToolbarCountsComponent({
         </span>{" "}
         {t("toolbar.selected")}
       </span>
-      <button onClick={onClearLogs} disabled={entriesLength === 0}>
+      <button
+        id="btnClearLogs"
+        onClick={onClearLogs}
+        disabled={clearing || entriesLength === 0}
+      >
         {t("toolbar.clearLogs")}
       </button>
     </div>

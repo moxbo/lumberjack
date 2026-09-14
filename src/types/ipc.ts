@@ -86,6 +86,8 @@ export interface Settings {
   follow?: boolean;
   followSmooth?: boolean;
   detailHeight?: number;
+  detailWidth?: number;
+  detailLayout?: "bottom" | "right";
   colTs?: number;
   colLvl?: number;
   colLogger?: number;

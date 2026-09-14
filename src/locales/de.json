@@ -2,6 +2,39 @@
   "app": {
     "title": "Lumberjack"
   },
+  "inspector": {
+    "title": "Eintragsdetails",
+    "message": "Nachricht",
+    "stacktrace": "Stacktrace",
+    "context": "Kontext",
+    "raw": "Rohdaten",
+    "entryContext": "Kontext des Eintrags",
+    "close": "Details schließen",
+    "copy": "Kopieren",
+    "copyMessage": "Nachricht kopieren",
+    "copied": "Nachricht kopiert",
+    "copyFailed": "Nachricht konnte nicht kopiert werden.",
+    "unavailable": "Vollständige Details sind nicht verfügbar.",
+    "noStacktrace": "Kein Stacktrace für diesen Eintrag.",
+    "noContext": "Kein Diagnosekontext vorhanden.",
+    "rawHint": "Gespeicherte Quelldaten oder verfügbare Eintragsfelder.",
+    "rawTruncated": "Vorschau aus Leistungsgründen gekürzt; vollständige Daten bitte exportieren."
+  },
+  "workspace": {
+    "open": "Öffnen",
+    "export": "Exportieren",
+    "layout": "Position der Details",
+    "bottom": "Details unten",
+    "right": "Details rechts",
+    "settings": "Darstellung und Einstellungen",
+    "more": "Weitere Aktionen",
+    "follow": "Live folgen",
+    "resizeDetails": "Größe der Details ändern",
+    "clearing": "Logs werden geleert …",
+    "waitingToClear": "Leeren: laufender Schreibvorgang wird abgeschlossen …",
+    "storageError": "Aufnahme-/Speicherfehler",
+    "localSession": "Lokale Sitzung"
+  },
   "searchProgress": {
     "label": "Suchfortschritt",
     "starting": "Suche wird gestartet …",

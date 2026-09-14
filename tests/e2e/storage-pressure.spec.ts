@@ -139,6 +139,9 @@ test("pauses ingestion on quota failure, preserves exportable data and recovers 
   await expect(window.locator("#countTotal")).toHaveText("0");
   await command("open-files");
   await expect(window.locator("#countTotal")).toHaveText("1");
+  if (!(await window.locator("#filterLevel").isVisible())) {
+    await window.locator(".filter-toggle-btn").click();
+  }
   await window.locator("#filterLevel").selectOption("ERROR");
   await expect(window.locator("#countFiltered")).toHaveText("1");
   await expect(window.locator(".row .col.msg")).toHaveText("after-recovery");

@@ -122,7 +122,10 @@ export function FilterSection({
   useEffect(() => setMessageVal(filter.message), [filter.message]);
 
   return (
-    <div className={`filter-section ${expanded ? "expanded" : "collapsed"}`}>
+    <div
+      id="workspace-filters"
+      className={`filter-section ${expanded ? "expanded" : "collapsed"}`}
+    >
       <div className="section" style={{ paddingTop: 0 }}>
         <label>
           <input

@@ -52,6 +52,17 @@ export const SETTINGS_SCHEMA = {
     default: 300,
     validate: (val: number) => val >= 150 && val <= 2000,
   },
+  detailWidth: {
+    type: "number",
+    default: 420,
+    validate: (val: number) =>
+      Number.isFinite(val) && val >= 280 && val <= 1600,
+  },
+  detailLayout: {
+    type: "string",
+    default: "bottom",
+    validate: (val: string) => val === "bottom" || val === "right",
+  },
 
   colTs: {
     type: "number",

@@ -72,6 +72,7 @@ test("imports paged rows, filters and streams the current view in every format",
     }
   }
 
+  await window.locator(".filter-toggle-btn").click();
   await window.locator("#filterLevel").selectOption("ERROR");
   await expect(window.locator("#countFiltered")).toHaveText("300");
   const filteredPath = path.join(testUserData, "filtered.ndjson");

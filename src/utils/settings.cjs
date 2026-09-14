@@ -65,6 +65,16 @@ const SETTINGS_SCHEMA = {
     default: 300,
     validate: (val) => val >= 150 && val <= 2e3
   },
+  detailWidth: {
+    type: "number",
+    default: 420,
+    validate: (val) => Number.isFinite(val) && val >= 280 && val <= 1600
+  },
+  detailLayout: {
+    type: "string",
+    default: "bottom",
+    validate: (val) => val === "bottom" || val === "right"
+  },
   colTs: {
     type: "number",
     default: 220,

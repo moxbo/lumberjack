@@ -164,7 +164,7 @@ export function StatusSection({
       {/* TCP Status - show when active */}
       {isTcpActive && (
         <span id="tcpStatus" className="status status-active">
-          <span aria-hidden="true">🟢 </span>
+          <span className="connection-dot" aria-hidden="true" />
           {tcpStatus}
         </span>
       )}
@@ -175,7 +175,7 @@ export function StatusSection({
           className={`status ${isHttpError ? "status-error" : "status-active"}`}
           role={isHttpError ? "alert" : undefined}
         >
-          <span aria-hidden="true">{isHttpError ? "🔴 " : "🟢 "}</span>
+          <span className="connection-dot" aria-hidden="true" />
           {httpStatus}
         </span>
       )}
@@ -185,9 +185,7 @@ export function StatusSection({
           id="httpTailStatus"
           className={`status ${httpTailPausedCount > 0 ? "status-warning" : "status-active"}`}
         >
-          <span aria-hidden="true">
-            {httpTailPausedCount > 0 ? "🟡 " : "🟢 "}
-          </span>
+          <span className="connection-dot" aria-hidden="true" />
           {httpTailLabels.state}
         </span>
       )}

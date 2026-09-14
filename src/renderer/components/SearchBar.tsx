@@ -12,6 +12,7 @@ import type { JSX } from "preact/jsx-runtime";
 import { useI18n } from "../../utils/i18n";
 import type { ReadonlySequence } from "../../utils/metadataSnapshot";
 import { shouldNavigateCommittedSearch } from "../progressiveSearch";
+import { WorkspaceIcon } from "./WorkspaceToolbar";
 
 export interface SearchBarProps {
   search: string;
@@ -88,7 +89,7 @@ export function SearchBar({
   useEffect(() => setSearchVal(search), [search]);
 
   return (
-    <div className="section">
+    <div className="section workspace-search">
       <div className="search-wrapper" style={{ position: "relative" }}>
         <input
           id="searchText"
@@ -389,7 +390,7 @@ export function SearchBar({
         disabled={!search.trim() || searchMatchIdx.length === 0}
         onClick={() => gotoSearchMatch(-1)}
       >
-        ▲
+        <WorkspaceIcon name="up" />
       </button>
       <span
         style={{
@@ -421,7 +422,7 @@ export function SearchBar({
         disabled={!search.trim() || searchMatchIdx.length === 0}
         onClick={() => gotoSearchMatch(1)}
       >
-        ▼
+        <WorkspaceIcon name="down" />
       </button>
     </div>
   );

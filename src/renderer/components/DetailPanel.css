@@ -1,0 +1,301 @@
+.details.inspector {
+  --inspector-line: var(--ui-line, var(--color-divider));
+  --inspector-muted: var(--ui-muted, var(--color-text-secondary));
+  --inspector-accent: var(--ui-accent, var(--color-primary));
+  container: inspector / inline-size;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  padding: 0;
+  overflow: hidden;
+  background: var(--ui-panel, var(--color-bg-paper));
+  background-image: linear-gradient(var(--details-tint), var(--details-tint));
+  color: var(--color-text-primary);
+  border-top: 1px solid var(--inspector-line);
+  box-shadow: none;
+}
+
+.inspector .inspector-heading {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  flex: 0 0 auto;
+  gap: 10px;
+  padding: 12px 20px 10px;
+}
+
+.inspector .inspector-level {
+  border-radius: 4px;
+  padding: 3px 6px;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.4px;
+  background: color-mix(in srgb, currentColor 10%, transparent);
+}
+
+.inspector .inspector-logger {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+  font-weight: 600;
+  flex: 0 1 auto;
+}
+
+.inspector .inspector-timestamp {
+  color: var(--inspector-muted);
+  font:
+    11px var(--font-family-mono),
+    monospace;
+  font-variant-numeric: tabular-nums;
+}
+
+.inspector .inspector-heading-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: auto;
+}
+
+.inspector button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 5px 8px;
+  border: 1px solid var(--inspector-line);
+  border-radius: 6px;
+  background: transparent;
+  box-shadow: none;
+  color: var(--inspector-muted);
+  font: inherit;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.inspector button:hover:not(:disabled) {
+  color: var(--inspector-accent);
+  background: var(--color-bg-hover);
+}
+
+.inspector button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.inspector button:focus-visible,
+.inspector [role="tabpanel"]:focus-visible {
+  outline: 2px solid var(--inspector-accent);
+  outline-offset: -2px;
+}
+
+.inspector .inspector-icon-button {
+  padding: 4px;
+  flex-shrink: 0;
+}
+
+.inspector svg {
+  flex-shrink: 0;
+}
+
+.inspector .inspector-tabs {
+  display: flex;
+  gap: 20px;
+  flex: 0 0 auto;
+  overflow-x: auto;
+  padding: 0 20px;
+  border-bottom: 1px solid var(--inspector-line);
+}
+
+.inspector .inspector-tabs button {
+  padding: 8px 0;
+  flex-shrink: 0;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  border-radius: 0;
+  white-space: nowrap;
+}
+
+.inspector .inspector-tabs button[aria-selected="true"] {
+  border-bottom-color: var(--inspector-accent);
+  color: var(--inspector-accent);
+  font-weight: 600;
+}
+
+.inspector .inspector-count {
+  padding: 1px 5px;
+  border-radius: 4px;
+  background: var(--color-bg-hover);
+  font-size: 10px;
+}
+
+.inspector .inspector-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  min-width: 0;
+  padding: 16px 20px;
+  overflow: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+}
+
+.inspector .inspector-body-message,
+.inspector .inspector-body-context {
+  display: grid;
+  grid-template-columns: minmax(0, 1.7fr) minmax(0, 1fr);
+  align-content: start;
+  gap: 28px;
+}
+
+.inspector .inspector-body section {
+  min-width: 0;
+}
+
+.inspector h3 {
+  margin: 0 0 12px;
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.inspector .inspector-metadata h3,
+.inspector .inspector-context h3 {
+  color: var(--inspector-muted);
+  text-transform: uppercase;
+  font-size: 10px;
+  letter-spacing: 0.8px;
+}
+
+.inspector .inspector-section-heading {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
+.inspector .inspector-section-heading h3 {
+  margin: 0;
+}
+
+.inspector .inspector-section-heading > span,
+.inspector .inspector-hint {
+  font-size: 11px;
+  color: var(--inspector-muted);
+}
+
+.inspector .inspector-hint {
+  margin: 0 0 12px;
+  line-height: 1.6;
+}
+
+.inspector .inspector-code {
+  margin: 0;
+  padding: 12px 14px;
+  border: 1px solid var(--inspector-line);
+  border-radius: 7px;
+  background: var(--ui-code, var(--color-bg-default));
+  color: var(--color-text-primary);
+  font:
+    11px/1.8 var(--font-family-mono),
+    monospace;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  tab-size: 2;
+}
+
+.inspector dl {
+  margin: 0;
+  font-size: 11px;
+}
+
+.inspector dl > div {
+  display: grid;
+  grid-template-columns: minmax(65px, 0.7fr) minmax(0, 1.6fr);
+  gap: 12px;
+  margin-bottom: 10px;
+}
+
+.inspector dt {
+  color: var(--inspector-muted);
+  overflow-wrap: anywhere;
+}
+
+.inspector dd {
+  display: flex;
+  align-items: start;
+  gap: 8px;
+  margin: 0;
+  min-width: 0;
+  overflow-wrap: anywhere;
+  font:
+    11px/1.5 var(--font-family-mono),
+    monospace;
+}
+
+.inspector dd > span,
+.inspector dd > code {
+  flex: 1;
+  min-width: 0;
+  white-space: pre-wrap;
+}
+
+.inspector .inspector-notice {
+  padding: 7px 20px;
+  font-size: 11px;
+  color: var(--inspector-accent);
+  border-bottom: 1px solid var(--inspector-line);
+}
+
+.inspector .inspector-notice[role="alert"] {
+  color: var(--color-error);
+}
+
+.inspector .inspector-empty {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  justify-content: center;
+  flex-direction: column;
+  gap: 10px;
+  padding: 24px;
+  text-align: center;
+  color: var(--inspector-muted);
+  font-size: 12px;
+}
+
+@container inspector (max-width: 620px) {
+  .inspector .inspector-heading {
+    gap: 8px;
+    padding: 14px 16px 10px;
+  }
+
+  .inspector .inspector-logger {
+    flex: 1;
+  }
+
+  .inspector .inspector-timestamp {
+    order: 3;
+    flex-basis: 100%;
+  }
+
+  .inspector .inspector-heading-actions button > span {
+    display: none;
+  }
+
+  .inspector .inspector-tabs {
+    gap: 16px;
+    padding: 0 16px;
+  }
+
+  .inspector .inspector-body {
+    padding: 18px 16px;
+  }
+
+  .inspector .inspector-body-message,
+  .inspector .inspector-body-context {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 24px;
+  }
+}

@@ -93,6 +93,7 @@ export interface ColumnResizeState {
   active: string | null;
   startX: number;
   startW: number;
+  maxW?: number;
 }
 
 /**

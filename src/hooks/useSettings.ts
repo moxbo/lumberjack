@@ -70,6 +70,16 @@ export function useSettings({ t, showAlert, onLoaded }: UseSettingsOptions) {
               "--detail-height",
               `${Math.round(detail)}px`,
             );
+          const detailWidth = loaded.detailWidth;
+          if (
+            typeof detailWidth === "number" &&
+            Number.isFinite(detailWidth) &&
+            detailWidth >= 280
+          )
+            root.style.setProperty(
+              "--detail-width",
+              `${Math.round(detailWidth)}px`,
+            );
           for (const [key, value] of [
             ["--col-ts", loaded.colTs],
             ["--col-lvl", loaded.colLvl],
@@ -203,6 +213,23 @@ export function useSettings({ t, showAlert, onLoaded }: UseSettingsOptions) {
   const setThemeMode = useStableCallback((themeMode: ThemeMode) =>
     setSettings((previous) => ({ ...previous, themeMode })),
   );
+  const setDetailLayout = useStableCallback(
+    async (detailLayout: "bottom" | "right") => {
+      setSettings((previous) => ({ ...previous, detailLayout }));
+      try {
+        const result = await patchSettings({ detailLayout });
+        if (!result?.ok)
+          throw new Error(result?.error || t("status.errorUnknown"));
+      } catch (error) {
+        logger.error("Saving detail layout failed:", error);
+        showAlert(
+          t("errors.saveFailed", {
+            message: error instanceof Error ? error.message : String(error),
+          }),
+        );
+      }
+    },
+  );
   const setHttpTailEmitInitial = useStableCallback(
     (httpTailEmitInitial: boolean) =>
       setSettings((previous) => ({ ...previous, httpTailEmitInitial })),
@@ -238,6 +265,11 @@ export function useSettings({ t, showAlert, onLoaded }: UseSettingsOptions) {
     setFollow,
     themeMode,
     setThemeMode,
+    detailLayout:
+      settings.detailLayout === "right"
+        ? ("right" as const)
+        : ("bottom" as const),
+    setDetailLayout,
     applyThemeMode,
     showSettings,
     settingsTab,

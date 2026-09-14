@@ -31,6 +31,35 @@ Du hast mehrere Wege, Logs zu sehen:
 
 ---
 
+## Arbeitsbereich und Details
+
+Die obere Leiste bündelt **Öffnen**, **Exportieren** und die Suche.
+Weitere Aktionen erreichst du über die Schaltfläche mit den drei Punkten.
+Aktive Filter erscheinen darunter als einzeln entfernbare Chips; die Zähler
+zeigen weiterhin Gesamtmenge, gefilterte und ausgewählte Einträge.
+
+Mit den beiden Layout-Schaltflächen stehen die Details **unten** oder **rechts**.
+Die Wahl wird unabhängig vom Hell-/Dunkelmodus gespeichert. Bei schmalen Fenstern
+erscheinen die Details automatisch unten; beim Verbreitern kehrt das gewählte
+Layout zurück. Ziehe die Trennlinie zum Vergrößern oder fokussiere sie mit Tab
+und verwende die Pfeiltasten.
+
+Die Detailansicht bietet **Nachricht**, **Stacktrace**, **Kontext** und **Rohdaten**.
+Die Rohdatenvorschau zeigt gespeicherte Quelldaten oder die verfügbaren
+Eintragsfelder und ist bei sehr großen Einträgen begrenzt; für vollständige Daten
+verwende den Export. Nach dem Schließen öffnet eine erneute Zeilenauswahl die
+Details wieder.
+
+Die untere Statusleiste zeigt laufende Vorgänge und Verbindungen. Während
+**Logs leeren** läuft, ist ein erneuter Löschauftrag gesperrt.
+Nach Abschluss laufender Schreibvorgänge wechselt Lumberjack auf eine neue,
+leere Datenbank. Die bisherige Datenbank wird anschließend im Hintergrund
+freigegeben; deshalb kann die belegte Plattenkapazität verzögert sinken.
+Schlägt das Vorbereiten der neuen Datenbank fehl, bleibt der bisherige Bestand
+erhalten und die Aufnahme pausiert.
+
+---
+
 ## 🔎 Filtern
 
 Lumberjack hat eine Mini-Filter-Sprache:
@@ -97,4 +126,3 @@ auch das Electron-Menü werden umgestellt.
 | Windows | `%APPDATA%\Lumberjack\logs\main.log` |
 | macOS   | `~/Library/Logs/Lumberjack/main.log` |
 | Linux   | `~/.config/Lumberjack/logs/main.log` |
-

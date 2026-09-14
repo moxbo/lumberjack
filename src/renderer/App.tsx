@@ -111,6 +111,7 @@ import type { VirtualizedLogListHandle } from "./components";
 import { SkeletonLoader } from "./components/SkeletonLoader";
 import { ElasticStatusBar } from "./components/ElasticStatusBar";
 import { FilterProgressStatus } from "./components/FilterProgressStatus";
+import { WorkspaceToolbar, WorkspaceIcon } from "./components/WorkspaceToolbar";
 import { searchMatchPositions } from "./progressiveSearch";
 import { JSX } from "preact/jsx-runtime";
 import { buildDemoEntries, LOGBACK_TCP_SNIPPET } from "./onboardingData";
@@ -286,6 +287,8 @@ export default function App(): JSX.Element {
     getDataGeneration,
     appendEntriesAsync,
     clearEntries,
+    isClearing,
+    clearPhase,
     storageError,
     usesPagedStorage,
     repository,
@@ -444,6 +447,8 @@ export default function App(): JSX.Element {
     setFollow,
     themeMode,
     setThemeMode,
+    detailLayout,
+    setDetailLayout,
     applyThemeMode,
     showSettings,
     settingsTab,
@@ -609,6 +614,20 @@ export default function App(): JSX.Element {
 
   // Busy helper
   const [busy, setBusy] = useState<boolean>(false);
+  const [clearRequested, setClearing] = useState(false);
+  const clearing = clearRequested || isClearing;
+  const clearingRef = useRef(false);
+  const [detailsHidden, setDetailsHidden] = useState(false);
+  const [compactWorkspace, setCompactWorkspace] = useState(
+    () => window.matchMedia("(max-width: 900px)").matches,
+  );
+  useEffect(() => {
+    const query = window.matchMedia("(max-width: 900px)");
+    const update = () => setCompactWorkspace(query.matches);
+    query.addEventListener("change", update);
+    return () => query.removeEventListener("change", update);
+  }, []);
+  const effectiveDetailLayout = compactWorkspace ? "bottom" : detailLayout;
   const [importProgress, setImportProgress] = useState<{
     processedEntries: number;
     totalEntries?: number;
@@ -842,6 +861,7 @@ export default function App(): JSX.Element {
   // Use resize handlers hook for divider and column resize
   const { dividerElRef, resizeHeight, onColMouseDown } = useResizeHandlers({
     layoutRef,
+    detailLayout: effectiveDetailLayout,
   });
 
   // Use Filter Worker for large datasets (>10,000 entries)
@@ -899,6 +919,7 @@ export default function App(): JSX.Element {
       searchMode,
       entryGeneration,
       repository,
+      repository.databaseName,
     ],
   );
   const [submittedQueryKey, setSubmittedQueryKey] = useState<string | null>(
@@ -1244,6 +1265,7 @@ export default function App(): JSX.Element {
   // Stabile Callbacks für LogRow, um unnötige Re-Renders zu vermeiden
   const handleRowSelect = useCallback(
     (idx: number, shift: boolean, meta: boolean) => {
+      setDetailsHidden(false);
       handleManualNavigation();
       try {
         toggleSelectIndex(idx, shift, meta);
@@ -1358,6 +1380,7 @@ export default function App(): JSX.Element {
       setSelectedEntry(null);
       return;
     }
+    setDetailsHidden(false);
     setSelectedEntry(null);
     void repository
       .getPayload(selectedOneIdx)
@@ -2137,6 +2160,7 @@ export default function App(): JSX.Element {
   }, [filteredIdx, repository, showAlert, showTraceTimeline, traceTimelineId]);
 
   function clearLogs() {
+    if (clearingRef.current || isClearing) return;
     // Sicherheitsabfrage über In-App-Dialog (keine native Dialog-Fokus-Bugs).
     if (entries && entries.length > 0) {
       void (async () => {
@@ -2150,12 +2174,18 @@ export default function App(): JSX.Element {
   }
 
   async function doClearLogs() {
-    activeStreamCleanupRef.current?.();
+    if (clearingRef.current || isClearing) return;
+    clearingRef.current = true;
+    setClearing(true);
     try {
+      activeStreamCleanupRef.current?.();
       await clearEntries();
     } catch (error) {
       logger.error("Clearing logs failed:", error);
       return;
+    } finally {
+      clearingRef.current = false;
+      setClearing(false);
     }
     setSelected(new Set());
     resetElasticSearchState();
@@ -2173,6 +2203,19 @@ export default function App(): JSX.Element {
       showAlert(t("errors.resetLoggingStoreFailed"));
     }
     // HTTP/TCP Status wird NICHT zurückgesetzt, da Verbindungen noch aktiv sein können
+  }
+
+  async function openLogs() {
+    if (busy || clearingRef.current || isClearing) return;
+    try {
+      await withBusy(async () => {
+        const paths = await typedOpenFiles();
+        if (paths?.length) await importPaths(paths);
+      });
+    } catch (error) {
+      logger.error("Open file failed:", error);
+      showAlert(error instanceof Error ? error.message : String(error));
+    }
   }
 
   const exportCurrentView = useStableCallback(async () => {
@@ -2408,18 +2451,7 @@ export default function App(): JSX.Element {
     hasActiveHttpTails: httpTail.tails.length > 0,
 
     // File
-    onOpenFile: async () => {
-      try {
-        await withBusy(async () => {
-          const result = await typedOpenFiles();
-          if (result && result.length > 0) {
-            await importPaths(result);
-          }
-        });
-      } catch (err) {
-        logger.error("Open file failed:", err);
-      }
-    },
+    onOpenFile: openLogs,
     onClearLogs: clearLogs,
     onExportLogs: async () => {
       try {
@@ -2600,7 +2632,10 @@ export default function App(): JSX.Element {
   };
 
   return (
-    <div style="height:100%; display:flex; flex-direction:column;">
+    <div
+      className="workspace-app"
+      style="height:100%; display:flex; flex-direction:column;"
+    >
       {/* Skeleton loader während Settings geladen werden */}
       {!settingsLoaded && <SkeletonLoader />}
 
@@ -2716,54 +2751,48 @@ export default function App(): JSX.Element {
 
       {/* Toolbar */}
       <header className="toolbar">
-        <ToolbarCounts
-          countTotal={countTotal}
-          countFiltered={countFiltered}
-          countSelected={countSelected}
-          lastFilterStats={lastFilterStats}
-          entriesLength={entries.length}
-          onClearLogs={onClearLogs}
+        <WorkspaceToolbar
+          detailLayout={detailLayout}
+          onLayoutChange={(layout) => {
+            void setDetailLayout(layout);
+            setDetailsHidden(false);
+          }}
+          onOpen={() => void openLogs()}
+          onExport={() => void exportCurrentView()}
+          onSettings={() => void openSettingsModal("appearance")}
+          onMore={() => setShowCommandPalette(true)}
+          busy={busy || clearing}
+          canExport={countFiltered > 0}
           t={t}
-        />
-        <MarksNavigation
-          countFiltered={countFiltered}
-          markedCount={markedIdx.length}
-          bookmarkItems={bookmarkItems}
-          showBookmarks={showBookmarks}
-          onGotoStart={onGotoListStart}
-          onGotoEnd={onGotoListEnd}
-          onGotoMarked={onGotoMarked}
-          onToggleBookmarks={onToggleBookmarks}
-          onSelectBookmark={onSelectBookmark}
-          t={t}
-        />
-        <SearchBar
-          search={search}
-          setSearch={commitSearch}
-          searchMode={searchMode}
-          setSearchMode={commitSearchMode}
-          showSearchOptions={showSearchOptions}
-          setShowSearchOptions={setShowSearchOptions}
-          fltHistSearch={fltHistSearch}
-          showSearchHist={showSearchHist}
-          setShowSearchHist={setShowSearchHist}
-          searchHistHighlightIdx={searchHistHighlightIdx}
-          setSearchHistHighlightIdx={setSearchHistHighlightIdx}
-          searchPos={searchPos}
-          searchHistRef={searchHistRef}
-          searchPopRef={searchPopRef}
-          searchInputRef={searchInputRef}
-          setShowLoggerHist={setShowLoggerHist}
-          setShowThreadHist={setShowThreadHist}
-          setShowMessageHist={setShowMessageHist}
-          addFilterHistory={addFilterHistory}
-          searchMatchIdx={searchMatchIdx}
-          selectedOneIdx={selectedOneIdx}
-          filteredIdx={filteredIdx}
-          positionOfId={viOfGlobal}
-          gotoSearchMatch={gotoSearchMatch}
-          t={t}
-        />
+        >
+          <SearchBar
+            search={search}
+            setSearch={commitSearch}
+            searchMode={searchMode}
+            setSearchMode={commitSearchMode}
+            showSearchOptions={showSearchOptions}
+            setShowSearchOptions={setShowSearchOptions}
+            fltHistSearch={fltHistSearch}
+            showSearchHist={showSearchHist}
+            setShowSearchHist={setShowSearchHist}
+            searchHistHighlightIdx={searchHistHighlightIdx}
+            setSearchHistHighlightIdx={setSearchHistHighlightIdx}
+            searchPos={searchPos}
+            searchHistRef={searchHistRef}
+            searchPopRef={searchPopRef}
+            searchInputRef={searchInputRef}
+            setShowLoggerHist={setShowLoggerHist}
+            setShowThreadHist={setShowThreadHist}
+            setShowMessageHist={setShowMessageHist}
+            addFilterHistory={addFilterHistory}
+            searchMatchIdx={searchMatchIdx}
+            selectedOneIdx={selectedOneIdx}
+            filteredIdx={filteredIdx}
+            positionOfId={viOfGlobal}
+            gotoSearchMatch={gotoSearchMatch}
+            t={t}
+          />
+        </WorkspaceToolbar>
         {queryActive && !filterWorkerError && (
           <FilterProgressStatus
             key={queryKey}
@@ -2777,26 +2806,17 @@ export default function App(): JSX.Element {
             t={t}
           />
         )}
-        <StatusSection
-          busy={busy}
-          importProgress={importProgress}
-          tcpStatus={tcpStatus}
-          httpStatus={httpStatus}
-          httpTailCount={httpTail.tails.length}
-          httpTailPausedCount={httpTail.pausedCount}
-          httpTailNextPollSeconds={httpTail.nextPollSeconds}
-          httpTailPausedIntervalSeconds={httpTail.pausedIntervalSeconds}
-          nextPollIn={nextPollIn}
-          t={t}
-        />
-        <div className="section" style={{ flex: 1, flexWrap: "wrap" }}>
+        <div className="workspace-filterbar">
           {/* Filter Toggle Button */}
           <button
             className={`filter-toggle-btn ${filtersExpanded ? "expanded" : ""}`}
             onClick={() => setFiltersExpanded(!filtersExpanded)}
             title={t("toolbar.filterToggle")}
+            aria-expanded={filtersExpanded}
+            aria-controls="workspace-filters"
           >
-            <span>️ {t("toolbar.filterLabel")}</span>
+            <WorkspaceIcon name="filter" />
+            <span>{t("toolbar.filterLabel")}</span>
             <span className="chevron">▼</span>
           </button>
           {/* Aktive Filter-Chips inline */}
@@ -2928,20 +2948,67 @@ export default function App(): JSX.Element {
           onLoadMore={esLoadMore}
           t={t}
         />
+        <div className="workspace-infobar">
+          <ToolbarCounts
+            countTotal={countTotal}
+            countFiltered={countFiltered}
+            countSelected={countSelected}
+            lastFilterStats={lastFilterStats}
+            entriesLength={entries.length}
+            clearing={clearing}
+            onClearLogs={onClearLogs}
+            t={t}
+          />
+          <label className="workspace-follow">
+            <input
+              type="checkbox"
+              role="switch"
+              checked={follow}
+              onChange={(event) => {
+                const value = event.currentTarget.checked;
+                setFollow(value);
+                patchSettingsQuiet({ follow: value });
+              }}
+            />
+            {t("workspace.follow")}
+          </label>
+          <MarksNavigation
+            countFiltered={countFiltered}
+            markedCount={markedIdx.length}
+            bookmarkItems={bookmarkItems}
+            showBookmarks={showBookmarks}
+            onGotoStart={onGotoListStart}
+            onGotoEnd={onGotoListEnd}
+            onGotoMarked={onGotoMarked}
+            onToggleBookmarks={onToggleBookmarks}
+            onSelectBookmark={onSelectBookmark}
+            t={t}
+          />
+        </div>
       </header>
 
       {/* Resize-Indikator für Detail-Panel */}
       {resizeHeight !== null && (
         <div
           className="resize-indicator"
-          style={{ bottom: resizeHeight + 20 + "px" }}
+          style={
+            effectiveDetailLayout === "right"
+              ? { right: resizeHeight + 20 + "px", bottom: "40px" }
+              : { bottom: resizeHeight + 20 + "px" }
+          }
         >
           {resizeHeight}px
         </div>
       )}
 
       {/* Hauptlayout: Liste + Overlay-Details */}
-      <div className="layout" ref={layoutRef}>
+      <div
+        className="layout"
+        ref={layoutRef}
+        data-detail-layout={effectiveDetailLayout}
+        data-details-hidden={detailsHidden ? "true" : "false"}
+        aria-busy={clearing}
+      >
         <VirtualizedLogList
           ref={virtualListRef}
           listRef={parentRef}
@@ -3019,18 +3086,7 @@ export default function App(): JSX.Element {
                   <button
                     type="button"
                     className="btn-primary"
-                    onClick={async () => {
-                      try {
-                        await withBusy(async () => {
-                          const paths = await typedOpenFiles();
-                          if (paths && paths.length) {
-                            await importPaths(paths);
-                          }
-                        });
-                      } catch (e) {
-                        logger.error("Open file failed:", e);
-                      }
-                    }}
+                    onClick={() => void openLogs()}
                   >
                     📂 {t("list.actionOpenFile")}
                   </button>
@@ -3109,7 +3165,15 @@ export default function App(): JSX.Element {
         <div className="overlay">
           <div
             className="divider"
-            ref={(el) => (dividerElRef.current = el as any)}
+            ref={(el) => {
+              dividerElRef.current = el;
+            }}
+            role="separator"
+            tabIndex={0}
+            aria-label={t("workspace.resizeDetails")}
+            aria-orientation={
+              effectiveDetailLayout === "right" ? "vertical" : "horizontal"
+            }
           />
           <DetailPanel
             selectedEntry={selectedEntry}
@@ -3118,12 +3182,55 @@ export default function App(): JSX.Element {
             onAddMdcToFilter={addMdcToFilter}
             onFilterByLogger={filterByLogger}
             onFilterByThread={filterByThread}
+            onClose={() => {
+              setDetailsHidden(true);
+              parentRef.current?.focus({ preventScroll: true });
+            }}
+            onError={showAlert}
             markColor={
               selectedEntry ? marksMap[entrySignature(selectedEntry)] : null
             }
           />
         </div>
       </div>
+      <footer className="workspace-statusbar">
+        {clearing ? (
+          <span className="workspace-storage-state" role="status">
+            <span className="spinner" aria-hidden="true" />
+            {t(
+              clearPhase === "waiting"
+                ? "workspace.waitingToClear"
+                : "workspace.clearing",
+            )}
+          </span>
+        ) : storageError ? (
+          <button
+            className="workspace-storage-error"
+            onClick={() => showAlert(storageError.message)}
+          >
+            {t("workspace.storageError")}
+          </button>
+        ) : (
+          <span className="workspace-storage-state">
+            {t("workspace.localSession")}
+          </span>
+        )}
+        <StatusSection
+          busy={busy}
+          importProgress={importProgress}
+          tcpStatus={tcpStatus}
+          httpStatus={httpStatus}
+          httpTailCount={httpTail.tails.length}
+          httpTailPausedCount={httpTail.pausedCount}
+          httpTailNextPollSeconds={httpTail.nextPollSeconds}
+          httpTailPausedIntervalSeconds={httpTail.pausedIntervalSeconds}
+          nextPollIn={nextPollIn}
+          t={t}
+        />
+        <span className="workspace-shortcuts">
+          <kbd>N</kbd> {t("toolbar.nextMatch")}
+        </span>
+      </footer>
 
       {/* Kontextmenü */}
       <ContextMenu

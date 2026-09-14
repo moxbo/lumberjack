@@ -111,6 +111,33 @@ afterEach(() => {
 });
 
 describe("useSettings integration", () => {
+  it("persists the detail layout independently of theme and restores its width", async () => {
+    vi.mocked(getSettings).mockResolvedValue({
+      themeMode: "dark",
+      detailLayout: "right",
+      detailWidth: 480,
+    } as Settings);
+    await mount();
+    expect(render().detailLayout).toBe("right");
+    expect(setProperty).toHaveBeenCalledWith("--detail-width", "480px");
+    await render().setDetailLayout("bottom");
+    expect(patchSettings).toHaveBeenCalledWith({ detailLayout: "bottom" });
+    expect(render().detailLayout).toBe("bottom");
+    expect(render().themeMode).toBe("dark");
+    expect(attributes.get("data-theme")).toBe("dark");
+  });
+
+  it("reports failed layout persistence without changing the theme", async () => {
+    await mount();
+    vi.mocked(patchSettings).mockResolvedValue({
+      ok: false,
+      error: "disk full",
+    });
+    await render().setDetailLayout("right");
+    expect(showAlert).toHaveBeenCalledWith("errors.saveFailed");
+    expect(render().themeMode).toBe("system");
+  });
+
   it("hydrates settings, feature callbacks, layout, permissions and splash exactly once", async () => {
     const settings = {
       isMaximized: false,
