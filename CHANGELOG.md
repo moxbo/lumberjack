@@ -5,6 +5,32 @@ Alle nennenswerten Änderungen an diesem Projekt werden in dieser Datei dokument
 Das Format orientiert sich an [Keep a Changelog](https://keepachangelog.com/de/1.1.0/),
 und dieses Projekt folgt [Semantic Versioning](https://semver.org/lang/de/).
 
+## [1.2.0-beta.4] - 2026-09-14 _(Pre-Release)_
+
+
+### Added
+- Enhance filtering logic and improve metadata handling for performance
+- Implement elastic pagination progress assertions and error handling
+- Add import progress labels for file and entry tracking
+- Add acknowledged HTTP tail backpressure
+- **search**: Show live progress and preserve result navigation
+- **ingestion**: Propagate bounded backpressure and storage failures
+
+
+### Changed
+- **main**: Serialize log delivery and streamed export sessions
+
+
+### Performance
+- Accelerate large log persistence
+- **renderer**: Publish incremental snapshots and stream log exports
+- **search**: Stream cancellable search results in bounded pages
+- **storage**: Enforce decoded payload cache byte budgets
+
+
+### Tests
+- **ingestion**: Cover storage recovery and document resource limits
+
 ## [1.2.0-beta.3] - 2026-08-11 _(Pre-Release)_
 
 
