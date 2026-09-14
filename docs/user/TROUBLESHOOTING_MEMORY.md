@@ -6,6 +6,39 @@
 
 Wenn Lumberjack weiterhin Probleme aufweist, die auf Speicher oder Ressourcen zurückzuführen sein könnten, hilft dieser Leitfaden bei der Diagnose und Behebung.
 
+## Aufnahme nach einem Speicherfehler angehalten
+
+Bei einem IndexedDB-Schreibfehler, etwa wegen erschöpfter Speicherquote, hält
+Lumberjack die weitere Aufnahme an. Der vorhandene Datenbestand wird **nicht**
+automatisch vollständig in den Arbeitsspeicher kopiert. Auch ohne verfügbares
+IndexedDB startet kein unbegrenzter RAM-Ersatzbetrieb.
+
+Solange Lesen noch möglich ist, können bereits gespeicherte Einträge weiterhin
+angesehen und exportiert werden. Exportieren Sie benötigte Daten zuerst, beheben
+Sie das Speicherproblem und verwenden Sie anschließend **Logs leeren**, bevor Sie
+die Quelle erneut starten oder den Import wiederholen. Leeren löscht den
+bisherigen Datenbestand; ein fehlgeschlagener Löschvorgang gibt die Aufnahme nicht
+wieder frei. Ein Importfehler bedeutet nicht, dass das gesamte angeforderte
+Datenpaket gespeichert wurde.
+
+Das Speicherbudget des Payload-Caches begrenzt aufbewahrte, dekomprimierte
+Log-Inhalte, nicht den gesamten Prozessspeicher. Sichtbare Einträge, Metadaten,
+Suchergebnisse und laufende Verarbeitung benötigen zusätzlichen Speicher.
+
+## Überlast und begrenzte Eingabepakete
+
+Netzwerk- und Streaming-Quellen warten auf die Verarbeitung ihrer Pakete.
+Kapazitätsüberschreitungen, zu große Eingaben oder ausbleibende Bestätigungen
+werden als Fehler gemeldet; betroffene Quellen stoppen statt Daten still zu
+verwerfen oder unkontrolliert zu wiederholen. TCP-/Streaming-Zeilen sind auf
+1 MiB begrenzt. Starten Sie eine gestoppte Quelle erst nach Behebung der Ursache
+neu und berücksichtigen Sie bereits gespeicherte Teilmengen: Raw-TCP liefert
+keine Exactly-once-Garantie.
+
+Große JSON-Gesamtdokumente und ZIP-Importe verwenden weiterhin Vollparser. Für
+große Bestände ist deshalb der zeilenweise Streaming-Import, etwa NDJSON, zu
+bevorzugen; die Cachegrenze allein macht nicht jedes Dateiformat speicherkonstant.
+
 ## Symptome von Speicherproblemen
 
 ### 1. Anwendung wird langsamer über Zeit
@@ -400,6 +433,35 @@ Die folgenden Fixes sind implementiert:
 ## Overview
 
 If Lumberjack continues to have issues that could be related to memory or resources, this guide will help diagnose and resolve them.
+
+## Ingestion paused after a storage failure
+
+An IndexedDB write failure, such as an exhausted storage quota, pauses further
+ingestion. Lumberjack does **not** copy the entire existing dataset into RAM.
+Unavailable IndexedDB does not enable an unlimited in-memory fallback either.
+
+Previously persisted entries remain readable and exportable while database reads
+still work. Export required data first, resolve the storage problem, then use
+**Clear Logs** before restarting the source or repeating the import. Clearing
+deletes the existing dataset; a failed clear does not resume ingestion. An import
+error does not mean the entire requested batch was persisted.
+
+The payload-cache budget limits retained, decompressed log contents, not total
+process memory. Visible entries, metadata, search results and in-flight processing
+need additional memory.
+
+## Overload and bounded input batches
+
+Network and streaming sources wait for their batches to be consumed. Capacity
+limits, oversized inputs and acknowledgement timeouts are reported as errors;
+affected sources stop rather than silently dropping data or replaying it
+uncontrollably. TCP/streaming lines are limited to 1 MiB. Restart a stopped source
+only after resolving the cause and account for already persisted partial input:
+raw TCP does not provide exactly-once delivery.
+
+Large whole-document JSON and ZIP imports still use full parsers. Prefer
+line-oriented streaming import, such as NDJSON, for large datasets; the cache
+budget alone does not make every file format constant-memory.
 
 ## Symptoms of Memory Problems
 
