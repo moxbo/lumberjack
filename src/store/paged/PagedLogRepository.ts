@@ -72,7 +72,11 @@ function transactionDone(
 }
 
 export class PagedLogRepository {
-  readonly databaseName: string;
+  private activeDatabaseName: string;
+  private readonly baseDatabaseName: string;
+  private readonly retiredDatabases = new Set<string>();
+  private readonly deletions = new Map<string, Promise<void>>();
+  private clearSequence = 0;
   private db: IDBDatabase | null = null;
   private initPromise: Promise<IDBDatabase> | null = null;
   private nextId = 1;
@@ -87,7 +91,8 @@ export class PagedLogRepository {
 
   constructor(options: PagedLogRepositoryOptions = {}) {
     this.factory = options.indexedDbFactory;
-    this.databaseName = options.databaseName ?? PAGED_DB_NAME;
+    this.baseDatabaseName = options.databaseName ?? PAGED_DB_NAME;
+    this.activeDatabaseName = this.baseDatabaseName;
     this.payloadCache = new PageLruCache(
       (firstId, lastId) => this.loadPayloadPage(firstId, lastId),
       {
@@ -96,6 +101,10 @@ export class PagedLogRepository {
         maxBytes: options.maxCachedBytes,
       },
     );
+  }
+
+  get databaseName(): string {
+    return this.activeDatabaseName;
   }
 
   isAvailable(): boolean {
@@ -304,40 +313,85 @@ export class PagedLogRepository {
   }
 
   async clear(): Promise<void> {
-    this.payloadCache.invalidate();
     await this.runMutation(async () => {
       const db = await this.getDb();
-      const transaction = db.transaction(
-        [PAYLOAD_STORE_NAME, PROJECTION_STORE_NAME],
-        "readwrite",
-      );
-      let requestError: unknown;
-      const payloadRequest = transaction
-        .objectStore(PAYLOAD_STORE_NAME)
-        .clear();
-      payloadRequest.onerror = () => {
-        requestError = payloadRequest.error;
-      };
-      const projectionRequest = transaction
-        .objectStore(PROJECTION_STORE_NAME)
-        .clear();
-      projectionRequest.onerror = () => {
-        requestError = projectionRequest.error;
-      };
+      const generation = this.lifecycleGeneration;
+      const replacementName = `${this.baseDatabaseName}-generation-${Date.now()}-${++this.clearSequence}-${Math.random().toString(36).slice(2)}`;
+      let replacement: IDBDatabase;
       try {
-        await transactionDone(
-          transaction,
-          () => requestError ?? transaction.error,
-        );
+        // Clearing individual stores walks their records in Chromium. Prepare a
+        // committed empty database instead, keeping the current one on failure.
+        replacement = await openPagedDatabase(this.factory, replacementName);
       } catch (error) {
+        this.retiredDatabases.add(replacementName);
+        this.reclaimRetiredDatabases();
         throw toPagedWriteError(error);
       }
+      if (generation !== this.lifecycleGeneration) {
+        replacement.close();
+        this.retiredDatabases.add(replacementName);
+        this.reclaimRetiredDatabases();
+        throw new Error(
+          "Log clear cancelled because the repository was closed",
+        );
+      }
+      const previousName = this.databaseName;
+      this.lifecycleGeneration++;
+      this.activeDatabaseName = replacementName;
+      this.db = replacement;
+      this.initPromise = Promise.resolve(replacement);
       this.nextId = 1;
       this.signatureKeys.clear();
       this.signaturesLoaded = true;
       this.signatureLoadPromise = null;
       this.payloadCache.invalidate();
+      db.close();
+      this.retiredDatabases.add(previousName);
+      this.reclaimRetiredDatabases();
     });
+  }
+
+  private deleteDatabase(name: string): Promise<void> {
+    const existing = this.deletions.get(name);
+    if (existing) return existing;
+    const deletion = new Promise<void>((resolve, reject) => {
+      const factory =
+        this.factory ?? (isIndexedDbAvailable() ? indexedDB : undefined);
+      if (!factory) throw new IndexedDbUnavailableError();
+      const request = factory.deleteDatabase(name);
+      request.onsuccess = () => {
+        this.retiredDatabases.delete(name);
+        resolve();
+      };
+      request.onerror = () =>
+        reject(
+          new IndexedDbUnavailableError("Unable to delete paged log database", {
+            cause: request.error,
+          }),
+        );
+      // A blocked delete cannot be cancelled. Keep tracking it until all
+      // readers close instead of treating a still-pending deletion as failed.
+    });
+    this.deletions.set(name, deletion);
+    void deletion.then(
+      () => this.deletions.delete(name),
+      () => this.deletions.delete(name),
+    );
+    return deletion;
+  }
+
+  private reclaimRetiredDatabases(): void {
+    for (const name of this.retiredDatabases) {
+      // Failed reclamation is retried on the next clear/destroy and by session
+      // cleanup; it must never roll back an already committed dataset switch.
+      void this.deleteDatabase(name).catch((error) => {
+        console.warn(
+          "Reclaiming retired log storage failed; will retry:",
+          name,
+          error,
+        );
+      });
+    }
   }
 
   close(): void {
@@ -352,26 +406,10 @@ export class PagedLogRepository {
   async destroy(): Promise<void> {
     await this.runMutation(async () => {
       this.close();
-      const factory =
-        this.factory ?? (isIndexedDbAvailable() ? indexedDB : undefined);
-      if (!factory) throw new IndexedDbUnavailableError();
-      await new Promise<void>((resolve, reject) => {
-        const request = factory.deleteDatabase(this.databaseName);
-        request.onsuccess = () => resolve();
-        request.onerror = () =>
-          reject(
-            new IndexedDbUnavailableError(
-              "Unable to delete paged log database",
-              { cause: request.error },
-            ),
-          );
-        request.onblocked = () =>
-          reject(
-            new IndexedDbUnavailableError(
-              "Deleting paged log database is blocked by another connection",
-            ),
-          );
-      });
+      this.retiredDatabases.add(this.databaseName);
+      await Promise.all(
+        [...this.retiredDatabases].map((name) => this.deleteDatabase(name)),
+      );
       this.signatureKeys.clear();
       this.signaturesLoaded = false;
       this.signatureLoadPromise = null;
@@ -464,6 +502,7 @@ export class PagedLogRepository {
     if (this.signaturesLoaded) return;
     if (this.signatureLoadPromise) return this.signatureLoadPromise;
 
+    const generation = this.lifecycleGeneration;
     const load = (async () => {
       const db = await this.getDb();
       const transaction = db.transaction(PROJECTION_STORE_NAME, "readonly");
@@ -474,6 +513,7 @@ export class PagedLogRepository {
       request.onsuccess = () => {
         const cursor = request.result;
         if (!cursor) return;
+        if (generation !== this.lifecycleGeneration) return;
         const projection = cursor.value as ProjectionRecord;
         this.signatureKeys.add(`${projection.source}\0${projection.signature}`);
         cursor.continue();
@@ -485,7 +525,7 @@ export class PagedLogRepository {
         transaction,
         () => requestError ?? transaction.error,
       );
-      this.signaturesLoaded = true;
+      if (generation === this.lifecycleGeneration) this.signaturesLoaded = true;
     })();
     this.signatureLoadPromise = load;
     try {

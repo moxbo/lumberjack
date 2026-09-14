@@ -1,6 +1,8 @@
+/* eslint-disable @typescript-eslint/unbound-method -- Mock methods are inspected, never called unbound. */
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { DEFAULT_MAX_CACHED_BYTES, estimatePayloadBytes } from "../cache";
 import { PAYLOAD_STORE_NAME, PROJECTION_STORE_NAME } from "../indexedDb";
+import * as indexedDb from "../indexedDb";
 import {
   PagedLogRepository,
   type PagedLogRepositoryOptions,
@@ -27,69 +29,91 @@ function fixture(
       new Map(records.map((item) => [item.projection.id, item.projection])),
     ],
   ]);
-  const transaction = vi.fn(() => {
-    let pending = 0;
-    const tx = {
-      oncomplete: null as (() => void) | null,
-      objectStore(name: string) {
-        const store = stores.get(name)!;
-        const finish = () => {
-          if (--pending === 0) tx.oncomplete?.();
-        };
-        const write = (operation: () => void) => {
-          pending++;
-          queueMicrotask(() => {
-            operation();
-            finish();
-          });
-          return {};
-        };
-        return {
-          put: (record: { id: number }) =>
-            write(() => store.set(record.id, record)),
-          clear: () => write(() => store.clear()),
-          openCursor: (range: { lower: number; upper: number }) => {
+  const makeTransaction = (stores: Map<string, Map<number, { id: number }>>) =>
+    vi.fn(() => {
+      let pending = 0;
+      const tx = {
+        oncomplete: null as (() => void) | null,
+        objectStore(name: string) {
+          const store = stores.get(name)!;
+          const finish = () => {
+            if (--pending === 0) tx.oncomplete?.();
+          };
+          const write = (operation: () => void) => {
             pending++;
-            const entries = [...store.values()].filter(
-              (record) => record.id >= range.lower && record.id <= range.upper,
-            );
-            let index = 0;
-            const request = {
-              result: null as {
-                value: { id: number };
-                continue: () => void;
-              } | null,
-              onsuccess: null as (() => void) | null,
-            };
-            const advance = () => {
-              const value = entries[index++];
-              request.result = value
-                ? {
-                    value,
-                    continue: () => queueMicrotask(advance),
-                  }
-                : null;
-              request.onsuccess?.();
-              if (!value) finish();
-            };
-            queueMicrotask(advance);
-            return request;
-          },
-        };
-      },
-    };
-    return tx;
+            queueMicrotask(() => {
+              operation();
+              finish();
+            });
+            return {};
+          };
+          return {
+            put: (record: { id: number }) =>
+              write(() => store.set(record.id, record)),
+            clear: () => write(() => store.clear()),
+            openCursor: (range: { lower: number; upper: number }) => {
+              pending++;
+              const entries = [...store.values()].filter(
+                (record) =>
+                  record.id >= range.lower && record.id <= range.upper,
+              );
+              let index = 0;
+              const request = {
+                result: null as {
+                  value: { id: number };
+                  continue: () => void;
+                } | null,
+                onsuccess: null as (() => void) | null,
+              };
+              const advance = () => {
+                const value = entries[index++];
+                request.result = value
+                  ? {
+                      value,
+                      continue: () => queueMicrotask(advance),
+                    }
+                  : null;
+                request.onsuccess?.();
+                if (!value) finish();
+              };
+              queueMicrotask(advance);
+              return request;
+            },
+          };
+        },
+      };
+      return tx;
+    });
+  const transaction = makeTransaction(stores);
+  const db = { transaction, close: vi.fn() } as unknown as IDBDatabase;
+  const factory = {
+    deleteDatabase: vi.fn(() => {
+      const request = { onsuccess: null as (() => void) | null };
+      queueMicrotask(() => request.onsuccess?.());
+      return request;
+    }),
+  } as unknown as IDBFactory;
+  const repository = new PagedLogRepository({
+    indexedDbFactory: factory,
+    ...options,
   });
-  const db = { transaction } as unknown as IDBDatabase;
-  const repository = new PagedLogRepository(options);
-  vi.spyOn(
-    repository as unknown as { getDb(): Promise<IDBDatabase> },
-    "getDb",
-  ).mockResolvedValue(db);
+  (repository as unknown as { db: IDBDatabase }).db = db;
+  const open = vi.spyOn(indexedDb, "openPagedDatabase").mockImplementation(
+    async () =>
+      ({
+        close: vi.fn(),
+        transaction: makeTransaction(
+          new Map([
+            [PAYLOAD_STORE_NAME, new Map()],
+            [PROJECTION_STORE_NAME, new Map()],
+          ]),
+        ),
+      }) as unknown as IDBDatabase,
+  );
   vi.stubGlobal("IDBKeyRange", {
     bound: (lower: number, upper: number) => ({ lower, upper }),
   });
-  return { repository, transaction };
+  return { repository, transaction, open, factory, db };
 }
 
 afterEach(() => {
@@ -98,6 +122,96 @@ afterEach(() => {
 });
 
 describe("PagedLogRepository byte cache", () => {
+  it("keeps the original database and readable cached records when replacement preparation fails", async () => {
+    const { repository, open, db, transaction } = fixture(
+      [
+        preparePagedRecord(
+          { timestamp: null, message: "retained", source: "test" },
+          1,
+        ),
+      ],
+      {},
+    );
+    const originalName = repository.databaseName;
+    await repository.getPayload(1);
+    const stats = repository.getCacheStats();
+    open.mockRejectedValueOnce(new Error("replacement failed"));
+    await expect(repository.clear()).rejects.toThrow("replacement failed");
+    expect(repository.databaseName).toBe(originalName);
+    expect(db.close).not.toHaveBeenCalled();
+    await expect(repository.getPayload(1)).resolves.toMatchObject({
+      message: "retained",
+    });
+    expect(repository.getCacheStats().residentBytes).toBe(stats.residentBytes);
+    expect(transaction).toHaveBeenCalledTimes(1);
+  });
+
+  it("switches only after preparation commits and serializes writes into the new dense-ID dataset", async () => {
+    const { repository, open, db } = fixture([], {});
+    await repository.putMany([
+      { timestamp: null, message: "old", source: "test" },
+    ]);
+    const originalName = repository.databaseName;
+    const prepare = open.getMockImplementation()!;
+    let release!: (db: IDBDatabase) => void;
+    open.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          release = resolve;
+        }),
+    );
+    const clear = repository.clear();
+    await vi.waitFor(() => expect(release).toBeTypeOf("function"));
+    expect(repository.databaseName).toBe(originalName);
+    expect(db.close).not.toHaveBeenCalled();
+    const write = repository.putMany([
+      { timestamp: null, message: "new", source: "test" },
+    ]);
+    release(await prepare());
+    await clear;
+    expect(repository.databaseName).not.toBe(originalName);
+    await expect(write).resolves.toEqual([1]);
+    await expect(repository.getPayload(1)).resolves.toMatchObject({
+      message: "new",
+    });
+    expect(db.close).toHaveBeenCalledOnce();
+  });
+
+  it("does not turn a committed clear into failure when retired database cleanup fails", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const { repository, factory } = fixture([], {});
+    vi.mocked(factory.deleteDatabase).mockImplementationOnce(() => {
+      const request = {
+        onerror: null as (() => void) | null,
+        error: new Error("cleanup failed"),
+      };
+      queueMicrotask(() => request.onerror?.());
+      return request as unknown as IDBOpenDBRequest;
+    });
+    const originalName = repository.databaseName;
+    await expect(repository.clear()).resolves.toBeUndefined();
+    expect(repository.databaseName).not.toBe(originalName);
+    await vi.waitFor(() =>
+      expect(warn).toHaveBeenCalledWith(
+        "Reclaiming retired log storage failed; will retry:",
+        originalName,
+        expect.any(Error),
+      ),
+    );
+    await repository.putMany([
+      { timestamp: null, message: "new", source: "test" },
+    ]);
+    await expect(repository.getPayload(1)).resolves.toMatchObject({
+      message: "new",
+    });
+    await repository.destroy();
+    expect(
+      vi
+        .mocked(factory.deleteDatabase)
+        .mock.calls.filter(([name]) => name === originalName),
+    ).toHaveLength(2);
+  });
+
   it("exposes default and injected byte limits without opening storage", () => {
     expect(new PagedLogRepository().getCacheStats()).toMatchObject({
       maxBytes: DEFAULT_MAX_CACHED_BYTES,

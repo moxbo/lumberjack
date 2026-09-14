@@ -74,6 +74,9 @@ export function useEntryManagement({
     metadataStoreRef.current.publish(),
   );
   const [storageError, setStorageError] = useState<Error | null>(null);
+  const [clearPhase, setClearPhase] = useState<"waiting" | "clearing" | null>(
+    null,
+  );
   const initialUsesPagedStorage = pagedLogRepository.isAvailable();
   const usesPagedStorage = true;
   const marksMapRef = useRef(marksMap);
@@ -476,6 +479,7 @@ export function useEntryManagement({
 
   const clearEntries = useCallback(() => {
     const generation = ++generationRef.current;
+    setClearPhase("waiting");
     const clearingError = new Error(
       "Log ingestion is paused while storage is cleared",
     );
@@ -496,6 +500,7 @@ export function useEntryManagement({
         }
         if (!repository.isAvailable())
           throw new Error("IndexedDB is unavailable");
+        setClearPhase("clearing");
         return repository.clear();
       })
       .then(() => {
@@ -525,6 +530,11 @@ export function useEntryManagement({
           publishMetadata();
         }
         throw pauseStorage(error, generation);
+      })
+      .finally(() => {
+        if (mountedRef.current && generation === generationRef.current) {
+          setClearPhase(null);
+        }
       });
     operationTailRef.current = operation.catch(() => undefined);
     return operation;
@@ -548,6 +558,8 @@ export function useEntryManagement({
     appendEntries,
     appendEntriesAsync,
     clearEntries,
+    clearPhase,
+    isClearing: clearPhase !== null,
     storageError,
     usesPagedStorage,
     repository: repositoryRef.current,

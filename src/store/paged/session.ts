@@ -110,16 +110,18 @@ export function startPagedSessionLifecycle(
             const sessions = readRegistry();
             const now = Date.now();
             let registryChanged = false;
+            const failedSessions = new Set<string>();
             for (const database of databases) {
               const name = database.name;
+              const sessionName = name?.split("-generation-")[0];
               if (
                 !name ||
                 !name.startsWith(`${PAGED_DB_NAME}-`) ||
-                name === PAGED_SESSION_DATABASE_NAME
+                sessionName === PAGED_SESSION_DATABASE_NAME
               ) {
                 continue;
               }
-              const lastHeartbeat = sessions[name];
+              const lastHeartbeat = sessions[sessionName!];
               if (
                 lastHeartbeat === undefined ||
                 now - lastHeartbeat <= STALE_SESSION_MS
@@ -128,10 +130,19 @@ export function startPagedSessionLifecycle(
               }
               try {
                 await deletePagedDatabase(name);
-                delete sessions[name];
                 registryChanged = true;
               } catch (error) {
+                failedSessions.add(sessionName!);
                 onError(error);
+              }
+            }
+            for (const [name, lastHeartbeat] of Object.entries(sessions)) {
+              if (
+                now - lastHeartbeat > STALE_SESSION_MS &&
+                !failedSessions.has(name)
+              ) {
+                delete sessions[name];
+                registryChanged = true;
               }
             }
             if (registryChanged) writeRegistry(sessions);
@@ -147,12 +158,7 @@ export function startPagedSessionLifecycle(
 
   return () => {
     window.clearInterval(timer);
-    try {
-      void updateSessionRegistry((sessions) => {
-        delete sessions[PAGED_SESSION_DATABASE_NAME];
-      }).catch(onError);
-    } catch (error) {
-      onError(error);
-    }
+    // Keep the last heartbeat so the next session can reclaim every generation
+    // if shutdown interrupts database deletion. Unknown sessions stay untouched.
   };
 }

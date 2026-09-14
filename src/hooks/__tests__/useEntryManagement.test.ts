@@ -215,6 +215,8 @@ describe("getMetadataPublishDelay", () => {
       await started;
       const generation = hook.getDataGeneration();
       const clear = hook.clearEntries();
+      expect(render().clearPhase).toBe("waiting");
+      expect(render().isClearing).toBe(true);
       expect(hook.getDataGeneration()).toBe(generation + 1);
       expect(await append).toBeInstanceOf(Error);
       await expect(hook.appendEntriesAsync([input(99)])).rejects.toThrow(
@@ -222,6 +224,7 @@ describe("getMetadataPublishDelay", () => {
       );
       releaseWrite();
       await clear;
+      expect(render().isClearing).toBe(false);
       await vi.advanceTimersByTimeAsync(100);
       hook = render();
       expect(hook.entries.length).toBe(0);
@@ -249,12 +252,14 @@ describe("getMetadataPublishDelay", () => {
       });
       const first = hook.clearEntries().catch((error: unknown) => error);
       await entered;
+      expect(render().clearPhase).toBe("clearing");
       const second = hook.clearEntries();
       release();
       expect(await first).toMatchObject({
         message: expect.stringContaining("cancelled"),
       });
       await second;
+      expect(render().clearPhase).toBeNull();
       await hook.appendEntriesAsync([input(2)]);
       expect([...render().entries.ids]).toEqual([1]);
     });
@@ -268,6 +273,7 @@ describe("getMetadataPublishDelay", () => {
         new Error("clear failed"),
       );
       await expect(hook.clearEntries()).rejects.toThrow("clear failed");
+      expect(render().isClearing).toBe(false);
       await expect(hook.appendEntriesAsync([input(2)])).rejects.toThrow(
         "clear failed",
       );
