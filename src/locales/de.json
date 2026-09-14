@@ -5,8 +5,7 @@
   "searchProgress": {
     "label": "Suchfortschritt",
     "starting": "Suche wird gestartet …",
-    "running": "{{processed}} / {{total}} durchsucht · {{matches}} Treffer",
-    "complete": "{{total}} durchsucht · {{matches}} Treffer"
+    "running": "{{processed}} / {{total}} durchsucht"
   },
   "status": {
     "tcpActive": "TCP: Port {{port}} aktiv",

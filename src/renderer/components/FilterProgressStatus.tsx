@@ -9,12 +9,12 @@ export function filterProgressLabel(
   locale: string,
   t: Translate,
 ): string {
-  if (!progress) return running ? t("searchProgress.starting") : "";
+  if (!running) return "";
+  if (!progress) return t("searchProgress.starting");
   const number = new Intl.NumberFormat(locale);
-  return t(running ? "searchProgress.running" : "searchProgress.complete", {
+  return t("searchProgress.running", {
     processed: number.format(progress.processed),
     total: number.format(progress.total),
-    matches: number.format(progress.matches),
   });
 }
 
@@ -41,17 +41,17 @@ export function FilterProgressStatus({
     return () => clearInterval(timer);
   }, [running, locale]);
 
+  if (!running) return null;
+
   return (
     <div className="filter-progress" style={{ fontSize: "11px" }}>
       <span aria-hidden="true">{label}</span>
-      {running && (
-        <progress
-          aria-label={t("searchProgress.label")}
-          max={Math.max(1, progress?.total ?? 1)}
-          value={progress?.processed ?? 0}
-          style={{ width: "70px", marginLeft: "6px" }}
-        />
-      )}
+      <progress
+        aria-label={t("searchProgress.label")}
+        max={Math.max(1, progress?.total ?? 1)}
+        value={progress?.processed ?? 0}
+        style={{ width: "70px", marginLeft: "6px" }}
+      />
       <span
         role="status"
         aria-live="polite"
@@ -68,7 +68,7 @@ export function FilterProgressStatus({
           border: 0,
         }}
       >
-        {running ? announcement : label}
+        {announcement}
       </span>
     </div>
   );

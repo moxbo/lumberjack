@@ -1,7 +1,16 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import de from "../../locales/de.json";
 import en from "../../locales/en.json";
-import { filterProgressLabel } from "./FilterProgressStatus";
+import {
+  FilterProgressStatus,
+  filterProgressLabel,
+} from "./FilterProgressStatus";
+
+vi.mock("preact/hooks", () => ({
+  useRef: <T>(value: T) => ({ current: value }),
+  useState: <T>(value: T) => [value, vi.fn()],
+  useEffect: vi.fn(),
+}));
 
 function translator(messages: typeof de | typeof en) {
   return (key: string, params: Record<string, string> = {}) => {
@@ -17,12 +26,12 @@ describe("filter progress labels", () => {
   const progress = { processed: 120_000, total: 1_000_000, matches: 347 };
   it("formats live German counts without declaring the search finished", () => {
     expect(filterProgressLabel(progress, true, "de", translator(de))).toBe(
-      "120.000 / 1.000.000 durchsucht · 347 Treffer",
+      "120.000 / 1.000.000 durchsucht",
     );
   });
   it("formats live English counts", () => {
     expect(filterProgressLabel(progress, true, "en", translator(en))).toBe(
-      "120,000 / 1,000,000 searched · 347 matches",
+      "120,000 / 1,000,000 searched",
     );
   });
   it("announces starting rather than no matches before the first page", () => {
@@ -31,7 +40,7 @@ describe("filter progress labels", () => {
     );
     expect(filterProgressLabel(null, false, "de", translator(de))).toBe("");
   });
-  it("reports the final match count after completion", () => {
+  it("hides the entire status after completion instead of repeating counts", () => {
     expect(
       filterProgressLabel(
         { ...progress, processed: progress.total },
@@ -39,6 +48,14 @@ describe("filter progress labels", () => {
         "en",
         translator(en),
       ),
-    ).toBe("1,000,000 searched · 347 matches");
+    ).toBe("");
+    expect(
+      FilterProgressStatus({
+        progress,
+        running: false,
+        locale: "en",
+        t: translator(en),
+      }),
+    ).toBeNull();
   });
 });

@@ -55,6 +55,9 @@ view; it does not turn navigation search into a message filter. App maps match
 IDs to current visual positions because partial worker positions can differ
 from the full list. New matches preserve stable-ID selection and the viewport
 anchor, and manual interaction cancels any pending automatic navigation.
+The progress indicator shows processed/total counts only while a scan is running.
+Match counts remain in the existing navigation counter; filtered row counts
+remain in the toolbar rather than being repeated in the progress indicator.
 
 ## Storage failures
 

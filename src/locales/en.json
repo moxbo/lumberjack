@@ -5,8 +5,7 @@
   "searchProgress": {
     "label": "Search progress",
     "starting": "Starting search …",
-    "running": "{{processed}} / {{total}} searched · {{matches}} matches",
-    "complete": "{{total}} searched · {{matches}} matches"
+    "running": "{{processed}} / {{total}} searched"
   },
   "status": {
     "tcpActive": "TCP: Port {{port}} active",
