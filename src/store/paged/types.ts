@@ -65,11 +65,19 @@ export interface PayloadCacheStats {
   loads: number;
   coalescedLoads: number;
   evictions: number;
+  /** Estimated bytes removed by LRU/byte-budget eviction, not invalidation. */
+  evictedBytes: number;
+  /** Pages delivered without admission (oversized or unmeasurable). */
+  oversizedPages: number;
   residentPages: number;
   residentPayloads: number;
   maxResidentPayloads: number;
   pageSize: number;
   maxPages: number;
+  /** Estimated retained decoded heap, excluding active loads and UI/export owners. */
+  residentBytes: number;
+  maxBytes: number;
+  bytesEstimated: true;
 }
 
 export interface PagedRepositoryStatus {

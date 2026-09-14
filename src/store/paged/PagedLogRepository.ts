@@ -30,6 +30,8 @@ import {
 export interface PagedLogRepositoryOptions {
   pageSize?: number;
   maxCachedPages?: number;
+  /** Estimated decoded cache budget (default 64 MiB); excludes UI/export results. */
+  maxCachedBytes?: number;
   indexedDbFactory?: IDBFactory;
   databaseName?: string;
 }
@@ -91,6 +93,7 @@ export class PagedLogRepository {
       {
         pageSize: options.pageSize,
         maxPages: options.maxCachedPages,
+        maxBytes: options.maxCachedBytes,
       },
     );
   }
@@ -552,7 +555,12 @@ export class PagedLogRepository {
         }
       },
     );
-    await Promise.all(workers);
+    // Do not release cache load admission on an early decoder failure while
+    // sibling workers are still retaining/decoding this page.
+    const results = await Promise.allSettled(workers);
+    for (const result of results) {
+      if (result.status === "rejected") throw result.reason;
+    }
     return output;
   }
 

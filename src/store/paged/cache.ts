@@ -1,4 +1,9 @@
+import { estimatePayloadBytes } from "../../utils/estimatePayloadBytes";
 import type { PayloadCacheStats } from "./types";
+
+export { estimatePayloadBytes } from "../../utils/estimatePayloadBytes";
+
+export const DEFAULT_MAX_CACHED_BYTES = 64 * 1024 * 1024;
 
 export type PageLoader<T> = (
   firstId: number,
@@ -11,14 +16,30 @@ interface CacheCounters {
   loads: number;
   coalescedLoads: number;
   evictions: number;
+  evictedBytes: number;
+  oversizedPages: number;
 }
 
+interface CachedPage<T> {
+  values: ReadonlyMap<number, T>;
+  bytes: number;
+}
+
+/**
+ * Limits retained decoded pages, not the application's total heap. UI payloads,
+ * getMany/export results and caller-held references are outside this budget and
+ * must not be mutated while cached. At most one page loader/decode runs at once;
+ * that transient page may exceed maxBytes but is still delivered to its callers.
+ */
 export class PageLruCache<T> {
   readonly pageSize: number;
   readonly maxPages: number;
+  readonly maxBytes: number;
 
   private generation = 0;
-  private readonly pages = new Map<number, ReadonlyMap<number, T>>();
+  private residentBytes = 0;
+  private loadTail: Promise<void> = Promise.resolve();
+  private readonly pages = new Map<number, CachedPage<T>>();
   private readonly pending = new Map<string, Promise<ReadonlyMap<number, T>>>();
   private readonly counters: CacheCounters = {
     hits: 0,
@@ -26,25 +47,32 @@ export class PageLruCache<T> {
     loads: 0,
     coalescedLoads: 0,
     evictions: 0,
+    evictedBytes: 0,
+    oversizedPages: 0,
   };
 
   constructor(
     private readonly loader: PageLoader<T>,
-    options: { pageSize?: number; maxPages?: number } = {},
+    options: { pageSize?: number; maxPages?: number; maxBytes?: number } = {},
   ) {
     this.pageSize = options.pageSize ?? 256;
     this.maxPages = options.maxPages ?? 32;
+    this.maxBytes = options.maxBytes ?? DEFAULT_MAX_CACHED_BYTES;
     if (!Number.isSafeInteger(this.pageSize) || this.pageSize < 1) {
       throw new RangeError("pageSize must be a positive integer");
     }
     if (!Number.isSafeInteger(this.maxPages) || this.maxPages < 1) {
       throw new RangeError("maxPages must be a positive integer");
     }
+    if (!Number.isSafeInteger(this.maxBytes) || this.maxBytes < 0) {
+      throw new RangeError("maxBytes must be a non-negative safe integer");
+    }
   }
 
   invalidate(): void {
     this.generation++;
     this.pages.clear();
+    this.residentBytes = 0;
     this.pending.clear();
   }
 
@@ -52,7 +80,7 @@ export class PageLruCache<T> {
     this.generation++;
     this.pending.clear();
     for (const id of ids) {
-      this.pages.delete(this.pageNumber(id));
+      this.removePage(this.pageNumber(id));
     }
   }
 
@@ -82,7 +110,8 @@ export class PageLruCache<T> {
 
   getStats(): PayloadCacheStats {
     let residentPayloads = 0;
-    for (const page of this.pages.values()) residentPayloads += page.size;
+    for (const page of this.pages.values())
+      residentPayloads += page.values.size;
     return {
       ...this.counters,
       residentPages: this.pages.size,
@@ -90,6 +119,9 @@ export class PageLruCache<T> {
       maxResidentPayloads: this.pageSize * this.maxPages,
       pageSize: this.pageSize,
       maxPages: this.maxPages,
+      residentBytes: this.residentBytes,
+      maxBytes: this.maxBytes,
+      bytesEstimated: true,
     };
   }
 
@@ -110,7 +142,7 @@ export class PageLruCache<T> {
       this.counters.hits++;
       this.pages.delete(pageNumber);
       this.pages.set(pageNumber, cached);
-      return cached;
+      return cached.values;
     }
 
     this.counters.misses++;
@@ -123,12 +155,17 @@ export class PageLruCache<T> {
     }
 
     const firstId = pageNumber * this.pageSize + 1;
-    this.counters.loads++;
-    const load = this.loader(firstId, firstId + this.pageSize - 1).then(
-      (page) => {
-        if (this.generation === generation) this.store(pageNumber, page);
-        return page;
-      },
+    // Queue only request metadata; do not reset admission on invalidation while
+    // an old generation is still decoding. The tail never retains page results.
+    const load = this.loadTail.then(async () => {
+      this.counters.loads++;
+      const page = await this.loader(firstId, firstId + this.pageSize - 1);
+      if (this.generation === generation) this.store(pageNumber, page);
+      return page;
+    });
+    this.loadTail = load.then(
+      () => undefined,
+      () => undefined,
     );
     this.pending.set(pendingKey, load);
     try {
@@ -141,13 +178,30 @@ export class PageLruCache<T> {
   }
 
   private store(pageNumber: number, page: ReadonlyMap<number, T>): void {
-    this.pages.delete(pageNumber);
-    this.pages.set(pageNumber, page);
-    while (this.pages.size > this.maxPages) {
+    const bytes = estimatePayloadBytes(page, this.maxBytes);
+    if (bytes > this.maxBytes || page.size > this.pageSize) {
+      this.counters.oversizedPages++;
+      return;
+    }
+    this.removePage(pageNumber);
+    while (
+      this.pages.size >= this.maxPages ||
+      this.residentBytes > this.maxBytes - bytes
+    ) {
       const oldest = this.pages.keys().next().value as number | undefined;
       if (oldest === undefined) break;
-      this.pages.delete(oldest);
+      this.counters.evictedBytes += this.removePage(oldest);
       this.counters.evictions++;
     }
+    this.pages.set(pageNumber, { values: page, bytes });
+    this.residentBytes += bytes;
+  }
+
+  private removePage(pageNumber: number): number {
+    const page = this.pages.get(pageNumber);
+    if (!page) return 0;
+    this.pages.delete(pageNumber);
+    this.residentBytes -= page.bytes;
+    return page.bytes;
   }
 }
