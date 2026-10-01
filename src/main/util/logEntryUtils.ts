@@ -5,6 +5,7 @@
 
 import type { LogEntry } from "../../types/ipc";
 import { MAX_MESSAGE_LENGTH, TRUNCATION_FIELDS } from "./constants";
+import { computeMdcFromRaw } from "../../utils/mdc";
 
 /**
  * Truncate large text fields in a log entry to prevent memory issues in the list view.
@@ -20,15 +21,13 @@ export function truncateEntryForRenderer(entry: LogEntry): LogEntry {
   try {
     if (!entry || typeof entry !== "object") return entry;
 
-    // Drop the raw payload before it is transferred to the renderer.
-    //
-    // The renderer NEVER reads `raw` (verified across the detail panel, export,
-    // filtering, entry signatures and DC matching). For JSON logs however `raw`
-    // holds a second copy of every field, so it roughly DOUBLES the per-entry
-    // memory footprint. Keeping it caused the renderer heap to explode at large
-    // volumes and the app to crash/restart around ~500k entries. Removing it
-    // here also shrinks the IPC structured-clone payload for every batch.
+    // Preserve diagnostic context before dropping the duplicate raw IPC payload.
     const base = { ...(entry as Record<string, unknown>) };
+    const raw = entry.raw && typeof entry.raw === "object" ? entry.raw : entry;
+    base.mdc = computeMdcFromRaw({
+      ...raw,
+      mdc: entry.mdc ?? ("mdc" in raw ? raw.mdc : undefined),
+    });
     if ("raw" in base) delete base.raw;
 
     // If already truncated by parser, don't truncate again

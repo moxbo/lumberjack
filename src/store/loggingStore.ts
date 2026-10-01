@@ -3,9 +3,12 @@
 // - reset(): clears internal state and notifies listeners
 // - addLoggingStoreListener(listener): { loggingEventsAdded(events), loggingStoreReset() }
 
+import { computeMdcFromRaw } from "../utils/mdc";
+export { computeMdcFromRaw, findTraceId } from "../utils/mdc";
+
 interface LogEvent {
   [k: string]: unknown;
-  mdc?: Record<string, string>;
+  mdc?: Record<string, unknown>;
   raw?: unknown;
 }
 
@@ -13,106 +16,6 @@ type Listener = {
   loggingEventsAdded?: (events: LogEvent[]) => void;
   loggingStoreReset?: () => void;
 };
-
-const RESERVED_STD_FIELDS = new Set([
-  "remarks",
-  "color",
-  "stack_trace",
-  "stackTrace",
-  "stacktrace",
-  "error",
-  "err",
-  "exception",
-  "cause",
-  "throwable",
-  "exception.stacktrace",
-  "error.stacktrace",
-  "level",
-  "thread_name",
-  "logger_name",
-  "message",
-  "@timestamp",
-  "@version",
-  // additional common standard keys to avoid duplication in MDC
-  "timestamp",
-  "time",
-  "logger",
-  "thread",
-  // renderer-only metadata for truncated messages
-  "_fullMessage",
-  "_truncated",
-  "_messageSize",
-  // trace id variants intentionally NOT excluded to show in MDC only
-]);
-
-function isString(v: unknown): v is string {
-  return typeof v === "string";
-}
-
-function findExternalId(raw: Record<string, unknown>): string | null {
-  if (!raw || typeof raw !== "object") return null;
-  const candidates = [
-    "externalId",
-    "external_id",
-    "external.id",
-    "extId",
-    "traceparent",
-    "id",
-  ];
-  for (const k of candidates) {
-    const v = raw[k];
-    if (isString(v) && v.trim()) return v.trim();
-  }
-  return null;
-}
-
-function findTraceId(raw: Record<string, unknown>): string | null {
-  if (!raw || typeof raw !== "object") return null;
-  const candidates = ["traceId", "trace_id", "trace", "trace.id", "TraceID"];
-  for (const k of candidates) {
-    const v = raw[k];
-    if (typeof v === "string" && v.trim()) return v.trim();
-  }
-  return null;
-}
-export { findTraceId };
-
-// Trace-Key-Varianten als Modul-Konstante (Hot Path: wird pro Log-Event aufgerufen)
-const TRACE_VARIANTS = new Set([
-  "TraceID",
-  "traceId",
-  "trace_id",
-  "trace.id",
-  "trace-id",
-  "x-trace-id",
-  "x_trace_id",
-  "x.trace.id",
-  "trace",
-]);
-
-export function computeMdcFromRaw(
-  raw: { [s: string]: unknown } | ArrayLike<unknown>,
-): Record<string, string> {
-  const mdc: Record<string, string> = {};
-  if (!raw || typeof raw !== "object") return mdc;
-  // Zuerst TraceID extrahieren
-  const tid = findTraceId(raw as Record<string, unknown>);
-  // Übernahme aller string-basierten Felder außer reservierten und Trace-Varianten
-  for (const [k, v] of Object.entries(raw as Record<string, unknown>)) {
-    if (RESERVED_STD_FIELDS.has(k)) continue;
-    if (TRACE_VARIANTS.has(k)) continue;
-    if (typeof v !== "string") continue;
-    const key = String(k);
-    const val = String(v);
-    if (!key.trim()) continue;
-    mdc[key] = val;
-  }
-  const ext = findExternalId(raw as Record<string, unknown>);
-  if (ext && !mdc.externalId) mdc.externalId = ext;
-  // Normalisierte TraceID im MDC nur unter dem kanonischen Key einmalig bereitstellen
-  if (tid && !mdc.TraceID) mdc.TraceID = tid;
-  return mdc;
-}
 
 class LoggingStoreImpl {
   private _listeners = new Set<Listener>();
@@ -156,7 +59,7 @@ class LoggingStoreImpl {
           e && e.raw && typeof e.raw === "object"
             ? (e.raw as Record<string, unknown>)
             : (e as Record<string, unknown>);
-        e.mdc = computeMdcFromRaw(rawObj);
+        e.mdc = computeMdcFromRaw({ ...rawObj, mdc: e.mdc ?? rawObj.mdc });
       } catch (err) {
         console.warn("computeMdcFromRaw failed:", err);
       }

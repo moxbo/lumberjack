@@ -10,6 +10,7 @@ import log from "electron-log/main";
 import zlib from "zlib";
 import { buildElasticMessageQuery } from "../utils/esMessageQuery";
 import { estimatePayloadBytes } from "../utils/estimatePayloadBytes";
+import { computeMdcFromRaw } from "../utils/mdc";
 
 // Keep-Alive Agents für HTTP/HTTPS (inkl. unsicherem TLS)
 const HTTP_KEEPALIVE_AGENT = new http.Agent({ keepAlive: true, maxSockets: 8 });
@@ -238,6 +239,7 @@ function toEntry(obj: AnyMap = {}, fallbackMessage = "", source = ""): Entry {
     stackTrace: stackTrace || null,
     raw: obj,
     source,
+    mdc: computeMdcFromRaw(obj),
   };
 
   // Add truncation metadata if applicable
