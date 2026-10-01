@@ -23,22 +23,24 @@ Beyond the memory leak fixes already implemented, here are additional improvemen
 - Faster failure detection
 - Better resource cleanup
 
-### 2. HTTP Response Size Limit ⭐ HIGH PRIORITY
+### 2. HTTP Streaming and Record Size Limit (Implemented)
 
-**Current Issue:**
-- No limit on HTTP response body size
-- Large responses can cause memory issues
-- Malicious/misconfigured endpoints can send GBs of data
+**Implementation:**
+- One-shot loading and polling stream text/JSONL lines and JSON array elements.
+- There is no total response size limit, including for native insecure HTTPS.
+- Downloads pause while ACK-backed consumers persist each batch (up to 100
+  records, flushed earlier at approximately 1 MiB).
+- Each individual line or array element is limited to 16 MiB; exceeding this
+  limit reports an error rather than truncating the record.
+- The 30-second timeout covers response headers and individual stalled reads,
+  not the total transfer duration or time spent waiting for persistence.
+- Polling stops and reports errors after a partially persisted response to
+  avoid replaying an ambiguous prefix. Earlier failures retain the existing
+  retry behavior.
 
-**Solution:**
-- Add maximum response size limit (e.g., 100MB)
-- Stream response and check size
-- Abort if size exceeds limit
-
-**Impact:**
-- Prevents memory exhaustion from large responses
-- Protects against malicious endpoints
-- Predictable memory usage
+**Diagnostics:**
+- `http.maxResponseSize` and `limits.httpMaxResponseSize` are `null` (unlimited).
+- `http.maxRecordSize` and `limits.httpMaxRecordSize` report the per-record limit.
 
 ### 3. TCP Connection Limit ⭐ MEDIUM PRIORITY
 
@@ -151,7 +153,7 @@ All limits should be configurable with sensible defaults:
 ```typescript
 // HTTP Configuration
 HTTP_FETCH_TIMEOUT_MS = 30000        // 30 seconds
-HTTP_MAX_RESPONSE_SIZE = 100 * 1024 * 1024  // 100MB
+HTTP_MAX_RECORD_SIZE = 16 * 1024 * 1024  // 16 MiB per line/array element
 
 // TCP Configuration  
 TCP_MAX_CONNECTIONS = 1000           // Max concurrent connections

@@ -29,6 +29,14 @@ Du hast mehrere Wege, Logs zu sehen:
 5. **Elasticsearch** – Über die Elasticsearch-Suchmaske gezielt Indizes
    abfragen.
 
+**HTTP Einmal laden und Poll:** Text, JSONL und JSON-Arrays werden während
+des Downloads in kleinen Paketen verarbeitet, ohne feste Grenze für die
+Gesamtgröße der Antwort. Pro Textzeile bzw. JSON-Array-Element gilt ein
+Speicherlimit von 16 MiB. Ungültige oder abgebrochene JSON-Arrays werden als
+Fehler gemeldet; bereits gespeicherte Pakete bleiben erhalten. Nach einem
+Fehler mit bereits gespeicherten Einträgen stoppt der Poller, statt die
+Antwort erneut einzulesen.
+
 ---
 
 ## Arbeitsbereich und Details
