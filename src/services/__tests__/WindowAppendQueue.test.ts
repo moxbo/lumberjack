@@ -36,6 +36,38 @@ describe("AppendBlocks", () => {
 });
 
 describe("WindowAppendQueue", () => {
+  it("does not strand an admission between the final ACK and flush completion", async () => {
+    vi.useFakeTimers();
+    const queue = new WindowAppendQueue<number>();
+    const received: number[][] = [];
+    const deliver = async (blocks: AppendBlocks<number>) => {
+      received.push(values(blocks));
+    };
+    const flushIfIdle = () => {
+      if (!queue.isFlushing) return queue.flush(deliver, () => 0, false);
+      return Promise.resolve();
+    };
+    try {
+      const firstReceipt = queue.enqueue([1]);
+      const next = firstReceipt.then(async () => {
+        // The source continues through an async persistence callback after ACK.
+        await Promise.resolve();
+        const receipt = queue.enqueue([2]);
+        void flushIfIdle();
+        await receipt;
+      });
+      void next.catch(() => {});
+      const flush = flushIfIdle();
+      await vi.advanceTimersByTimeAsync(0);
+      expect(received).toEqual([[1], [2]]);
+      await Promise.all([flush, next]);
+      expect(queue.length).toBe(0);
+    } finally {
+      queue.dispose();
+      vi.useRealTimers();
+    }
+  });
+
   it("counts active delivery against count and byte capacity until persisted", async () => {
     const queue = new WindowAppendQueue<number>(() => 4, 8);
     const receipt = queue.enqueue([1, 2], 2);

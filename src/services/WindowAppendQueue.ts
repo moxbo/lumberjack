@@ -190,6 +190,7 @@ export class WindowAppendQueue<T> {
   ): Promise<void> {
     if (this.inFlight) return this.inFlight;
     if (this.disposed || !this.blocks.length) return Promise.resolve();
+    let completed = false;
     this.inFlight = Promise.resolve()
       .then(async () => {
         while (!this.disposed && this.blocks.length) {
@@ -214,9 +215,16 @@ export class WindowAppendQueue<T> {
             throw error;
           }
         }
+        completed = true;
       })
       .finally(() => {
         this.inFlight = null;
+        // ACK continuations can enqueue after the drain's last empty check.
+        // Restart only successful drains; failed retryable suffixes stay queued.
+        if (completed && !this.disposed && this.blocks.length) {
+          return this.flush(deliver, acknowledgedEntries, retry);
+        }
+        return undefined;
       });
     return this.inFlight;
   }
