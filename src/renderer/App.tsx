@@ -3071,7 +3071,7 @@ export default function App(): JSX.Element {
                   >
                     ⏵ {t("list.actionStartTcp")}
                   </button>
-                  <button type="button" onClick={() => setShowTimeDialog(true)}>
+                  <button type="button" onClick={openTimeFilterDialog}>
                     🔍 {t("list.actionElastic")}
                   </button>
                   <button
