@@ -143,7 +143,7 @@ log4j.appender.lumberjack.reconnectionDelay=10000
 log4j.rootLogger=INFO, console, lumberjack
 ```
 
-> 💡 **Tip**: Configure the TCP port in Lumberjack under *Settings → TCP Port* (default: 4445)
+> 💡 **Tip**: Configure the TCP port in Lumberjack under *Settings → Connections → TCP* (default: 4445)
 
 ---
 
@@ -207,8 +207,16 @@ via the bookmarks popover in the toolbar. Bookmarks survive filter changes.
 ## 🌍 Internationalization
 
 Lumberjack ships with German (`de`) and English (`en`) translations.
-Switch the UI language under *Settings → Language*. Both Electron menus and
+Switch the UI language under *Settings → General → Language*. Both Electron menus and
 renderer UI are localized.
+
+Settings are grouped into **General**, **Appearance**, **Connections**,
+**Logging**, and **Advanced**. General contains language and updates;
+Advanced contains the memory limit and feature controls. The dialog uses
+macOS-inspired controls, keyboard category navigation, visible focus indicators,
+and system preferences for contrast and reduced motion. The existing
+Save/Cancel flow remains unchanged; language, window permissions, and feature
+controls retain their immediate-apply behavior.
 
 ---
 

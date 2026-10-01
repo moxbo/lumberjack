@@ -1789,7 +1789,7 @@ export default function App(): JSX.Element {
                 break;
               }
               case "open-settings": {
-                await openSettingsModal(tab || "tcp");
+                await openSettingsModal(tab);
                 break;
               }
               case "tcp-start": {

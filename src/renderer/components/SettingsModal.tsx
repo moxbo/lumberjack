@@ -1,7 +1,7 @@
 /**
- * Settings Modal Component - Modern Design
+ * Settings dialog with macOS-inspired categories and controls.
  */
-import { useEffect, useState } from "preact/hooks";
+import { useEffect, useRef, useState } from "preact/hooks";
 import { type Locale, useI18n } from "../../utils/i18n";
 import logger from "../../utils/logger";
 import type {
@@ -21,6 +21,21 @@ import {
 
 // SVG Icons for tabs
 const TabIcons: Record<SettingsTab, JSX.Element> = {
+  general: (
+    <svg
+      width="20"
+      height="20"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.5"
+      strokeLinecap="round"
+    >
+      <path d="M4 7h16M4 17h16" />
+      <circle cx="9" cy="7" r="3" fill="var(--color-bg-paper)" />
+      <circle cx="15" cy="17" r="3" fill="var(--color-bg-paper)" />
+    </svg>
+  ),
   tcp: (
     <svg
       width="20"
@@ -119,6 +134,16 @@ const TabIcons: Record<SettingsTab, JSX.Element> = {
     </svg>
   ),
 };
+
+const SETTINGS_CATEGORIES = [
+  { id: "general", tab: "general", icon: "general" },
+  { id: "appearance", tab: "appearance", icon: "appearance" },
+  { id: "connections", tab: "tcp", icon: "http" },
+  { id: "logging", tab: "logging", icon: "logging" },
+  { id: "advanced", tab: "features", icon: "features" },
+] as const;
+
+const CONNECTION_TABS = ["tcp", "http", "elastic"] as const;
 
 interface SettingsModalProps {
   open: boolean;
@@ -244,7 +269,7 @@ function UpdateCheckRow(): JSX.Element {
 
   return (
     <div className="settings-field">
-      <label className="settings-label">{t("settings.updates.checkNow")}</label>
+      <span className="settings-label">{t("settings.updates.checkNow")}</span>
       <p className="settings-field-hint">
         {t("settings.updates.checkNowHint")}
       </p>
@@ -267,7 +292,9 @@ function UpdateCheckRow(): JSX.Element {
             ? t("settings.updates.checking")
             : t("settings.updates.checkNow")}
         </button>
-        {statusEl}
+        <span role="status" aria-live="polite">
+          {statusEl}
+        </span>
       </div>
     </div>
   );
@@ -291,6 +318,34 @@ export function SettingsModal({
   const { t } = useI18n();
   const { features, loading } = useFeatureFlags();
   const [defaultLogPath, setDefaultLogPath] = useState<string>("");
+  const [compactNavigation, setCompactNavigation] = useState(false);
+  const dialogRef = useRef<HTMLDivElement>(null);
+  const contentRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const query = window.matchMedia("(max-width: 640px)");
+    const update = () => setCompactNavigation(query.matches);
+    update();
+    query.addEventListener("change", update);
+    return () => query.removeEventListener("change", update);
+  }, []);
+
+  useEffect(() => {
+    if (!open) return;
+    const previousFocus = document.activeElement;
+    dialogRef.current
+      ?.querySelector<HTMLButtonElement>('[role="tab"][aria-selected="true"]')
+      ?.focus();
+    return () => {
+      if (previousFocus instanceof HTMLElement && previousFocus.isConnected) {
+        previousFocus.focus();
+      }
+    };
+  }, [open]);
+
+  useEffect(() => {
+    if (contentRef.current) contentRef.current.scrollTop = 0;
+  }, [tab]);
 
   // Load default log path when modal opens
   useEffect(() => {
@@ -325,15 +380,55 @@ export function SettingsModal({
     // Modal closes automatically on success via the hook
   };
 
+  const category =
+    tab === "tcp" || tab === "http" || tab === "elastic"
+      ? "connections"
+      : tab === "features"
+        ? "advanced"
+        : tab;
+
+  const handleDialogKeyDown = (
+    event: JSX.TargetedKeyboardEvent<HTMLDivElement>,
+  ) => {
+    event.stopPropagation();
+    if (event.key === "Escape") {
+      event.preventDefault();
+      handleClose();
+    } else if (event.key === "Tab") {
+      const controls = Array.from(
+        event.currentTarget.querySelectorAll<HTMLElement>(
+          'button:not(:disabled), input:not(:disabled), select:not(:disabled), [tabindex="0"]',
+        ),
+      ).filter(
+        (control) =>
+          control.tabIndex >= 0 && control.getClientRects().length > 0,
+      );
+      const first = controls[0];
+      const last = controls[controls.length - 1];
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault();
+        last?.focus();
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first?.focus();
+      }
+    }
+  };
+
   return (
-    <div className="modal-backdrop" onClick={handleClose}>
+    <div className="modal-backdrop settings-backdrop" onClick={handleClose}>
       <div
         className="modal modal-settings modal-settings-modern"
+        ref={dialogRef}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="settings-title"
+        onKeyDown={handleDialogKeyDown}
         onClick={(e) => e.stopPropagation()}
       >
         {/* Header */}
         <div className="settings-header">
-          <h3>{t("settings.title")}</h3>
+          <h3 id="settings-title">{t("settings.title")}</h3>
           <button
             className="settings-close-btn"
             onClick={handleClose}
@@ -361,38 +456,96 @@ export function SettingsModal({
           <nav
             className="settings-sidebar"
             role="tablist"
+            aria-orientation={compactNavigation ? "horizontal" : "vertical"}
             aria-label={t("settings.navAriaLabel")}
           >
-            {(
-              [
-                "tcp",
-                "http",
-                "elastic",
-                "logging",
-                "appearance",
-                "features",
-              ] as SettingsTab[]
-            ).map((tabKey) => (
+            {SETTINGS_CATEGORIES.map((item, index) => (
               <button
-                key={tabKey}
-                className={`settings-nav-item${tab === tabKey ? " active" : ""}`}
+                key={item.id}
+                id={`settings-tab-${item.id}`}
+                type="button"
+                className={`settings-nav-item${category === item.id ? " active" : ""}`}
                 role="tab"
-                aria-selected={tab === tabKey}
-                onClick={() => onTabChange(tabKey)}
+                aria-selected={category === item.id}
+                aria-controls="settings-panel"
+                tabIndex={category === item.id ? 0 : -1}
+                onClick={() =>
+                  onTabChange(
+                    item.id === "connections" && category === "connections"
+                      ? tab
+                      : item.tab,
+                  )
+                }
+                onKeyDown={(event) => {
+                  let nextIndex: number;
+                  switch (event.key) {
+                    case "ArrowDown":
+                    case "ArrowRight":
+                      nextIndex = (index + 1) % SETTINGS_CATEGORIES.length;
+                      break;
+                    case "ArrowUp":
+                    case "ArrowLeft":
+                      nextIndex =
+                        (index + SETTINGS_CATEGORIES.length - 1) %
+                        SETTINGS_CATEGORIES.length;
+                      break;
+                    case "Home":
+                      nextIndex = 0;
+                      break;
+                    case "End":
+                      nextIndex = SETTINGS_CATEGORIES.length - 1;
+                      break;
+                    default:
+                      return;
+                  }
+                  event.preventDefault();
+                  const next = SETTINGS_CATEGORIES[nextIndex];
+                  if (next) {
+                    onTabChange(next.tab);
+                    document.getElementById(`settings-tab-${next.id}`)?.focus();
+                  }
+                }}
               >
-                <span className="settings-nav-icon">{TabIcons[tabKey]}</span>
+                <span className="settings-nav-icon" aria-hidden="true">
+                  {TabIcons[item.icon]}
+                </span>
                 <span className="settings-nav-label">
-                  {t("settings.tabs." + tabKey)}
+                  {t("settings.tabs." + item.id)}
                 </span>
               </button>
             ))}
           </nav>
 
           {/* Content Area */}
-          <div className="settings-content">
+          <div
+            className="settings-content"
+            ref={contentRef}
+            id="settings-panel"
+            role="tabpanel"
+            aria-labelledby={`settings-tab-${category}`}
+            tabIndex={0}
+          >
+            {category === "connections" && (
+              <div
+                className="settings-connection-selector"
+                role="group"
+                aria-label={t("settings.tabs.connections")}
+              >
+                {CONNECTION_TABS.map((connection) => (
+                  <button
+                    type="button"
+                    className="settings-connection-btn"
+                    aria-pressed={tab === connection}
+                    onClick={() => onTabChange(connection)}
+                  >
+                    {t(`settings.tabs.${connection}`)}
+                  </button>
+                ))}
+              </div>
+            )}
             {/* TCP Tab */}
             {tab === "tcp" && (
-              <div className="settings-panel" role="tabpanel">
+              <div className="settings-panel">
                 <div className="settings-panel-header">
                   <h4>{t("settings.tabs.tcp")}</h4>
                   <p className="settings-panel-description">
@@ -461,7 +614,7 @@ export function SettingsModal({
 
             {/* HTTP Tab */}
             {tab === "http" && (
-              <div className="settings-panel" role="tabpanel">
+              <div className="settings-panel">
                 <div className="settings-panel-header">
                   <h4>{t("settings.tabs.http")}</h4>
                   <p className="settings-panel-description">
@@ -494,7 +647,6 @@ export function SettingsModal({
                         })
                       }
                       placeholder="https://…/logs.json"
-                      autoFocus
                     />
                   </div>
                   <div className="settings-field">
@@ -526,7 +678,7 @@ export function SettingsModal({
 
             {/* Elasticsearch Tab */}
             {tab === "elastic" && (
-              <div className="settings-panel" role="tabpanel">
+              <div className="settings-panel">
                 <div className="settings-panel-header">
                   <h4>{t("settings.tabs.elastic")}</h4>
                   <p className="settings-panel-description">
@@ -559,7 +711,6 @@ export function SettingsModal({
                         })
                       }
                       placeholder="https://es:9200"
-                      autoFocus
                     />
                   </div>
 
@@ -696,7 +847,7 @@ export function SettingsModal({
 
             {/* Logging Tab */}
             {tab === "logging" && (
-              <div className="settings-panel" role="tabpanel">
+              <div className="settings-panel">
                 <div className="settings-panel-header">
                   <h4>{t("settings.tabs.logging")}</h4>
                   <p className="settings-panel-description">
@@ -827,7 +978,7 @@ export function SettingsModal({
 
             {/* Appearance Tab */}
             {tab === "appearance" && (
-              <div className="settings-panel" role="tabpanel">
+              <div className="settings-panel">
                 <div className="settings-panel-header">
                   <h4>{t("settings.tabs.appearance")}</h4>
                   <p className="settings-panel-description">
@@ -842,50 +993,57 @@ export function SettingsModal({
                     <p className="settings-field-hint">
                       {t("settings.descriptions.appearanceThemeHint")}
                     </p>
-                    <div className="settings-theme-selector">
-                      {[
-                        {
-                          value: "system",
-                          label: t("settings.appearance.themeSystem"),
-                          icon: "💻",
-                        },
-                        {
-                          value: "light",
-                          label: t("settings.appearance.themeLight"),
-                          icon: "☀️",
-                        },
-                        {
-                          value: "dark",
-                          label: t("settings.appearance.themeDark"),
-                          icon: "🌙",
-                        },
-                      ].map((theme) => (
-                        <button
-                          key={theme.value}
-                          type="button"
-                          className={`settings-theme-btn${form.themeMode === theme.value ? " active" : ""}`}
-                          onClick={() => {
-                            onFormChange({ ...form, themeMode: theme.value });
-                            applyThemeMode(
-                              ["light", "dark"].includes(theme.value)
-                                ? theme.value
-                                : "system",
-                            );
-                          }}
-                        >
-                          <span className="settings-theme-icon">
-                            {theme.icon}
-                          </span>
-                          <span className="settings-theme-label">
-                            {theme.label}
-                          </span>
-                        </button>
-                      ))}
-                    </div>
+                    <select
+                      id="theme"
+                      className="settings-select"
+                      value={form.themeMode}
+                      onChange={(event) => {
+                        const value = event.currentTarget.value;
+                        if (
+                          value === "system" ||
+                          value === "light" ||
+                          value === "dark"
+                        ) {
+                          onFormChange({ ...form, themeMode: value });
+                          applyThemeMode(value);
+                        }
+                      }}
+                    >
+                      <option value="system">
+                        {t("settings.appearance.themeSystem")}
+                      </option>
+                      <option value="light">
+                        {t("settings.appearance.themeLight")}
+                      </option>
+                      <option value="dark">
+                        {t("settings.appearance.themeDark")}
+                      </option>
+                    </select>
                   </div>
 
                   <div className="settings-divider" />
 
+                  <div className="settings-field">
+                    <span className="settings-label">
+                      {t("settings.appearance.accent")}
+                    </span>
+                    <p className="settings-field-hint">
+                      {t("settings.appearance.accentInfo")}
+                    </p>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {tab === "general" && (
+              <div className="settings-panel">
+                <div className="settings-panel-header">
+                  <h4>{t("settings.tabs.general")}</h4>
+                  <p className="settings-panel-description">
+                    {t("settings.descriptions.general")}
+                  </p>
+                </div>
+                <div className="settings-card">
                   <div className="settings-field">
                     <label className="settings-label" htmlFor="language">
                       {t("settings.language.label")}
@@ -908,17 +1066,6 @@ export function SettingsModal({
                         {t("settings.language.english")}
                       </option>
                     </select>
-                  </div>
-
-                  <div className="settings-divider" />
-
-                  <div className="settings-field">
-                    <label className="settings-label">
-                      {t("settings.appearance.accent")}
-                    </label>
-                    <p className="settings-field-hint settings-accent-info">
-                      {t("settings.appearance.accentInfo")}
-                    </p>
                   </div>
 
                   <div className="settings-divider" />
@@ -956,9 +1103,19 @@ export function SettingsModal({
 
                   {/* Manual update check */}
                   <UpdateCheckRow />
+                </div>
+              </div>
+            )}
 
-                  <div className="settings-divider" />
-
+            {tab === "features" && (
+              <div className="settings-panel">
+                <div className="settings-panel-header">
+                  <h4>{t("settings.tabs.advanced")}</h4>
+                  <p className="settings-panel-description">
+                    {t("settings.descriptions.advanced")}
+                  </p>
+                </div>
+                <div className="settings-card">
                   {/* Heap Size Setting */}
                   <div className="settings-field">
                     <label className="settings-label" htmlFor="heapSizeMB">
@@ -988,18 +1145,6 @@ export function SettingsModal({
                       <option value="8192">8 GB</option>
                     </select>
                   </div>
-                </div>
-              </div>
-            )}
-
-            {/* Features Tab */}
-            {tab === "features" && (
-              <div className="settings-panel" role="tabpanel">
-                <div className="settings-panel-header">
-                  <h4>{t("settings.tabs.features")}</h4>
-                  <p className="settings-panel-description">
-                    {t("settings.descriptions.features")}
-                  </p>
                 </div>
                 <div className="settings-card">
                   <FeatureFlagsPanel />

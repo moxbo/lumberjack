@@ -36,7 +36,7 @@ export function useSettings({ t, showAlert, onLoaded }: UseSettingsOptions) {
   const [settings, setSettings] = useState<Partial<Settings>>({});
   const [settingsLoaded, setSettingsLoaded] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
-  const [settingsTab, setSettingsTab] = useState<SettingsTab>("tcp");
+  const [settingsTab, setSettingsTab] = useState<SettingsTab>("general");
   const [form, setForm] = useState(() => normalizeSettingsForm({}));
   const [originalHeapSizeMB, setOriginalHeapSizeMB] = useState(4096);
   const [canTcpControlWindow, setCanTcpControlWindow] = useState(true);
@@ -136,7 +136,7 @@ export function useSettings({ t, showAlert, onLoaded }: UseSettingsOptions) {
       const nextForm = normalizeSettingsForm(latest);
       setForm(nextForm);
       setOriginalHeapSizeMB(nextForm.heapSizeMB);
-      setSettingsTab(initialTab || "tcp");
+      setSettingsTab(initialTab || "general");
       setShowSettings(true);
     },
   );

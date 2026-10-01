@@ -1120,14 +1120,39 @@ body {
    Modern Settings Modal Styles
    ============================================ */
 
+.settings-backdrop {
+  padding: 16px;
+}
+
 .modal.modal-settings-modern {
-  width: min(860px, 95vw);
-  max-width: 95vw;
-  height: clamp(520px, 70vh, 680px);
+  --settings-accent: #0066cc;
+  --settings-accent-text: #ffffff;
+  width: min(820px, calc(100vw - 32px));
+  max-width: calc(100vw - 32px);
+  height: min(680px, 85dvh);
+  max-height: calc(100dvh - 32px);
   padding: 0;
   display: flex;
   flex-direction: column;
   overflow: hidden;
+  background: var(--color-bg-default);
+  border: 1px solid var(--color-border);
+  border-radius: 12px;
+  font-family: var(--font-family);
+  box-shadow: var(--shadow-xl);
+  backdrop-filter: none;
+}
+
+:root[data-theme="dark"] .modal-settings-modern {
+  --settings-accent: #76b0ff;
+  --settings-accent-text: #0a0f14;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .modal-settings-modern {
+    --settings-accent: #76b0ff;
+    --settings-accent-text: #0a0f14;
+  }
 }
 
 /* Settings Header */
@@ -1140,9 +1165,9 @@ body {
   flex-shrink: 0;
 }
 
-.settings-header h3 {
+.modal .settings-header h3 {
   margin: 0;
-  font-size: 18px;
+  font-size: 15px;
   font-weight: 600;
 }
 
@@ -1156,9 +1181,9 @@ body {
   border: none;
   background: transparent;
   color: var(--color-text-secondary);
-  border-radius: 8px;
+  border-radius: 6px;
   cursor: pointer;
-  transition: all var(--transition-fast);
+  transition: background-color var(--transition-fast);
 }
 
 .settings-close-btn:hover {
@@ -1176,7 +1201,7 @@ body {
 
 /* Sidebar Navigation */
 .settings-sidebar {
-  width: 200px;
+  width: 184px;
   flex-shrink: 0;
   background: var(--color-bg-default);
   border-right: 1px solid var(--color-divider);
@@ -1191,16 +1216,16 @@ body {
   display: flex;
   align-items: center;
   justify-content: flex-start;
-  gap: 12px;
-  padding: 10px 12px;
+  gap: 10px;
+  padding: 8px 10px;
   border: none;
   background: transparent;
-  color: var(--color-text-secondary);
-  font-size: 14px;
+  color: var(--color-text-primary);
+  font-size: 13px;
   font-weight: 500;
-  border-radius: 8px;
+  border-radius: 6px;
   cursor: pointer;
-  transition: all var(--transition-fast);
+  transition: background-color var(--transition-fast);
   text-align: left;
   width: 100%;
 }
@@ -1211,8 +1236,8 @@ body {
 }
 
 .settings-nav-item.active {
-  background: var(--accent-gradient);
-  color: var(--color-primary-contrast);
+  background: var(--settings-accent);
+  color: var(--settings-accent-text);
 }
 
 .settings-nav-icon {
@@ -1228,6 +1253,15 @@ body {
   width: 20px;
   height: 20px;
   display: block;
+  stroke-width: 1.5;
+}
+
+.settings-nav-icon circle[fill] {
+  fill: var(--color-bg-default);
+}
+
+.settings-nav-item.active .settings-nav-icon circle[fill] {
+  fill: var(--settings-accent);
 }
 
 .settings-nav-label {
@@ -1242,6 +1276,39 @@ body {
   min-width: 0;
   padding: 20px 24px;
   overflow-y: auto;
+}
+
+.settings-connection-selector {
+  display: flex;
+  gap: 4px;
+  padding: 3px;
+  margin-bottom: 24px;
+  border: 1px solid var(--color-border);
+  border-radius: 7px;
+}
+
+.settings-connection-btn {
+  flex: 1;
+  min-width: 0;
+  padding: 6px 8px;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--color-text-primary);
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.settings-connection-btn:hover {
+  background: var(--color-bg-hover);
+}
+
+.settings-connection-btn[aria-pressed="true"] {
+  border-color: var(--color-border);
+  background: var(--color-bg-paper);
+  font-weight: 600;
+  box-shadow: var(--shadow-sm);
 }
 
 /* Panel Header */
@@ -1267,21 +1334,12 @@ body {
 .settings-card {
   background: var(--color-bg-paper);
   border: 1px solid var(--color-divider);
-  border-radius: 12px;
+  border-radius: 8px;
   padding: 16px 20px;
 }
 
-/* Besserer Kontrast für Settings-Cards im Dark Mode */
-:root[data-theme="dark"] .settings-card {
-  background: #1e242c;
-  border-color: rgba(255, 255, 255, 0.08);
-}
-
-@media (prefers-color-scheme: dark) {
-  :root:not([data-theme="light"]) .settings-card {
-    background: #1e242c;
-    border-color: rgba(255, 255, 255, 0.08);
-  }
+.settings-card + .settings-card {
+  margin-top: 16px;
 }
 
 /* Settings Field */
@@ -1323,11 +1381,12 @@ body {
 /* Settings Input */
 .settings-input {
   width: 100%;
-  padding: 10px 12px;
-  font-size: 14px;
+  min-width: 0;
+  padding: 7px 9px;
+  font-size: 13px;
   border: 1px solid var(--color-border);
-  border-radius: 8px;
-  background: var(--color-bg-default);
+  border-radius: 5px;
+  background: var(--color-bg-paper);
   color: var(--color-text-primary);
   transition:
     border-color var(--transition-fast),
@@ -1352,12 +1411,12 @@ body {
 /* Select */
 .settings-select {
   width: 100%;
-  max-width: 200px;
-  padding: 10px 32px 10px 12px;
-  font-size: 14px;
+  max-width: 240px;
+  padding: 7px 9px;
+  font-size: 13px;
   border: 1px solid var(--color-border);
-  border-radius: 8px;
-  background-color: var(--color-bg-default);
+  border-radius: 5px;
+  background-color: var(--color-bg-paper);
   color: var(--color-text-primary);
   cursor: pointer;
   transition: border-color var(--transition-fast);
@@ -1496,83 +1555,29 @@ body {
   color: var(--color-text-secondary);
 }
 
-/* Theme Selector */
-.settings-theme-selector {
-  display: flex;
-  gap: 12px;
-  margin-top: 8px;
-}
-
-.settings-theme-btn {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 8px;
-  padding: 16px 24px;
-  border: 2px solid var(--color-border);
-  background: var(--color-bg-default);
-  border-radius: 12px;
-  cursor: pointer;
-  transition: all var(--transition-fast);
-  min-width: 90px;
-}
-
-.settings-theme-btn:hover {
-  border-color: var(--color-text-disabled);
-  background: var(--color-bg-hover);
-}
-
-.settings-theme-btn.active {
-  border-color: var(--color-primary);
-  background: rgba(var(--color-primary-rgb, 59, 130, 246), 0.08);
-}
-
-.settings-theme-icon {
-  font-size: 24px;
-}
-
-.settings-theme-label {
+/* Buttons */
+.settings-btn,
+.modal-settings-modern .settings-btn-secondary {
+  padding: 6px 14px;
   font-size: 13px;
   font-weight: 500;
+  border: 1px solid var(--color-border);
+  border-radius: 5px;
+  background: var(--color-bg-paper);
   color: var(--color-text-primary);
-}
-
-/* Accent Info */
-.settings-accent-info {
-  background: var(--color-bg-default);
-  padding: 12px;
-  border-radius: 8px;
-  border: 1px dashed var(--color-border);
-}
-
-/* Buttons */
-.settings-btn {
-  padding: 10px 20px;
-  font-size: 14px;
-  font-weight: 500;
-  border-radius: 8px;
   cursor: pointer;
-  transition: all var(--transition-fast);
+  transition: background-color var(--transition-fast);
 }
 
 .settings-btn.settings-btn-primary {
-  background: var(--accent-gradient);
-  color: var(--color-primary-contrast);
-  border: none;
-  box-shadow: 0 2px 4px rgba(59, 130, 246, 0.3);
+  background: var(--settings-accent);
+  color: var(--settings-accent-text);
+  border-color: transparent;
 }
 
-.settings-btn.settings-btn-primary:hover {
-  background: var(--accent-gradient);
-  filter: brightness(0.9);
-  transform: translateY(-1px);
-  box-shadow: 0 4px 12px rgba(59, 130, 246, 0.4);
-}
-
+.settings-btn.settings-btn-primary:hover,
 .settings-btn.settings-btn-primary:active {
-  background: var(--accent-gradient);
-  transform: translateY(0);
-  box-shadow: 0 1px 2px rgba(59, 130, 246, 0.3);
+  filter: brightness(0.9);
 }
 
 .settings-btn.settings-btn-secondary {
@@ -1581,13 +1586,83 @@ body {
   border: 1px solid var(--color-border);
 }
 
-.settings-btn.settings-btn-secondary:hover {
+.modal-settings-modern .settings-btn-secondary:hover {
   background: var(--color-bg-hover);
   border-color: var(--color-text-disabled);
 }
 
 .settings-btn.settings-btn-secondary:active {
   background: var(--color-bg-default);
+}
+
+.modal-settings-modern button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.modal-settings-modern :is(.settings-toggle, .toggle-switch) input {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  z-index: 1;
+  cursor: pointer;
+}
+
+.modal-settings-modern :is(button, input, select, [tabindex]):focus-visible {
+  outline: 3px solid var(--settings-accent);
+  outline-offset: 2px;
+}
+
+.modal-settings-modern
+  :is(.settings-toggle, .toggle-switch)
+  input:focus-visible
+  + span {
+  outline: 3px solid var(--settings-accent);
+  outline-offset: 3px;
+}
+
+.modal-settings-modern .feature-flag-item {
+  background: transparent;
+  box-shadow: none;
+}
+
+.modal-settings-modern .feature-flag-item.disabled {
+  opacity: 1;
+  border-color: var(--color-border);
+}
+
+.modal-settings-modern .feature-flags-stats .stat.enabled,
+.modal-settings-modern .feature-flags-stats .stat.disabled,
+.modal-settings-modern .feature-flag-info .feature-reason {
+  color: var(--color-text-secondary);
+}
+
+.modal-settings-modern .feature-flags-header {
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.modal-settings-modern .feature-flag-info {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.modal-settings-modern .toggle-switch input:checked + .toggle-slider,
+.modal-settings-modern
+  .settings-toggle
+  input:checked
+  + .settings-toggle-slider {
+  background: var(--settings-accent);
+}
+
+.modal-settings-modern .feature-flags-reset {
+  background: var(--color-bg-paper);
+  color: var(--color-text-primary);
+  border: 1px solid var(--color-border);
+  box-shadow: none;
+  transform: none;
 }
 
 /* Footer */
@@ -1643,27 +1718,87 @@ body {
   }
 
   .settings-nav-item {
-    flex-direction: column;
-    gap: 4px;
+    flex: 0 0 auto;
+    width: auto;
     padding: 8px 12px;
-    min-width: fit-content;
   }
 
-  .settings-nav-label {
-    font-size: 11px;
+  .settings-nav-icon {
+    display: none;
+  }
+
+  .settings-content {
+    padding: 16px;
   }
 
   .settings-field-group {
     grid-template-columns: 1fr;
   }
 
-  .settings-theme-selector {
+  .settings-input-group {
     flex-wrap: wrap;
   }
 
-  .settings-theme-btn {
-    flex: 1;
-    min-width: 80px;
+  .settings-connection-selector {
+    flex-wrap: wrap;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .modal-settings-modern,
+  .modal-settings-modern *,
+  .modal-settings-modern *::before {
+    animation: none !important;
+    transition: none !important;
+  }
+}
+
+@media (prefers-contrast: more) {
+  .modal-settings-modern {
+    --color-border: var(--color-text-secondary);
+    --color-divider: var(--color-text-secondary);
+  }
+}
+
+@media (forced-colors: active) {
+  .modal-settings-modern .settings-nav-item.active,
+  .modal-settings-modern .settings-btn-primary {
+    background: Highlight;
+    color: HighlightText;
+    border: 1px solid Highlight;
+    forced-color-adjust: none;
+  }
+
+  .modal-settings-modern :is(.settings-toggle-slider, .toggle-slider) {
+    background: Canvas;
+    border: 1px solid ButtonText;
+    forced-color-adjust: none;
+  }
+
+  .modal-settings-modern :is(.settings-toggle-slider, .toggle-slider)::before {
+    background: ButtonText;
+  }
+
+  .modal-settings-modern
+    :is(.settings-toggle, .toggle-switch)
+    input:checked
+    + span {
+    background: Highlight;
+  }
+
+  .modal-settings-modern
+    :is(.settings-toggle, .toggle-switch)
+    input:checked
+    + span::before {
+    background: HighlightText;
+  }
+
+  .modal-settings-modern :is(button, input, select, [tabindex]):focus-visible,
+  .modal-settings-modern
+    :is(.settings-toggle, .toggle-switch)
+    input:focus-visible
+    + span {
+    outline-color: Highlight;
   }
 }
 

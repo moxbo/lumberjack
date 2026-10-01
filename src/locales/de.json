@@ -227,10 +227,13 @@
   "settings": {
     "title": "Einstellungen",
     "tabs": {
+      "general": "Allgemein",
+      "connections": "Verbindungen",
+      "advanced": "Erweitert",
       "tcp": "TCP",
       "http": "HTTP",
       "elastic": "Elasticsearch",
-      "logging": "Logging",
+      "logging": "Protokollierung",
       "appearance": "Darstellung",
       "language": "Sprache",
       "features": "Features"
@@ -265,7 +268,7 @@
       "maxBackups": "Max. Backups"
     },
     "appearance": {
-      "theme": "Theme",
+      "theme": "Erscheinungsbild",
       "themeSystem": "System",
       "themeLight": "Hell",
       "themeDark": "Dunkel",
@@ -298,6 +301,8 @@
     "close": "Schließen",
     "navAriaLabel": "Einstellungen Navigation",
     "descriptions": {
+      "general": "Sprache und Aktualisierungen der Anwendung.",
+      "advanced": "Speicherlimit und optionale Funktionen der Anwendung.",
       "tcp": "Konfigurieren Sie den TCP-Server für eingehende Log-Nachrichten.",
       "tcpPortHint": "Port auf dem der TCP-Server lauscht (1-65535)",
       "tcpWindowControlHint": "Erlaubt TCP-Clients, dieses Fenster zu steuern",

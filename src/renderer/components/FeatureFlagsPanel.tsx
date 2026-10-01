@@ -88,6 +88,7 @@ export function FeatureFlagsPanel() {
               <label className="toggle-switch">
                 <input
                   type="checkbox"
+                  aria-label={description}
                   checked={isEnabled}
                   onChange={() => handleToggle(feature, isEnabled)}
                 />

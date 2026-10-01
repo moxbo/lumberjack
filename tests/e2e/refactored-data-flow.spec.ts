@@ -108,10 +108,16 @@ test("settings hook saves and reloads the modal without touching the real profil
   );
   expect(actualProfile).toBe(testUserData);
   await sendMenu(electronApp, "open-settings");
+  await window
+    .getByRole("tab", { name: /^(Connections|Verbindungen)$/ })
+    .click();
   await window.locator("#tcp-port").fill("54321");
   await window.getByRole("button", { name: /^(Save|Speichern)$/ }).click();
   await expect(window.locator("#tcp-port")).not.toBeVisible();
   await sendMenu(electronApp, "open-settings");
+  await window
+    .getByRole("tab", { name: /^(Connections|Verbindungen)$/ })
+    .click();
   await expect(window.locator("#tcp-port")).toHaveValue("54321");
   const settings: { tcpPort: number } = JSON.parse(
     await readFile(path.join(testUserData, "settings.json"), "utf8"),

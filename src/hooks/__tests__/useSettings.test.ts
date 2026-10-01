@@ -111,6 +111,15 @@ afterEach(() => {
 });
 
 describe("useSettings integration", () => {
+  it("opens general settings by default and preserves connection shortcuts", async () => {
+    await mount();
+    await render().openSettingsModal();
+    expect(render().settingsTab).toBe("general");
+    render().closeSettingsModal();
+    await render().openSettingsModal("http");
+    expect(render().settingsTab).toBe("http");
+  });
+
   it("persists the detail layout independently of theme and restores its width", async () => {
     vi.mocked(getSettings).mockResolvedValue({
       themeMode: "dark",

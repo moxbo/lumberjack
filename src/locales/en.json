@@ -227,6 +227,9 @@
   "settings": {
     "title": "Settings",
     "tabs": {
+      "general": "General",
+      "connections": "Connections",
+      "advanced": "Advanced",
       "tcp": "TCP",
       "http": "HTTP",
       "elastic": "Elasticsearch",
@@ -298,6 +301,8 @@
     "close": "Close",
     "navAriaLabel": "Settings Navigation",
     "descriptions": {
+      "general": "Application language and updates.",
+      "advanced": "Memory limit and optional application features.",
       "tcp": "Configure the TCP server for incoming log messages.",
       "tcpPortHint": "Port on which the TCP server listens (1-65535)",
       "tcpWindowControlHint": "Allow TCP clients to control this window",
