@@ -11,7 +11,10 @@ import type { RefObject } from "preact";
 import type { JSX } from "preact/jsx-runtime";
 import { useI18n } from "../../utils/i18n";
 import type { ReadonlySequence } from "../../utils/metadataSnapshot";
-import { shouldNavigateCommittedSearch } from "../progressiveSearch";
+import {
+  searchMatchIndex,
+  shouldNavigateCommittedSearch,
+} from "../progressiveSearch";
 import { WorkspaceIcon } from "./WorkspaceToolbar";
 
 export interface SearchBarProps {
@@ -408,7 +411,7 @@ export function SearchBar({
                     filteredIdx.indexOf(selectedOneIdx))
                   : -1;
               const currentMatchPos =
-                curVi >= 0 ? searchMatchIdx.indexOf(curVi) : -1;
+                curVi >= 0 ? searchMatchIndex(searchMatchIdx, curVi) : -1;
               if (currentMatchPos >= 0) {
                 return `${currentMatchPos + 1}/${searchMatchIdx.length}`;
               }

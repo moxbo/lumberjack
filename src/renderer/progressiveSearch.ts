@@ -6,11 +6,54 @@ export function searchMatchPositions(
   positionOf: (id: number) => number,
 ): number[] {
   const positions: number[] = [];
+  let ordered = true;
   for (const id of ids) {
     const position = positionOf(id);
-    if (position >= 0) positions.push(position);
+    if (position >= 0) {
+      if (positions.length && position < positions[positions.length - 1]!)
+        ordered = false;
+      positions.push(position);
+    }
   }
-  return positions.sort((a, b) => a - b);
+  return ordered ? positions : positions.sort((a, b) => a - b);
+}
+
+function firstMatchAtOrAfter(
+  positions: readonly number[],
+  position: number,
+): number {
+  let low = 0;
+  let high = positions.length;
+  while (low < high) {
+    const middle = low + Math.floor((high - low) / 2);
+    if (positions[middle]! < position) low = middle + 1;
+    else high = middle;
+  }
+  return low;
+}
+
+export function searchMatchIndex(
+  positions: readonly number[],
+  position: number,
+): number {
+  const index = firstMatchAtOrAfter(positions, position);
+  return index < positions.length && positions[index] === position ? index : -1;
+}
+
+export function adjacentSearchMatch(
+  positions: readonly number[],
+  currentPosition: number,
+  direction: number,
+): number | undefined {
+  if (!positions.length) return undefined;
+  if (currentPosition < 0)
+    return direction > 0 ? positions[0] : positions[positions.length - 1];
+  const index = firstMatchAtOrAfter(positions, currentPosition);
+  const next =
+    direction > 0
+      ? index + (positions[index] === currentPosition ? 1 : 0)
+      : index - 1;
+  return positions[Math.max(0, Math.min(positions.length - 1, next))];
 }
 
 export function anchoredScrollOffset(

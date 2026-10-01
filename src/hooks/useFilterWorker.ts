@@ -66,6 +66,8 @@ export interface PagedFilterConfig {
   paged: true;
   databaseName?: string;
   generation?: string | number;
+  /** Base filter identity, excluding navigation search. */
+  baseGeneration?: string | number;
   dataGeneration?: string | number;
   entryCount: number;
   pageSize?: number;
@@ -95,7 +97,7 @@ export interface UseFilterWorkerResult {
     marksMap?: Record<string, string>,
     config?: PagedFilterConfig,
   ) => void;
-  cancelFiltering: () => void;
+  cancelFiltering: (preserveBase?: boolean) => void;
   /** True wenn UtilityProcess verwendet wird, false für Web Worker/Sync */
   useUtilityProcess: boolean;
   /** Bridge for direct projection transfer to the filter worker. null when no worker. */
@@ -218,6 +220,35 @@ function computeSearchMatchIndices(
   return matches;
 }
 
+function mergeSearchMatches(
+  previous: { indices: number[]; ids: number[] },
+  incoming: { indices: number[]; ids: number[] },
+): { indices: number[]; ids: number[] } {
+  if (!incoming.indices.length) return previous;
+  if (!previous.indices.length) return incoming;
+  if (previous.indices[previous.indices.length - 1]! < incoming.indices[0]!) {
+    return {
+      indices: previous.indices.concat(incoming.indices),
+      ids: previous.ids.concat(incoming.ids),
+    };
+  }
+  const indices: number[] = [];
+  const ids: number[] = [];
+  let left = 0;
+  let right = 0;
+  while (left < previous.indices.length || right < incoming.indices.length) {
+    const takePrevious =
+      right >= incoming.indices.length ||
+      (left < previous.indices.length &&
+        previous.indices[left]! < incoming.indices[right]!);
+    const source = takePrevious ? previous : incoming;
+    const index = takePrevious ? left++ : right++;
+    indices.push(source.indices[index]!);
+    ids.push(source.ids[index]!);
+  }
+  return { indices, ids };
+}
+
 /** Worker-first filtering with progressive, cancellable fallback pages. */
 export function useFilterWorker(): UseFilterWorkerResult {
   const [filteredIndices, setFilteredIndices] = useState<number[]>([]);
@@ -232,6 +263,13 @@ export function useFilterWorker(): UseFilterWorkerResult {
   const workerRef = useRef<Worker | null>(null);
   const pendingRequestRef = useRef<number>(0);
   const pendingGenerationRef = useRef<string | number | undefined>(undefined);
+  const pendingBaseGenerationRef = useRef<string | undefined>(undefined);
+  const renderedBaseCountRef = useRef<number | undefined>(undefined);
+  const deltaMatchesRef = useRef<{
+    requestId: number;
+    indices: number[];
+    ids: number[];
+  } | null>(null);
   // Accept partial snapshots from the current query, including a running scan
   // of an earlier append, but never from a replaced query or cleared dataset.
   const lastAppliedRequestRef = useRef<number>(0);
@@ -258,17 +296,22 @@ export function useFilterWorker(): UseFilterWorkerResult {
   const fallbackRunningRef = useRef(false);
   const queuedFallbackRef = useRef<(() => Promise<void>) | null>(null);
 
-  const cancelFiltering = useCallback(() => {
+  const cancelFiltering = useCallback((preserveBase = false) => {
     const requestId = ++requestSeqRef.current;
     pendingRequestRef.current = requestId;
     cancelledThroughRef.current = requestId;
     pendingGenerationRef.current = undefined;
+    if (!preserveBase) {
+      pendingBaseGenerationRef.current = undefined;
+      renderedBaseCountRef.current = undefined;
+      setFilteredIndices([]);
+      setStats(null);
+    }
+    deltaMatchesRef.current = null;
     queuedFallbackRef.current = null;
-    setFilteredIndices([]);
     setSearchMatchIndices([]);
     setSearchMatchIds([]);
     setProgress(null);
-    setStats(null);
     setIsFiltering(false);
     setError(null);
     try {
@@ -345,14 +388,34 @@ export function useFilterWorker(): UseFilterWorkerResult {
         if (data.type !== "result") return;
         lastAppliedRequestRef.current = requestId;
         setError(null);
-        setFilteredIndices(data.filteredIndices);
-        setSearchMatchIndices(data.searchMatchIndices);
-        setSearchMatchIds(
-          data.searchMatchIds ??
-            data.searchMatchIndices.map(
-              (index) => data.filteredIndices[index]!,
-            ),
-        );
+        if (!data.reuseFilteredIndices) {
+          setFilteredIndices(data.filteredIndices);
+          renderedBaseCountRef.current = data.progress?.processed;
+        }
+        if (data.searchMatchesDelta) {
+          const previous = deltaMatchesRef.current;
+          const merged = mergeSearchMatches(
+            previous?.requestId === requestId
+              ? previous
+              : { indices: [], ids: [] },
+            {
+              indices: data.searchMatchIndices,
+              ids: data.searchMatchIds ?? [],
+            },
+          );
+          deltaMatchesRef.current = { requestId, ...merged };
+          setSearchMatchIndices(merged.indices);
+          setSearchMatchIds(merged.ids);
+        } else {
+          deltaMatchesRef.current = null;
+          setSearchMatchIndices(data.searchMatchIndices);
+          setSearchMatchIds(
+            data.searchMatchIds ??
+              data.searchMatchIndices.map(
+                (index) => data.filteredIndices[index]!,
+              ),
+          );
+        }
         if (data.progress) {
           setProgress({
             ...data.progress,
@@ -655,23 +718,47 @@ export function useFilterWorker(): UseFilterWorkerResult {
           : [],
         paged: config?.paged ?? false,
         generation: config?.generation,
+        baseGeneration: config?.baseGeneration,
         dataGeneration: config?.paged
           ? config.dataGeneration
           : sourceRevisionRef.current,
         databaseName: config?.databaseName,
       });
+      const {
+        navigationSearch: _search,
+        navigationSearchMode: _mode,
+        ...baseOptions
+      } = options;
+      const baseGeneration = JSON.stringify({
+        options: baseOptions,
+        markedSignatures: options.onlyMarked
+          ? Object.keys(marksMap ?? {}).sort()
+          : [],
+        paged: config?.paged ?? false,
+        generation: config?.baseGeneration ?? config?.generation,
+        dataGeneration: config?.paged
+          ? config.dataGeneration
+          : sourceRevisionRef.current,
+        databaseName: config?.databaseName,
+      });
+      const baseChanged = baseGeneration !== pendingBaseGenerationRef.current;
       const queryChanged = generation !== pendingGenerationRef.current;
       pendingRequestRef.current = requestId;
       pendingGenerationRef.current = generation;
+      pendingBaseGenerationRef.current = baseGeneration;
       targetCountRef.current = config?.entryCount ?? entries.length;
       setError(null);
       if (queryChanged) {
         cancelledThroughRef.current = requestId - 1;
         queuedFallbackRef.current = null;
-        setFilteredIndices([]);
+        if (baseChanged) {
+          renderedBaseCountRef.current = undefined;
+          setFilteredIndices([]);
+          setStats(null);
+        }
+        deltaMatchesRef.current = null;
         setSearchMatchIndices([]);
         setSearchMatchIds([]);
-        setStats(null);
         setProgress({
           processed: 0,
           total: targetCountRef.current,
@@ -739,6 +826,8 @@ export function useFilterWorker(): UseFilterWorkerResult {
             requestId,
             markedSignatures: marksMap ? Object.keys(marksMap) : [],
             generation,
+            baseGeneration,
+            knownBaseCount: renderedBaseCountRef.current,
             dataGeneration: config.dataGeneration,
             entryCount: config.entryCount,
             pageSize: config.pageSize,
@@ -768,7 +857,7 @@ export function useFilterWorker(): UseFilterWorkerResult {
       }
 
       if (workerRef.current) {
-        const forceFull = options.onlyMarked;
+        const forceFull = options.onlyMarked && baseChanged;
 
         try {
           const ok = syncEntriesToWorker(
@@ -784,6 +873,8 @@ export function useFilterWorker(): UseFilterWorkerResult {
               options,
               requestId,
               generation,
+              baseGeneration,
+              knownBaseCount: renderedBaseCountRef.current,
               dataGeneration: sourceRevisionRef.current,
             });
             return;

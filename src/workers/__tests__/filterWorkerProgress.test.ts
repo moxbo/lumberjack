@@ -117,7 +117,7 @@ describe("worker progressive message protocol", () => {
       close,
       transaction: () => ({
         objectStore: () => ({
-          openCursor: (range: { lower: number; upper: number }) => {
+          getAll: (range: { lower: number; upper: number }) => {
             const cursorRequest = {
               result: null as unknown,
               error: new Error("page failed"),
@@ -129,18 +129,10 @@ describe("worker progressive message protocol", () => {
               last: range.upper,
               database,
               release(records) {
-                let index = 0;
-                const next = () => {
-                  cursorRequest.result =
-                    index < records.length
-                      ? {
-                          value: records[index++],
-                          continue: () => queueMicrotask(next),
-                        }
-                      : null;
+                queueMicrotask(() => {
+                  cursorRequest.result = records;
                   cursorRequest.onsuccess!();
-                };
-                queueMicrotask(next);
+                });
               },
               fail() {
                 queueMicrotask(() => cursorRequest.onerror!());
@@ -267,6 +259,38 @@ describe("worker progressive message protocol", () => {
     expect(loads).toHaveLength(2);
   });
 
+  it("skips IndexedDB pages without candidates during navigation-only search", async () => {
+    autoPage = ({ first, last }) =>
+      Array.from({ length: last - first + 1 }, (_, index) => ({
+        ...projection(first + index, "needle"),
+        level: first + index === 5 ? "ERROR" : "INFO",
+      }));
+    const baseOptions = options({
+      filter: { level: "ERROR", logger: "", thread: "", message: "" },
+    });
+    send(request({ baseGeneration: "base", options: baseOptions }));
+    await until(() => !!final(1));
+    expect(final(1)!.filteredIndices).toEqual([5]);
+    const priorLoads = loads.length;
+    send(
+      request({
+        requestId: 2,
+        baseGeneration: "base",
+        generation: "new-search",
+        knownBaseCount: 6,
+        options: { ...baseOptions, navigationSearch: "needle OR absent" },
+      }),
+    );
+    await until(() => !!final(2));
+    expect(loads.slice(priorLoads).map((page) => page.first)).toEqual([5]);
+    expect(
+      results()
+        .filter((r) => r.requestId === 2)
+        .flatMap((r) => r.searchMatchIds ?? []),
+    ).toEqual([5]);
+    expect(final(2)!.progress?.processed).toBe(6);
+  });
+
   it.each([
     { generation: "query-2" },
     { dataGeneration: "data-2" },
@@ -344,6 +368,187 @@ describe("worker progressive message protocol", () => {
     expect(final(2)!.searchMatchIds).toEqual([2]);
     expect(final(2)!.filteredIndices).toEqual([1, 2, 3]);
     expect(openDatabase).not.toHaveBeenCalled();
+  });
+
+  it("reuses completed base predicates and sorting and sends only incremental navigation matches", async () => {
+    const levelRead = vi.fn(() => "INFO");
+    autoPage = ({ first, last }) => {
+      clock += 101;
+      return Array.from({ length: last - first + 1 }, (_, index) => ({
+        ...projection(
+          first + index,
+          first + index === 3 ? "different" : "needle",
+        ),
+        get level() {
+          return levelRead();
+        },
+        timestamp: 7 - first - index,
+      }));
+    };
+    const baseOptions = options({
+      filter: { level: "INFO", logger: "app", thread: "", message: "" },
+    });
+    send(request({ options: baseOptions, baseGeneration: "base" }));
+    await until(() => !!final(1));
+    expect(levelRead).toHaveBeenCalledTimes(6);
+    expect(final(1)!.filteredIndices).toEqual([6, 5, 4, 3, 2, 1]);
+    levelRead.mockClear();
+    const sort = await import("../../utils/sort");
+    const comparisons = vi.spyOn(sort, "compareByTimestampId");
+    send(
+      request({
+        requestId: 2,
+        generation: "search-2",
+        baseGeneration: "base",
+        knownBaseCount: 6,
+        options: { ...baseOptions, navigationSearch: "different" },
+      }),
+    );
+    await until(() => !!final(2));
+    const updates = results().filter((result) => result.requestId === 2);
+    expect(levelRead).not.toHaveBeenCalled();
+    expect(comparisons).not.toHaveBeenCalled();
+    expect(
+      updates.every(
+        (result) => result.reuseFilteredIndices && result.searchMatchesDelta,
+      ),
+    ).toBe(true);
+    expect(updates.every((result) => result.filteredIndices.length === 0)).toBe(
+      true,
+    );
+    expect(updates.flatMap((result) => result.searchMatchIds ?? [])).toEqual([
+      3,
+    ]);
+    expect(updates.flatMap((result) => result.searchMatchIndices)).toEqual([3]);
+    expect(updates.map((result) => result.progress?.processed)).toEqual([
+      2, 4, 6, 6,
+    ]);
+    expect(final(2)!.progress?.matches).toBe(1);
+    const reads = loads.length;
+    send(
+      request({
+        requestId: 3,
+        generation: "search-3",
+        baseGeneration: "base",
+        knownBaseCount: 6,
+        options: { ...baseOptions, navigationSearch: "" },
+      }),
+    );
+    await until(() => !!final(3));
+    expect(loads).toHaveLength(reads);
+    expect(final(3)!.filteredIndices).toEqual([]);
+    expect(final(3)!.searchMatchIds).toEqual([]);
+    expect(final(3)!.progress).toEqual({ processed: 6, total: 6, matches: 6 });
+  });
+
+  it.each([
+    {
+      options: options({
+        filter: { level: "ERROR", logger: "", thread: "", message: "" },
+      }),
+    },
+    {
+      options: options({
+        timeFilterEnabled: true,
+        timeFilterFrom: "2027-01-01",
+      }),
+    },
+    {
+      options: options({
+        dcFilterEnabled: true,
+        dcFilterEntries: [{ key: "a", value: "b", active: true }],
+      }),
+    },
+    { markedSignatures: ["sig-2"] },
+    { baseGeneration: "new-base" },
+    { dataGeneration: "new-data" },
+    { databaseName: "new-db" },
+    { entryCount: 2 },
+  ])("invalidates completed base reuse on %j", async (change) => {
+    autoPage = ({ first, last }) =>
+      Array.from({ length: last - first + 1 }, (_, index) =>
+        projection(first + index),
+      );
+    const initial = request({
+      baseGeneration: "base",
+      options: options({ onlyMarked: true }),
+      markedSignatures: ["sig-1"],
+    });
+    send(initial);
+    await until(() => !!final(1));
+    send({ ...initial, requestId: 2, knownBaseCount: 6, ...change });
+    await until(() => !!final(2));
+    expect(final(2)!.reuseFilteredIndices).not.toBe(true);
+    expect(loads[3]!.first).toBe(1);
+  });
+
+  it("search changes across an append filter only the tail and rescan old search matches", async () => {
+    const levelRead = vi.fn(() => "INFO");
+    autoPage = ({ first, last }) =>
+      Array.from({ length: last - first + 1 }, (_, index) => ({
+        ...projection(first + index, (first + index) % 2 === 1 ? "old" : "new"),
+        get level() {
+          return levelRead();
+        },
+      }));
+    const baseOptions = options({
+      navigationSearch: "old",
+      filter: { level: "INFO", logger: "", thread: "", message: "" },
+    });
+    send(
+      request({ entryCount: 2, baseGeneration: "base", options: baseOptions }),
+    );
+    await until(() => !!final(1));
+    levelRead.mockClear();
+    send(
+      request({
+        requestId: 2,
+        entryCount: 4,
+        generation: "search-2",
+        baseGeneration: "base",
+        knownBaseCount: 2,
+        options: { ...baseOptions, navigationSearch: "new" },
+      }),
+    );
+    await until(() => !!final(2));
+    expect(levelRead).toHaveBeenCalledTimes(2);
+    const updates = results().filter((result) => result.requestId === 2);
+    expect(
+      updates.filter((result) => !result.reuseFilteredIndices).at(-1)
+        ?.filteredIndices,
+    ).toEqual([1, 2, 3, 4]);
+    expect(updates.flatMap((result) => result.searchMatchIds ?? [])).toEqual([
+      2, 4,
+    ]);
+  });
+
+  it("rehydrates the base once after renderer cancellation and rejects cancelled navigation deltas", async () => {
+    autoPage = ({ first, last }) =>
+      Array.from({ length: last - first + 1 }, (_, index) =>
+        projection(first + index),
+      );
+    send(request({ baseGeneration: "base" }));
+    await until(() => !!final(1));
+    send({ type: "cancel", requestId: 2 });
+    autoPage = undefined;
+    send(
+      request({
+        requestId: 3,
+        baseGeneration: "base",
+        generation: "new",
+        options: options({ navigationSearch: "other" }),
+      }),
+    );
+    await until(() => loads.length === 4);
+    expect(
+      results().filter((result) => result.requestId === 3)[0]!.filteredIndices,
+    ).toHaveLength(6);
+    send({ type: "cancel", requestId: 3 });
+    loads[3]!.release([projection(1), projection(2)]);
+    await until(() => close.mock.calls.length === 2);
+    expect(results().filter((result) => result.requestId === 3)).toHaveLength(
+      1,
+    );
   });
 
   it("reports errors with both identities", async () => {
@@ -431,8 +636,10 @@ describe("worker progressive message protocol", () => {
         return projection(id, id === 900_001 ? "needle" : "other");
       });
     };
+    const baselineStart = Date.now();
     send(request({ entryCount: 1_000_000, pageSize: 2_000 }));
     await until(() => !!final(1));
+    const baselineMs = Date.now() - baselineStart;
     expect(loads).toHaveLength(500);
     expect(final(1)!.searchMatchIds).toEqual([900_001]);
     expect(final(1)!.searchMatchIndices).toEqual([900_000]);
@@ -446,6 +653,36 @@ describe("worker progressive message protocol", () => {
     expect(results().length).toBeLessThan(10);
     const worker = await import("../filterWorker");
     expect(worker._getTransferredProjectionCache()).toBeNull();
+    const fullPayloadIds = results().reduce(
+      (sum, result) => sum + result.filteredIndices.length,
+      0,
+    );
+    const searchStart = Date.now();
+    send(
+      request({
+        requestId: 2,
+        generation: "search-only",
+        baseGeneration: "query-1",
+        knownBaseCount: 1_000_000,
+        entryCount: 1_000_000,
+        pageSize: 2_000,
+        options: options({ navigationSearch: "needle OR absent" }),
+      }),
+    );
+    await until(() => !!final(2));
+    const searchMs = Date.now() - searchStart;
+    const updates = results().filter((result) => result.requestId === 2);
+    expect(updates.flatMap((result) => result.searchMatchIds ?? [])).toEqual([
+      900_001,
+    ]);
+    expect(
+      updates.reduce((sum, result) => sum + result.filteredIndices.length, 0),
+    ).toBe(0);
+    expect(final(2)!.progress?.processed).toBe(1_000_000);
+    expect(worker._getTransferredProjectionCache()).toBeNull();
+    console.warn(
+      `[perf] 1m synthetic paged: full=${baselineMs}ms navigation=${searchMs}ms; base IDs sent=${fullPayloadIds}->0`,
+    );
   }, 20_000);
 
   it("legacy set/append scans are progressive, scoped and do not starve", async () => {

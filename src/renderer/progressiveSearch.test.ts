@@ -2,11 +2,47 @@ import { describe, expect, it, vi } from "vitest";
 import { MetadataStore } from "../utils/metadataSnapshot";
 import {
   anchoredScrollOffset,
+  adjacentSearchMatch,
+  searchMatchIndex,
   searchMatchPositions,
   shouldNavigateCommittedSearch,
 } from "./progressiveSearch";
 
 describe("progressive search navigation", () => {
+  it("keeps navigation boundaries and finds adjacent matches from nonmatching rows", () => {
+    const matches = [2, 6, 10];
+    expect(adjacentSearchMatch(matches, -1, 1)).toBe(2);
+    expect(adjacentSearchMatch(matches, -1, -1)).toBe(10);
+    expect(adjacentSearchMatch(matches, 6, 1)).toBe(10);
+    expect(adjacentSearchMatch(matches, 6, -1)).toBe(2);
+    expect(adjacentSearchMatch(matches, 7, 1)).toBe(10);
+    expect(adjacentSearchMatch(matches, 7, -1)).toBe(6);
+    expect(adjacentSearchMatch(matches, 10, 1)).toBe(10);
+    expect(adjacentSearchMatch(matches, 2, -1)).toBe(2);
+    expect(adjacentSearchMatch([], 0, 1)).toBeUndefined();
+    expect(searchMatchIndex(matches, 6)).toBe(1);
+    expect(searchMatchIndex(matches, 7)).toBe(-1);
+    expect(searchMatchIndex([], 0)).toBe(-1);
+  });
+
+  it("locates the counter and adjacent results among a million matches with logarithmic reads", () => {
+    let reads = 0;
+    const matches = new Proxy<number[]>([], {
+      get(target, key, receiver) {
+        if (key === "length") return 1_000_000;
+        if (typeof key === "string" && /^\d+$/.test(key)) {
+          reads++;
+          return Number(key) * 2;
+        }
+        return Reflect.get(target, key, receiver);
+      },
+    });
+    expect(searchMatchIndex(matches, 1_999_996)).toBe(999_998);
+    expect(adjacentSearchMatch(matches, 1_999_996, 1)).toBe(1_999_998);
+    expect(adjacentSearchMatch(matches, 1_999_996, -1)).toBe(1_999_994);
+    expect(reads).toBeLessThan(70);
+  });
+
   it("maps stable matches to the displayed, unfiltered snapshot", () => {
     const store = new MetadataStore();
     store.appendSorted(

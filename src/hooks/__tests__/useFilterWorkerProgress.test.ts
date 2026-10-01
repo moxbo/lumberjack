@@ -130,6 +130,86 @@ afterEach(() => {
 });
 
 describe("progressive filter coordination", () => {
+  it("preserves the base array across search changes and merges sorted match-only deltas", () => {
+    const hook = mount();
+    const baseConfig = { ...config, baseGeneration: "base" };
+    hook.filterEntries(entries, options, undefined, baseConfig);
+    const first = request();
+    const baseIds = [99, 12, 8];
+    reply(first, baseIds);
+    hook.cancelFiltering(true);
+    expect(state().ids).toBe(baseIds);
+    hook.filterEntries(
+      entries,
+      { ...options, navigationSearch: "new" },
+      undefined,
+      { ...baseConfig, generation: "next-search" },
+    );
+    const second = request();
+    expect(second.baseGeneration).toBe(first.baseGeneration);
+    expect(second.generation).not.toBe(first.generation);
+    expect(second.knownBaseCount).toBe(3);
+    expect(state().ids).toBe(baseIds);
+    const delta = (indices: number[], partial: boolean) =>
+      TestWorker.instance.onmessage?.({
+        data: {
+          ...second,
+          type: "result",
+          filteredIndices: [],
+          reuseFilteredIndices: true,
+          searchMatchesDelta: true,
+          searchMatchIndices: indices,
+          searchMatchIds: indices.map((index) => baseIds[index]),
+          stats: stats(3),
+          partial,
+          progress: {
+            processed: partial ? 2 : 3,
+            total: 3,
+            matches: partial ? 1 : 2,
+          },
+        },
+      });
+    delta([2], true);
+    expect(state().ids).toBe(baseIds);
+    expect(state().matches).toEqual([8]);
+    delta([0], false);
+    expect(state().ids).toBe(baseIds);
+    expect(state().matches).toEqual([99, 8]);
+    expect(hooks.states[1]).toEqual([0, 2]);
+    expect(state().isFiltering).toBe(false);
+    hook.cancelFiltering();
+    hook.filterEntries(
+      entries,
+      { ...options, navigationSearch: "new" },
+      undefined,
+      baseConfig,
+    );
+    expect(request().knownBaseCount).toBeUndefined();
+  });
+
+  it.each([
+    { databaseName: "rotated-db" },
+    { dataGeneration: 2 },
+    { baseGeneration: "new-base" },
+  ])("clears the base view and rejects stale results on %j", (change) => {
+    const hook = mount();
+    hook.filterEntries(entries, options, undefined, {
+      ...config,
+      baseGeneration: "base",
+    });
+    const old = request();
+    reply(old, [12, 8, 99]);
+    hook.filterEntries(entries, options, undefined, {
+      ...config,
+      baseGeneration: "base",
+      ...change,
+    });
+    expect(state().ids).toEqual([]);
+    expect(request().knownBaseCount).toBeUndefined();
+    reply(old, [99]);
+    expect(state().ids).toEqual([]);
+  });
+
   it("applies repeated partial snapshots of one request before its final result", () => {
     const hook = mount();
     hook.filterEntries(entries, options, undefined, config);
@@ -160,13 +240,21 @@ describe("progressive filter coordination", () => {
     );
     const current = request();
     expect(current.generation).not.toBe(old.generation);
-    expect(state()).toMatchObject({ ids: [], matches: [], isFiltering: true });
+    expect(state()).toMatchObject({
+      ids: [12],
+      matches: [],
+      isFiltering: true,
+    });
     reply(old, [12, 8], true);
     reply(old, [12, 8, 99]);
     TestWorker.instance.onmessage?.({
       data: { ...old, type: "error", paged: true, message: "obsolete" },
     });
-    expect(state()).toMatchObject({ ids: [], error: null, isFiltering: true });
+    expect(state()).toMatchObject({
+      ids: [12],
+      error: null,
+      isFiltering: true,
+    });
     reply(current, [99]);
     expect(state()).toMatchObject({ ids: [99], isFiltering: false });
   });

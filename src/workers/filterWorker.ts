@@ -4,7 +4,7 @@ import {
   type ProjectionRecord,
 } from "../store/paged";
 import { compileDcFilter, matchesCompiledDcFilter } from "../utils/dcMatch";
-import { msgMatches, type SearchMode } from "../utils/msgFilter";
+import { tokenizeQuery, type SearchMode } from "../utils/msgFilter";
 import { compareByTimestampId } from "../utils/sort";
 import type { FilterProgress } from "../types/filterProgress";
 export type { FilterProgress } from "../types/filterProgress";
@@ -57,6 +57,8 @@ export interface FilterRequest {
   options: FilterOptions;
   requestId?: number;
   generation?: string | number;
+  baseGeneration?: string | number;
+  knownBaseCount?: number;
   dataGeneration?: string | number;
 }
 
@@ -67,6 +69,8 @@ export interface PagedFilterRequest {
   markedSignatures: string[];
   pageSize?: number;
   generation?: string | number;
+  baseGeneration?: string | number;
+  knownBaseCount?: number;
   dataGeneration?: string | number;
   entryCount: number;
   databaseName?: string;
@@ -84,6 +88,10 @@ export interface FilterResponse {
   dataGeneration?: string | number;
   paged?: boolean;
   partial?: boolean;
+  /** The completed base view is unchanged; filteredIndices is omitted logically. */
+  reuseFilteredIndices?: boolean;
+  /** Match arrays contain only new matches, sorted by visual index. */
+  searchMatchesDelta?: boolean;
 }
 
 export interface FilterErrorResponse {
@@ -155,12 +163,16 @@ const TRANSFER_CACHE_MAX_CHARS = 64 * 1024 * 1024;
 const TRANSFER_CACHE_MAX_RECORDS = 350_000;
 
 interface PagedFilterCache {
+  paged: boolean;
+  baseKey: string;
+  searchKey: string | null;
   databaseName?: string;
   generation?: string | number;
   dataGeneration?: string | number;
   scannedEntryCount: number;
   references: PassingReference[];
   stats: FilterStats;
+  positions?: Int32Array | Map<number, number>;
 }
 
 let pagedFilterCache: PagedFilterCache | null = null;
@@ -297,46 +309,82 @@ function parseOptionalTimestamp(value?: string): number | null {
   return Number.isNaN(parsed) ? null : parsed;
 }
 
-function createMessageMatcher(
+export function createMessageMatcher(
   expression: string,
   mode: SearchMode = "insensitive",
 ): (entry: Pick<FilterableEntry, "message" | "messageLower">) => boolean {
   const query = String(expression || "").trim();
   if (!query) return () => true;
 
-  // Most interactive searches are literals or whitespace-separated implicit
-  // AND terms. Avoid the general query parser and repeated lower-casing.
-  if (/^[^&|!()"\\]+$/.test(query)) {
-    const terms = query.split(/\s+/).filter(Boolean);
-    const hasTextOperator = terms.some(
-      (term) => term === "AND" || term === "OR" || term === "NOT",
-    );
-    if (hasTextOperator) {
+  if (mode === "regex") {
+    try {
+      const regex = new RegExp(query, "i");
+      return (entry) => regex.test(String(entry.message ?? ""));
+    } catch {
+      const needle = query.toLowerCase();
       return (entry) =>
-        msgMatches(String(entry.message ?? ""), query, {
-          mode,
-        });
-    }
-    if (mode === "sensitive") {
-      return (entry) => {
-        const message = String(entry.message ?? "");
-        return terms.every((term) => message.includes(term));
-      };
-    }
-    if (mode === "insensitive") {
-      const needles = terms.map((term) => term.toLowerCase());
-      return (entry) => {
-        const message =
-          entry.messageLower ?? String(entry.message ?? "").toLowerCase();
-        return needles.every((needle) => message.includes(needle));
-      };
+        (
+          entry.messageLower ?? String(entry.message ?? "").toLowerCase()
+        ).includes(needle);
     }
   }
 
+  // Parse once per request, including permissive malformed-expression behavior.
+  // Evaluating the old parser per row also walked every short-circuited branch.
+  const tokens = tokenizeQuery(query);
+  type Predicate = (message: string) => boolean;
+  let pos = 0;
+  const primary = (): Predicate => {
+    const token = tokens[pos++];
+    if (token?.t === "WORD") {
+      const needle = mode === "sensitive" ? token.v! : token.v!.toLowerCase();
+      return (message) => message.includes(needle);
+    }
+    if (token?.t === "LPAREN") {
+      const expression = or();
+      if (tokens[pos]?.t === "RPAREN") pos++;
+      return expression;
+    }
+    return () => true;
+  };
+  const not = (): Predicate => {
+    let negate = false;
+    while (tokens[pos]?.t === "NOT") {
+      pos++;
+      negate = !negate;
+    }
+    const operand = primary();
+    return negate ? (message) => !operand(message) : operand;
+  };
+  const and = (): Predicate => {
+    const operands = [not()];
+    while (true) {
+      const kind = tokens[pos]?.t;
+      if (kind === "AND") pos++;
+      else if (kind !== "WORD" && kind !== "LPAREN" && kind !== "NOT") break;
+      operands.push(not());
+    }
+    return operands.length === 1
+      ? operands[0]!
+      : (message) => operands.every((operand) => operand(message));
+  };
+  const or = (): Predicate => {
+    const operands = [and()];
+    while (tokens[pos]?.t === "OR") {
+      pos++;
+      operands.push(and());
+    }
+    return operands.length === 1
+      ? operands[0]!
+      : (message) => operands.some((operand) => operand(message));
+  };
+  const matches = or();
   return (entry) =>
-    msgMatches(String(entry.message ?? ""), query, {
-      mode,
-    });
+    matches(
+      mode === "sensitive"
+        ? String(entry.message ?? "")
+        : (entry.messageLower ?? String(entry.message ?? "").toLowerCase()),
+    );
 }
 
 export function normalizeProjection(entry: ProjectionRecord): CachedProjection {
@@ -472,7 +520,7 @@ function buildResponse(
   const searchMatchIndices: number[] = [];
   const searchMatchIds: number[] = [];
   for (const ref of references) {
-    if (ref.searchMatch) {
+    if (request.options.navigationSearch?.trim() && ref.searchMatch) {
       searchMatchIndices.push(filteredIndices.length);
       searchMatchIds.push(ref.id);
     }
@@ -662,29 +710,22 @@ function readProjectionPage(
 ): Promise<ProjectionRecord[]> {
   return new Promise((resolve, reject) => {
     let settled = false;
-    const page: ProjectionRecord[] = [];
     let transaction: IDBTransaction;
     try {
       transaction = db.transaction(PROJECTION_STORE_NAME, "readonly");
       const range = IDBKeyRange.bound(firstId, lastId);
       const request = transaction
         .objectStore(PROJECTION_STORE_NAME)
-        .openCursor(range, "next");
+        .getAll(range);
       request.onerror = () => {
         settled = true;
-        reject(request.error ?? new Error("Projection cursor failed"));
+        reject(request.error ?? new Error("Projection page failed"));
       };
       request.onsuccess = () => {
-        const cursor = request.result;
-        if (!cursor) {
-          if (!settled) {
-            settled = true;
-            resolve(page);
-          }
-          return;
+        if (!settled) {
+          settled = true;
+          resolve(request.result as ProjectionRecord[]);
         }
-        page.push(cursor.value as ProjectionRecord);
-        cursor.continue();
       };
       transaction.onabort = () => {
         if (!settled)
@@ -725,16 +766,24 @@ function invalidateJobs(): void {
   queuedJob = null;
 }
 
-async function* legacyPages(job: FilterJob): AsyncGenerator<unknown[]> {
-  let remaining = job.total;
+async function* legacyPages(
+  job: FilterJob,
+  skip = 0,
+): AsyncGenerator<unknown[]> {
+  let remaining = job.total - skip;
   for (const batch of job.batches ?? []) {
-    for (let start = 0; start < batch.length && remaining > 0;) {
+    if (skip >= batch.length) {
+      skip -= batch.length;
+      continue;
+    }
+    for (let start = skip; start < batch.length && remaining > 0;) {
       if (job.cancelled) return;
       const size = Math.min(PAGED_SCAN_SIZE, remaining, batch.length - start);
       yield batch.slice(start, start + size);
       start += size;
       remaining -= size;
     }
+    skip = 0;
     if (!remaining) break;
   }
 }
@@ -742,6 +791,7 @@ async function* legacyPages(job: FilterJob): AsyncGenerator<unknown[]> {
 async function* projectionPages(
   job: FilterJob,
   start: number,
+  candidatePositions?: Int32Array,
 ): AsyncGenerator<{ records: ProjectionRecord[]; processed: number }> {
   const request = job.request as PagedFilterRequest;
   const pageSize =
@@ -758,6 +808,19 @@ async function* projectionPages(
     for (let offset = start; offset < job.total; offset += pageSize) {
       if (job.cancelled) return;
       const end = Math.min(job.total, offset + pageSize);
+      if (candidatePositions) {
+        let hasCandidate = false;
+        for (let id = offset + 1; id <= end; id++) {
+          if (candidatePositions[id]! >= 0) {
+            hasCandidate = true;
+            break;
+          }
+        }
+        if (!hasCandidate) {
+          yield { records: [], processed: end };
+          continue;
+        }
+      }
       let records: ProjectionRecord[] = [];
       if (transferred) {
         for (let id = offset + 1; id <= end; id++) {
@@ -779,6 +842,155 @@ async function* projectionPages(
   }
 }
 
+function baseKey(request: SearchRequest): string {
+  const {
+    navigationSearch: _search,
+    navigationSearchMode: _mode,
+    ...base
+  } = request.options;
+  return JSON.stringify({
+    options: base,
+    generation: request.baseGeneration ?? request.generation,
+    marked:
+      request.type === "filterPaged" && request.options.onlyMarked
+        ? [...request.markedSignatures].sort()
+        : [],
+  });
+}
+
+function searchKey(request: SearchRequest): string {
+  return JSON.stringify([
+    request.options.navigationSearch?.trim() ?? "",
+    request.options.navigationSearchMode ?? "insensitive",
+  ]);
+}
+
+async function runNavigationSearch(
+  job: FilterJob,
+  cached: PagedFilterCache,
+  publish: (response: FilterResponse) => void,
+  basePublished = false,
+): Promise<FilterResponse | null> {
+  const request = job.request;
+  const search = request.options.navigationSearch?.trim() ?? "";
+  if (!basePublished && request.knownBaseCount !== cached.scannedEntryCount) {
+    // Cancellation can clear the renderer while the worker still owns a base.
+    publish(
+      buildResponse(
+        { ...request, options: { ...request.options, navigationSearch: "" } },
+        cached.references,
+        cached.stats,
+        job.total,
+        true,
+      ),
+    );
+  }
+  const matcher = createMessageMatcher(
+    search,
+    request.options.navigationSearchMode,
+  );
+  // Dense paged IDs need four bytes per dataset row, not a million Map nodes.
+  if (!cached.positions) {
+    const positions = cached.paged
+      ? new Int32Array(cached.scannedEntryCount + 1).fill(-1)
+      : new Map<number, number>();
+    cached.references.forEach((ref, index) => {
+      if (positions instanceof Int32Array) positions[ref.id] = index;
+      else positions.set(ref.id, index);
+    });
+    cached.positions = positions;
+  }
+  const positions = cached.positions;
+  let pending: number[] = [];
+  let matches = 0;
+  let processed = 0;
+  let published = false;
+  let lastPublished = 0;
+  // Flags are committed only after a complete scan, so cancelled searches cannot
+  // poison append reuse of the previous query.
+  const flags = new Uint8Array(cached.references.length);
+  const response = (partial: boolean): FilterResponse => {
+    pending.sort((a, b) => a - b);
+    const indices = pending;
+    pending = [];
+    return {
+      type: "result",
+      filteredIndices: [],
+      reuseFilteredIndices: true,
+      searchMatchesDelta: true,
+      searchMatchIndices: indices,
+      searchMatchIds: indices.map((index) => cached.references[index]!.id),
+      stats: { ...cached.stats },
+      progress: {
+        processed,
+        total: job.total,
+        matches: search ? matches : cached.stats.passed,
+      },
+      requestId: request.requestId,
+      generation: request.generation,
+      dataGeneration: request.dataGeneration,
+      paged: cached.paged,
+      partial,
+    };
+  };
+  const scan = (records: readonly unknown[], end: number): void => {
+    for (let offset = 0; offset < records.length; offset++) {
+      const entry = records[offset] as FilterableEntry | null;
+      if (!entry) continue;
+      const id = cached.paged ? entry.id! : (entry._id ?? processed + offset);
+      const index =
+        positions instanceof Int32Array ? positions[id] : positions.get(id);
+      if (index === undefined || index < 0 || !matcher(entry)) continue;
+      flags[index] = 1;
+      pending.push(index);
+      matches++;
+    }
+    processed = end;
+    if (
+      !published ||
+      performance.now() - lastPublished >= PROGRESS_INTERVAL_MS
+    ) {
+      publish(response(true));
+      published = true;
+      lastPublished = performance.now();
+    }
+  };
+  if (cached.searchKey === searchKey(request)) {
+    cached.references.forEach((ref, index) => {
+      if (search && ref.searchMatch) {
+        flags[index] = 1;
+        pending.push(index);
+        matches++;
+      }
+    });
+  } else if (search && cached.references.length) {
+    if (cached.paged) {
+      for await (const page of projectionPages(
+        job,
+        0,
+        positions instanceof Int32Array ? positions : undefined,
+      )) {
+        if (job.cancelled) return null;
+        scan(page.records, page.processed);
+        await yieldWorker();
+      }
+    } else {
+      for await (const page of legacyPages(job)) {
+        if (job.cancelled) return null;
+        scan(page, processed + page.length);
+        await yieldWorker();
+      }
+    }
+  }
+  if (job.cancelled) return null;
+  processed = job.total;
+  cached.references.forEach((ref, index) => {
+    ref.searchMatch = flags[index] === 1;
+  });
+  cached.searchKey = searchKey(request);
+  return response(false);
+}
+
 async function runFilter(
   job: FilterJob,
   publish: (response: FilterResponse) => void,
@@ -786,16 +998,24 @@ async function runFilter(
   const request = job.request;
   const paged = request.type === "filterPaged";
   const cached =
-    paged &&
     pagedFilterCache !== null &&
-    pagedFilterCache?.databaseName === request.databaseName &&
-    pagedFilterCache?.generation === request.generation &&
+    pagedFilterCache.paged === paged &&
+    pagedFilterCache?.databaseName ===
+      (paged ? request.databaseName : undefined) &&
+    pagedFilterCache.baseKey === baseKey(request) &&
     pagedFilterCache?.dataGeneration === request.dataGeneration &&
     pagedFilterCache.scannedEntryCount <= job.total
       ? pagedFilterCache
       : null;
+  if (cached && cached.scannedEntryCount === job.total) {
+    return runNavigationSearch(job, cached, publish);
+  }
+  const needsSearchScan = !!cached && cached.searchKey !== searchKey(request);
+  const baseRequest = needsSearchScan
+    ? { ...request, options: { ...request.options, navigationSearch: "" } }
+    : request;
   const stats = cached ? { ...cached.stats } : emptyStats();
-  const prepared = prepareFilter(request.options);
+  const prepared = prepareFilter(baseRequest.options);
   const navigationMatcher = createMessageMatcher(
     prepared.navigationSearch,
     request.options.navigationSearchMode,
@@ -834,7 +1054,7 @@ async function runFilter(
     runs.add(incoming);
     const now = performance.now();
     if (!published || now - lastPublished >= PROGRESS_INTERVAL_MS) {
-      publish(buildResponse(request, snapshot(), stats, job.total, true));
+      publish(buildResponse(baseRequest, snapshot(), stats, job.total, true));
       published = true;
       lastPublished = performance.now();
     }
@@ -847,7 +1067,7 @@ async function runFilter(
       await yieldWorker();
     }
   } else {
-    for await (const page of legacyPages(job)) {
+    for await (const page of legacyPages(job, processed)) {
       if (job.cancelled) return null;
       scanPage(page, processed + page.length);
       await yieldWorker();
@@ -855,15 +1075,19 @@ async function runFilter(
   }
   if (job.cancelled) return null;
   references = snapshot();
-  if (paged) {
-    pagedFilterCache = {
-      databaseName: request.databaseName,
-      generation: request.generation,
-      dataGeneration: request.dataGeneration,
-      scannedEntryCount: processed,
-      references,
-      stats: { ...stats },
-    };
+  pagedFilterCache = {
+    paged,
+    baseKey: baseKey(request),
+    searchKey: needsSearchScan ? null : searchKey(request),
+    databaseName: paged ? request.databaseName : undefined,
+    dataGeneration: request.dataGeneration,
+    scannedEntryCount: processed,
+    references,
+    stats: { ...stats },
+  };
+  if (needsSearchScan) {
+    publish(buildResponse(baseRequest, references, stats, job.total, true));
+    return runNavigationSearch(job, pagedFilterCache, publish, true);
   }
   return buildResponse(request, references, stats, job.total);
 }
@@ -918,6 +1142,7 @@ if (workerScope) {
     }
     if (data.type === "setEntries") {
       invalidateJobs();
+      pagedFilterCache = null;
       cachedEntryBatches = [data.entries || []];
       cachedEntryCount = data.entries?.length ?? 0;
       cachedDataGeneration = data.dataGeneration;
@@ -930,6 +1155,7 @@ if (workerScope) {
         data.dataGeneration !== cachedDataGeneration
       ) {
         invalidateJobs();
+        pagedFilterCache = null;
         cachedEntryBatches = [];
         cachedEntryCount = 0;
         cachedDataGeneration = data.dataGeneration;
@@ -963,6 +1189,10 @@ if (workerScope) {
       if (data.requestId <= newestRequestId) return;
       newestRequestId = data.requestId;
     }
+    if (data.type === "filter" && data.entries) {
+      invalidateJobs();
+      pagedFilterCache = null;
+    }
     const job: FilterJob = {
       request: data,
       cancelled: false,
@@ -983,6 +1213,8 @@ if (workerScope) {
       if (
         active.type !== data.type ||
         active.generation !== data.generation ||
+        baseKey(active) !== baseKey(data) ||
+        searchKey(active) !== searchKey(data) ||
         active.dataGeneration !== data.dataGeneration ||
         (active.type === "filterPaged" &&
           data.type === "filterPaged" &&

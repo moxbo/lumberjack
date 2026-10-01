@@ -44,6 +44,12 @@ text/mode, filters, relevant marks, database and data generation. New queries an
 `cancelFiltering()` invalidate obsolete results; same-query appends queue behind
 the current scan so continuous input cannot starve results.
 
+Completed worker base results are cached independently of navigation text/mode.
+Navigation-only requests send sorted match deltas instead of retransmitting the
+base ID sequence; the hook merges them into its cumulative result snapshots.
+`cancelFiltering(true)` cancels obsolete matches while retaining the base view.
+The workerless fallback remains a cooperative scan, not a cached search index.
+
 The worker scans projection pages rather than loading all messages before
 filtering. It publishes the first page immediately and throttles subsequent
 updates. Passing references retain IDs, timestamps and match flags, not message
@@ -58,6 +64,21 @@ anchor, and manual interaction cancels any pending automatic navigation.
 The progress indicator shows processed/total counts only while a scan is running.
 Match counts remain in the existing navigation counter; filtered row counts
 remain in the toolbar rather than being repeated in the progress indicator.
+
+App keeps the base-view identity separate from the navigation query identity.
+A new navigation term or case/regex mode must not blank a completed filtered
+list or replace its ID sequence on every match update. Genuine filter, relevant
+mark, database or data-generation changes still invalidate the base view.
+Match counters and previous/next navigation use binary lookup in sorted visual
+match positions rather than walking potentially millions of matches.
+
+New search terms still scan relevant message pages. IndexedDB reads use bounded
+`getAll()` ranges and skip pages without base-filter candidates. Boolean and regex
+matchers are compiled once per request. This does not provide a full-text index.
+For an opt-in Electron/IndexedDB measurement with short synthetic messages, run
+`SEARCH_BENCH_ROWS=1000000 npx playwright test tests/e2e/search-performance.spec.ts`
+after building the application. It compares base reuse with forced refiltering
+and reports timing and transferred base IDs, not a real 1–5 GB workload guarantee.
 
 ## Storage failures
 

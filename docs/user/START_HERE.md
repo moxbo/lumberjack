@@ -64,6 +64,17 @@ erhalten und die Aufnahme pausiert.
 
 Lumberjack hat eine Mini-Filter-Sprache:
 
+Die **Suche oben** wird mit Enter übernommen und navigiert durch Treffer in der
+bestehenden Liste; sie ist kein zusätzlicher Nachrichtenfilter. Ein neuer
+Suchbegriff lässt die gefilterte Liste und deren Zähler stehen, während neue
+Treffer ermittelt werden. Eine bereits abgeschlossene
+Filterung wird bei unveränderten Filtern und Daten wiederverwendet.
+
+Ein neuer Volltextsuchbegriff muss weiterhin die relevanten Nachrichten prüfen;
+ein Volltextindex wird nicht aufgebaut.
+Bei sehr großen Beständen helfen vorab gesetzte Level-, Logger-, Zeit- oder
+Kontextfilter, die Suchmenge zu begrenzen.
+
 | Operator | Bedeutung | Beispiel          |
 |----------|-----------|-------------------|
 | `&`      | UND       | `service&timeout` |

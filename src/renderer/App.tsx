@@ -112,7 +112,7 @@ import { SkeletonLoader } from "./components/SkeletonLoader";
 import { ElasticStatusBar } from "./components/ElasticStatusBar";
 import { FilterProgressStatus } from "./components/FilterProgressStatus";
 import { WorkspaceToolbar, WorkspaceIcon } from "./components/WorkspaceToolbar";
-import { searchMatchPositions } from "./progressiveSearch";
+import { adjacentSearchMatch, searchMatchPositions } from "./progressiveSearch";
 import { JSX } from "preact/jsx-runtime";
 import { buildDemoEntries, LOGBACK_TCP_SNIPPET } from "./onboardingData";
 
@@ -894,7 +894,7 @@ export default function App(): JSX.Element {
     dcFilterActive ||
     TimeFilter.isEnabled();
   const queryActive = filterIsActive || !!search.trim();
-  const queryKey = useMemo(
+  const baseViewKey = useMemo(
     () =>
       JSON.stringify({
         stdFiltersEnabled,
@@ -903,8 +903,6 @@ export default function App(): JSX.Element {
         timeVersion,
         onlyMarked,
         markedSignatures: onlyMarked ? Object.keys(marksMap).sort() : [],
-        navigationSearch: search,
-        navigationSearchMode: searchMode,
         entryGeneration,
         databaseName: repository.databaseName,
       }),
@@ -915,16 +913,22 @@ export default function App(): JSX.Element {
       timeVersion,
       onlyMarked,
       onlyMarked ? marksMap : null,
-      search,
-      searchMode,
       entryGeneration,
       repository,
       repository.databaseName,
     ],
   );
+  const queryKey = useMemo(
+    () => JSON.stringify([baseViewKey, search, searchMode]),
+    [baseViewKey, search, searchMode],
+  );
   const [submittedQueryKey, setSubmittedQueryKey] = useState<string | null>(
     null,
   );
+  const [submittedBaseViewKey, setSubmittedBaseViewKey] = useState<
+    string | null
+  >(null);
+  const filterResultsCurrent = baseViewKey === submittedBaseViewKey;
   const resultsCurrent = queryKey === submittedQueryKey;
   const searchRunning = queryActive && (!resultsCurrent || isFiltering);
   const pendingFirstSearchRef = useRef<string | null>(null);
@@ -936,7 +940,7 @@ export default function App(): JSX.Element {
   const commitSearch = useCallback(
     (value: string) => {
       if (value === search) return;
-      cancelFiltering();
+      cancelFiltering(true);
       setSubmittedQueryKey(null);
       pendingFirstSearchRef.current = value.trim() ? value : null;
       pendingSelectedAfterFilterRef.current = null;
@@ -947,7 +951,7 @@ export default function App(): JSX.Element {
   const commitSearchMode = useCallback(
     (mode: typeof searchMode) => {
       if (mode === searchMode) return;
-      cancelFiltering();
+      cancelFiltering(true);
       setSubmittedQueryKey(null);
       pendingFirstSearchRef.current = search.trim() ? search : null;
       pendingSelectedAfterFilterRef.current = null;
@@ -985,11 +989,13 @@ export default function App(): JSX.Element {
     ) {
       cancelFiltering();
       setSubmittedQueryKey(queryKey);
+      setSubmittedBaseViewKey(baseViewKey);
       if (!visibleEntries.length) cancelAutomaticNavigation();
       return;
     }
 
     setSubmittedQueryKey(queryKey);
+    setSubmittedBaseViewKey(baseViewKey);
     const filterGeneration = JSON.stringify({
       stdFiltersEnabled,
       filter,
@@ -1029,6 +1035,7 @@ export default function App(): JSX.Element {
         ? {
             paged: true,
             generation: filterGeneration,
+            baseGeneration: baseViewKey,
             dataGeneration: entryGeneration,
             entryCount: visibleEntries.length,
             databaseName: repository.databaseName,
@@ -1054,13 +1061,14 @@ export default function App(): JSX.Element {
     filterIsActive,
     repository,
     queryKey,
+    baseViewKey,
     cancelFiltering,
     cancelAutomaticNavigation,
   ]);
 
   const unfilteredIds = entries.ids;
   const filteredIdx = filterIsActive
-    ? resultsCurrent
+    ? filterResultsCurrent
       ? workerFilteredIdx
       : EMPTY_FILTER_IDS
     : unfilteredIds;
@@ -1177,13 +1185,7 @@ export default function App(): JSX.Element {
   const selectedRef = useRef<Set<number>>(selected);
   // Track previous filter criteria to distinguish filter changes from new entries
   const prevFilterCriteriaRef = useRef({
-    stdFiltersEnabled,
-    filter,
-    dcVersion,
-    timeVersion,
-    onlyMarked,
-    searchMode,
-    search,
+    baseViewKey,
     entryGeneration,
   });
 
@@ -1197,14 +1199,7 @@ export default function App(): JSX.Element {
 
     // Prüfe ob sich die Filter-Kriterien geändert haben (nicht nur neue Einträge)
     const prevCriteria = prevFilterCriteriaRef.current;
-    const filterCriteriaChanged =
-      prevCriteria.stdFiltersEnabled !== stdFiltersEnabled ||
-      prevCriteria.filter !== filter ||
-      prevCriteria.dcVersion !== dcVersion ||
-      prevCriteria.timeVersion !== timeVersion ||
-      prevCriteria.onlyMarked !== onlyMarked ||
-      prevCriteria.searchMode !== searchMode ||
-      prevCriteria.search !== search;
+    const filterCriteriaChanged = prevCriteria.baseViewKey !== baseViewKey;
 
     if (prevCriteria.entryGeneration !== entryGeneration) {
       cancelAutomaticNavigation();
@@ -1218,17 +1213,11 @@ export default function App(): JSX.Element {
 
     prevFilteredIdxRef.current = filteredIdx;
     prevFilterCriteriaRef.current = {
-      stdFiltersEnabled,
-      filter,
-      dcVersion,
-      timeVersion,
-      onlyMarked,
-      searchMode,
-      search,
+      baseViewKey,
       entryGeneration,
     };
 
-    if (!filteredListChanged || !resultsCurrent) return;
+    if (!filteredListChanged || !filterResultsCurrent) return;
 
     // Teilergebnisse enthalten den ausgewählten Eintrag möglicherweise noch
     // nicht. Das Ziel bleibt daher bis zu einem späteren Worker-Ergebnis aktiv.
@@ -1245,15 +1234,10 @@ export default function App(): JSX.Element {
     }
   }, [
     filteredIdx,
-    stdFiltersEnabled,
-    filter,
-    dcVersion,
-    timeVersion,
-    onlyMarked,
-    searchMode,
+    baseViewKey,
     search,
     entryGeneration,
-    resultsCurrent,
+    filterResultsCurrent,
     searchRunning,
     viOfGlobal,
     cancelAutomaticNavigation,
@@ -1552,25 +1536,7 @@ export default function App(): JSX.Element {
     handleManualNavigation();
     if (!searchMatchIdx.length) return;
     const curVi = selectedOneIdx != null ? viOfGlobal(selectedOneIdx) : -1;
-    const first = searchMatchIdx[0]!;
-    const last = searchMatchIdx[searchMatchIdx.length - 1]!;
-    let targetVi: number | undefined;
-    if (dir > 0) {
-      if (curVi < 0)
-        targetVi = first; // keine Auswahl → zum ersten Treffer
-      else {
-        const next = searchMatchIdx.find((vi) => vi > curVi);
-        targetVi = next != null ? next : last; // kein nächster → am letzten stehen bleiben
-      }
-    } else {
-      if (curVi < 0)
-        targetVi = last; // keine Auswahl → zum letzten Treffer
-      else {
-        let prev = -1;
-        for (const vi of searchMatchIdx) if (vi < curVi) prev = vi;
-        targetVi = prev >= 0 ? prev : first; // kein vorheriger → am ersten stehen bleiben
-      }
-    }
+    const targetVi = adjacentSearchMatch(searchMatchIdx, curVi, dir)!;
     const globalIdx: number = filteredIdx.at(targetVi)!;
     setSelected(new Set([globalIdx]));
     lastClicked.current = globalIdx;
@@ -3019,7 +2985,7 @@ export default function App(): JSX.Element {
           marksMap={marksMap}
           search={search}
           follow={follow}
-          queryKey={queryKey}
+          queryKey={baseViewKey}
           positionOfId={viOfGlobal}
           onUserInteraction={handleManualNavigation}
           onDisableFollow={handleDisableFollow}
