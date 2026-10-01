@@ -9,7 +9,7 @@ import { createHash } from "crypto";
 import log from "electron-log/main";
 import type { LogEntry } from "../types/ipc";
 import { responseChunks } from "./ResponseStream";
-import { StringDecoder } from "string_decoder";
+import { httpLogBatches } from "./HttpLogStream";
 
 /**
  * TCP Status
@@ -86,7 +86,7 @@ export class NetworkService {
 
   // Additional robustness constants
   private static readonly HTTP_FETCH_TIMEOUT_MS = 30 * 1000; // 30 seconds HTTP timeout
-  private static readonly HTTP_MAX_RESPONSE_SIZE = 16 * 1024 * 1024;
+  private static readonly HTTP_MAX_RECORD_SIZE = 16 * 1024 * 1024;
   private static readonly TCP_MAX_CONNECTIONS = 16;
   private static readonly HTTP_MAX_POLLERS = 4;
   private httpFetches = 0;
@@ -518,111 +518,74 @@ export class NetworkService {
    * Fetch HTTPS URL using native Node.js https module with insecure SSL option
    * This allows self-signed certificates and other certificate errors
    */
-  private fetchWithNodeHttps(
+  private async *fetchWithNodeHttps(
     _url: string,
     parsedUrl: URL,
     signal: AbortSignal,
-  ): Promise<string> {
-    return new Promise((resolve, reject) => {
-      if (signal.aborted) {
-        reject(new Error("Request aborted"));
-        return;
-      }
-
-      const options: https.RequestOptions = {
-        hostname: parsedUrl.hostname,
-        port: parsedUrl.port || 443,
-        path: parsedUrl.pathname + parsedUrl.search,
-        method: "GET",
-        rejectUnauthorized: false, // Skip certificate validation
-        headers: {
-          "Cache-Control": "no-store",
-        },
-      };
-
-      const req = https.request(options, (res) => {
-        // Check HTTP status
-        if (res.statusCode && (res.statusCode < 200 || res.statusCode >= 300)) {
-          reject(new Error(`HTTP ${res.statusCode}: ${res.statusMessage}`));
-          return;
-        }
-
-        let data = "";
-        let bytes = 0;
-        res.setEncoding("utf8");
-
-        res.on("data", (chunk: string) => {
-          data += chunk;
-          bytes += Buffer.byteLength(chunk, "utf8");
-          // Check size limit during download
-          if (bytes > NetworkService.HTTP_MAX_RESPONSE_SIZE) {
-            req.destroy();
-            reject(
-              new Error(
-                `Response too large (max: ${NetworkService.HTTP_MAX_RESPONSE_SIZE})`,
-              ),
-            );
-          }
-        });
-
-        res.on("end", () => {
-          resolve(data);
-        });
-
-        res.on("error", (err) => {
-          reject(err);
-        });
-      });
-
-      req.on("error", (err) => {
-        reject(err);
-      });
-
-      // Handle abort signal
-      const onAbort = (): void => {
-        req.destroy();
-        reject(new Error("Request aborted"));
-      };
-      signal.addEventListener("abort", onAbort, { once: true });
-      req.once("close", () => signal.removeEventListener("abort", onAbort));
-
-      req.end();
+    onResponse: () => void,
+  ): AsyncGenerator<Uint8Array> {
+    if (signal.aborted) throw new Error("Request aborted");
+    const req = https.request({
+      hostname: parsedUrl.hostname,
+      port: parsedUrl.port || 443,
+      path: parsedUrl.pathname + parsedUrl.search,
+      method: "GET",
+      rejectUnauthorized: false,
+      headers: { "Cache-Control": "no-store" },
     });
-  }
-
-  /**
-   * Fetch text from HTTP URL with timeout and size limits
-   * @param url - URL to fetch
-   * @param externalSignal - Optional AbortSignal to allow external cancellation (e.g., on poll stop)
-   */
-  private async httpFetchText(
-    url: string,
-    externalSignal?: AbortSignal,
-  ): Promise<string> {
-    const release = this.reserveHttpRequest();
-    try {
-      return await this.fetchText(url, externalSignal);
-    } finally {
-      release();
-    }
-  }
-
-  private reserveHttpRequest(): () => void {
-    if (this.httpFetches >= NetworkService.HTTP_MAX_POLLERS) {
-      throw new Error(
-        "HTTP admission capacity exceeded; retry after pending requests",
-      );
-    }
-    this.httpFetches++;
-    return () => {
-      this.httpFetches--;
+    const onAbort = (): void => {
+      req.destroy(new Error("Request aborted"));
     };
+    signal.addEventListener("abort", onAbort, { once: true });
+    try {
+      const res = await new Promise<import("http").IncomingMessage>(
+        (resolve, reject) => {
+          req.once("response", resolve);
+          req.once("error", reject);
+          req.end();
+        },
+      );
+      onResponse();
+      if (res.statusCode && (res.statusCode < 200 || res.statusCode >= 300)) {
+        res.destroy();
+        throw new Error(`HTTP ${res.statusCode}: ${res.statusMessage}`);
+      }
+      const reader = res[Symbol.asyncIterator]();
+      try {
+        while (true) {
+          let timer!: ReturnType<typeof setTimeout>;
+          const result = await Promise.race([
+            reader.next(),
+            new Promise<never>((_, reject) => {
+              timer = setTimeout(
+                () => reject(new Error("Response read timed out")),
+                NetworkService.HTTP_FETCH_TIMEOUT_MS,
+              );
+            }),
+          ]).finally(() => clearTimeout(timer));
+          if (result.done) return;
+          if (!Buffer.isBuffer(result.value)) {
+            throw new Error("Invalid HTTP response chunk");
+          }
+          const bytes = result.value;
+          for (let i = 0; i < bytes.length; i += 64 * 1024) {
+            if (signal.aborted) throw new Error("Request aborted");
+            yield bytes.subarray(i, i + 64 * 1024);
+          }
+        }
+      } finally {
+        res.destroy();
+      }
+    } finally {
+      signal.removeEventListener("abort", onAbort);
+      req.destroy();
+    }
   }
 
-  private async fetchText(
+  private async *fetchChunks(
     url: string,
     externalSignal?: AbortSignal,
-  ): Promise<string> {
+  ): AsyncGenerator<Uint8Array> {
     if (typeof fetch === "function") {
       // Create AbortController for timeout
       const controller = new AbortController();
@@ -665,53 +628,32 @@ export class NetworkService {
 
         // For HTTPS with insecure SSL option, use native Node.js https module
         if (this.allowInsecureSSL && parsedUrl.protocol === "https:") {
-          const text = await this.fetchWithNodeHttps(
+          yield* this.fetchWithNodeHttps(
             url,
             parsedUrl,
             controller.signal,
+            () => clearTimeout(timeoutId),
           );
-          return text;
+          return;
         }
 
         const res = await fetch(url, {
           cache: "no-store",
           signal: controller.signal,
         });
+        clearTimeout(timeoutId);
 
         if (!res.ok) {
           await res.body?.cancel();
           throw new Error(`HTTP ${res.status}: ${res.statusText}`);
         }
 
-        // Check Content-Length header if available
-        const contentLength = res.headers.get("content-length");
-        if (contentLength) {
-          const size = parseInt(contentLength, 10);
-          if (size > NetworkService.HTTP_MAX_RESPONSE_SIZE) {
-            await res.body?.cancel();
-            throw new Error(
-              `Response too large: ${size} bytes (max: ${NetworkService.HTTP_MAX_RESPONSE_SIZE})`,
-            );
-          }
-        }
-
-        const decoder = new StringDecoder("utf8");
-        let text = "";
-        let bytes = 0;
-        for await (const chunk of responseChunks(
+        yield* responseChunks(
           res,
           NetworkService.HTTP_FETCH_TIMEOUT_MS,
           controller.signal,
-        )) {
-          bytes += chunk.byteLength;
-          if (bytes > NetworkService.HTTP_MAX_RESPONSE_SIZE) {
-            throw new Error(
-              `Response too large (max: ${NetworkService.HTTP_MAX_RESPONSE_SIZE})`,
-            );
-          }
-          text += decoder.write(Buffer.from(chunk));
-        }
-        return text + decoder.end();
+        );
+        return;
       } catch (err) {
         if (err instanceof Error && err.name === "AbortError") {
           // Check if it was external abort (poll stopped) vs timeout
@@ -772,6 +714,45 @@ export class NetworkService {
     throw new Error("fetch unavailable");
   }
 
+  private reserveHttpRequest(): () => void {
+    if (this.httpFetches >= NetworkService.HTTP_MAX_POLLERS) {
+      throw new Error(
+        "HTTP admission capacity exceeded; retry after pending requests",
+      );
+    }
+    this.httpFetches++;
+    return () => {
+      this.httpFetches--;
+    };
+  }
+
+  private async *httpEntryBatches(
+    url: string,
+    signal?: AbortSignal,
+  ): AsyncGenerator<LogEntry[]> {
+    const parseJsonFile = this.parseJsonFile;
+    const parseTextLines = this.parseTextLines;
+    if (!parseJsonFile || !parseTextLines) {
+      throw new Error("Parser functions not set");
+    }
+    const release = this.reserveHttpRequest();
+    try {
+      for await (const batch of httpLogBatches(
+        this.fetchChunks(url, signal),
+        NetworkService.HTTP_MAX_RECORD_SIZE,
+        NetworkService.HTTP_BATCH_SIZE,
+      )) {
+        if (signal?.aborted) throw new Error("Request aborted (poll stopped)");
+        const entries = batch.jsonArray
+          ? parseJsonFile(url, batch.text)
+          : parseTextLines(url, batch.text);
+        if (entries.length) yield entries;
+      }
+    } finally {
+      release();
+    }
+  }
+
   /**
    * Deduplicate new entries based on key fields
    * Limits the size of the seen Set to prevent unbounded memory growth
@@ -821,71 +802,21 @@ export class NetworkService {
     url: string,
     consume?: (entries: LogEntry[]) => void | Promise<void>,
   ): Promise<{ ok: boolean; entries?: LogEntry[]; error?: string }> {
-    let release: (() => void) | undefined;
     try {
       if (!this.parseJsonFile || !this.parseTextLines) {
         throw new Error("Parser functions not set");
       }
 
-      // Keep admission until persistence ACK: a completed download still retains
-      // its bounded response while the consumer is busy.
-      release = this.reserveHttpRequest();
-      const text = await this.fetchText(url);
-      if (consume) {
-        const trimmed = text.trimStart();
-        let array: unknown[] | undefined;
-        if (trimmed.startsWith("[")) {
-          try {
-            const parsed: unknown = JSON.parse(text);
-            if (Array.isArray(parsed)) array = parsed;
-          } catch {
-            // Match parseJsonFile's fallback to line-oriented parsing.
-          }
-        }
-        if (array) {
-          for (
-            let i = 0;
-            i < array.length;
-            i += NetworkService.HTTP_BATCH_SIZE
-          ) {
-            const batch = this.parseJsonFile(
-              url,
-              JSON.stringify(
-                array.slice(i, i + NetworkService.HTTP_BATCH_SIZE),
-              ),
-            );
-            await consume(batch);
-          }
-        } else {
-          let start = 0;
-          let lines = 0;
-          for (let i = 0; i < text.length; i++) {
-            if (text[i] !== "\n") continue;
-            if (++lines < NetworkService.HTTP_BATCH_SIZE) continue;
-            const batch = this.parseTextLines(url, text.slice(start, i + 1));
-            if (batch.length) await consume(batch);
-            start = i + 1;
-            lines = 0;
-          }
-          if (start < text.length) {
-            const batch = this.parseTextLines(url, text.slice(start));
-            if (batch.length) await consume(batch);
-          }
-        }
-        return { ok: true, entries: [] };
+      const entries: LogEntry[] = [];
+      for await (const batch of this.httpEntryBatches(url)) {
+        if (consume) await consume(batch);
+        else entries.push(...batch);
       }
-      const isJson = text.trim().startsWith("[") || text.trim().startsWith("{");
-      const entries = isJson
-        ? this.parseJsonFile(url, text)
-        : this.parseTextLines(url, text);
-
       return { ok: true, entries };
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       log.error("HTTP load failed:", message);
       return { ok: false, error: message };
-    } finally {
-      release?.();
     }
   }
 
@@ -921,9 +852,6 @@ export class NetworkService {
       const seen = new Set<string>();
       const abortController = new AbortController();
 
-      const parseJsonFile = this.parseJsonFile;
-      const parseTextLines = this.parseTextLines;
-
       // Helper to yield to event loop - prevents UI freeze ("Keine Rückmeldung")
       const yieldToEventLoop = (): Promise<void> =>
         new Promise((resolve) => setImmediate(resolve));
@@ -945,54 +873,20 @@ export class NetworkService {
 
         log.debug(`[http:poll] ${id} tick starting for ${url}`);
 
+        let delivered = false;
         try {
-          const text = await this.httpFetchText(url, abortController.signal);
-
-          // Check again after fetch (which could take a while)
-          if (!isPollerActive()) {
-            log.debug(
-              `[http:poll] ${id} processing skipped - poller stopped during fetch`,
-            );
-            return;
-          }
-
-          const isJson =
-            text.trim().startsWith("[") || text.trim().startsWith("{");
-
-          // Yield before parsing to let event loop process other tasks
-          await yieldToEventLoop();
-
-          // Check before parsing
-          if (!isPollerActive()) {
-            return;
-          }
-
-          const entries = isJson
-            ? parseJsonFile(url, text)
-            : parseTextLines(url, text);
-
-          // Yield after parsing
-          await yieldToEventLoop();
-
-          // Check after parsing
-          if (!isPollerActive()) {
-            return;
-          }
-
-          for (
-            let i = 0;
-            i < entries.length;
-            i += NetworkService.HTTP_BATCH_SIZE
-          ) {
+          for await (const entries of this.httpEntryBatches(
+            url,
+            abortController.signal,
+          )) {
+            await yieldToEventLoop();
             if (!isPollerActive()) return;
             const nextSeen = new Set(seen);
-            const fresh = this.dedupeNewEntries(
-              entries.slice(i, i + NetworkService.HTTP_BATCH_SIZE),
-              nextSeen,
-            );
+            const fresh = this.dedupeNewEntries(entries, nextSeen);
             if (fresh.length) {
               try {
                 await this.sendLogs(fresh);
+                delivered = true;
               } catch (error) {
                 if (!isPollerActive()) return;
                 // Persistence may have accepted a prefix. Never refetch/replay
@@ -1022,6 +916,17 @@ export class NetworkService {
           // Skip logging for abort errors (poller stopped)
           if (message.includes("aborted") || message.includes("poll stopped")) {
             log.debug(`[http:poll] ${id} aborted: ${message}`);
+            return;
+          }
+          // Streaming may already have persisted a prefix; retrying it could
+          // duplicate entries after the bounded deduplication history expires.
+          if (delivered) {
+            log.error(
+              `[http:poll] ${url} stopped after partial response:`,
+              err,
+            );
+            this.httpStopPoll(id);
+            onError?.(id, err instanceof Error ? err : new Error(String(err)));
             return;
           }
           // Keine Log-Einträge in die UI pushen – stilles Retry im nächsten Intervall
@@ -1165,14 +1070,16 @@ export class NetworkService {
         seenEntries: number;
       }>;
       fetchTimeoutMs: number;
-      maxResponseSize: number;
+      maxResponseSize: number | null;
+      maxRecordSize: number;
     };
     limits: {
       tcpMaxConnections: number;
       tcpBufferSize: number;
       tcpTimeout: number;
       httpTimeout: number;
-      httpMaxResponseSize: number;
+      httpMaxResponseSize: number | null;
+      httpMaxRecordSize: number;
       maxSeenEntries: number;
     };
   } {
@@ -1193,14 +1100,16 @@ export class NetworkService {
           seenEntries: p.seen.size,
         })),
         fetchTimeoutMs: NetworkService.HTTP_FETCH_TIMEOUT_MS,
-        maxResponseSize: NetworkService.HTTP_MAX_RESPONSE_SIZE,
+        maxResponseSize: null,
+        maxRecordSize: NetworkService.HTTP_MAX_RECORD_SIZE,
       },
       limits: {
         tcpMaxConnections: NetworkService.TCP_MAX_CONNECTIONS,
         tcpBufferSize: NetworkService.MAX_BUFFER_SIZE,
         tcpTimeout: NetworkService.SOCKET_TIMEOUT_MS,
         httpTimeout: NetworkService.HTTP_FETCH_TIMEOUT_MS,
-        httpMaxResponseSize: NetworkService.HTTP_MAX_RESPONSE_SIZE,
+        httpMaxResponseSize: null,
+        httpMaxRecordSize: NetworkService.HTTP_MAX_RECORD_SIZE,
         maxSeenEntries: NetworkService.MAX_SEEN_ENTRIES,
       },
     };

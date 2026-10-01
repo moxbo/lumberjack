@@ -10,7 +10,7 @@ vi.mock("electron-log/main", () => ({
 afterEach(() => vi.restoreAllMocks());
 
 describe("source backpressure", () => {
-  it("rejects an oversized chunked HTTP response without returning a truncated prefix", async () => {
+  it("rejects an oversized HTTP record without returning a truncated prefix", async () => {
     const chunk = new Uint8Array(64 * 1024).fill(120);
     let pulls = 0;
     let cancelled = false;
@@ -225,6 +225,121 @@ describe("source backpressure", () => {
       );
     } finally {
       release();
+      service.stopAllHttpPollers();
+    }
+  });
+
+  it.each(["text", "array"] as const)(
+    "polls large %s responses with backpressure and cancels on stop",
+    async (format) => {
+      const message = "x".repeat(64 * 1024);
+      const count = 320;
+      let pulls = 0;
+      let cancelled = false;
+      const body = new ReadableStream<Uint8Array>(
+        {
+          pull(controller) {
+            if (format === "array" && pulls === 0) {
+              controller.enqueue(Buffer.from("["));
+            } else if (pulls < count + (format === "array" ? 1 : 0)) {
+              const record =
+                format === "array"
+                  ? JSON.stringify({ message: `${pulls}-${message}` })
+                  : `${pulls}-${message}`;
+              controller.enqueue(
+                Buffer.from(
+                  record +
+                    (format === "array" ? (pulls === count ? "]" : ",") : "\n"),
+                ),
+              );
+            } else controller.close();
+            pulls++;
+          },
+          cancel() {
+            cancelled = true;
+          },
+        },
+        { highWaterMark: 0 },
+      );
+      vi.spyOn(globalThis, "fetch").mockResolvedValue(
+        new Response(body, { headers: { "content-length": "20320000" } }),
+      );
+      const service = new NetworkService();
+      service.setParsers({
+        ...parsers,
+        parseJsonFile: (url, text) =>
+          JSON.parse(text).map((entry: { message: string }) => ({
+            timestamp: null,
+            source: url,
+            message: entry.message,
+          })),
+      });
+      let release!: () => void;
+      const gate = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      let received = 0;
+      const consume = vi.fn(async (entries: Array<{ message: string }>) => {
+        received += entries.length;
+        if (received === count) service.httpStopPoll(poll.id!);
+        await gate;
+      });
+      service.setLogCallback(consume);
+      const poll = await service.httpStartPoll("http://example.test/log", 1);
+      try {
+        await vi.waitFor(() => expect(consume).toHaveBeenCalledTimes(1));
+        const blockedPulls = pulls;
+        await new Promise((resolve) => setTimeout(resolve, 20));
+        expect(pulls).toBe(blockedPulls);
+        expect(pulls).toBeLessThan(count);
+        release();
+        await vi.waitFor(() => expect(received).toBe(count));
+        await vi.waitFor(() => expect(cancelled).toBe(true));
+        expect(service.getDiagnostics().http.activePollers).toBe(0);
+      } finally {
+        release();
+        service.stopAllHttpPollers();
+      }
+    },
+  );
+
+  it("stops polling after a truncated streamed response with an acknowledged prefix", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(
+        `[${Array.from({ length: 100 }, (_, i) =>
+          JSON.stringify({ message: String(i) }),
+        ).join(",")},`,
+      ),
+    );
+    const service = new NetworkService();
+    service.setParsers({
+      ...parsers,
+      parseJsonFile: (url, text) =>
+        JSON.parse(text).map((entry: { message: string }) => ({
+          timestamp: null,
+          source: url,
+          message: entry.message,
+        })),
+    });
+    const consume = vi.fn();
+    const reportError = vi.fn();
+    service.setLogCallback(consume);
+    const poll = await service.httpStartPoll(
+      "http://example.test/log",
+      1,
+      reportError,
+    );
+    try {
+      await vi.waitFor(() => expect(reportError).toHaveBeenCalledOnce());
+      expect(consume).toHaveBeenCalledOnce();
+      expect(reportError).toHaveBeenCalledWith(
+        poll.id,
+        expect.objectContaining({
+          message: "Invalid JSON array: incomplete response",
+        }),
+      );
+      expect(service.getDiagnostics().http.activePollers).toBe(0);
+    } finally {
       service.stopAllHttpPollers();
     }
   });
