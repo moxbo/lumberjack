@@ -5,6 +5,27 @@ Alle nennenswerten Änderungen an diesem Projekt werden in dieser Datei dokument
 Das Format orientiert sich an [Keep a Changelog](https://keepachangelog.com/de/1.1.0/),
 und dieses Projekt folgt [Semantic Versioning](https://semver.org/lang/de/).
 
+## [1.2.0-beta.6] - 2026-10-01 _(Pre-Release)_
+
+
+### Added
+- **ui**: Add switchable workspace layouts and tabbed log inspector
+- **inspector**: Move raw data into collapsible advanced section
+- Refine settings with macOS-inspired design and categories
+
+
+### Fixed
+- **mdc**: Preserve TCP diagnostic context across IPC
+- **tcp**: Drain admissions racing with persistence acknowledgements
+- **http**: Persist one-shot loads in bounded acknowledged batches
+- **import**: Bound file and raw-drop persistence batches
+- **import**: Simplify settings import path
+
+
+### Performance
+- **storage**: Rotate database generations for fast log clearing
+- **search**: Reuse filtered views for full-text navigation
+
 ## [1.2.0-beta.5] - 2026-09-14 _(Pre-Release)_
 
 
