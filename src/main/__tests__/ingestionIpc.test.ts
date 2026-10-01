@@ -1,10 +1,20 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { EventEmitter } from "node:events";
-import type { ElasticSearchOptions, ParseResult } from "../../types/ipc";
+import AdmZip from "adm-zip";
+import { parseJsonFile, parseTextLines } from "../parsers";
+import type {
+  ElasticSearchOptions,
+  LogEntry,
+  ParseResult,
+} from "../../types/ipc";
 import { SettingsService } from "../../services/SettingsService";
 import { NetworkService } from "../../services/NetworkService";
 import { registerIpcHandlers } from "../ipcHandlers";
 import { IPC_BATCH_SIZE } from "../../constants/logViewer";
+import {
+  DEFAULT_INGESTION_LIMITS,
+  IngestionBudget,
+} from "../../hooks/ingestionBudget";
 
 const ipc = vi.hoisted(() => ({ handle: vi.fn(), on: vi.fn() }));
 vi.mock("electron", () => ({
@@ -33,15 +43,215 @@ function register(
     new SettingsService(),
     network,
     () => parsers as Parsers,
-    () => {
-      throw new Error("ZIP parser unused");
-    },
+    () => AdmZip,
     undefined,
     enqueue,
   );
 }
 
+describe("raw drop ingestion", () => {
+  it("bounds decoded drop payload bytes even when the entry count is small", async () => {
+    const budget = new IngestionBudget(DEFAULT_INGESTION_LIMITS);
+    const entries = parseJsonFile(
+      "large.json",
+      JSON.stringify(
+        Array.from({ length: 80 }, () => ({ message: "x".repeat(256 * 1024) })),
+      ),
+    );
+    expect(() => budget.reserve(entries)).toThrow("capacity exceeded");
+    let received = 0;
+    const consume = vi.fn(async (batch: LogEntry[]) => {
+      const release = budget.reserve(batch);
+      received += batch.length;
+      release();
+    });
+    register({ parseJsonFile: () => entries }, new NetworkService(), consume);
+    const handler = ipc.handle.mock.calls.find(
+      ([channel]) => channel === "logs:parseRaw",
+    )![1];
+    await expect(
+      handler({ sender: { id: 42 } }, [
+        { name: "large.json", encoding: "utf8", data: "[]" },
+      ]),
+    ).resolves.toEqual({ ok: true, entries: [] });
+    expect(received).toBe(80);
+    expect(consume.mock.calls.length).toBeGreaterThan(1);
+  });
+
+  it.each(["json", "ndjson", "txt", "zip"])(
+    "persists large %s drops in bounded batches before returning success",
+    async (extension) => {
+      const count = DEFAULT_INGESTION_LIMITS.maxEntries + 5;
+      const objects = Array.from({ length: count }, (_, index) => ({
+        message: `entry-${index}`,
+        mdc: { tenant: "orders" },
+        ...(index === 0 ? { markColor: "#ff0000" } : {}),
+      }));
+      const json = JSON.stringify(objects);
+      let data =
+        extension === "json" || extension === "zip"
+          ? json
+          : extension === "txt"
+            ? objects.map((entry) => entry.message).join("\n")
+            : objects.map((entry) => JSON.stringify(entry)).join("\n");
+      if (extension === "zip") {
+        const zip = new AdmZip();
+        zip.addFile("logs.json", Buffer.from(json));
+        data = zip.toBuffer().toString("base64");
+      }
+      const budget = new IngestionBudget(DEFAULT_INGESTION_LIMITS);
+      let release!: () => void;
+      const gate = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      let received = 0;
+      const consume = vi.fn(async (entries: LogEntry[], senderId: number) => {
+        const free = budget.reserve(entries);
+        try {
+          expect(senderId).toBe(42);
+          expect(entries.length).toBeLessThanOrEqual(1000);
+          expect(entries[0]?.message).toBe(`entry-${received}`);
+          if (received === 0 && extension !== "txt") {
+            expect(entries[0]?._mark).toBe("#ff0000");
+            expect(entries[0]?.mdc).toMatchObject({ tenant: "orders" });
+          }
+          received += entries.length;
+          await gate;
+        } finally {
+          free();
+        }
+      });
+      register(
+        { parseJsonFile, parseTextLines },
+        new NetworkService(),
+        consume,
+      );
+      const handler = ipc.handle.mock.calls.find(
+        ([channel]) => channel === "logs:parseRaw",
+      )![1];
+      const loading = handler({ sender: { id: 42 } }, [
+        {
+          name: `drop.${extension}`,
+          encoding: extension === "zip" ? "base64" : "utf8",
+          data,
+        },
+      ]);
+      try {
+        await vi.waitFor(() => expect(consume).toHaveBeenCalledTimes(1));
+        expect(received).toBe(1000);
+      } finally {
+        release();
+      }
+      await expect(loading).resolves.toEqual({ ok: true, entries: [] });
+      expect(received).toBe(count);
+      expect(consume).toHaveBeenCalledTimes(Math.ceil(count / 1000));
+    },
+  );
+
+  it("stops parsing later raw files after a negative persistence ACK", async () => {
+    const parse = vi.fn(parseTextLines);
+    const consume = vi.fn(async () => {
+      throw new Error("storage quota exceeded");
+    });
+    register(
+      { parseJsonFile, parseTextLines: parse },
+      new NetworkService(),
+      consume,
+    );
+    const handler = ipc.handle.mock.calls.find(
+      ([channel]) => channel === "logs:parseRaw",
+    )![1];
+    await expect(
+      handler({ sender: { id: 42 } }, [
+        { name: "first.log", encoding: "utf8", data: "first\nlast" },
+        { name: "next.log", encoding: "utf8", data: "next" },
+      ]),
+    ).resolves.toEqual({ ok: false, error: "storage quota exceeded" });
+    expect(parse).toHaveBeenCalledExactlyOnceWith("first.log", "first\nlast");
+    expect(consume).toHaveBeenCalledTimes(1);
+  });
+});
+
 describe("terminal ingestion error notifications", () => {
+  it.each(["json-array", "unsupported-format", "small-file"])(
+    "streams %s fallback imports beyond renderer admission with ACK backpressure",
+    async (reason) => {
+      const count = DEFAULT_INGESTION_LIMITS.maxEntries + 5;
+      const parse = vi.fn(async () =>
+        Array.from({ length: count }, (_, index) => ({
+          timestamp: null,
+          message: `entry-${index}`,
+          source: "fallback.json",
+        })),
+      );
+      register({
+        getStreamParseStrategy: async () => ({
+          streamable: false,
+          reason,
+          totalBytes: 10,
+        }),
+        parsePathsAsync: parse,
+      });
+      const start = ipc.handle.mock.calls.find(
+        ([channel]) => channel === "logs:streamParsePaths",
+      )![1];
+      const ready = ipc.on.mock.calls.find(
+        ([channel]) => channel === "logs:streamReady",
+      )![1];
+      const ack = ipc.on.mock.calls.find(
+        ([channel]) => channel === "logs:streamAck",
+      )![1];
+      const cancel = ipc.on.mock.calls.find(
+        ([channel]) => channel === "logs:streamCancel",
+      )![1];
+      const budget = new IngestionBudget(DEFAULT_INGESTION_LIMITS);
+      let received = 0;
+      let blocked = true;
+      const sender = Object.assign(new EventEmitter(), {
+        id: 42,
+        isDestroyed: () => false,
+        send: vi.fn((channel: string, chunk) => {
+          if (channel !== "logs:streamChunk") return;
+          const release = budget.reserve(chunk.entries);
+          expect(chunk.entries[0]?.message).toBe(`entry-${received}`);
+          received += chunk.entries.length;
+          release();
+          if (!blocked) {
+            queueMicrotask(() =>
+              ack(
+                { sender },
+                {
+                  sessionId: chunk.sessionId,
+                  chunkIndex: chunk.chunkIndex,
+                },
+              ),
+            );
+          }
+        }),
+      });
+      const result = await start({ sender }, ["fallback.json"]);
+      expect(result).toMatchObject({ streamed: true });
+      try {
+        expect(parse).not.toHaveBeenCalled();
+        ready({ sender }, { sessionId: result.sessionId });
+        await vi.waitFor(() => expect(received).toBe(1000));
+        expect(sender.send).toHaveBeenCalledTimes(1);
+        blocked = false;
+        ack({ sender }, { sessionId: result.sessionId, chunkIndex: 0 });
+        await vi.waitFor(() =>
+          expect(sender.send).toHaveBeenCalledWith(
+            "logs:streamComplete",
+            expect.objectContaining({ totalEntries: count, errors: [] }),
+          ),
+        );
+        expect(received).toBe(count);
+        expect(parse).toHaveBeenCalledExactlyOnceWith(["fallback.json"]);
+      } finally {
+        cancel({ sender }, { sessionId: result.sessionId });
+      }
+    },
+  );
+
   it("routes one-shot HTTP batches to the requesting window and waits for persistence", async () => {
     const network = new NetworkService();
     let release!: () => void;

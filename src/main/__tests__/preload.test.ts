@@ -7,6 +7,7 @@ import { WindowAppendQueue } from "../../services/WindowAppendQueue";
 
 const electron = vi.hoisted(() => ({
   contextBridge: { exposeInMainWorld: vi.fn() },
+  webUtils: { getPathForFile: vi.fn(() => "/logs/dropped.log") },
   ipcRenderer: {
     invoke: vi.fn(async () => ({ ok: true, settings: {} })),
     on: vi.fn(),
@@ -44,6 +45,12 @@ function deliver(callback: Parameters<ElectronAPI["onAppend"]>[0]) {
 }
 
 describe("renderer persistence acknowledgements", () => {
+  it("resolves native dropped file paths with Electron webUtils", () => {
+    const file = new File(["message"], "dropped.log");
+    expect(api.getPathForFile(file)).toBe("/logs/dropped.log");
+    expect(electron.webUtils.getPathForFile).toHaveBeenCalledWith(file);
+  });
+
   it("propagates a preload negative ACK through the delivery queue to TCP disconnect", async () => {
     api.onAppend(async () => {
       throw new Error("storage quota exceeded");

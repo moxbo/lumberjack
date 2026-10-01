@@ -1750,7 +1750,10 @@ export default function App(): JSX.Element {
             );
           }
           const persistence = appendEntriesAsync(newEntries as any[])
-            .then(() => announceAppend(newEntries as any[]))
+            .then(() => {
+              hydrateMarksFromEntries(newEntries);
+              announceAppend(newEntries as any[]);
+            })
             .catch((error) => {
               logger.error("Persisting appended IPC logs failed:", error);
               throw error;

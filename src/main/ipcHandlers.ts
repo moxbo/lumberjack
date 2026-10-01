@@ -18,6 +18,7 @@ import { HttpTailManager } from "./HttpTailManager";
 import { getSharedMainApi } from "./sharedMainApi";
 import { ExportFileService } from "./ExportFileService";
 import { IPC_BATCH_SIZE } from "../constants/logViewer";
+import { estimatePayloadBytes } from "../utils/estimatePayloadBytes";
 import type {
   ExportBeginRequest,
   ExportBeginResult,
@@ -187,6 +188,35 @@ async function planStreamParseFiles(
   return plans;
 }
 
+function* boundedImportBatches(
+  entries: readonly LogEntry[],
+  chunkSize: number,
+): IterableIterator<LogEntry[]> {
+  if (!Number.isSafeInteger(chunkSize) || chunkSize < 1) {
+    throw new Error("Import chunk size must be a positive integer");
+  }
+  let batch: LogEntry[] = [];
+  let bytes = 64;
+  for (const entry of entries) {
+    const size = estimatePayloadBytes(entry, 8 * 1024 * 1024);
+    if (!Number.isFinite(size)) {
+      throw new Error("Log entry exceeds 8 MiB decoded-payload limit");
+    }
+    if (
+      batch.length &&
+      (batch.length >= Math.min(chunkSize, STREAM_PARSE_CHUNK_SIZE) ||
+        bytes + size > 2 * 1024 * 1024)
+    ) {
+      yield batch;
+      batch = [];
+      bytes = 64;
+    }
+    batch.push(entry);
+    bytes += size;
+  }
+  if (batch.length) yield batch;
+}
+
 export async function streamPathsWithBackpressure({
   sessionId,
   filePaths,
@@ -255,8 +285,9 @@ export async function streamPathsWithBackpressure({
             });
             chunkIndex++;
           } else {
-            for (let start = 0; start < parsed.length; start += chunkSize) {
-              const entries = parsed.slice(start, start + chunkSize);
+            let processed = 0;
+            for (const entries of boundedImportBatches(parsed, chunkSize)) {
+              processed += entries.length;
               totalEntries += entries.length;
               await sendChunk({
                 sessionId,
@@ -268,7 +299,7 @@ export async function streamPathsWithBackpressure({
                 ),
                 totalBytes,
                 filePath: plan.filePath,
-                done: start + chunkSize >= parsed.length,
+                done: processed === parsed.length,
                 fileIndex: plan.fileIndex,
                 totalFiles,
               });
@@ -987,15 +1018,8 @@ export function registerIpcHandlers(
               "Stream admission capacity exceeded; finish or cancel the current import",
           };
         }
-        const shouldStream = plans.some((plan) => plan.streamable);
-        if (!shouldStream) {
-          await yieldToEventLoop();
-          const entries: LogEntry[] = parsers.parsePathsAsync
-            ? await parsers.parsePathsAsync(filePaths)
-            : parsers.parsePaths(filePaths);
-          await yieldToEventLoop();
-          return { ok: true, entries };
-        }
+        // Fallback parsers also need bounded, acknowledged renderer delivery.
+        if (plans.length === 0) return { ok: true, entries: [] };
 
         const sessionId = `stream-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
         const abortController = new AbortController();
@@ -1137,14 +1161,43 @@ export function registerIpcHandlers(
 
   ipcMain.handle(
     "logs:parseRaw",
-    async (_event, files: DroppedFile[]): Promise<ParseResult> => {
+    async (event, files: DroppedFile[]): Promise<ParseResult> => {
+      let admittedSenderId: number | undefined;
       try {
         if (!Array.isArray(files) || !files.length)
           return { ok: true, entries: [] };
 
+        if (enqueueWatchEntries) {
+          if (
+            startingStreams.has(event.sender.id) ||
+            startingStreams.size + streamSessions.size >= 16 ||
+            Array.from(streamSessions.values()).some(
+              (session) => session.sender === event.sender,
+            )
+          ) {
+            return {
+              ok: false,
+              error:
+                "Stream admission capacity exceeded; finish or cancel the current import",
+            };
+          }
+          admittedSenderId = event.sender.id;
+          startingStreams.add(admittedSenderId);
+        }
         const { parseJsonFile, parseTextLines } = getParsers();
-        const ZipClass = getAdmZip();
         const all: LogEntry[] = [];
+        const deliver = async (entries: LogEntry[]): Promise<void> => {
+          if (enqueueWatchEntries) {
+            for (const batch of boundedImportBatches(
+              entries,
+              STREAM_PARSE_CHUNK_SIZE,
+            )) {
+              await enqueueWatchEntries(batch, event.sender.id);
+            }
+          } else {
+            for (const entry of entries) all.push(entry);
+          }
+        };
 
         for (const f of files) {
           // Yield between files to keep UI responsive
@@ -1157,8 +1210,8 @@ export function registerIpcHandlers(
           if (!name || !data) continue;
           if (ext === ".zip") {
             const buf = Buffer.from(data, enc === "base64" ? "base64" : "utf8");
-            // AdmZip accepts Buffer but type definitions may be incomplete
-            const zip = new ZipClass(buf as unknown as string);
+            const ZipClass = getAdmZip();
+            const zip = new ZipClass(buf);
             for (const zEntry of zip.getEntries() as ZipEntry[]) {
               const ename = zEntry.entryName;
               const eext = path.extname(ename).toLowerCase();
@@ -1181,15 +1234,15 @@ export function registerIpcHandlers(
                 for (const e of parsed) {
                   e.source = `${name}::${ename}`;
                 }
-                all.push(...parsed);
+                await deliver(parsed);
               }
             }
           } else if (ext === ".json") {
             const entries: LogEntry[] = parseJsonFile(name, data);
-            all.push(...entries);
+            await deliver(entries);
           } else {
             const entries: LogEntry[] = parseTextLines(name, data);
-            all.push(...entries);
+            await deliver(entries);
           }
         }
         return { ok: true, entries: all };
@@ -1202,6 +1255,10 @@ export function registerIpcHandlers(
           ok: false,
           error: err instanceof Error ? err.message : String(err),
         };
+      } finally {
+        if (admittedSenderId !== undefined) {
+          startingStreams.delete(admittedSenderId);
+        }
       }
     },
   );

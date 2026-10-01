@@ -572,8 +572,10 @@ function parseZipFile(zipPath: string): Entry[] {
         ext === ".json"
           ? parseJsonFile(name, text)
           : parseTextLines(name, text);
-      parsed.forEach((e) => (e.source = `${zipPath}::${name}`));
-      entries.push(...parsed);
+      for (const entry of parsed) {
+        entry.source = `${zipPath}::${name}`;
+        entries.push(entry);
+      }
     }
   });
   return entries;
@@ -596,7 +598,7 @@ function parsePaths(paths: string[]): Entry[] {
   const all: Entry[] = [];
   for (const p of paths) {
     try {
-      all.push(...parsePath(p));
+      for (const entry of parsePath(p)) all.push(entry);
     } catch (err) {
       // include error as a special entry
       const msg = err instanceof Error ? err.message : String(err);
@@ -674,7 +676,11 @@ async function parsePathsAsync(paths: string[]): Promise<Entry[]> {
 
   // Reihenfolge der Eingabe-Pfade bewahren
   const all: Entry[] = [];
-  for (const list of results) if (list) all.push(...list);
+  for (const list of results) {
+    if (list) {
+      for (const entry of list) all.push(entry);
+    }
+  }
   return all;
 }
 

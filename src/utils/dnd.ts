@@ -1,5 +1,6 @@
 // Drag & Drop Manager: kapselt Events, extrahiert Pfade und meldet Aktiv-Status
 import logger from "./logger";
+import { getPathForFile } from "./typedApi";
 
 export type RawFilePayload = {
   name: string;
@@ -146,13 +147,16 @@ export class DragAndDropManager {
       } catch (e) {
         logger.warn("DnD: reading text/plain failed:", e);
       }
-      // Fallback 1: FileList .path (benötigt sandbox=false)
+      // Electron no longer exposes File.path; resolve native paths via preload.
       try {
         const files = dt.files as FileList | undefined;
         if (files) {
           for (let i = 0; i < files.length; i++) {
-            const f = files[i] as any;
-            const p = (f && f.path) || "";
+            const f = files[i];
+            if (!f) continue;
+            const p =
+              getPathForFile(f) ||
+              ("path" in f && typeof f.path === "string" ? f.path : "");
             if (p) out.push(p);
           }
         }
@@ -167,7 +171,10 @@ export class DragAndDropManager {
             const it = items[i];
             if (it && it.kind === "file") {
               const f = it.getAsFile?.();
-              const p = f && (f as any).path;
+              const p =
+                f &&
+                (getPathForFile(f) ||
+                  ("path" in f && typeof f.path === "string" ? f.path : ""));
               if (p) out.push(p);
             }
           }

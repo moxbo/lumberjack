@@ -320,6 +320,131 @@ function estimatePayloadBytes(value, maxBytes = Number.MAX_SAFE_INTEGER) {
   return bytes <= maxBytes ? bytes : Infinity;
 }
 
+// src/utils/dcMatch.ts
+var TRACE_KEY_VARIANTS = /* @__PURE__ */ new Set([
+  "traceid",
+  "trace_id",
+  "trace.id",
+  "trace-id",
+  "x-trace-id",
+  "x_trace_id",
+  "x.trace.id",
+  "trace"
+]);
+function normalizeTraceKeyName(k) {
+  const lk = String(k || "").trim().toLowerCase();
+  return TRACE_KEY_VARIANTS.has(lk) ? "TraceID" : null;
+}
+function canonicalDcKey(k) {
+  const raw = String(k || "").trim();
+  if (!raw) return "";
+  return normalizeTraceKeyName(raw) || raw;
+}
+function toSafeString(val) {
+  if (val == null) return "";
+  if (typeof val === "string") return val;
+  if (typeof val === "number" || typeof val === "boolean" || typeof val === "bigint") {
+    return String(val);
+  }
+  if (typeof val === "object" || typeof val === "function") {
+    try {
+      return JSON.stringify(val);
+    } catch {
+      return "";
+    }
+  }
+  return "";
+}
+
+// src/utils/mdc.ts
+var RESERVED_STD_FIELDS = /* @__PURE__ */ new Set([
+  "remarks",
+  "color",
+  "stack_trace",
+  "stackTrace",
+  "stacktrace",
+  "error",
+  "err",
+  "exception",
+  "cause",
+  "throwable",
+  "exception.stacktrace",
+  "error.stacktrace",
+  "level",
+  "thread_name",
+  "logger_name",
+  "message",
+  "@timestamp",
+  "@version",
+  "timestamp",
+  "time",
+  "logger",
+  "thread",
+  "_fullMessage",
+  "_truncated",
+  "_messageSize",
+  "source",
+  "signature",
+  "_id",
+  "_mark",
+  "raw"
+]);
+var CONTEXT_FIELDS = /* @__PURE__ */ new Set(["mdc", "context", "properties", "labels"]);
+function findTraceId(raw) {
+  for (const [key, value] of Object.entries(raw)) {
+    if (canonicalDcKey(key) === "TraceID" && typeof value === "string" && value.trim()) {
+      return value.trim();
+    }
+  }
+  return null;
+}
+function findExternalId(raw) {
+  for (const key of [
+    "externalId",
+    "external_id",
+    "external.id",
+    "extId",
+    "traceparent",
+    "id"
+  ]) {
+    const value = raw[key];
+    if (typeof value === "string" && value.trim()) return value.trim();
+  }
+  return null;
+}
+function computeMdcFromRaw(raw) {
+  const mdc = {};
+  if (!raw || typeof raw !== "object") return mdc;
+  const add = (key, value) => {
+    const canonical = canonicalDcKey(key);
+    if (!canonical || value == null) return;
+    Object.defineProperty(mdc, canonical, {
+      value: toSafeString(value),
+      enumerable: true,
+      configurable: true,
+      writable: true
+    });
+  };
+  for (const [key, value] of Object.entries(raw)) {
+    if (RESERVED_STD_FIELDS.has(key) || CONTEXT_FIELDS.has(key)) continue;
+    if (typeof value === "string" || typeof value === "number" || typeof value === "boolean") {
+      add(key, value);
+    }
+  }
+  const record = raw;
+  const externalId = findExternalId(record);
+  if (externalId && !mdc.externalId) add("externalId", externalId);
+  const traceId = findTraceId(record);
+  if (traceId) add("TraceID", traceId);
+  for (const field of ["labels", "properties", "context", "mdc"]) {
+    const context = record[field];
+    if (context && typeof context === "object" && !Array.isArray(context)) {
+      for (const [key, value] of Object.entries(context)) add(key, value);
+    }
+  }
+  return mdc;
+}
+
 // src/main/parsers.ts
 var HTTP_KEEPALIVE_AGENT = new import_http.default.Agent({ keepAlive: true, maxSockets: 8 });
 var HTTPS_KEEPALIVE_AGENT = new import_https.default.Agent({ keepAlive: true });
@@ -454,7 +579,8 @@ function toEntry(obj = {}, fallbackMessage = "", source = "") {
     traceId: toOptionalString(traceVal),
     stackTrace: stackTrace || null,
     raw: obj,
-    source
+    source,
+    mdc: computeMdcFromRaw(obj)
   };
   if (truncated) {
     entry._truncated = true;
@@ -729,8 +855,10 @@ function parseZipFile(zipPath) {
     if (!zEntry.isDirectory && (ext === ".log" || ext === ".json" || ext === ".jsonl" || ext === ".ndjson" || ext === ".txt")) {
       const text = zEntry.getData().toString("utf8");
       const parsed = ext === ".json" ? parseJsonFile(name, text) : parseTextLines(name, text);
-      parsed.forEach((e) => e.source = `${zipPath}::${name}`);
-      entries.push(...parsed);
+      for (const entry of parsed) {
+        entry.source = `${zipPath}::${name}`;
+        entries.push(entry);
+      }
     }
   });
   return entries;
@@ -751,7 +879,7 @@ function parsePaths(paths) {
   const all = [];
   for (const p of paths) {
     try {
-      all.push(...parsePath(p));
+      for (const entry of parsePath(p)) all.push(entry);
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       all.push(
@@ -805,7 +933,11 @@ async function parsePathsAsync(paths) {
   for (let i = 0; i < CONCURRENCY; i++) workers.push(worker());
   await Promise.all(workers);
   const all = [];
-  for (const list of results) if (list) all.push(...list);
+  for (const list of results) {
+    if (list) {
+      for (const entry of list) all.push(entry);
+    }
+  }
   return all;
 }
 var pitSessions = /* @__PURE__ */ new Map();

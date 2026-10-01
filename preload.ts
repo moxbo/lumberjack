@@ -3,7 +3,12 @@
  * Exposes a secure, typed API to the renderer process
  */
 
-import { contextBridge, ipcRenderer, type IpcRendererEvent } from "electron";
+import {
+  contextBridge,
+  ipcRenderer,
+  webUtils,
+  type IpcRendererEvent,
+} from "electron";
 import type {
   AutoUpdaterStatus,
   DroppedFile,
@@ -85,6 +90,7 @@ const api: ElectronAPI = {
 
   // Dialog operations
   openFiles: (): Promise<string[]> => ipcRenderer.invoke("dialog:openFiles"),
+  getPathForFile: (file: File): string => webUtils.getPathForFile(file),
 
   chooseLogFile: (): Promise<string> =>
     ipcRenderer.invoke("dialog:chooseLogFile"),

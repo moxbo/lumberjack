@@ -1,9 +1,14 @@
 import fs from "fs";
 import path from "path";
+import AdmZip from "adm-zip";
 import { estimatePayloadBytes } from "../../utils/estimatePayloadBytes";
 import { afterEach, describe, expect, it } from "vitest";
+import type { LogEntry } from "../../types/ipc";
 import {
   getStreamParseStrategy,
+  parseJsonFile,
+  parsePaths,
+  parsePathsAsync,
   parseTextLines,
   streamParseFile,
 } from "../parsers";
@@ -171,6 +176,106 @@ describe("getStreamParseStrategy", () => {
 });
 
 describe("streamPathsWithBackpressure", () => {
+  it.each(["json", "zip"])(
+    "imports a large %s fallback without bulk admission or argument-count overflow",
+    async (extension) => {
+      const count = 150_005;
+      const text = JSON.stringify(
+        Array.from({ length: count }, (_, index) => ({
+          message: String(index),
+          mdc: { tenant: "orders" },
+          ...(index === 0 ? { markColor: "#ff0000" } : {}),
+        })),
+      );
+      let filePath: string;
+      if (extension === "zip") {
+        const zip = new AdmZip();
+        zip.addFile("logs.json", Buffer.from(text));
+        filePath = await writeFixture("large.zip", "");
+        await fs.promises.writeFile(filePath, zip.toBuffer());
+      } else {
+        filePath = await writeFixture("large.json", text);
+      }
+      let received = 0;
+      let completed = false;
+      await streamPathsWithBackpressure({
+        sessionId: `large-${extension}`,
+        filePaths: [filePath],
+        parsers: {
+          parsePaths,
+          parsePathsAsync,
+          parseJsonFile,
+          parseTextLines,
+          streamParseFile,
+          getStreamParseStrategy,
+        },
+        sendChunk: async (chunk) => {
+          expect(chunk.entries.length).toBeLessThanOrEqual(1000);
+          expect(chunk.entries[0]?.message).toBe(String(received));
+          expect(chunk.entries[0]?.mdc).toMatchObject({ tenant: "orders" });
+          if (received === 0) expect(chunk.entries[0]?._mark).toBe("#ff0000");
+          expect(chunk.entries.at(-1)?.message).toBe(
+            String(received + chunk.entries.length - 1),
+          );
+          received += chunk.entries.length;
+        },
+        sendComplete: (result) => {
+          expect(result.errors).toEqual([]);
+          expect(result.totalEntries).toBe(count);
+          completed = true;
+        },
+        sendError: (error) => {
+          throw new Error(error.error);
+        },
+      });
+      expect(received).toBe(count);
+      expect(completed).toBe(true);
+    },
+  );
+
+  it("bounds fallback batches by decoded bytes, not only entry count", async () => {
+    const entries = Array.from({ length: 8 }, (_, index) => ({
+      timestamp: null,
+      message: `${index}-${"x".repeat(256 * 1024)}`,
+      source: "array.json",
+    }));
+    const batches: LogEntry[][] = [];
+    await streamPathsWithBackpressure({
+      sessionId: "byte-fallback",
+      filePaths: ["array.json"],
+      plans: [
+        {
+          filePath: "array.json",
+          fileIndex: 0,
+          totalBytes: 10,
+          streamable: false,
+        },
+      ],
+      parsers: {
+        parsePaths: () => entries,
+        parseJsonFile: parseTextLines,
+        parseTextLines,
+      },
+      sendChunk: async (chunk) => {
+        batches.push(chunk.entries);
+        expect(
+          chunk.entries.reduce(
+            (sum, entry) => sum + estimatePayloadBytes(entry),
+            64,
+          ),
+        ).toBeLessThanOrEqual(2 * 1024 * 1024);
+      },
+      sendComplete: (result) => {
+        expect(result.errors).toEqual([]);
+      },
+      sendError: (error) => {
+        throw new Error(error.error);
+      },
+    });
+    expect(batches.length).toBeGreaterThan(1);
+    expect(batches.flat()).toEqual(entries);
+  });
+
   it("keeps file order and monotonic byte progress across multiple files", async () => {
     const streamedContent = Array.from(
       { length: 6 },

@@ -426,6 +426,7 @@ export type ElectronAPI = {
   windowPermsGet: () => Promise<WindowPermsResult>;
   windowPermsSet: (patch: { canTcpControl?: boolean }) => Promise<Result<void>>;
   openFiles: () => Promise<string[]>;
+  getPathForFile: (file: File) => string;
   chooseLogFile: () => Promise<string>;
   chooseExportPath: () => Promise<ExportPathResult>;
   saveExportFile: (filePath: string, content: string) => Promise<ExportResult>;

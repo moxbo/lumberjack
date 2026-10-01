@@ -217,6 +217,10 @@ export async function openFiles(): Promise<string[]> {
   }
 }
 
+export function getPathForFile(file: File): string {
+  return window.api?.getPathForFile?.(file) ?? "";
+}
+
 /**
  * Open a native file picker for choosing a single log file path.
  */
