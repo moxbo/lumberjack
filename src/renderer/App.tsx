@@ -52,7 +52,7 @@ import { clearTimestampCache, fmtTimestamp } from "../utils/format";
 import { exportCurrentView as streamCurrentView } from "../utils/exportCurrentView";
 import type { ReadonlySequence } from "../utils/metadataSnapshot";
 import { useIdPositions } from "../hooks/useIdPositions";
-import { useSettings } from "../hooks/useSettings";
+import { useSettings } from "../hooks";
 import {
   setupDebugFunctions,
   setDebugEntriesRef,
