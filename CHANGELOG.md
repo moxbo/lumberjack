@@ -5,6 +5,20 @@ Alle nennenswerten Änderungen an diesem Projekt werden in dieser Datei dokument
 Das Format orientiert sich an [Keep a Changelog](https://keepachangelog.com/de/1.1.0/),
 und dieses Projekt folgt [Semantic Versioning](https://semver.org/lang/de/).
 
+## [1.2.0-beta.7] - 2026-10-01 _(Pre-Release)_
+
+
+### Added
+- Update time filter button action and add Elasticsearch dialog prefill tests
+
+
+### Docs
+- **http**: Describe streaming limits and partial-response behavior
+
+
+### Fixed
+- **http**: Stream large log responses without a total size limit
+
 ## [1.2.0-beta.6] - 2026-10-01 _(Pre-Release)_
 
 
