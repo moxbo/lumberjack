@@ -22,7 +22,11 @@ vi.mock("electron-log/main", () => ({
 afterEach(() => vi.useRealTimers());
 
 type Parsers = ReturnType<Parameters<typeof registerIpcHandlers>[2]>;
-function register(parsers: Partial<Parsers>, network = new NetworkService()) {
+function register(
+  parsers: Partial<Parsers>,
+  network = new NetworkService(),
+  enqueue?: Parameters<typeof registerIpcHandlers>[5],
+) {
   ipc.handle.mockClear();
   ipc.on.mockClear();
   registerIpcHandlers(
@@ -32,10 +36,52 @@ function register(parsers: Partial<Parsers>, network = new NetworkService()) {
     () => {
       throw new Error("ZIP parser unused");
     },
+    undefined,
+    enqueue,
   );
 }
 
 describe("terminal ingestion error notifications", () => {
+  it("routes one-shot HTTP batches to the requesting window and waits for persistence", async () => {
+    const network = new NetworkService();
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const enqueue = vi.fn(() => gate);
+    vi.spyOn(network, "httpLoadOnce").mockImplementation(
+      async (_url, consume) => {
+        await consume!([
+          { timestamp: null, message: "HTTP entry", source: _url },
+        ]);
+        return { ok: true, entries: [] };
+      },
+    );
+    register({}, network, enqueue);
+    const handler = ipc.handle.mock.calls.find(
+      ([channel]) => channel === "http:loadOnce",
+    )![1];
+    let completed = false;
+    const loading = handler({ sender: { id: 42 } }, "http://example.test/log");
+    void loading.then(() => {
+      completed = true;
+    });
+    await Promise.resolve();
+    expect(completed).toBe(false);
+    expect(enqueue).toHaveBeenCalledExactlyOnceWith(
+      [
+        {
+          timestamp: null,
+          message: "HTTP entry",
+          source: "http://example.test/log",
+        },
+      ],
+      42,
+    );
+    release();
+    await expect(loading).resolves.toEqual({ ok: true, entries: [] });
+  });
+
   it("routes terminal polling errors to the requesting renderer", async () => {
     const network = new NetworkService();
     vi.spyOn(network, "httpStartPoll").mockImplementation(

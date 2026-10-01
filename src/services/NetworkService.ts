@@ -599,17 +599,24 @@ export class NetworkService {
     url: string,
     externalSignal?: AbortSignal,
   ): Promise<string> {
+    const release = this.reserveHttpRequest();
+    try {
+      return await this.fetchText(url, externalSignal);
+    } finally {
+      release();
+    }
+  }
+
+  private reserveHttpRequest(): () => void {
     if (this.httpFetches >= NetworkService.HTTP_MAX_POLLERS) {
       throw new Error(
         "HTTP admission capacity exceeded; retry after pending requests",
       );
     }
     this.httpFetches++;
-    try {
-      return await this.fetchText(url, externalSignal);
-    } finally {
+    return () => {
       this.httpFetches--;
-    }
+    };
   }
 
   private async fetchText(
@@ -812,13 +819,61 @@ export class NetworkService {
    */
   async httpLoadOnce(
     url: string,
+    consume?: (entries: LogEntry[]) => void | Promise<void>,
   ): Promise<{ ok: boolean; entries?: LogEntry[]; error?: string }> {
+    let release: (() => void) | undefined;
     try {
       if (!this.parseJsonFile || !this.parseTextLines) {
         throw new Error("Parser functions not set");
       }
 
-      const text = await this.httpFetchText(url);
+      // Keep admission until persistence ACK: a completed download still retains
+      // its bounded response while the consumer is busy.
+      release = this.reserveHttpRequest();
+      const text = await this.fetchText(url);
+      if (consume) {
+        const trimmed = text.trimStart();
+        let array: unknown[] | undefined;
+        if (trimmed.startsWith("[")) {
+          try {
+            const parsed: unknown = JSON.parse(text);
+            if (Array.isArray(parsed)) array = parsed;
+          } catch {
+            // Match parseJsonFile's fallback to line-oriented parsing.
+          }
+        }
+        if (array) {
+          for (
+            let i = 0;
+            i < array.length;
+            i += NetworkService.HTTP_BATCH_SIZE
+          ) {
+            const batch = this.parseJsonFile(
+              url,
+              JSON.stringify(
+                array.slice(i, i + NetworkService.HTTP_BATCH_SIZE),
+              ),
+            );
+            await consume(batch);
+          }
+        } else {
+          let start = 0;
+          let lines = 0;
+          for (let i = 0; i < text.length; i++) {
+            if (text[i] !== "\n") continue;
+            if (++lines < NetworkService.HTTP_BATCH_SIZE) continue;
+            const batch = this.parseTextLines(url, text.slice(start, i + 1));
+            if (batch.length) await consume(batch);
+            start = i + 1;
+            lines = 0;
+          }
+          if (start < text.length) {
+            const batch = this.parseTextLines(url, text.slice(start));
+            if (batch.length) await consume(batch);
+          }
+        }
+        return { ok: true, entries: [] };
+      }
       const isJson = text.trim().startsWith("[") || text.trim().startsWith("{");
       const entries = isJson
         ? this.parseJsonFile(url, text)
@@ -829,6 +884,8 @@ export class NetworkService {
       const message = err instanceof Error ? err.message : String(err);
       log.error("HTTP load failed:", message);
       return { ok: false, error: message };
+    } finally {
+      release?.();
     }
   }
 

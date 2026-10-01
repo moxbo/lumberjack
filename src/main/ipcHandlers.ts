@@ -1316,7 +1316,7 @@ export function registerIpcHandlers(
   // HTTP handlers
   ipcMain.handle(
     "http:loadOnce",
-    async (_event, url: string): Promise<ParseResult> => {
+    async (event, url: string): Promise<ParseResult> => {
       // Check if HTTP_POLLING feature is enabled
       if (featureFlags && !featureFlags.isEnabled("HTTP_POLLING")) {
         const reason = featureFlags.getDisableReason("HTTP_POLLING");
@@ -1326,7 +1326,14 @@ export function registerIpcHandlers(
           error: reason ? `${msg}: ${reason}` : msg,
         };
       }
-      return await networkService.httpLoadOnce(url);
+      // Deliver to the requesting window through the ACK-backed append pipeline,
+      // not as one giant invoke result exceeding renderer ingestion admission.
+      return await networkService.httpLoadOnce(
+        url,
+        enqueueWatchEntries
+          ? (entries) => enqueueWatchEntries(entries, event.sender.id)
+          : undefined,
+      );
     },
   );
 
