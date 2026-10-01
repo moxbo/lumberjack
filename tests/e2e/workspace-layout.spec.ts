@@ -139,9 +139,20 @@ test("keeps search, filters and real inspector data usable in both layouts", asy
   );
   await window.getByRole("tab", { name: /Kontext|Context/ }).click();
   await expect(window.getByRole("tabpanel")).toContainText("request-1");
-  await window.getByRole("tab", { name: /Rohdaten|Raw data/ }).click();
+  await expect(
+    window.getByRole("tab", { name: /Rohdaten|Raw data/ }),
+  ).toHaveCount(0);
+  await window.getByRole("tab", { name: /Erweitert|Advanced/ }).click();
+  await expect(window.locator(".inspector-raw")).toHaveJSProperty(
+    "open",
+    false,
+  );
+  await expect(window.getByRole("tabpanel").locator("pre")).toHaveCount(0);
+  await window.locator(".inspector-raw summary").click();
   await expect(window.getByRole("tabpanel")).toContainText("Payment timeout 0");
   await expect(window.getByRole("tabpanel")).toContainText("request-1");
+  await window.locator(".inspector-raw summary").click();
+  await expect(window.getByRole("tabpanel").locator("pre")).toHaveCount(0);
   await window
     .getByRole("tab", { name: /Nachricht|Message/, exact: true })
     .click();

@@ -7,6 +7,7 @@
     "message": "Message",
     "stacktrace": "Stacktrace",
     "context": "Context",
+    "advanced": "Advanced",
     "raw": "Raw data",
     "entryContext": "Entry context",
     "close": "Close details",

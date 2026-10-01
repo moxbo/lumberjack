@@ -111,6 +111,13 @@ function render(props: DetailPanelProps) {
   return tree;
 }
 
+function toggleRaw(tree: unknown, open: boolean) {
+  const details = find(tree, "className", "inspector-raw");
+  (details.props.onToggle as (event: unknown) => void)({
+    currentTarget: { open },
+  });
+}
+
 function props(overrides: Partial<DetailPanelProps> = {}): DetailPanelProps {
   return {
     selectedEntry: {
@@ -227,12 +234,39 @@ describe("DetailPanel inspector", () => {
     options.selectedEntry!.raw = raw;
     let tree = render(options);
     expect(read).not.toHaveBeenCalled();
-    click(find(tree, "id", "inspector-test-tab-raw"));
+    expect(
+      nodes(tree).some((node) => node.props.id === "inspector-test-tab-raw"),
+    ).toBe(false);
+    click(find(tree, "id", "inspector-test-tab-advanced"));
+    tree = render(options);
+    expect(find(tree, "className", "inspector-raw").props.open).toBe(false);
+    expect(read).not.toHaveBeenCalled();
+    toggleRaw(tree, true);
     tree = render(options);
     expect(read).toHaveBeenCalledOnce();
     expect(text(tree)).toContain("original payload");
     render({ ...options, search: "changed" });
     expect(read).toHaveBeenCalledOnce();
+    toggleRaw(tree, false);
+    tree = render(options);
+    expect(text(tree)).not.toContain("original payload");
+    expect(find(tree, "className", "inspector-raw").props.open).toBe(false);
+  });
+
+  it("collapses raw data again when the selected entry changes", () => {
+    const options = props();
+    let tree = render(options);
+    click(find(tree, "id", "inspector-test-tab-advanced"));
+    tree = render(options);
+    toggleRaw(tree, true);
+    expect(text(render(options))).toContain("payload");
+    const next = props();
+    tree = render(next);
+    expect(find(tree, "className", "inspector-raw").props.open).toBe(false);
+    expect(text(tree)).not.toContain("payload");
+    expect(find(render(options), "className", "inspector-raw").props.open).toBe(
+      false,
+    );
   });
 
   it("requires full-message opt-in again after changing selection", () => {
@@ -370,7 +404,9 @@ describe("DetailPanel inspector", () => {
     });
     let tree = render(options);
     await Promise.resolve();
-    click(find(tree, "id", "inspector-test-tab-raw"));
+    click(find(tree, "id", "inspector-test-tab-advanced"));
+    tree = render(options);
+    toggleRaw(tree, true);
     tree = render(options);
     expect(text(tree)).toContain("Loaded full message");
     expect(text(tree)).toContain("Loaded trace");

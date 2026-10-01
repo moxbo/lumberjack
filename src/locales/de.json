@@ -7,6 +7,7 @@
     "message": "Nachricht",
     "stacktrace": "Stacktrace",
     "context": "Kontext",
+    "advanced": "Erweitert",
     "raw": "Rohdaten",
     "entryContext": "Kontext des Eintrags",
     "close": "Details schließen",

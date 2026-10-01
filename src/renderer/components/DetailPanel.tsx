@@ -10,8 +10,8 @@ import logger from "../../utils/logger";
 import "./DetailPanel.css";
 
 type InspectorEntry = Partial<PagedLogEntry>;
-type InspectorTab = "message" | "stacktrace" | "context" | "raw";
-const TABS: InspectorTab[] = ["message", "stacktrace", "context", "raw"];
+type InspectorTab = "message" | "stacktrace" | "context" | "advanced";
+const TABS: InspectorTab[] = ["message", "stacktrace", "context", "advanced"];
 const RAW_PREVIEW_LIMIT = 64 * 1024;
 
 export interface DetailPanelProps {
@@ -160,6 +160,7 @@ export function DetailPanelComponent({
   reportUnavailable.current = () => onError?.(t("inspector.unavailable"));
   const id = useId();
   const [tab, setTab] = useState<InspectorTab>("message");
+  const [rawEntry, setRawEntry] = useState<InspectorEntry | null>(null);
   const [fullMessageEntry, setFullMessageEntry] =
     useState<InspectorEntry | null>(null);
   const [copyStatus, setCopyStatus] = useState<{
@@ -177,6 +178,7 @@ export function DetailPanelComponent({
 
   useEffect(() => {
     setFullMessageEntry(null);
+    setRawEntry(null);
     setCopyStatus(null);
   }, [selectedEntry]);
 
@@ -237,8 +239,9 @@ export function DetailPanelComponent({
     (typeof selectedEntry?._messageSize === "number"
       ? selectedEntry._messageSize
       : effectiveFullMessage.length);
+  const showRaw = selectedEntry !== null && rawEntry === selectedEntry;
   const rawPreview = useMemo(() => {
-    if (tab !== "raw" || !selectedEntry) return null;
+    if (tab !== "advanced" || !showRaw || !selectedEntry) return null;
     const raw = selectedEntry.raw;
     return createRawPreview(
       raw ?? selectedEntry,
@@ -252,6 +255,7 @@ export function DetailPanelComponent({
     );
   }, [
     tab,
+    showRaw,
     selectedEntry,
     heavy?.record,
     effectiveFullMessage,
@@ -540,16 +544,27 @@ export function DetailPanelComponent({
                 </section>
               </Fragment>
             )}
-            {tab === "raw" && rawPreview && (
-              <section>
-                <p className="inspector-hint">{t("inspector.rawHint")}</p>
-                {rawPreview.truncated && (
-                  <p className="inspector-hint" role="status">
-                    {t("inspector.rawTruncated")}
-                  </p>
+            {tab === "advanced" && (
+              <details
+                className="inspector-raw"
+                open={showRaw}
+                onToggle={(event) =>
+                  setRawEntry(event.currentTarget.open ? selectedEntry : null)
+                }
+              >
+                <summary>{t("inspector.raw")}</summary>
+                {rawPreview && (
+                  <section>
+                    <p className="inspector-hint">{t("inspector.rawHint")}</p>
+                    {rawPreview.truncated && (
+                      <p className="inspector-hint" role="status">
+                        {t("inspector.rawTruncated")}
+                      </p>
+                    )}
+                    <pre className="inspector-code">{rawPreview.text}</pre>
+                  </section>
                 )}
-                <pre className="inspector-code">{rawPreview.text}</pre>
-              </section>
+              </details>
             )}
           </div>
         </Fragment>

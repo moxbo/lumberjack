@@ -44,8 +44,9 @@ erscheinen die Details automatisch unten; beim Verbreitern kehrt das gewählte
 Layout zurück. Ziehe die Trennlinie zum Vergrößern oder fokussiere sie mit Tab
 und verwende die Pfeiltasten.
 
-Die Detailansicht bietet **Nachricht**, **Stacktrace**, **Kontext** und **Rohdaten**.
-Die Rohdatenvorschau zeigt gespeicherte Quelldaten oder die verfügbaren
+Die Detailansicht bietet **Nachricht**, **Stacktrace** und **Kontext**.
+Unter **Erweitert** kannst du bei Bedarf den standardmäßig eingeklappten Bereich
+**Rohdaten** öffnen. Die Vorschau zeigt gespeicherte Quelldaten oder die verfügbaren
 Eintragsfelder und ist bei sehr großen Einträgen begrenzt; für vollständige Daten
 verwende den Export. Nach dem Schließen öffnet eine erneute Zeilenauswahl die
 Details wieder.
