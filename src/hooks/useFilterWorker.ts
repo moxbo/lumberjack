@@ -197,8 +197,7 @@ function computeSearchMatchIndices(
   const search = String(options.navigationSearch || "").trim();
   if (!search) return [];
 
-  // UtilityProcess filtering still returns legacy array indices, so this helper
-  // intentionally treats filteredIndices as direct offsets into `entries`.
+  // These are source offsets, not the stable IDs returned to the view.
   const matches: number[] = [];
   for (
     let visualIndex = 0;
@@ -295,6 +294,13 @@ export function useFilterWorker(): UseFilterWorkerResult {
     useState<ProjectionBridge | null>(null);
   const fallbackRunningRef = useRef(false);
   const queuedFallbackRef = useRef<(() => Promise<void>) | null>(null);
+  const localBaseRef = useRef<{
+    generation: string;
+    count: number;
+    indices: number[];
+    sourcePositions: number[];
+    stats: FilterStats;
+  } | null>(null);
 
   const cancelFiltering = useCallback((preserveBase = false) => {
     const requestId = ++requestSeqRef.current;
@@ -302,6 +308,7 @@ export function useFilterWorker(): UseFilterWorkerResult {
     cancelledThroughRef.current = requestId;
     pendingGenerationRef.current = undefined;
     if (!preserveBase) {
+      localBaseRef.current = null;
       pendingBaseGenerationRef.current = undefined;
       renderedBaseCountRef.current = undefined;
       setFilteredIndices([]);
@@ -558,6 +565,7 @@ export function useFilterWorker(): UseFilterWorkerResult {
       baseOffset = 0,
     ): {
       indices: number[];
+      sourcePositions: number[];
       searchMatchIndices: number[];
       stats: FilterStats;
     } => {
@@ -574,6 +582,7 @@ export function useFilterWorker(): UseFilterWorkerResult {
       };
 
       const indices: number[] = [];
+      const sourcePositions: number[] = [];
       const searchMatchIndices: number[] = [];
       const navigationSearch = String(options.navigationSearch || "").trim();
       const hasMarks = !!marksMap && Object.keys(marksMap).length > 0;
@@ -674,6 +683,7 @@ export function useFilterWorker(): UseFilterWorkerResult {
         const visualIndex = indices.length;
         const id = typeof e._id === "number" ? e._id : baseOffset + i;
         indices.push(id);
+        sourcePositions.push(baseOffset + i);
         if (
           navigationSearch &&
           msgMatches(String(e.message ?? ""), navigationSearch, {
@@ -684,7 +694,12 @@ export function useFilterWorker(): UseFilterWorkerResult {
         }
       }
 
-      return { indices, searchMatchIndices, stats: filterStats };
+      return {
+        indices,
+        sourcePositions,
+        searchMatchIndices,
+        stats: filterStats,
+      };
     },
     [],
   );
@@ -742,6 +757,14 @@ export function useFilterWorker(): UseFilterWorkerResult {
         databaseName: config?.databaseName,
       });
       const baseChanged = baseGeneration !== pendingBaseGenerationRef.current;
+      const cachedBase = localBaseRef.current;
+      if (
+        cachedBase &&
+        (cachedBase.generation !== baseGeneration ||
+          cachedBase.count !== entries.length)
+      ) {
+        localBaseRef.current = null;
+      }
       const queryChanged = generation !== pendingGenerationRef.current;
       pendingRequestRef.current = requestId;
       pendingGenerationRef.current = generation;
@@ -780,6 +803,16 @@ export function useFilterWorker(): UseFilterWorkerResult {
         if (!isCurrent() || requestId < lastAppliedRequestRef.current) return;
         lastAppliedRequestRef.current = requestId;
         setFilteredIndices(result.indices);
+        if (!partial && !config?.paged) {
+          localBaseRef.current = {
+            generation: baseGeneration,
+            count: entries.length,
+            indices: result.indices,
+            sourcePositions: result.sourcePositions,
+            stats: result.stats,
+          };
+          renderedBaseCountRef.current = result.stats.total;
+        }
         setSearchMatchIndices(result.searchMatchIndices);
         setSearchMatchIds(
           result.searchMatchIndices.map((index) => result.indices[index]!),
@@ -841,6 +874,50 @@ export function useFilterWorker(): UseFilterWorkerResult {
           );
           setIsFiltering(false);
         }
+        return;
+      }
+
+      const reusableBase = localBaseRef.current;
+      if (reusableBase) {
+        if (!options.navigationSearch?.trim()) {
+          publish({ ...reusableBase, searchMatchIndices: [] });
+          return;
+        }
+        const matches: number[] = [];
+        const runSearch = async () => {
+          try {
+            const positions = reusableBase.sourcePositions;
+            for (let start = 0; start < positions.length; start += 2_000) {
+              if (!isCurrent()) return;
+              matches.push(
+                ...computeSearchMatchIndices(
+                  entries,
+                  positions.slice(start, start + 2_000),
+                  options,
+                ).map((index) => start + index),
+              );
+              const done = start + 2_000 >= positions.length;
+              publish(
+                { ...reusableBase, searchMatchIndices: matches.slice() },
+                !done,
+              );
+              if (!done)
+                await new Promise<void>((resolve) => setTimeout(resolve, 0));
+            }
+            if (!positions.length) {
+              publish({ ...reusableBase, searchMatchIndices: [] });
+            }
+          } catch (cause) {
+            if (isCurrent()) {
+              setError(
+                cause instanceof Error ? cause : new Error(String(cause)),
+              );
+              setIsFiltering(false);
+            }
+          }
+        };
+        setIsFiltering(true);
+        void runSearch();
         return;
       }
 
@@ -924,6 +1001,9 @@ export function useFilterWorker(): UseFilterWorkerResult {
                     response.filteredIndices,
                     options,
                   ),
+                  sourcePositions: response.filteredIndices.map(
+                    (index) => start + index,
+                  ),
                   stats: response.stats,
                 };
               } catch (cause) {
@@ -938,6 +1018,7 @@ export function useFilterWorker(): UseFilterWorkerResult {
             pageResult ??= filterSync(page, options, marksMap, start);
             const offset = accumulated.indices.length;
             accumulated.indices.push(...pageResult.indices);
+            accumulated.sourcePositions.push(...pageResult.sourcePositions);
             accumulated.searchMatchIndices.push(
               ...pageResult.searchMatchIndices.map((index) => offset + index),
             );
@@ -955,6 +1036,7 @@ export function useFilterWorker(): UseFilterWorkerResult {
               publish(
                 {
                   indices: accumulated.indices.slice(),
+                  sourcePositions: accumulated.sourcePositions.slice(),
                   searchMatchIndices: accumulated.searchMatchIndices.slice(),
                   stats: { ...accumulated.stats },
                 },

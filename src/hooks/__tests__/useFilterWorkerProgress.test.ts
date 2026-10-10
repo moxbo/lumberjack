@@ -130,6 +130,178 @@ afterEach(() => {
 });
 
 describe("progressive filter coordination", () => {
+  it("searches only cached candidates for small datasets without reevaluating filters", () => {
+    const levelRead = vi.fn(() => "ERROR");
+    const excludedMessage = vi.fn(() => "needle");
+    const rows = [
+      {
+        _id: 30,
+        level: "INFO",
+        get message() {
+          return excludedMessage();
+        },
+      },
+      {
+        _id: 20,
+        get level() {
+          return levelRead();
+        },
+        message: "Needle",
+      },
+      {
+        _id: 10,
+        get level() {
+          return levelRead();
+        },
+        message: "needle-two",
+      },
+    ];
+    const baseOptions: FilterOptions = {
+      ...options,
+      stdFiltersEnabled: true,
+      filter: { ...options.filter, level: "ERROR" },
+      navigationSearch: "",
+    };
+    const hook = mount();
+    hook.filterEntries(rows, baseOptions);
+    const baseIds = state().ids;
+    expect(baseIds).toEqual([20, 10]);
+    levelRead.mockClear();
+    hook.cancelFiltering(true);
+    hook.filterEntries(rows, { ...baseOptions, navigationSearch: "needle" });
+    expect(state().matches).toEqual([20, 10]);
+    hook.filterEntries(rows, {
+      ...baseOptions,
+      navigationSearch: "needle",
+      navigationSearchMode: "sensitive",
+    });
+    expect(state().matches).toEqual([10]);
+    hook.filterEntries(rows, {
+      ...baseOptions,
+      navigationSearch: "^N.*e$",
+      navigationSearchMode: "regex",
+    });
+    expect(state().matches).toEqual([20]);
+    hook.filterEntries(rows, baseOptions);
+    expect(state().matches).toEqual([]);
+    expect(state().ids).toBe(baseIds);
+    expect(levelRead).not.toHaveBeenCalled();
+    expect(excludedMessage).not.toHaveBeenCalled();
+  });
+
+  it("invalidates local candidates on filter, source, count changes and clearing", () => {
+    const hook = mount();
+    const rows = [
+      { _id: 30, level: "INFO", message: "needle" },
+      { _id: 20, level: "ERROR", message: "needle" },
+    ];
+    const baseOptions = {
+      ...options,
+      stdFiltersEnabled: true,
+      filter: { ...options.filter, level: "ERROR" },
+    };
+    hook.filterEntries(rows, baseOptions);
+    expect(state().ids).toEqual([20]);
+    const infoOptions = {
+      ...baseOptions,
+      filter: { ...baseOptions.filter, level: "INFO" },
+    };
+    hook.filterEntries(rows, infoOptions);
+    expect(state().ids).toEqual([30]);
+    rows.push({ _id: 10, level: "INFO", message: "needle" });
+    hook.filterEntries(rows, infoOptions);
+    expect(state().matches).toEqual([30, 10]);
+    const replacement = rows.map((row) => ({ ...row, message: "different" }));
+    hook.filterEntries(replacement, infoOptions);
+    expect(state().matches).toEqual([]);
+    hook.cancelFiltering();
+    hook.filterEntries([], infoOptions);
+    expect(state().ids).toEqual([]);
+    hook.filterEntries(rows, baseOptions);
+    expect(state().matches).toEqual([20]);
+  });
+
+  it("reuses completed cooperative fallback candidates and cancels navigation pages", async () => {
+    vi.useFakeTimers();
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    vi.stubGlobal(
+      "Worker",
+      class {
+        constructor() {
+          throw new Error("unavailable");
+        }
+      },
+    );
+    const levelRead = vi.fn(() => "ERROR");
+    const rows = Array.from({ length: 6001 }, (_, i) => ({
+      _id: 9000 - i,
+      get level() {
+        return levelRead();
+      },
+      message: i === 6000 ? "needle" : "other",
+    }));
+    const baseOptions = {
+      ...options,
+      stdFiltersEnabled: true,
+      filter: { ...options.filter, level: "ERROR" },
+      navigationSearch: "",
+    };
+    const hook = mount();
+    hook.filterEntries(rows, baseOptions);
+    await vi.runAllTimersAsync();
+    const baseIds = state().ids;
+    levelRead.mockClear();
+    hook.cancelFiltering(true);
+    hook.filterEntries(rows, { ...baseOptions, navigationSearch: "needle" });
+    await vi.runAllTimersAsync();
+    expect(state().matches).toEqual([3000]);
+    expect(state().ids).toBe(baseIds);
+    expect(levelRead).not.toHaveBeenCalled();
+    hook.filterEntries(rows, { ...baseOptions, navigationSearch: "other" });
+    expect(state().isFiltering).toBe(true);
+    hook.cancelFiltering(true);
+    await vi.runAllTimersAsync();
+    expect(state()).toMatchObject({
+      matches: [],
+      progress: null,
+      isFiltering: false,
+    });
+    expect(state().ids).toBe(baseIds);
+  });
+
+  it("reuses utility-process candidates with absolute source offsets", async () => {
+    vi.useFakeTimers();
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    vi.stubGlobal(
+      "Worker",
+      class {
+        constructor() {
+          throw new Error("unavailable");
+        }
+      },
+    );
+    vi.mocked(filterIsAvailable).mockResolvedValue(true);
+    vi.mocked(utilityFilter).mockResolvedValue({
+      ok: true,
+      filteredIndices: [0],
+      stats: stats(2000, 1),
+    });
+    const hook = mount();
+    await Promise.resolve();
+    const rows = Array.from({ length: 6000 }, (_, i) => ({
+      _id: 9000 - i,
+      message: i === 4000 ? "needle" : "other",
+    }));
+    hook.filterEntries(rows, { ...options, navigationSearch: "" });
+    await vi.runAllTimersAsync();
+    expect(state().ids).toEqual([9000, 7000, 5000]);
+    expect(utilityFilter).toHaveBeenCalledTimes(3);
+    hook.cancelFiltering(true);
+    hook.filterEntries(rows, options);
+    expect(state().matches).toEqual([5000]);
+    expect(utilityFilter).toHaveBeenCalledTimes(3);
+  });
+
   it("preserves the base array across search changes and merges sorted match-only deltas", () => {
     const hook = mount();
     const baseConfig = { ...config, baseGeneration: "base" };

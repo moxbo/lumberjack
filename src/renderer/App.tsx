@@ -2762,19 +2762,6 @@ export default function App(): JSX.Element {
             t={t}
           />
         </WorkspaceToolbar>
-        {queryActive && !filterWorkerError && (
-          <FilterProgressStatus
-            key={queryKey}
-            running={searchRunning}
-            progress={
-              resultsCurrent
-                ? filterProgress
-                : { processed: 0, total: entries.length, matches: 0 }
-            }
-            locale={locale}
-            t={t}
-          />
-        )}
         <div className="workspace-filterbar">
           {/* Filter Toggle Button */}
           <button
@@ -2928,6 +2915,21 @@ export default function App(): JSX.Element {
             onClearLogs={onClearLogs}
             t={t}
           />
+          <div className="workspace-progress-slot">
+            {queryActive && !filterWorkerError && (
+              <FilterProgressStatus
+                key={queryKey}
+                running={searchRunning}
+                progress={
+                  resultsCurrent
+                    ? filterProgress
+                    : { processed: 0, total: entries.length, matches: 0 }
+                }
+                locale={locale}
+                t={t}
+              />
+            )}
+          </div>
           <label className="workspace-follow">
             <input
               type="checkbox"

@@ -250,6 +250,31 @@
   padding-bottom: 5px;
 }
 
+.workspace-progress-slot {
+  position: relative;
+  flex: 1 0 180px;
+  height: 16px;
+  min-width: 0;
+}
+
+.workspace-progress-slot .filter-progress {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+.workspace-progress-slot .filter-progress > span:first-child {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.workspace-progress-slot .filter-progress > progress {
+  flex-shrink: 0;
+}
+
 .workspace-app .toolbar .counts {
   border: 0;
   padding: 0;

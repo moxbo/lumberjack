@@ -8,6 +8,7 @@ declare global {
       arm(): void;
       release(): void;
       queuedFinals: number;
+      baseResults: number;
     };
   }
 }
@@ -25,10 +26,12 @@ test("shows real partial matches, rejects superseded results and preserves the v
     const pending: Array<() => void> = [];
     const control = {
       queuedFinals: 0,
+      baseResults: 0,
       arm() {
         armed = true;
         blockedGeneration = undefined;
         control.queuedFinals = 0;
+        control.baseResults = 0;
       },
       release() {
         armed = false;
@@ -48,6 +51,7 @@ test("shows real partial matches, rejects superseded results and preserves the v
           const data = event.data;
           const deliver = () => this.onmessage?.call(this, event);
           if (data.type === "result") {
+            if (!data.reuseFilteredIndices) control.baseResults++;
             if (
               blockedGeneration !== undefined &&
               data.generation === blockedGeneration
@@ -101,11 +105,17 @@ test("shows real partial matches, rejects superseded results and preserves the v
   const selectedMessage = window.locator(".row.sel .col.msg");
   const status = window.locator(".filter-progress > span").first();
   const matchCount = window.locator("#btnPrevMatch + span");
+  const listTop = () =>
+    window
+      .locator(".list")
+      .evaluate((element) => element.getBoundingClientRect().top);
+  const initialListTop = await listTop();
   await window.evaluate(() => globalThis.window.searchTestControl.arm());
   await search.fill("needle");
   await search.press("Enter");
   await expect(progress).toHaveAttribute("value", "2000");
   await expect(status).toHaveText(/2[.,]000 \/ 6[.,]001 (durchsucht|searched)/);
+  expect(await listTop()).toBe(initialListTop);
   await expect(matchCount).toHaveText("1/1");
   await expect(selectedMessage).toHaveText("needle-1000");
   await expect(selectedMessage).toBeVisible();
@@ -124,6 +134,7 @@ test("shows real partial matches, rejects superseded results and preserves the v
   await window.evaluate(() => globalThis.window.searchTestControl.release());
   await expect(progress).toHaveCount(0);
   await expect(window.locator(".filter-progress")).toHaveCount(0);
+  expect(await listTop()).toBe(initialListTop);
   await expect(matchCount).toHaveText(/\/2$/);
   await expect(selectedMessage).toHaveText(selection!);
   expect(
@@ -157,6 +168,7 @@ test("shows real partial matches, rejects superseded results and preserves the v
   await window.locator("#filterLevel").selectOption("ERROR");
   await expect(window.locator("#countFiltered")).toHaveText("1000");
   await expect(status).toHaveText(/2[.,]000 \/ 6[.,]001 (durchsucht|searched)/);
+  const filteredListTop = await listTop();
   await window.locator(".list").dispatchEvent("wheel", { deltaY: 1 });
   await window.locator(".list").evaluate((element) => {
     element.scrollTop = 200 * 36 + 7;
@@ -165,7 +177,6 @@ test("shows real partial matches, rejects superseded results and preserves the v
   await expect(anchoredRow).toContainText("row-");
   await anchoredRow.click();
   const anchoredMessage = await anchoredRow.textContent();
-  // Hiding completed progress can resize the toolbar, not the log scroll anchor.
   const before = await anchoredRow.evaluate(
     (element) =>
       element.getBoundingClientRect().top -
@@ -180,6 +191,7 @@ test("shows real partial matches, rejects superseded results and preserves the v
   await expect(window.locator("#countFiltered")).toHaveText("3000");
   await expect(window.locator(".filter-progress")).toHaveCount(0);
   await expect(progress).toHaveCount(0);
+  expect(await listTop()).toBe(filteredListTop);
   await expect(selectedMessage).toHaveText(anchoredMessage!);
   expect(
     await selectedMessage.evaluate(
@@ -188,6 +200,29 @@ test("shows real partial matches, rejects superseded results and preserves the v
         element.closest(".list")!.getBoundingClientRect().top,
     ),
   ).toBeCloseTo(before, 0);
+
+  await window.evaluate(() => globalThis.window.searchTestControl.arm());
+  await search.fill("row-");
+  await search.press("Enter");
+  await expect(progress).toHaveAttribute("value", "2000");
+  await expect(window.locator("#countFiltered")).toHaveText("3000");
+  expect(await listTop()).toBe(filteredListTop);
+  await expect
+    .poll(() =>
+      window.evaluate(() => globalThis.window.searchTestControl.queuedFinals),
+    )
+    .toBeGreaterThan(0);
+  expect(
+    await window.evaluate(
+      () => globalThis.window.searchTestControl.baseResults,
+    ),
+  ).toBe(0);
+  await window.evaluate(() => globalThis.window.searchTestControl.release());
+  await expect(progress).toHaveCount(0);
+  await expect(matchCount).toHaveText(/\/3000$/);
+  expect(await listTop()).toBe(filteredListTop);
+  await search.fill("");
+  await expect(window.locator(".filter-progress")).toHaveCount(0);
 
   await window.evaluate(() => globalThis.window.searchTestControl.arm());
   await window.locator("#filterLevel").selectOption("INFO");
