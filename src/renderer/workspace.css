@@ -289,9 +289,36 @@
 
 .workspace-app #btnClearLogs {
   margin-left: 8px;
+  min-height: 32px;
+  padding: 6px 12px;
+  flex-shrink: 0;
+  white-space: nowrap;
+  font-weight: 600;
+  color: var(--color-level-error);
+  border-color: var(--color-level-error);
+  background: color-mix(
+    in srgb,
+    var(--color-level-error) 10%,
+    var(--color-bg-paper)
+  );
+}
+
+.workspace-app #btnClearLogs:hover:not(:disabled) {
+  background: color-mix(
+    in srgb,
+    var(--color-level-error) 20%,
+    var(--color-bg-paper)
+  );
+}
+
+.workspace-app #btnClearLogs:focus-visible {
+  outline-color: var(--color-level-error);
+}
+
+.workspace-app #btnClearLogs:disabled {
   color: var(--ui-muted);
-  border-color: transparent;
-  background: transparent;
+  border-color: var(--color-border);
+  background: var(--ui-panel);
 }
 
 .workspace-follow {

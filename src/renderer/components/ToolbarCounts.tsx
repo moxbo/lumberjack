@@ -4,6 +4,7 @@
  */
 import type { FilterStats } from "../../types/renderer";
 import { memo } from "preact/compat";
+import { WorkspaceIcon } from "./WorkspaceToolbar";
 
 export interface ToolbarCountsProps {
   countTotal: number;
@@ -82,6 +83,7 @@ function ToolbarCountsComponent({
         onClick={onClearLogs}
         disabled={clearing || entriesLength === 0}
       >
+        <WorkspaceIcon name="trash" />
         {t("toolbar.clearLogs")}
       </button>
     </div>
