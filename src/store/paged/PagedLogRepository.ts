@@ -99,6 +99,7 @@ export class PagedLogRepository {
         pageSize: options.pageSize,
         maxPages: options.maxCachedPages,
         maxBytes: options.maxCachedBytes,
+        sparseLoader: (ids) => this.loadPayloadsById(ids),
       },
     );
   }
@@ -556,7 +557,6 @@ export class PagedLogRepository {
       .openCursor(range);
     const payloads = new Map<number, StoredPayloadEntry>();
     const projections = new Map<number, ProjectionRecord>();
-    const output = new Map<number, CanonicalLogEntry>();
     let requestError: unknown;
     payloadRequest.onsuccess = () => {
       const cursor = payloadRequest.result;
@@ -579,6 +579,50 @@ export class PagedLogRepository {
       requestError = projectionRequest.error;
     };
     await transactionDone(transaction, () => requestError ?? transaction.error);
+    return this.decodePayloads(payloads, projections);
+  }
+
+  /** Reads exactly the given IDs; used for scattered rows of filtered views. */
+  private async loadPayloadsById(
+    ids: readonly number[],
+  ): Promise<ReadonlyMap<number, CanonicalLogEntry>> {
+    const db = await this.getDb();
+    const transaction = db.transaction(
+      [PAYLOAD_STORE_NAME, PROJECTION_STORE_NAME],
+      "readonly",
+    );
+    const payloadStore = transaction.objectStore(PAYLOAD_STORE_NAME);
+    const projectionStore = transaction.objectStore(PROJECTION_STORE_NAME);
+    const payloads = new Map<number, StoredPayloadEntry>();
+    const projections = new Map<number, ProjectionRecord>();
+    let requestError: unknown;
+    for (const id of ids) {
+      const payloadRequest = payloadStore.get(id);
+      payloadRequest.onsuccess = () => {
+        const record = payloadRequest.result as PayloadRecord | undefined;
+        if (record) payloads.set(record.id, record.entry);
+      };
+      payloadRequest.onerror = () => {
+        requestError = payloadRequest.error;
+      };
+      const projectionRequest = projectionStore.get(id);
+      projectionRequest.onsuccess = () => {
+        const record = projectionRequest.result as ProjectionRecord | undefined;
+        if (record) projections.set(record.id, record);
+      };
+      projectionRequest.onerror = () => {
+        requestError = projectionRequest.error;
+      };
+    }
+    await transactionDone(transaction, () => requestError ?? transaction.error);
+    return this.decodePayloads(payloads, projections);
+  }
+
+  private async decodePayloads(
+    payloads: ReadonlyMap<number, StoredPayloadEntry>,
+    projections: ReadonlyMap<number, ProjectionRecord>,
+  ): Promise<ReadonlyMap<number, CanonicalLogEntry>> {
+    const output = new Map<number, CanonicalLogEntry>();
     const storedPayloads = [...payloads];
     let nextPayload = 0;
     const workers = Array.from(

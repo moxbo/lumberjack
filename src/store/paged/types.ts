@@ -64,6 +64,9 @@ export interface PayloadCacheStats {
   misses: number;
   loads: number;
   coalescedLoads: number;
+  /** Direct ID reads for sparsely requested pages; results are not retained. */
+  sparseLoads: number;
+  sparsePayloads: number;
   evictions: number;
   /** Estimated bytes removed by LRU/byte-budget eviction, not invalidation. */
   evictedBytes: number;

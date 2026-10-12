@@ -350,6 +350,72 @@ describe("PageLruCache", () => {
     await expect(cache.get(1)).rejects.toThrow("sync");
     await expect(cache.get(1)).resolves.toBe("ok");
   });
+
+  it("serves scattered IDs through the sparse loader and dense pages through the page loader", async () => {
+    const pageLoader = vi.fn(
+      async (first: number, last: number) =>
+        new Map(
+          Array.from(
+            { length: last - first + 1 },
+            (_, index) => [first + index, `p${first + index}`] as const,
+          ),
+        ),
+    );
+    const sparseLoader = vi.fn(
+      async (ids: readonly number[]) =>
+        new Map(ids.map((id) => [id, `s${id}`] as const)),
+    );
+    const cache = new PageLruCache<string>(pageLoader, {
+      pageSize: 8,
+      maxPages: 4,
+      sparseLoader,
+      sparseThreshold: 3,
+    });
+
+    const result = await cache.getMany([1, 2, 3, 9, 20, 30]);
+    expect([...result].sort((a, b) => a[0] - b[0])).toEqual([
+      [1, "p1"],
+      [2, "p2"],
+      [3, "p3"],
+      [9, "s9"],
+      [20, "s20"],
+      [30, "s30"],
+    ]);
+    expect(pageLoader).toHaveBeenCalledTimes(1);
+    expect(sparseLoader).toHaveBeenCalledTimes(1);
+    expect(sparseLoader).toHaveBeenCalledWith([9, 20, 30]);
+    expect(cache.getStats()).toMatchObject({
+      loads: 1,
+      sparseLoads: 1,
+      sparsePayloads: 3,
+      misses: 4,
+      residentPages: 1,
+    });
+
+    // Resident pages win over the sparse loader, and in-flight page loads are reused.
+    const pending = cache.get(17);
+    const again = await cache.getMany([4, 18]);
+    await pending;
+    expect([...again].sort((a, b) => a[0] - b[0])).toEqual([
+      [4, "p4"],
+      [18, "p18"],
+    ]);
+    expect(sparseLoader).toHaveBeenCalledTimes(1);
+    expect(pageLoader).toHaveBeenCalledTimes(2);
+  });
+
+  it("falls back to page loads without a sparse loader", async () => {
+    const pageLoader = vi.fn(async (first: number) => new Map([[first, "x"]]));
+    const cache = new PageLruCache<string>(pageLoader, { pageSize: 8 });
+    await expect(cache.getMany([1, 9])).resolves.toEqual(
+      new Map([
+        [1, "x"],
+        [9, "x"],
+      ]),
+    );
+    expect(pageLoader).toHaveBeenCalledTimes(2);
+    expect(cache.getStats().sparseLoads).toBe(0);
+  });
 });
 
 describe("estimatePayloadBytes", () => {

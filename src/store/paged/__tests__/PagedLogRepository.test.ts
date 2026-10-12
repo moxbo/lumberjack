@@ -51,6 +51,19 @@ function fixture(
             put: (record: { id: number }) =>
               write(() => store.set(record.id, record)),
             clear: () => write(() => store.clear()),
+            get: (id: number) => {
+              pending++;
+              const request = {
+                result: undefined as { id: number } | undefined,
+                onsuccess: null as (() => void) | null,
+              };
+              queueMicrotask(() => {
+                request.result = store.get(id);
+                request.onsuccess?.();
+                finish();
+              });
+              return request;
+            },
             openCursor: (range: { lower: number; upper: number }) => {
               pending++;
               const entries = [...store.values()].filter(
@@ -359,5 +372,47 @@ describe("PagedLogRepository byte cache", () => {
       residentPayloads: 1,
     });
     expect(repository.getCacheStats().residentBytes).toBeLessThanOrEqual(4096);
+  });
+
+  it("reads scattered filtered rows directly instead of decoding whole pages", async () => {
+    const records = Array.from({ length: 64 }, (_, index) =>
+      preparePagedRecord(
+        { timestamp: null, message: `entry ${index + 1}`, source: "test" },
+        index + 1,
+      ),
+    );
+    const { repository, transaction } = fixture(records, { pageSize: 16 });
+    const decode = vi.spyOn(compression, "decompressPayloadEntry");
+
+    // One visible row per page: sparse reads, nothing retained.
+    const scattered = await repository.getPayloads([3, 20, 37, 54]);
+    expect([...scattered.keys()]).toEqual([3, 20, 37, 54]);
+    expect(scattered.get(37)).toMatchObject({ message: "entry 37" });
+    expect(decode).toHaveBeenCalledTimes(4);
+    expect(transaction).toHaveBeenCalledTimes(1);
+    expect(repository.getCacheStats()).toMatchObject({
+      loads: 0,
+      sparseLoads: 1,
+      sparsePayloads: 4,
+      residentPages: 0,
+    });
+
+    // A densely requested page is still loaded and retained as a whole.
+    const dense = await repository.getPayloads([1, 2, 3, 4, 5, 6, 7, 8, 20]);
+    expect(dense.size).toBe(9);
+    expect(repository.getCacheStats()).toMatchObject({
+      loads: 1,
+      sparseLoads: 2,
+      residentPages: 1,
+      residentPayloads: 16,
+    });
+    decode.mockClear();
+    await expect(repository.getPayloads([9, 10])).resolves.toMatchObject(
+      new Map([
+        [9, { message: "entry 9" }],
+        [10, { message: "entry 10" }],
+      ]),
+    );
+    expect(decode).not.toHaveBeenCalled();
   });
 });

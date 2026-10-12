@@ -10,11 +10,18 @@ export type PageLoader<T> = (
   lastId: number,
 ) => Promise<ReadonlyMap<number, T>>;
 
+/** Loads exactly the given IDs; results are delivered but never retained. */
+export type SparseLoader<T> = (
+  ids: readonly number[],
+) => Promise<ReadonlyMap<number, T>>;
+
 interface CacheCounters {
   hits: number;
   misses: number;
   loads: number;
   coalescedLoads: number;
+  sparseLoads: number;
+  sparsePayloads: number;
   evictions: number;
   evictedBytes: number;
   oversizedPages: number;
@@ -35,10 +42,13 @@ export class PageLruCache<T> {
   readonly pageSize: number;
   readonly maxPages: number;
   readonly maxBytes: number;
+  /** Non-resident pages with fewer requested IDs than this use the sparse loader. */
+  readonly sparseThreshold: number;
 
   private generation = 0;
   private residentBytes = 0;
   private loadTail: Promise<void> = Promise.resolve();
+  private readonly sparseLoader?: SparseLoader<T>;
   private readonly pages = new Map<number, CachedPage<T>>();
   private readonly pending = new Map<string, Promise<ReadonlyMap<number, T>>>();
   private readonly counters: CacheCounters = {
@@ -46,6 +56,8 @@ export class PageLruCache<T> {
     misses: 0,
     loads: 0,
     coalescedLoads: 0,
+    sparseLoads: 0,
+    sparsePayloads: 0,
     evictions: 0,
     evictedBytes: 0,
     oversizedPages: 0,
@@ -53,11 +65,26 @@ export class PageLruCache<T> {
 
   constructor(
     private readonly loader: PageLoader<T>,
-    options: { pageSize?: number; maxPages?: number; maxBytes?: number } = {},
+    options: {
+      pageSize?: number;
+      maxPages?: number;
+      maxBytes?: number;
+      sparseLoader?: SparseLoader<T>;
+      sparseThreshold?: number;
+    } = {},
   ) {
     this.pageSize = options.pageSize ?? 256;
     this.maxPages = options.maxPages ?? 32;
     this.maxBytes = options.maxBytes ?? DEFAULT_MAX_CACHED_BYTES;
+    this.sparseLoader = options.sparseLoader;
+    this.sparseThreshold =
+      options.sparseThreshold ?? Math.floor(this.pageSize / 8);
+    if (
+      !Number.isSafeInteger(this.sparseThreshold) ||
+      this.sparseThreshold < 0
+    ) {
+      throw new RangeError("sparseThreshold must be a non-negative integer");
+    }
     if (!Number.isSafeInteger(this.pageSize) || this.pageSize < 1) {
       throw new RangeError("pageSize must be a positive integer");
     }
@@ -89,6 +116,12 @@ export class PageLruCache<T> {
     return page.get(id);
   }
 
+  /**
+   * Resident pages are served immediately. Filtered views request IDs that are
+   * scattered across many pages; decoding a full page per visible row would
+   * delay the first paint by seconds, so sparsely requested pages are fetched
+   * ID-by-ID (when a sparse loader exists) concurrently with the page loads.
+   */
   async getMany(ids: readonly number[]): Promise<Map<number, T>> {
     const result = new Map<number, T>();
     const idsByPage = new Map<number, number[]>();
@@ -98,13 +131,39 @@ export class PageLruCache<T> {
       if (pageIds) pageIds.push(id);
       else idsByPage.set(pageNumber, [id]);
     }
-    for (const [pageNumber, pageIds] of idsByPage) {
-      const page = await this.loadPage(pageNumber);
+    const copy = (page: ReadonlyMap<number, T>, pageIds: readonly number[]) => {
       for (const id of pageIds) {
         const value = page.get(id);
         if (value !== undefined) result.set(id, value);
       }
+    };
+    const pageLoads: Promise<void>[] = [];
+    const sparseIds: number[] = [];
+    for (const [pageNumber, pageIds] of idsByPage) {
+      const resident = this.touchResident(pageNumber);
+      if (resident) {
+        copy(resident, pageIds);
+      } else if (
+        this.sparseLoader &&
+        pageIds.length < this.sparseThreshold &&
+        !this.pending.has(`${this.generation}:${pageNumber}`)
+      ) {
+        sparseIds.push(...pageIds);
+      } else {
+        pageLoads.push(
+          this.loadPage(pageNumber).then((page) => copy(page, pageIds)),
+        );
+      }
     }
+    if (sparseIds.length > 0) {
+      this.counters.misses += sparseIds.length;
+      this.counters.sparseLoads++;
+      this.counters.sparsePayloads += sparseIds.length;
+      pageLoads.push(
+        this.sparseLoader!(sparseIds).then((loaded) => copy(loaded, sparseIds)),
+      );
+    }
+    await Promise.all(pageLoads);
     return result;
   }
 
@@ -136,14 +195,18 @@ export class PageLruCache<T> {
     return this.loadPage(this.pageNumber(id));
   }
 
-  private async loadPage(pageNumber: number): Promise<ReadonlyMap<number, T>> {
+  private touchResident(pageNumber: number): ReadonlyMap<number, T> | null {
     const cached = this.pages.get(pageNumber);
-    if (cached) {
-      this.counters.hits++;
-      this.pages.delete(pageNumber);
-      this.pages.set(pageNumber, cached);
-      return cached.values;
-    }
+    if (!cached) return null;
+    this.counters.hits++;
+    this.pages.delete(pageNumber);
+    this.pages.set(pageNumber, cached);
+    return cached.values;
+  }
+
+  private async loadPage(pageNumber: number): Promise<ReadonlyMap<number, T>> {
+    const resident = this.touchResident(pageNumber);
+    if (resident) return resident;
 
     this.counters.misses++;
     const generation = this.generation;
