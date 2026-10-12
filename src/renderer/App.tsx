@@ -2977,7 +2977,9 @@ export default function App(): JSX.Element {
         className="layout"
         ref={layoutRef}
         data-detail-layout={effectiveDetailLayout}
-        data-details-hidden={detailsHidden ? "true" : "false"}
+        data-details-hidden={
+          detailsHidden || entries.length === 0 ? "true" : "false"
+        }
         aria-busy={clearing}
       >
         <VirtualizedLogList
