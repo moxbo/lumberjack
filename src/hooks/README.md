@@ -138,11 +138,19 @@ writers also have finite defaults: 1,024 operations and 16 MiB. These are
 independent budgets, not a shared process-wide cap.
 
 HTTP polling and file/HTTP tailing await downstream consumption before reading
-the next chunk. HTTP-tail reads are 64 KiB; network/streaming line handling has
-a 1 MiB limit. On TCP an oversized line is truncated to 1 MiB (UTF-8 safe),
-flagged `_truncated` with `_messageSize` set to the original byte count, and the
-remainder is discarded up to the next newline; the connection stays open. Streaming imports allow one active session per renderer and
-16 globally, and require readiness/persistence acknowledgements within 30 seconds.
+the next chunk. HTTP-tail reads are 64 KiB. TCP and streamed file imports split
+lines with `BoundedLineSplitter` (`src/utils/entryLimits.ts`): a line longer
+than `MAX_LOG_LINE_BYTES` (4 MiB) is truncated UTF-8-safely, flagged
+`_truncated` with `_messageSize` set to the original byte count, and the
+remainder up to the next newline is discarded. Neither source fails because of
+line size. Within that cap the normal display truncation applies: the list shows
+a preview and the detail panel loads `_fullMessage` on demand, exactly as for
+file imports. `boundEntryPayload` shrinks entries above
+`MAX_ENTRY_PAYLOAD_BYTES` (32 MiB estimated) instead of rejecting the batch, and
+window-queue capacity refusals make TCP delivery wait for in-flight progress
+rather than terminate the connection. Streaming imports allow one active
+session per renderer and 16 globally, and require readiness/persistence
+acknowledgements within 30 seconds.
 
 Capacity, timeout and storage errors propagate to the source instead of silently
 dropping queued entries or replaying ambiguously committed batches. Restart a
