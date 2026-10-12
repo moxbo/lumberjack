@@ -126,7 +126,14 @@ returns a promise; replacement imports must await its successful completion.
 
 TCP delivery awaits file logging and the existing renderer `logs:appendAck`
 before resuming socket reads. Window queues retain at most 8,192 entries and
-32 MiB, including unready/in-flight delivery, with a 30-second timeout. File
+32 MiB, including unready/in-flight delivery, with a 30-second timeout. The
+timeout is progress-based: while a batch is still being persisted, the preload
+sends `logs:appendProgress` heartbeats every 10 seconds, which re-arm both the
+renderer ack deadline and the window queue receipts. A slow-but-alive renderer
+therefore applies backpressure to the source instead of resetting it; only a
+dead renderer or a persistence error terminates the connection. TCP sockets
+have no inactivity timeout (log sources are legitimately idle); dead peers are
+detected via TCP keepalive (60 s). File
 writers also have finite defaults: 1,024 operations and 16 MiB. These are
 independent budgets, not a shared process-wide cap.
 

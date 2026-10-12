@@ -168,6 +168,17 @@ export class WindowAppendQueue<T> {
     this.limit = Math.min(8192, maxPending);
   }
 
+  /** Restarts receipt timers; call when the consumer reports delivery progress. */
+  touch(): void {
+    if (this.disposed) return;
+    for (const receipt of this.receipts) {
+      clearTimeout(receipt.timer);
+      receipt.timer = setTimeout(() => {
+        this.dispose(new Error("Window append delivery timed out"));
+      }, this.timeoutMs);
+    }
+  }
+
   private acknowledge(count: number): void {
     while (count > 0 && this.receipts.length) {
       const receipt = this.receipts[0]!;

@@ -771,6 +771,7 @@ interface RendererBatchGroup {
   resolve: () => void;
   reject: (error: Error) => void;
   settled: boolean;
+  onProgress?: () => void;
 }
 
 interface QueuedRendererBatch {
@@ -825,6 +826,21 @@ function failRendererBatchQueue(queue: RendererBatchQueue, error: Error): void {
   }
 }
 
+function armRendererBatchTimeout(
+  queue: RendererBatchQueue,
+  batch: QueuedRendererBatch,
+): void {
+  if (queue.timeout) clearTimeout(queue.timeout);
+  queue.timeout = setTimeout(() => {
+    failRendererBatchQueue(
+      queue,
+      new Error(
+        `Renderer did not acknowledge batch ${batch.batchId} within ${RENDERER_BATCH_ACK_TIMEOUT_MS}ms`,
+      ),
+    );
+  }, RENDERER_BATCH_ACK_TIMEOUT_MS);
+}
+
 function drainRendererBatchQueue(queue: RendererBatchQueue): void {
   if (queue.inFlight || queue.pending.length === 0) return;
   if (queue.wc.isDestroyed()) {
@@ -840,14 +856,7 @@ function drainRendererBatchQueue(queue: RendererBatchQueue): void {
     });
     batchSendStats.total++;
     batchSendStats.lastSendTime = Date.now();
-    queue.timeout = setTimeout(() => {
-      failRendererBatchQueue(
-        queue,
-        new Error(
-          `Renderer did not acknowledge batch ${batch.batchId} within ${RENDERER_BATCH_ACK_TIMEOUT_MS}ms`,
-        ),
-      );
-    }, RENDERER_BATCH_ACK_TIMEOUT_MS);
+    armRendererBatchTimeout(queue, batch);
   } catch (error) {
     batchSendStats.failed++;
     failRendererBatchQueue(
@@ -855,6 +864,18 @@ function drainRendererBatchQueue(queue: RendererBatchQueue): void {
       error instanceof Error ? error : new Error(String(error)),
     );
   }
+}
+
+/** A still-pending batch reported liveness; defer its deadline instead of failing a slow renderer. */
+function reportRendererBatchProgress(
+  webContentsId: number,
+  batchId: string,
+): void {
+  const queue = rendererBatchQueues.get(webContentsId);
+  const batch = queue?.inFlight;
+  if (!queue || !batch || batch.batchId !== batchId) return;
+  armRendererBatchTimeout(queue, batch);
+  batch.group.onProgress?.();
 }
 
 function acknowledgeRendererBatch(
@@ -890,6 +911,7 @@ function sendBatchesAsyncTo(
   wc: Electron.WebContents,
   channel: string,
   batches: LogEntry[][],
+  onProgress?: () => void,
 ): Promise<void> {
   if (!batches || batches.length === 0) return Promise.resolve();
   if (wc.isDestroyed())
@@ -906,6 +928,7 @@ function sendBatchesAsyncTo(
       resolve,
       reject,
       settled: false,
+      onProgress,
     };
     let queue = rendererBatchQueues.get(wc.id);
     if (!queue) {
@@ -1054,9 +1077,12 @@ async function flushAppendQueue(
             for (const batch of renderBatches(block)) {
               if (queue.isDisposed)
                 throw new Error("Window delivery cancelled");
-              await sendBatchesAsyncTo(win.webContents, "logs:append", [
-                prepareRenderBatch(batch),
-              ]);
+              await sendBatchesAsyncTo(
+                win.webContents,
+                "logs:append",
+                [prepareRenderBatch(batch)],
+                () => queue.touch(),
+              );
               acknowledged += batch.length;
             }
           }
@@ -2456,6 +2482,14 @@ try {
     ) => {
       if (typeof payload?.batchId !== "string") return;
       acknowledgeRendererBatch(event.sender.id, payload.batchId, payload.error);
+    },
+  );
+
+  ipcMain.on(
+    "logs:appendProgress",
+    (event: Electron.IpcMainEvent, payload: { batchId?: string }) => {
+      if (typeof payload?.batchId !== "string") return;
+      reportRendererBatchProgress(event.sender.id, payload.batchId);
     },
   );
 

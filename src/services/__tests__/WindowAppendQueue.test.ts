@@ -177,6 +177,26 @@ describe("WindowAppendQueue", () => {
     }
   });
 
+  it("defers the receipt deadline while the consumer reports progress", async () => {
+    vi.useFakeTimers();
+    try {
+      const queue = new WindowAppendQueue<number>(() => 4, 8, 100);
+      const rejected = vi.fn();
+      const resolved = vi.fn();
+      void queue.enqueue([1]).then(resolved, rejected);
+      await vi.advanceTimersByTimeAsync(80);
+      queue.touch();
+      await vi.advanceTimersByTimeAsync(80);
+      expect(rejected).not.toHaveBeenCalled();
+      expect(queue.isDisposed).toBe(false);
+      await vi.advanceTimersByTimeAsync(30);
+      expect(rejected).toHaveBeenCalledOnce();
+      expect(resolved).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("does not resurrect a disconnected window or falsely acknowledge its active receipt", async () => {
     const queue = new WindowAppendQueue<number>();
     const receipt = expect(queue.enqueue([1, 2])).rejects.toThrow("disposed");

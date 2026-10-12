@@ -33,6 +33,9 @@ import type {
   WindowTitleResult,
 } from "./src/types/ipc";
 
+// Must stay well below the main-process renderer ack deadline (30 s).
+const APPEND_PROGRESS_INTERVAL_MS = 10_000;
+
 // OPTIMIZATION: Eagerly fetch settings during preload to avoid IPC round-trip on first render
 // Settings are already loaded synchronously in main process, so this is fast
 let cachedSettings: SettingsResult | null = null;
@@ -192,8 +195,18 @@ const api: ElectronAPI = {
     ): void => {
       const entries = Array.isArray(payload) ? payload : payload.entries;
       const batchId = Array.isArray(payload) ? undefined : payload.batchId;
+      // Persistence can legitimately outlast the main-process ack deadline
+      // (large stores, queued imports); prove liveness while still pending.
+      const heartbeat = batchId
+        ? setInterval(() => {
+            ipcRenderer.send("logs:appendProgress", { batchId });
+          }, APPEND_PROGRESS_INTERVAL_MS)
+        : null;
       void Promise.resolve()
         .then(() => callback(entries))
+        .finally(() => {
+          if (heartbeat) clearInterval(heartbeat);
+        })
         .then(
           () => {
             if (batchId) ipcRenderer.send("logs:appendAck", { batchId });

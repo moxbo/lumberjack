@@ -79,7 +79,9 @@ export class NetworkService {
 
   // Memory leak prevention constants
   private static readonly MAX_BUFFER_SIZE = 2 * 1024 * 1024;
-  private static readonly SOCKET_TIMEOUT_MS = 5 * 60 * 1000; // 5 minutes timeout
+  // Log sources are legitimately idle for long periods; dead peers are detected
+  // via TCP keepalive instead of an inactivity timeout that would reset them.
+  private static readonly TCP_KEEPALIVE_MS = 60 * 1000;
   private static readonly TCP_SHUTDOWN_GRACE_MS = 1000;
   private static readonly MAX_LINE_LENGTH = 1024 * 1024;
   private static readonly MAX_SEEN_ENTRIES = 10000; // Max deduplication entries per poller
@@ -148,26 +150,16 @@ export class NetworkService {
   }
 
   /**
-   * Send log entries to the callback
+   * Send log entries to the callback. The consumer owns delivery timeouts;
+   * a fixed deadline here would reset sources whose sink is slow but alive.
    */
   private async sendLogs(entries: LogEntry[]): Promise<void> {
     if (this.logCallback && entries.length > 0) {
-      let timer!: ReturnType<typeof setTimeout>;
-      const delivery = Promise.race([
-        Promise.resolve().then(() => this.logCallback!(entries)),
-        new Promise<never>((_, reject) => {
-          timer = setTimeout(
-            () =>
-              reject(new Error("Log persistence acknowledgement timed out")),
-            30_000,
-          );
-        }),
-      ]);
+      const delivery = Promise.resolve().then(() => this.logCallback!(entries));
       this.logDeliveries.add(delivery);
       try {
         await delivery;
       } finally {
-        clearTimeout(timer);
         this.logDeliveries.delete(delivery);
       }
     } else if (entries.length) {
@@ -232,8 +224,7 @@ export class NetworkService {
         );
       }
 
-      // Set socket timeout to prevent hanging connections
-      socket.setTimeout(NetworkService.SOCKET_TIMEOUT_MS);
+      socket.setKeepAlive(true, NetworkService.TCP_KEEPALIVE_MS);
 
       socket.setEncoding("utf8");
       let processing: Promise<void> | null = null;
@@ -340,11 +331,6 @@ export class NetworkService {
         // Only log internally, don't send to UI log list - these are internal socket errors
         // (like ECONNRESET when client disconnects), not actual application log data
         log.warn(`[tcp] Socket error on ${socketId}:`, err.message);
-      });
-
-      socket.on("timeout", () => {
-        log.warn(`[tcp] Socket timeout on ${socketId}, closing connection`);
-        socket.destroy(new Error("TCP socket timed out"));
       });
 
       socket.on("close", (hadError) => {
@@ -1077,6 +1063,7 @@ export class NetworkService {
       tcpMaxConnections: number;
       tcpBufferSize: number;
       tcpTimeout: number;
+      tcpKeepAliveMs: number;
       httpTimeout: number;
       httpMaxResponseSize: number | null;
       httpMaxRecordSize: number;
@@ -1106,7 +1093,8 @@ export class NetworkService {
       limits: {
         tcpMaxConnections: NetworkService.TCP_MAX_CONNECTIONS,
         tcpBufferSize: NetworkService.MAX_BUFFER_SIZE,
-        tcpTimeout: NetworkService.SOCKET_TIMEOUT_MS,
+        tcpTimeout: 0,
+        tcpKeepAliveMs: NetworkService.TCP_KEEPALIVE_MS,
         httpTimeout: NetworkService.HTTP_FETCH_TIMEOUT_MS,
         httpMaxResponseSize: null,
         httpMaxRecordSize: NetworkService.HTTP_MAX_RECORD_SIZE,
