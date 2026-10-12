@@ -10,6 +10,11 @@ import log from "electron-log/main";
 import type { LogEntry } from "../types/ipc";
 import { responseChunks } from "./ResponseStream";
 import { httpLogBatches } from "./HttpLogStream";
+import {
+  BoundedLineSplitter,
+  MAX_LOG_LINE_BYTES,
+  type BoundedLine,
+} from "../utils/entryLimits";
 
 /**
  * TCP Status
@@ -83,7 +88,6 @@ export class NetworkService {
   // via TCP keepalive instead of an inactivity timeout that would reset them.
   private static readonly TCP_KEEPALIVE_MS = 60 * 1000;
   private static readonly TCP_SHUTDOWN_GRACE_MS = 1000;
-  private static readonly MAX_LINE_LENGTH = 1024 * 1024;
   private static readonly MAX_SEEN_ENTRIES = 10000; // Max deduplication entries per poller
 
   // Additional robustness constants
@@ -173,16 +177,6 @@ export class NetworkService {
     }
   }
 
-  /** Cuts text to at most maxBytes UTF-8 bytes without leaving a broken multi-byte sequence. */
-  static truncateUtf8(text: string, maxBytes: number): string {
-    const bytes = Buffer.from(text, "utf8");
-    if (bytes.length <= maxBytes) return text;
-    let end = maxBytes;
-    // Back up over UTF-8 continuation bytes (10xxxxxx) to a character boundary.
-    while (end > 0 && (bytes[end]! & 0xc0) === 0x80) end--;
-    return bytes.subarray(0, end).toString("utf8");
-  }
-
   /**
    * Start TCP server
    */
@@ -240,69 +234,24 @@ export class NetworkService {
       let closed = false;
       let failed = false;
 
-      // Completed lines awaiting delivery plus the incomplete tail. Oversized
-      // lines are truncated and the remainder discarded until the next newline;
-      // the connection itself is never reset because of content size.
-      interface PendingLine {
-        text: string;
-        truncated: boolean;
-        originalBytes: number;
-      }
-      const lines: PendingLine[] = [];
-      let partial = "";
-      let partialBytes = 0;
-      let partialTruncated = false;
-      let discardedBytes = 0;
-
-      const completePartial = (): void => {
-        if (partial.length || partialTruncated) {
-          lines.push({
-            text: partial,
-            truncated: partialTruncated,
-            originalBytes: partialBytes + discardedBytes,
-          });
-        }
-        partial = "";
-        partialBytes = 0;
-        partialTruncated = false;
-        discardedBytes = 0;
-      };
-
+      // Completed lines awaiting delivery. Oversized lines are truncated and
+      // the remainder discarded until the next newline; the connection itself
+      // is never reset because of content size.
+      const lines: BoundedLine[] = [];
+      const splitter = new BoundedLineSplitter(MAX_LOG_LINE_BYTES, (bytes) =>
+        log.warn(
+          `[tcp] Line on ${socketId} exceeds ${MAX_LOG_LINE_BYTES} bytes (${bytes} so far); truncating and discarding the remainder`,
+        ),
+      );
       const ingest = (chunk: string): void => {
-        let start = 0;
-        while (start < chunk.length) {
-          const nl = chunk.indexOf("\n", start);
-          const segment = nl < 0 ? chunk.slice(start) : chunk.slice(start, nl);
-          const segmentBytes = Buffer.byteLength(segment, "utf8");
-          if (partialTruncated) {
-            discardedBytes += segmentBytes;
-          } else if (
-            partialBytes + segmentBytes >
-            NetworkService.MAX_LINE_LENGTH
-          ) {
-            const kept = NetworkService.truncateUtf8(
-              partial + segment,
-              NetworkService.MAX_LINE_LENGTH,
-            );
-            const keptBytes = Buffer.byteLength(kept, "utf8");
-            discardedBytes += partialBytes + segmentBytes - keptBytes;
-            partial = kept;
-            partialBytes = keptBytes;
-            partialTruncated = true;
-            log.warn(
-              `[tcp] Line on ${socketId} exceeds ${NetworkService.MAX_LINE_LENGTH} bytes; truncating and discarding the remainder`,
-            );
-          } else {
-            partial += segment;
-            partialBytes += segmentBytes;
-          }
-          if (nl < 0) break;
-          completePartial();
-          start = nl + 1;
-        }
+        lines.push(...splitter.push(chunk));
+      };
+      const completePartial = (): void => {
+        const tail = splitter.flush();
+        if (tail) lines.push(tail);
       };
 
-      const processLine = (pending: PendingLine): LogEntry | undefined => {
+      const processLine = (pending: BoundedLine): LogEntry | undefined => {
         const line = pending.text.trim();
         if (!line) return;
 
@@ -357,13 +306,13 @@ export class NetworkService {
                 }
               }
               if (batch.length) await this.sendLogs(batch);
-              if (!lines.length && (!closed || !partial.length)) break;
+              if (!lines.length && (!closed || !splitter.hasPartial)) break;
             }
           })
           .catch((error: unknown) => {
             failed = true;
             lines.length = 0;
-            partial = "";
+            splitter.flush();
             log.error(
               `[tcp] Delivery failed on ${socketId}; connection terminated:`,
               error,
@@ -376,7 +325,7 @@ export class NetworkService {
             processing = null;
             this.tcpDeliveries.delete(delivery);
             if (!closed && !failed) socket.resume();
-            else if (!failed && (lines.length || partial.length)) pump();
+            else if (!failed && (lines.length || splitter.hasPartial)) pump();
             else if (closed) this.activeSockets.delete(socket);
           });
         processing = delivery;

@@ -9,7 +9,12 @@ import http from "http";
 import log from "electron-log/main";
 import zlib from "zlib";
 import { buildElasticMessageQuery } from "../utils/esMessageQuery";
-import { estimatePayloadBytes } from "../utils/estimatePayloadBytes";
+import {
+  BoundedLineSplitter,
+  MAX_LOG_LINE_BYTES,
+  boundEntryPayload,
+  type BoundedLine,
+} from "../utils/entryLimits";
 import { computeMdcFromRaw } from "../utils/mdc";
 
 // Keep-Alive Agents für HTTP/HTTPS (inkl. unsicherem TLS)
@@ -444,35 +449,35 @@ async function* streamParseFile(
   let pending: Entry[] = [];
   let pendingBytes = 0;
 
-  async function* boundedLines(): AsyncGenerator<string> {
-    let carry = "";
+  async function* boundedLines(): AsyncGenerator<BoundedLine> {
+    // Oversized lines are truncated rather than failing the whole import.
+    const splitter = new BoundedLineSplitter(MAX_LOG_LINE_BYTES, (bytes) =>
+      log.warn(
+        `[parser] Line in ${filePath} exceeds ${MAX_LOG_LINE_BYTES} bytes (${bytes} so far); truncating and discarding the remainder`,
+      ),
+    );
     for await (const chunk of stream) {
-      carry += String(chunk);
-      let newline: number;
-      while ((newline = carry.indexOf("\n")) >= 0) {
-        const line = carry.slice(0, newline);
-        carry = carry.slice(newline + 1);
-        if (Buffer.byteLength(line, "utf8") > 1024 * 1024) {
-          throw new Error("Streamed log line exceeds 1 MiB");
+      for (const line of splitter.push(String(chunk))) {
+        if (!line.truncated && line.text.endsWith("\r")) {
+          line.text = line.text.slice(0, -1);
         }
-        yield line.endsWith("\r") ? line.slice(0, -1) : line;
-      }
-      if (Buffer.byteLength(carry, "utf8") > 1024 * 1024) {
-        throw new Error("Streamed log line exceeds 1 MiB");
+        yield line;
       }
     }
-    if (carry) yield carry;
+    const tail = splitter.flush();
+    if (tail) yield tail;
   }
 
   try {
     for await (const line of boundedLines()) {
       if (options.signal?.aborted) throw createAbortError();
-      const entry = parseTextLine(filePath, line);
-      if (entry) {
-        const bytes = estimatePayloadBytes(entry, 8 * 1024 * 1024);
-        if (!Number.isFinite(bytes)) {
-          throw new Error("Log entry exceeds 8 MiB decoded-payload limit");
+      const parsed = parseTextLine(filePath, line.text);
+      if (parsed) {
+        if (line.truncated) {
+          parsed._truncated = true;
+          parsed._messageSize = line.originalBytes;
         }
+        const { entry, bytes } = boundEntryPayload(parsed);
         if (pending.length && pendingBytes + bytes > 2 * 1024 * 1024) {
           yield {
             entries: pending,

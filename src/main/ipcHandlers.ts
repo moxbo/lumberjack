@@ -18,7 +18,7 @@ import { HttpTailManager } from "./HttpTailManager";
 import { getSharedMainApi } from "./sharedMainApi";
 import { ExportFileService } from "./ExportFileService";
 import { IPC_BATCH_SIZE } from "../constants/logViewer";
-import { estimatePayloadBytes } from "../utils/estimatePayloadBytes";
+import { boundEntryPayload } from "../utils/entryLimits";
 import type {
   ExportBeginRequest,
   ExportBeginResult,
@@ -197,11 +197,8 @@ function* boundedImportBatches(
   }
   let batch: LogEntry[] = [];
   let bytes = 64;
-  for (const entry of entries) {
-    const size = estimatePayloadBytes(entry, 8 * 1024 * 1024);
-    if (!Number.isFinite(size)) {
-      throw new Error("Log entry exceeds 8 MiB decoded-payload limit");
-    }
+  for (const original of entries) {
+    const { entry, bytes: size } = boundEntryPayload(original);
     if (
       batch.length &&
       (batch.length >= Math.min(chunkSize, STREAM_PARSE_CHUNK_SIZE) ||

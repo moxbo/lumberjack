@@ -3,6 +3,7 @@ import { once } from "events";
 import { connect } from "net";
 import { NetworkService } from "../NetworkService";
 import type { LogEntry } from "../../types/ipc";
+import { MAX_LOG_LINE_BYTES } from "../../utils/entryLimits";
 
 vi.mock("electron-log/main", () => ({
   default: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() },
@@ -168,8 +169,8 @@ describe("source backpressure", () => {
     socket.resume();
     try {
       await once(socket, "connect");
-      // 3 MiB without newline, including a multi-byte char straddling the cut.
-      const huge = "ä".repeat((3 * 1024 * 1024) / 2);
+      // 6 MiB without newline, including a multi-byte char straddling the cut.
+      const huge = "ä".repeat((6 * 1024 * 1024) / 2);
       await new Promise<void>((resolve) =>
         socket.write(`before\n${huge}\nafter\n`, () => resolve()),
       );
@@ -180,11 +181,11 @@ describe("source backpressure", () => {
       expect(received[2]!.message).toBe("after");
       const truncated = received[1]!;
       expect(truncated._truncated).toBe(true);
-      expect(truncated._messageSize).toBe(3 * 1024 * 1024);
+      expect(truncated._messageSize).toBe(6 * 1024 * 1024);
       expect(truncated.message.endsWith("… [truncated]")).toBe(true);
       expect(truncated.message).not.toContain("\uFFFD");
       expect(Buffer.byteLength(truncated.message, "utf8")).toBeLessThanOrEqual(
-        1024 * 1024 + 32,
+        MAX_LOG_LINE_BYTES + 32,
       );
       expect(socket.destroyed).toBe(false);
       expect(service.getTcpStatus().activeConnections).toBe(1);

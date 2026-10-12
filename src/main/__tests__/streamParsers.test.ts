@@ -2,6 +2,7 @@ import fs from "fs";
 import path from "path";
 import AdmZip from "adm-zip";
 import { estimatePayloadBytes } from "../../utils/estimatePayloadBytes";
+import { MAX_LOG_LINE_BYTES } from "../../utils/entryLimits";
 import { afterEach, describe, expect, it } from "vitest";
 import type { LogEntry } from "../../types/ipc";
 import {
@@ -86,12 +87,26 @@ describe("streamParseFile", () => {
     }
   });
 
-  it("rejects oversized unbroken lines before accumulating a whole file", async () => {
+  it("truncates oversized unbroken lines instead of failing the import", async () => {
+    const size = MAX_LOG_LINE_BYTES + 3 * 1024 * 1024;
     const filePath = await writeFixture(
       "oversized-line.log",
-      "x".repeat(1024 * 1024 + 1),
+      `before\n${"x".repeat(size)}\nafter\n`,
     );
-    await expect(collectStreamEntries(filePath, 1000)).rejects.toThrow("1 MiB");
+    const entries = (await collectStreamEntries(filePath, 1000)).flatMap(
+      (chunk) => chunk.entries,
+    );
+    expect(entries.map((entry) => entry.message.slice(0, 6))).toEqual([
+      "before",
+      "xxxxxx",
+      "after",
+    ]);
+    const truncated = entries[1]!;
+    expect(truncated._truncated).toBe(true);
+    expect(truncated._messageSize).toBe(size);
+    const retained = truncated._fullMessage ?? truncated.message;
+    expect(retained.length).toBeLessThanOrEqual(MAX_LOG_LINE_BYTES);
+    expect(retained.length).toBeGreaterThan(MAX_LOG_LINE_BYTES - 8);
   });
 
   it("preserves UTF-8 lines and final line without trailing newline", async () => {
