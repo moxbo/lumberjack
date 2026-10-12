@@ -5,6 +5,18 @@ Alle nennenswerten Änderungen an diesem Projekt werden in dieser Datei dokument
 Das Format orientiert sich an [Keep a Changelog](https://keepachangelog.com/de/1.1.0/),
 und dieses Projekt folgt [Semantic Versioning](https://semver.org/lang/de/).
 
+## [1.2.0-beta.8] - 2026-10-12 _(Pre-Release)_
+
+
+### Added
+- Enhance clear logs button with icon and improved styling
+- Implement sparse loading for scattered IDs in cache
+- Update details visibility logic based on entries length
+
+
+### Fixed
+- Stabilize filter progress layout and reuse filtered search candidates
+
 ## [1.2.0-beta.7] - 2026-10-01 _(Pre-Release)_
 
 
