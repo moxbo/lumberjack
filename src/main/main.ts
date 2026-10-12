@@ -24,8 +24,15 @@ import { SettingsService } from "../services/SettingsService";
 import { NetworkService } from "../services/NetworkService";
 import { PerformanceService } from "../services/PerformanceService";
 import { FileLoggingService } from "../services/FileLoggingService";
-import { WindowAppendQueue } from "../services/WindowAppendQueue";
+import {
+  WindowAppendCapacityError,
+  WindowAppendQueue,
+} from "../services/WindowAppendQueue";
 import { estimatePayloadBytes } from "../utils/estimatePayloadBytes";
+import {
+  MAX_ENTRY_PAYLOAD_BYTES,
+  boundEntryPayload,
+} from "../utils/entryLimits";
 import { HealthMonitor } from "../services/HealthMonitor";
 import { LoggingStrategy, LogLevel } from "../services/LoggingStrategy";
 import { FeatureFlags } from "../services/FeatureFlags";
@@ -641,7 +648,7 @@ function applyWindowTitles(): void {
 // Buffers with adaptive memory limits
 let MAX_PENDING_APPENDS = DEFAULT_MAX_PENDING_APPENDS;
 const entryBytes = (entry: LogEntry): number =>
-  estimatePayloadBytes(entry, 8 * 1024 * 1024);
+  estimatePayloadBytes(entry, MAX_ENTRY_PAYLOAD_BYTES);
 const pendingMenuCmdsByWindow = new Map<
   number,
   Array<{ type: string; tab?: string }>
@@ -1116,10 +1123,10 @@ function* renderBatches(
 ): IterableIterator<LogEntry[]> {
   let batch: LogEntry[] = [];
   let bytes = 0;
-  for (const entry of entries) {
-    const size = entryBytes(entry);
-    if (size > 8 * 1024 * 1024)
-      throw new Error("Log entry exceeds 8 MiB decoded-payload delivery limit");
+  for (const original of entries) {
+    // Oversized entries are shrunk, never rejected: a failure here would
+    // terminate the producing source (e.g. reset a TCP connection).
+    const { entry, bytes: size } = boundEntryPayload(original);
     if (
       batch.length &&
       (bytes + size > 1024 * 1024 || batch.length >= MAX_BATCH_ENTRIES)
@@ -1134,6 +1141,40 @@ function* renderBatches(
   if (batch.length) yield batch;
 }
 
+const CAPACITY_WAIT_IDLE_MS = 100;
+
+/**
+ * Enqueues one batch, waiting for queue capacity instead of failing. Capacity
+ * is only ever freed by delivery progress, so waiting is backpressure, not a
+ * hang: the producer (e.g. a paused TCP socket) stays blocked until then.
+ */
+async function enqueueWithBackpressure(
+  win: BrowserWindow,
+  batch: LogEntry[],
+): Promise<void> {
+  for (;;) {
+    if (win.isDestroyed()) throw new Error("No receiving window available");
+    const queue = pendingAppendsByWindow.get(win.id);
+    try {
+      const delivered = enqueueAppendsFor(win.id, batch);
+      void flushPendingAppendsFor(win).catch(() => {});
+      await delivered;
+      return;
+    } catch (error) {
+      if (!(error instanceof WindowAppendCapacityError)) throw error;
+      const current = pendingAppendsByWindow.get(win.id);
+      // An empty, idle queue that still refuses the batch can never accept it.
+      if (!current || (current.length === 0 && !current.isFlushing))
+        throw error;
+    }
+    if (queue?.isFlushing) await queue.whenIdle();
+    else
+      await new Promise((resolve) =>
+        setTimeout(resolve, CAPACITY_WAIT_IDLE_MS),
+      );
+  }
+}
+
 async function appendToWindow(
   win: BrowserWindow | null,
   entries: LogEntry[],
@@ -1142,9 +1183,7 @@ async function appendToWindow(
     throw new Error("No receiving window available");
   // Split a bulk producer input rather than accepting only its prefix.
   for (const batch of renderBatches(entries)) {
-    const delivered = enqueueAppendsFor(win.id, batch);
-    void flushPendingAppendsFor(win).catch(() => {});
-    await delivered;
+    await enqueueWithBackpressure(win, batch);
   }
 }
 

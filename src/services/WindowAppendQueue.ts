@@ -94,6 +94,14 @@ export class AppendBlocks<T> {
   }
 }
 
+/** Admission was refused because the queue is full; retry once in-flight delivery completes. */
+export class WindowAppendCapacityError extends Error {
+  constructor() {
+    super("Window append capacity exceeded; retry after pending delivery");
+    this.name = "WindowAppendCapacityError";
+  }
+}
+
 /** One in-flight drain per window keeps retry suffixes ahead of newer entries. */
 export class WindowAppendQueue<T> {
   private readonly blocks = new AppendBlocks<T>();
@@ -132,6 +140,16 @@ export class WindowAppendQueue<T> {
     return this.inFlight !== null;
   }
 
+  /** Resolves once the current drain (if any) has settled; never rejects. */
+  whenIdle(): Promise<void> {
+    return this.inFlight
+      ? this.inFlight.then(
+          () => undefined,
+          () => undefined,
+        )
+      : Promise.resolve();
+  }
+
   enqueue(entries: readonly T[], maxPending = this.limit): Promise<void> {
     if (this.disposed)
       return Promise.reject(new Error("Window queue disposed"));
@@ -141,11 +159,7 @@ export class WindowAppendQueue<T> {
       this.pendingCount + entries.length > Math.min(maxPending, this.limit) ||
       this.pendingBytes + bytes > this.maxBytes
     ) {
-      return Promise.reject(
-        new Error(
-          "Window append capacity exceeded; retry after pending delivery",
-        ),
-      );
+      return Promise.reject(new WindowAppendCapacityError());
     }
     this.blocks.enqueue(entries, Infinity);
     this.pendingCount += entries.length;
