@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { once } from "events";
 import { connect } from "net";
 import { NetworkService } from "../NetworkService";
+import type { LogEntry } from "../../types/ipc";
 
 vi.mock("electron-log/main", () => ({
   default: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() },
@@ -148,6 +149,45 @@ describe("source backpressure", () => {
       await closed;
       expect(consume).toHaveBeenCalledTimes(1);
       expect(service.getTcpStatus().activeConnections).toBe(0);
+    } finally {
+      socket.destroy();
+      await service.stopTcpServer();
+    }
+  });
+
+  it("truncates oversized TCP lines and keeps the connection open", async () => {
+    const service = new NetworkService();
+    service.setParsers(parsers);
+    const received: LogEntry[] = [];
+    service.setLogCallback((entries) => {
+      received.push(...entries);
+    });
+    const status = await service.startTcpServer(0);
+    const socket = connect({ port: status.port!, host: "127.0.0.1" });
+    socket.on("error", () => {});
+    socket.resume();
+    try {
+      await once(socket, "connect");
+      // 3 MiB without newline, including a multi-byte char straddling the cut.
+      const huge = "ä".repeat((3 * 1024 * 1024) / 2);
+      await new Promise<void>((resolve) =>
+        socket.write(`before\n${huge}\nafter\n`, () => resolve()),
+      );
+      await vi.waitFor(() => expect(received).toHaveLength(3), {
+        timeout: 5000,
+      });
+      expect(received[0]!.message).toBe("before");
+      expect(received[2]!.message).toBe("after");
+      const truncated = received[1]!;
+      expect(truncated._truncated).toBe(true);
+      expect(truncated._messageSize).toBe(3 * 1024 * 1024);
+      expect(truncated.message.endsWith("… [truncated]")).toBe(true);
+      expect(truncated.message).not.toContain("\uFFFD");
+      expect(Buffer.byteLength(truncated.message, "utf8")).toBeLessThanOrEqual(
+        1024 * 1024 + 32,
+      );
+      expect(socket.destroyed).toBe(false);
+      expect(service.getTcpStatus().activeConnections).toBe(1);
     } finally {
       socket.destroy();
       await service.stopTcpServer();

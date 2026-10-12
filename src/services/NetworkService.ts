@@ -173,6 +173,16 @@ export class NetworkService {
     }
   }
 
+  /** Cuts text to at most maxBytes UTF-8 bytes without leaving a broken multi-byte sequence. */
+  static truncateUtf8(text: string, maxBytes: number): string {
+    const bytes = Buffer.from(text, "utf8");
+    if (bytes.length <= maxBytes) return text;
+    let end = maxBytes;
+    // Back up over UTF-8 continuation bytes (10xxxxxx) to a character boundary.
+    while (end > 0 && (bytes[end]! & 0xc0) === 0x80) end--;
+    return bytes.subarray(0, end).toString("utf8");
+  }
+
   /**
    * Start TCP server
    */
@@ -206,7 +216,6 @@ export class NetworkService {
         return;
       }
 
-      let buffer = "";
       const remoteAddr = socket.remoteAddress ?? "unknown";
       const remotePort = socket.remotePort ?? 0;
       const socketId = `${remoteAddr}:${remotePort}`;
@@ -230,29 +239,96 @@ export class NetworkService {
       let processing: Promise<void> | null = null;
       let closed = false;
       let failed = false;
-      const processLine = (rawLine: string): LogEntry | undefined => {
-        const line = rawLine.trim();
+
+      // Completed lines awaiting delivery plus the incomplete tail. Oversized
+      // lines are truncated and the remainder discarded until the next newline;
+      // the connection itself is never reset because of content size.
+      interface PendingLine {
+        text: string;
+        truncated: boolean;
+        originalBytes: number;
+      }
+      const lines: PendingLine[] = [];
+      let partial = "";
+      let partialBytes = 0;
+      let partialTruncated = false;
+      let discardedBytes = 0;
+
+      const completePartial = (): void => {
+        if (partial.length || partialTruncated) {
+          lines.push({
+            text: partial,
+            truncated: partialTruncated,
+            originalBytes: partialBytes + discardedBytes,
+          });
+        }
+        partial = "";
+        partialBytes = 0;
+        partialTruncated = false;
+        discardedBytes = 0;
+      };
+
+      const ingest = (chunk: string): void => {
+        let start = 0;
+        while (start < chunk.length) {
+          const nl = chunk.indexOf("\n", start);
+          const segment = nl < 0 ? chunk.slice(start) : chunk.slice(start, nl);
+          const segmentBytes = Buffer.byteLength(segment, "utf8");
+          if (partialTruncated) {
+            discardedBytes += segmentBytes;
+          } else if (
+            partialBytes + segmentBytes >
+            NetworkService.MAX_LINE_LENGTH
+          ) {
+            const kept = NetworkService.truncateUtf8(
+              partial + segment,
+              NetworkService.MAX_LINE_LENGTH,
+            );
+            const keptBytes = Buffer.byteLength(kept, "utf8");
+            discardedBytes += partialBytes + segmentBytes - keptBytes;
+            partial = kept;
+            partialBytes = keptBytes;
+            partialTruncated = true;
+            log.warn(
+              `[tcp] Line on ${socketId} exceeds ${NetworkService.MAX_LINE_LENGTH} bytes; truncating and discarding the remainder`,
+            );
+          } else {
+            partial += segment;
+            partialBytes += segmentBytes;
+          }
+          if (nl < 0) break;
+          completePartial();
+          start = nl + 1;
+        }
+      };
+
+      const processLine = (pending: PendingLine): LogEntry | undefined => {
+        const line = pending.text.trim();
         if (!line) return;
 
-        if (Buffer.byteLength(line, "utf8") > NetworkService.MAX_LINE_LENGTH) {
-          throw new Error(
-            "TCP line exceeds 1 MiB; connection terminated without delivery acknowledgement",
-          );
-        }
-
-        // Parse JSON line, fallback to plain text
         let obj: Record<string, unknown>;
-        try {
-          obj = JSON.parse(line) as Record<string, unknown>;
-        } catch (e) {
-          log.warn(
-            "TCP JSON parse failed, treating as plain text:",
-            e instanceof Error ? e.message : String(e),
-          );
-          obj = { message: line };
+        if (pending.truncated) {
+          // A cut line is never valid JSON; keep the readable prefix instead.
+          obj = { message: line + "… [truncated]" };
+        } else {
+          // Parse JSON line, fallback to plain text
+          try {
+            obj = JSON.parse(line) as Record<string, unknown>;
+          } catch (e) {
+            log.warn(
+              "TCP JSON parse failed, treating as plain text:",
+              e instanceof Error ? e.message : String(e),
+            );
+            obj = { message: line };
+          }
         }
 
-        return toEntry(obj, "", `tcp:${remoteAddr}:${remotePort}`);
+        const entry = toEntry(obj, "", `tcp:${remoteAddr}:${remotePort}`);
+        if (pending.truncated) {
+          entry._truncated = true;
+          entry._messageSize = pending.originalBytes;
+        }
+        return entry;
       };
 
       const pump = (): void => {
@@ -263,36 +339,31 @@ export class NetworkService {
             while (!failed) {
               const batch: LogEntry[] = [];
               let bytes = 0;
-              let idx: number;
               while (
                 batch.length < NetworkService.TCP_BATCH_SIZE &&
                 bytes < 1024 * 1024 &&
-                (idx = buffer.indexOf("\n")) >= 0
+                lines.length
               ) {
-                const line = buffer.slice(0, idx);
-                buffer = buffer.slice(idx + 1);
-                bytes += Buffer.byteLength(line, "utf8");
-                const entry = processLine(line);
+                const pending = lines.shift()!;
+                bytes += Buffer.byteLength(pending.text, "utf8");
+                const entry = processLine(pending);
                 if (entry) batch.push(entry);
               }
-              if (
-                closed &&
-                buffer.length &&
-                buffer.indexOf("\n") < 0 &&
-                bytes < 1024 * 1024
-              ) {
-                const entry = processLine(buffer);
-                buffer = "";
-                if (entry) batch.push(entry);
+              if (closed && !lines.length && bytes < 1024 * 1024) {
+                completePartial();
+                while (lines.length) {
+                  const entry = processLine(lines.shift()!);
+                  if (entry) batch.push(entry);
+                }
               }
               if (batch.length) await this.sendLogs(batch);
-              if (buffer.indexOf("\n") < 0 && (!closed || !buffer.length))
-                break;
+              if (!lines.length && (!closed || !partial.length)) break;
             }
           })
           .catch((error: unknown) => {
             failed = true;
-            buffer = "";
+            lines.length = 0;
+            partial = "";
             log.error(
               `[tcp] Delivery failed on ${socketId}; connection terminated:`,
               error,
@@ -305,7 +376,7 @@ export class NetworkService {
             processing = null;
             this.tcpDeliveries.delete(delivery);
             if (!closed && !failed) socket.resume();
-            else if (!failed && buffer.length) pump();
+            else if (!failed && (lines.length || partial.length)) pump();
             else if (closed) this.activeSockets.delete(socket);
           });
         processing = delivery;
@@ -313,17 +384,7 @@ export class NetworkService {
       };
 
       socket.on("data", (chunk: string) => {
-        buffer += chunk;
-        if (
-          Buffer.byteLength(buffer, "utf8") > NetworkService.MAX_BUFFER_SIZE
-        ) {
-          failed = true;
-          buffer = "";
-          socket.destroy(
-            new Error("TCP buffer capacity exceeded; connection terminated"),
-          );
-          return;
-        }
+        ingest(chunk);
         pump();
       });
 

@@ -139,7 +139,9 @@ independent budgets, not a shared process-wide cap.
 
 HTTP polling and file/HTTP tailing await downstream consumption before reading
 the next chunk. HTTP-tail reads are 64 KiB; network/streaming line handling has
-a 1 MiB limit. Streaming imports allow one active session per renderer and
+a 1 MiB limit. On TCP an oversized line is truncated to 1 MiB (UTF-8 safe),
+flagged `_truncated` with `_messageSize` set to the original byte count, and the
+remainder is discarded up to the next newline; the connection stays open. Streaming imports allow one active session per renderer and
 16 globally, and require readiness/persistence acknowledgements within 30 seconds.
 
 Capacity, timeout and storage errors propagate to the source instead of silently
