@@ -1365,7 +1365,8 @@ export default function App(): JSX.Element {
       return;
     }
     setDetailsHidden(false);
-    setSelectedEntry(null);
+    // Keep the previous entry visible while the new payload loads; resetting
+    // to null here makes the inspector flash "no selection" on fast clicks.
     void repository
       .getPayload(selectedOneIdx)
       .then((entry) => {
@@ -1373,6 +1374,7 @@ export default function App(): JSX.Element {
       })
       .catch((error) => {
         if (!cancelled) {
+          setSelectedEntry(null);
           logger.error("Loading selected log entry failed:", error);
           showAlert(error instanceof Error ? error.message : String(error));
         }
