@@ -5,6 +5,23 @@ Alle nennenswerten Änderungen an diesem Projekt werden in dieser Datei dokument
 Das Format orientiert sich an [Keep a Changelog](https://keepachangelog.com/de/1.1.0/),
 und dieses Projekt folgt [Semantic Versioning](https://semver.org/lang/de/).
 
+## [1.2.0-beta.9] - 2026-10-12 _(Pre-Release)_
+
+
+### Added
+- Implement progress reporting for log delivery and adjust timeout handling
+- Retain previous entry visibility during payload loading to prevent selection flash
+- Implement TCP line truncation for oversized messages while maintaining connection
+- Truncate oversized lines instead of failing TCP and file ingestion
+
+
+### Docs
+- Describe shared line/payload limits and capacity backpressure
+
+
+### Fixed
+- Wait for window queue capacity instead of resetting TCP connections
+
 ## [1.2.0-beta.8] - 2026-10-12 _(Pre-Release)_
 
 
