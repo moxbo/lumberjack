@@ -142,7 +142,8 @@ export function HelpDialog({ open, onClose }: HelpDialogProps) {
             <h4 style={sectionHeaderStyle}>{t("help.filters.heading")}</h4>
             <ul style={{ margin: "0", paddingLeft: "20px" }}>
               <li>
-                <strong>Level:</strong> {t("help.filters.level")}
+                <strong>{t("toolbar.levelMinimum")}:</strong>{" "}
+                {t("help.filters.level")}
               </li>
               <li>
                 <strong>Logger:</strong> {t("help.filters.logger")}

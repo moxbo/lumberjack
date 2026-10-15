@@ -114,6 +114,8 @@
     "nextMatch": "Next match",
     "filterActive": "Standard filters active",
     "level": "Level",
+    "levelMinimum": "Min. level",
+    "levelTooltip": "Show the selected level and all higher severities (e.g. WARN also shows ERROR and FATAL).",
     "levelAll": "All",
     "logger": "Logger",
     "loggerPlaceholder": "Logger contains…",
@@ -720,7 +722,7 @@
     },
     "filters": {
       "heading": "Filters",
-      "level": "TRACE, DEBUG, INFO, WARN, ERROR, FATAL",
+      "level": "Minimum level and all higher severities: TRACE < DEBUG < INFO < WARN < ERROR < FATAL. WARN also shows ERROR and FATAL; All shows every entry.",
       "logger": "Substring search in logger name",
       "thread": "Filter by thread name",
       "dc": "Mapped Diagnostic Context (MDC) — TraceID, SpanID and custom keys",

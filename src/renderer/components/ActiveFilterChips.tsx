@@ -65,7 +65,7 @@ export function ActiveFilterChips({
   if (filter.level && stdFiltersEnabled) {
     activeFilters.push({
       type: "level",
-      label: "",
+      label: t("toolbar.levelMinimum"),
       value: filter.level,
       colorClass: `level-${filter.level.toLowerCase()}`,
       onRemove: () => setFilter((prev: any) => ({ ...prev, level: "" })),

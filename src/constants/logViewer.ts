@@ -36,7 +36,7 @@ export const DEFAULT_OVERSCAN = 15;
 export const MAX_FILTER_HISTORY = 20;
 export const MAX_ELASTIC_HISTORY = 10;
 
-// Log levels
+// Known log levels in ascending severity order, used by threshold filters.
 export const LOG_LEVELS = [
   "TRACE",
   "DEBUG",

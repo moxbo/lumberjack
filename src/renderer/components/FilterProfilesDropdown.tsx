@@ -596,7 +596,11 @@ export function FilterProfilesDropdown({
               <div className="filter-profiles-current">
                 <small>{t("filterProfiles.currentFilters")}:</small>
                 <div className="current-filter-chips">
-                  {filter.level && <span className="chip">{filter.level}</span>}
+                  {filter.level && (
+                    <span className="chip" title={t("toolbar.levelTooltip")}>
+                      {t("toolbar.levelMinimum")}: {filter.level}
+                    </span>
+                  )}
                   {filter.logger && (
                     <span className="chip" title={filter.logger}>
                       {t("filterProfiles.chipLogger")}

@@ -14,6 +14,7 @@
 import { parentPort } from "node:worker_threads";
 
 import { compileDcFilter, matchesCompiledDcFilter } from "../utils/dcMatch";
+import { compileLevelFilter } from "../utils/levelFilter";
 
 // ============================================================================
 // Types
@@ -403,7 +404,7 @@ function filterEntries(
   const filteredIndices: number[] = [];
 
   // Pre-compute lowercase filter values für Performance
-  const levelFilter = options.filter.level?.toUpperCase() || "";
+  const levelFilter = compileLevelFilter(options.filter.level);
   const loggerFilter = options.filter.logger?.toLowerCase() || "";
   const threadFilter = options.filter.thread?.toLowerCase() || "";
   const messageFilter = options.filter.message || "";
@@ -431,7 +432,7 @@ function filterEntries(
       // Level filter
       if (levelFilter) {
         const lev = String(e.level || "").toUpperCase();
-        if (lev !== levelFilter) {
+        if (!levelFilter.has(lev)) {
           stats.rejectedByLevel++;
           continue;
         }

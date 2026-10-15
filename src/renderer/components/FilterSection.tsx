@@ -8,6 +8,7 @@ import { useI18n } from "../../utils/i18n";
 import type { FilterState } from "../../hooks";
 import { FilterProfilesDropdown } from "./FilterProfilesDropdown";
 import type { FilterProfile } from "../../store/filterProfiles";
+import { LOG_LEVELS } from "../../constants/logViewer";
 
 interface FilterSectionProps {
   expanded: boolean;
@@ -137,17 +138,18 @@ export function FilterSection({
           {t("toolbar.filterActive")}
         </label>
 
-        <label>{t("toolbar.level")}</label>
+        <label htmlFor="filterLevel">{t("toolbar.levelMinimum")}</label>
         <select
           id="filterLevel"
           value={filter.level}
+          title={t("toolbar.levelTooltip")}
           onChange={(e) =>
             onFilterChange({ ...filter, level: e.currentTarget.value })
           }
           disabled={!stdFiltersEnabled}
         >
           <option value="">{t("toolbar.levelAll")}</option>
-          {["TRACE", "DEBUG", "INFO", "WARN", "ERROR", "FATAL"].map((l) => (
+          {LOG_LEVELS.map((l) => (
             <option key={l} value={l}>
               {l}
             </option>

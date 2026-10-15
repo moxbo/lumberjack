@@ -127,6 +127,70 @@ describe("filter worker snapshot integration", () => {
     expect(postMessage).not.toHaveBeenCalled();
   });
 
+  it.each([
+    { level: "", ids: [1, 2, 3, 4, 5, 6, 7, 8, 9] },
+    { level: "ALL", ids: [1, 2, 3, 4, 5, 6, 7, 8, 9] },
+    { level: "TRACE", ids: [1, 2, 3, 4, 5, 6] },
+    { level: "DEBUG", ids: [2, 3, 4, 5, 6] },
+    { level: "INFO", ids: [3, 4, 5, 6] },
+    { level: "WARN", ids: [4, 5, 6] },
+    { level: "ERROR", ids: [5, 6] },
+    { level: "FATAL", ids: [6] },
+    { level: "warn", ids: [4, 5, 6] },
+    { level: "custom", ids: [7] },
+  ])(
+    "applies the '$level' matrix threshold in the synchronous fallback",
+    ({ level, ids }) => {
+      const hook = mount();
+      const store = new MetadataStore();
+      store.appendSorted(
+        [
+          "TRACE",
+          "debug",
+          "INFO",
+          "warn",
+          "ERROR",
+          "fatal",
+          "CUSTOM",
+          "ALL",
+          undefined,
+        ].map((entryLevel, index) => ({
+          ...entry(index + 1),
+          level: entryLevel,
+        })),
+      );
+
+      hook.filterEntries(store.publish(), {
+        ...options,
+        stdFiltersEnabled: true,
+        filter: { level, logger: "", thread: "", message: "" },
+        navigationSearch: "message-5",
+      });
+
+      expect(hooks.states[0]).toEqual(ids);
+      expect(hooks.states[1]).toEqual(ids.includes(5) ? [ids.indexOf(5)] : []);
+      expect(postMessage).not.toHaveBeenCalled();
+    },
+  );
+
+  it("bypasses the fallback threshold when standard filters are disabled", () => {
+    const hook = mount();
+    hook.filterEntries(
+      [
+        { ...entry(1), level: "DEBUG" },
+        { ...entry(2), level: "WARN" },
+        { ...entry(3), level: "ERROR" },
+      ],
+      {
+        ...options,
+        filter: { level: "FATAL", logger: "", thread: "", message: "" },
+      },
+    );
+
+    expect(hooks.states[0]).toEqual([1, 2, 3]);
+    expect(postMessage).not.toHaveBeenCalled();
+  });
+
   it("transfers complete resets in bounded pages", () => {
     const hook = mount();
     const store = new MetadataStore();

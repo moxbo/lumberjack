@@ -18,6 +18,7 @@ import {
   type ReadonlySequence,
 } from "../utils/metadataSnapshot";
 import { compileDcFilter, matchesCompiledDcFilter } from "../utils/dcMatch";
+import { compileLevelFilter } from "../utils/levelFilter";
 import {
   filterIsAvailable,
   filterEntries as typedFilterEntries,
@@ -586,7 +587,7 @@ export function useFilterWorker(): UseFilterWorkerResult {
       const searchMatchIndices: number[] = [];
       const navigationSearch = String(options.navigationSearch || "").trim();
       const hasMarks = !!marksMap && Object.keys(marksMap).length > 0;
-      const levelFilter = options.filter.level.toUpperCase();
+      const levelFilter = compileLevelFilter(options.filter.level);
       const loggerFilter = options.filter.logger.toLowerCase();
       const threadFilter = options.filter.thread.toLowerCase();
       const compiledDcFilter = options.dcFilterEnabled
@@ -622,7 +623,7 @@ export function useFilterWorker(): UseFilterWorkerResult {
         if (options.stdFiltersEnabled) {
           if (levelFilter) {
             const lev = String(e.level || "").toUpperCase();
-            if (lev !== levelFilter) {
+            if (!levelFilter.has(lev)) {
               filterStats.rejectedByLevel++;
               continue;
             }

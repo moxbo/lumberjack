@@ -4,6 +4,7 @@ import {
   type ProjectionRecord,
 } from "../store/paged";
 import { compileDcFilter, matchesCompiledDcFilter } from "../utils/dcMatch";
+import { compileLevelFilter } from "../utils/levelFilter";
 import { tokenizeQuery, type SearchMode } from "../utils/msgFilter";
 import { compareByTimestampId } from "../utils/sort";
 import type { FilterProgress } from "../types/filterProgress";
@@ -148,7 +149,7 @@ export interface PassingReference {
 
 interface PreparedFilter {
   navigationSearch: string;
-  levelFilter: string;
+  levelFilter: ReturnType<typeof compileLevelFilter>;
   loggerFilter: string;
   threadFilter: string;
   fromTs: number | null;
@@ -550,7 +551,7 @@ function buildResponse(
 function prepareFilter(options: FilterOptions): PreparedFilter {
   return {
     navigationSearch: String(options.navigationSearch || "").trim(),
-    levelFilter: options.filter.level.toUpperCase(),
+    levelFilter: compileLevelFilter(options.filter.level),
     loggerFilter: options.filter.logger.toLowerCase(),
     threadFilter: options.filter.thread.toLowerCase(),
     fromTs: parseOptionalTimestamp(options.timeFilterFrom),
@@ -595,8 +596,9 @@ function entryPasses(
   if (options.stdFiltersEnabled) {
     if (
       prepared.levelFilter &&
-      (entry.levelUpper ?? String(entry.level || "").toUpperCase()) !==
-        prepared.levelFilter
+      !prepared.levelFilter.has(
+        entry.levelUpper ?? String(entry.level || "").toUpperCase(),
+      )
     ) {
       stats.rejectedByLevel++;
       return false;
