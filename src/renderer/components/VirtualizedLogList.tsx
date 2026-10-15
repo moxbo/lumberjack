@@ -8,7 +8,8 @@ import {
   useRef,
   useState,
 } from "preact/hooks";
-import { useVirtualizer } from "@tanstack/react-virtual";
+import { useFixedRowVirtualizer } from "../../hooks/useFixedRowVirtualizer";
+import type { ScrollAlign } from "../../hooks/fixedRowScroll";
 import {
   type LogPayloadRepository,
   usePagedLogHydration,
@@ -19,8 +20,6 @@ import { LogRow } from "../LogRow";
 import { anchoredScrollOffset } from "../progressiveSearch";
 
 const ROW_HEIGHT = 36;
-
-type ScrollAlign = "auto" | "center" | "end" | "start";
 
 export interface VirtualizedLogListHandle {
   scrollToIndex: (index: number, align?: ScrollAlign) => void;
@@ -98,44 +97,45 @@ const VirtualizedLogListWithRef = forwardRef<
     [listRef],
   );
 
-  const getScrollElement = useCallback(() => scrollElement, [scrollElement]);
-  const estimateSize = useCallback(() => ROW_HEIGHT, []);
-  const getItemKey = useCallback(
-    (index: number) => {
-      const globalIdx = filteredIdx.at(index);
-      return globalIdx !== undefined ? `row-${globalIdx}` : `row-temp-${index}`;
-    },
-    [filteredIdx],
-  );
-
   const dynamicOverscan =
     filteredIdx.length > 100000 ? 8 : filteredIdx.length > 50000 ? 10 : 15;
 
-  const virtualizer = useVirtualizer({
-    count: scrollElement ? filteredIdx.length : 0,
-    getScrollElement,
-    estimateSize,
-    overscan: dynamicOverscan,
-    getItemKey,
-    measureElement: undefined,
-  } as any);
-  const previousList = useRef({ ids: filteredIdx, queryKey });
+  const virtualizer = useFixedRowVirtualizer(
+    scrollElement,
+    filteredIdx.length,
+    ROW_HEIGHT,
+    dynamicOverscan,
+  );
+  const currentVirtualizer = useRef(virtualizer);
+  currentVirtualizer.current = virtualizer;
+  const previousList = useRef({
+    ids: filteredIdx,
+    queryKey,
+    getScrollOffset: virtualizer.getScrollOffset,
+    height: virtualizer.viewportHeight,
+  });
   useLayoutEffect(() => {
     const previous = previousList.current;
-    previousList.current = { ids: filteredIdx, queryKey };
+    previousList.current = {
+      ids: filteredIdx,
+      queryKey,
+      getScrollOffset: virtualizer.getScrollOffset,
+      height: virtualizer.viewportHeight,
+    };
     if (
       !scrollElement ||
-      previous.ids === filteredIdx ||
+      (previous.ids === filteredIdx &&
+        previous.height === virtualizer.viewportHeight) ||
       previous.queryKey !== queryKey
     )
       return;
     const offset = anchoredScrollOffset(
       previous.ids,
-      scrollElement.scrollTop,
+      previous.getScrollOffset(),
       positionOfId ?? ((id) => filteredIdx.indexOf(id)),
       ROW_HEIGHT,
     );
-    if (offset !== null && offset !== scrollElement.scrollTop) {
+    if (offset !== null && offset !== virtualizer.getScrollOffset()) {
       isProgrammaticScrollRef.current = true;
       virtualizer.scrollToOffset(offset);
       requestAnimationFrame(() => {
@@ -144,18 +144,10 @@ const VirtualizedLogListWithRef = forwardRef<
     }
   }, [filteredIdx, queryKey, positionOfId, scrollElement, virtualizer]);
 
-  const handleScroll = useCallback(
-    (event: Event) => {
-      if (isProgrammaticScrollRef.current || !follow) return;
-
-      const target = event.target as HTMLElement;
-      if (!target) return;
-      const distanceFromBottom =
-        target.scrollHeight - target.scrollTop - target.clientHeight;
-      if (distanceFromBottom > 100) onDisableFollow();
-    },
-    [follow, onDisableFollow],
-  );
+  const handleScroll = useCallback(() => {
+    if (isProgrammaticScrollRef.current || !follow) return;
+    if (virtualizer.getDistanceFromEnd() > 100) onDisableFollow();
+  }, [follow, onDisableFollow, virtualizer]);
 
   useImperativeHandle(
     ref,
@@ -182,15 +174,10 @@ const VirtualizedLogListWithRef = forwardRef<
           const currentIndex =
             currentView.current.positionOfId?.(id) ??
             currentView.current.filteredIdx.indexOf(id);
-          const rowElement = scrollElement?.querySelector(
-            `[data-vi="${currentIndex}"]`,
-          ) as HTMLElement | null;
-          if (rowElement) {
-            rowElement.scrollIntoView({
-              behavior: "smooth",
-              block: "nearest",
+          if (currentIndex >= 0)
+            currentVirtualizer.current.scrollToIndex(currentIndex, {
+              align: "auto",
             });
-          }
           setTimeout(() => {
             isProgrammaticScrollRef.current = false;
           }, 300);
@@ -214,7 +201,9 @@ const VirtualizedLogListWithRef = forwardRef<
             currentView.current.positionOfId?.(id) ??
             currentView.current.filteredIdx.indexOf(id);
           if (currentIndex >= 0)
-            virtualizer.scrollToIndex(currentIndex, { align: "center" });
+            currentVirtualizer.current.scrollToIndex(currentIndex, {
+              align: "center",
+            });
           requestAnimationFrame(() => {
             isProgrammaticScrollRef.current = false;
           });
@@ -224,8 +213,7 @@ const VirtualizedLogListWithRef = forwardRef<
     [scrollElement, virtualizer],
   );
 
-  const virtualItems = scrollElement ? virtualizer.getVirtualItems() : [];
-  const totalHeight = scrollElement ? virtualizer.getTotalSize() : 0;
+  const { virtualItems, totalHeight } = virtualizer;
   const requestedPayloadIds = useMemo(
     () =>
       repository
@@ -252,6 +240,7 @@ const VirtualizedLogListWithRef = forwardRef<
       ref={setListElement}
       tabIndex={0}
       role="listbox"
+      style={{ overflowAnchor: "none" }}
       aria-label={t("list.ariaLabel")}
       onKeyDown={(event) => {
         handleUserInteraction();
@@ -260,7 +249,7 @@ const VirtualizedLogListWithRef = forwardRef<
       onWheel={handleUserInteraction}
       onTouchStart={handleUserInteraction}
       onPointerDown={handleUserInteraction}
-      onScroll={handleScroll as any}
+      onScroll={handleScroll}
       onMouseDown={(event) => {
         try {
           if (listRef.current && !event.defaultPrevented) {
@@ -317,7 +306,7 @@ const VirtualizedLogListWithRef = forwardRef<
           if (!entry) {
             return (
               <div
-                key={virtualItem.key}
+                key={`row-${globalIdx}`}
                 className="row row--placeholder"
                 role="presentation"
                 aria-hidden="true"
@@ -344,7 +333,7 @@ const VirtualizedLogListWithRef = forwardRef<
 
           return (
             <LogRow
-              key={virtualItem.key}
+              key={`row-${globalIdx}`}
               index={visualIndex}
               globalIdx={globalIdx}
               entry={entry}

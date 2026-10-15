@@ -320,6 +320,111 @@ function estimatePayloadBytes(value, maxBytes = Number.MAX_SAFE_INTEGER) {
   return bytes <= maxBytes ? bytes : Infinity;
 }
 
+// src/utils/entryLimits.ts
+var MAX_LOG_LINE_BYTES = 4 * 1024 * 1024;
+var MAX_ENTRY_PAYLOAD_BYTES = 32 * 1024 * 1024;
+function truncateUtf8(text, maxBytes) {
+  const bytes = Buffer.from(text, "utf8");
+  if (bytes.length <= maxBytes) return text;
+  let end = maxBytes;
+  while (end > 0 && (bytes[end] & 192) === 128) end--;
+  return bytes.subarray(0, end).toString("utf8");
+}
+var BoundedLineSplitter = class {
+  constructor(maxBytes = MAX_LOG_LINE_BYTES, onTruncate) {
+    this.maxBytes = maxBytes;
+    this.onTruncate = onTruncate;
+  }
+  maxBytes;
+  onTruncate;
+  partial = "";
+  partialBytes = 0;
+  partialTruncated = false;
+  discardedBytes = 0;
+  get hasPartial() {
+    return this.partial.length > 0 || this.partialTruncated;
+  }
+  push(chunk) {
+    const lines = [];
+    let start = 0;
+    while (start < chunk.length) {
+      const nl = chunk.indexOf("\n", start);
+      const segment = nl < 0 ? chunk.slice(start) : chunk.slice(start, nl);
+      this.append(segment);
+      if (nl < 0) break;
+      const line = this.complete();
+      if (line) lines.push(line);
+      start = nl + 1;
+    }
+    return lines;
+  }
+  /** Emits the trailing line without a newline terminator, if any. */
+  flush() {
+    return this.complete();
+  }
+  append(segment) {
+    const segmentBytes = Buffer.byteLength(segment, "utf8");
+    if (this.partialTruncated) {
+      this.discardedBytes += segmentBytes;
+      return;
+    }
+    if (this.partialBytes + segmentBytes <= this.maxBytes) {
+      this.partial += segment;
+      this.partialBytes += segmentBytes;
+      return;
+    }
+    const kept = truncateUtf8(this.partial + segment, this.maxBytes);
+    const keptBytes = Buffer.byteLength(kept, "utf8");
+    this.discardedBytes += this.partialBytes + segmentBytes - keptBytes;
+    this.partial = kept;
+    this.partialBytes = keptBytes;
+    this.partialTruncated = true;
+    this.onTruncate?.(this.partialBytes + this.discardedBytes);
+  }
+  complete() {
+    if (!this.hasPartial) return null;
+    const line = {
+      text: this.partial,
+      truncated: this.partialTruncated,
+      originalBytes: this.partialBytes + this.discardedBytes
+    };
+    this.partial = "";
+    this.partialBytes = 0;
+    this.partialTruncated = false;
+    this.discardedBytes = 0;
+    return line;
+  }
+};
+function boundEntryPayload(entry, limit = MAX_ENTRY_PAYLOAD_BYTES) {
+  let bytes = estimatePayloadBytes(entry, limit);
+  if (Number.isFinite(bytes)) return { entry, bytes };
+  const bounded = { ...entry };
+  if (bounded.raw !== void 0) {
+    bounded.raw = { message: "[raw payload omitted: exceeds delivery limit]" };
+    bytes = estimatePayloadBytes(bounded, limit);
+    if (Number.isFinite(bytes)) return { entry: bounded, bytes };
+  }
+  const maxChars = Math.floor(limit / 4);
+  if (typeof bounded._fullMessage === "string") {
+    bounded._messageSize ??= bounded._fullMessage.length;
+    bounded._fullMessage = bounded._fullMessage.slice(0, maxChars);
+    bounded._truncated = true;
+  }
+  if (typeof bounded.stackTrace === "string" && bounded.stackTrace.length > maxChars) {
+    bounded.stackTrace = bounded.stackTrace.slice(0, maxChars);
+  }
+  if (bounded.message.length > maxChars) {
+    bounded._messageSize ??= bounded.message.length;
+    bounded.message = bounded.message.slice(0, maxChars) + "\u2026 [truncated]";
+    bounded._truncated = true;
+  }
+  bytes = estimatePayloadBytes(bounded, limit);
+  if (!Number.isFinite(bytes)) {
+    bytes = estimatePayloadBytes(bounded);
+  }
+  return { entry: bounded, bytes };
+}
+
 // src/utils/dcMatch.ts
 var TRACE_KEY_VARIANTS = /* @__PURE__ */ new Set([
   "traceid",
@@ -745,33 +850,33 @@ async function* streamParseFile(filePath, options = {}) {
   let pending = [];
   let pendingBytes = 0;
   async function* boundedLines() {
-    let carry = "";
+    const splitter = new BoundedLineSplitter(
+      MAX_LOG_LINE_BYTES,
+      (bytes) => import_main.default.warn(
+        `[parser] Line in ${filePath} exceeds ${MAX_LOG_LINE_BYTES} bytes (${bytes} so far); truncating and discarding the remainder`
+      )
+    );
     for await (const chunk of stream) {
-      carry += String(chunk);
-      let newline;
-      while ((newline = carry.indexOf("\n")) >= 0) {
-        const line = carry.slice(0, newline);
-        carry = carry.slice(newline + 1);
-        if (Buffer.byteLength(line, "utf8") > 1024 * 1024) {
-          throw new Error("Streamed log line exceeds 1 MiB");
+      for (const line of splitter.push(String(chunk))) {
+        if (!line.truncated && line.text.endsWith("\r")) {
+          line.text = line.text.slice(0, -1);
         }
-        yield line.endsWith("\r") ? line.slice(0, -1) : line;
-      }
-      if (Buffer.byteLength(carry, "utf8") > 1024 * 1024) {
-        throw new Error("Streamed log line exceeds 1 MiB");
+        yield line;
       }
     }
-    if (carry) yield carry;
+    const tail = splitter.flush();
+    if (tail) yield tail;
   }
   try {
     for await (const line of boundedLines()) {
       if (options.signal?.aborted) throw createAbortError();
-      const entry = parseTextLine(filePath, line);
-      if (entry) {
-        const bytes = estimatePayloadBytes(entry, 8 * 1024 * 1024);
-        if (!Number.isFinite(bytes)) {
-          throw new Error("Log entry exceeds 8 MiB decoded-payload limit");
+      const parsed = parseTextLine(filePath, line.text);
+      if (parsed) {
+        if (line.truncated) {
+          parsed._truncated = true;
+          parsed._messageSize = line.originalBytes;
         }
+        const { entry, bytes } = boundEntryPayload(parsed);
         if (pending.length && pendingBytes + bytes > 2 * 1024 * 1024) {
           yield {
             entries: pending,

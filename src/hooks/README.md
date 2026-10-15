@@ -17,6 +17,11 @@ and dialogs in `App.tsx`.
   arrays receive a fresh index because their ordering may have changed.
 - `useFilterWorker` sends projections to the filter worker.
   `usePagedLogHydration` loads payloads needed by visible rows.
+- `useFixedRowVirtualizer` maps fixed-height log rows onto a scroll surface
+  capped at 8,000,000 CSS pixels, below browser layout limits. Navigation and
+  stable-ID anchoring use logical offsets; DOM row positions and scrollbar
+  offsets use the capped coordinate space. Only viewport rows plus overscan
+  are materialized, even when removing a filter exposes millions of entries.
 
 ## Application state
 
