@@ -1145,6 +1145,36 @@ export function SettingsModal({
                       <option value="8192">8 GB</option>
                     </select>
                   </div>
+                  <div className="settings-divider" />
+                  <div className="settings-field">
+                    <label className="settings-label" htmlFor="liveEntryLimit">
+                      {t("settings.performance.liveEntryLimit")}
+                    </label>
+                    <p id="liveEntryLimitHint" className="settings-field-hint">
+                      {t("settings.performance.liveEntryLimitHint")}
+                    </p>
+                    <input
+                      id="liveEntryLimit"
+                      type="number"
+                      min="1"
+                      max={Number.MAX_SAFE_INTEGER}
+                      step="1"
+                      required
+                      aria-describedby="liveEntryLimitHint"
+                      className="settings-input"
+                      value={
+                        Number.isFinite(form.liveEntryLimit)
+                          ? form.liveEntryLimit
+                          : ""
+                      }
+                      onInput={(e) =>
+                        onFormChange({
+                          ...form,
+                          liveEntryLimit: e.currentTarget.valueAsNumber,
+                        })
+                      }
+                    />
+                  </div>
                 </div>
                 <div className="settings-card">
                   <FeatureFlagsPanel />

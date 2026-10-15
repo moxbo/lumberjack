@@ -2,6 +2,14 @@
   "app": {
     "title": "Lumberjack"
   },
+  "liveIntake": {
+    "usage": "Live-Einträge: {{count}} / {{limit}}",
+    "label": "Auslastung der Live-Aufnahme",
+    "settings": "Limit ändern",
+    "paused": "Live-Aufnahme pausiert.",
+    "pausedHint": "Bestehende Einträge bleiben erhalten. Während der Pause können neue Nachrichten verloren gehen. Limit erhöhen oder Logs leeren und die Quellen anschließend manuell neu starten. Importe bleiben möglich.",
+    "controlError": "Der Aufnahmestatus der Live-Quellen konnte nicht geändert werden: {{message}}"
+  },
   "inspector": {
     "title": "Eintragsdetails",
     "message": "Nachricht",
@@ -293,6 +301,9 @@
     "performance": {
       "heapSize": "Speicherlimit",
       "heapSizeHint": "Maximaler Arbeitsspeicher für die Anwendung. Größere Werte ermöglichen mehr Log-Einträge, benötigen aber einen Neustart.",
+      "liveEntryLimit": "Limit für Live-Einträge",
+      "liveEntryLimitHint": "Standard: 500.000. Begrenzt die angesammelten Live-Einträge aus TCP, HTTP-Polling, HTTP-Tail und Dateibeobachtung in der aktuellen Log-Sitzung. Dateiimporte, manuelle HTTP-Importe und Elasticsearch-Importe sind ausgenommen. Beim Erreichen des Limits pausiert die Live-Aufnahme, ohne gespeicherte Logs zu löschen. Während der Pause können Einträge fehlen. Erhöhen Sie das Limit oder leeren Sie die Logs und starten Sie die Quelle anschließend manuell neu. Dies garantiert keine feste Speicherobergrenze.",
+      "liveEntryLimitInvalid": "Das Limit für Live-Einträge muss eine ganze Zahl zwischen 1 und 9007199254740991 sein.",
       "default": "Standard",
       "restartRequired": "Das Speicherlimit wurde geändert. Die Änderung wird erst nach einem Neustart wirksam.\n\nMöchten Sie die Anwendung jetzt neu starten?"
     },
@@ -302,7 +313,7 @@
     "navAriaLabel": "Einstellungen Navigation",
     "descriptions": {
       "general": "Sprache und Aktualisierungen der Anwendung.",
-      "advanced": "Speicherlimit und optionale Funktionen der Anwendung.",
+      "advanced": "Limits für Live-Einträge und Speicher sowie optionale Funktionen der Anwendung.",
       "tcp": "Konfigurieren Sie den TCP-Server für eingehende Log-Nachrichten.",
       "tcpPortHint": "Port auf dem der TCP-Server lauscht (1-65535)",
       "tcpWindowControlHint": "Erlaubt TCP-Clients, dieses Fenster zu steuern",

@@ -51,6 +51,22 @@ A fast, lightweight Electron-based log viewer with powerful filtering capabiliti
 
 ---
 
+## Live intake limit
+
+Live TCP reception, HTTP polling, HTTP tailing and file watching share a
+**500,000-entry limit per window's log session** by default. Change it under
+*Settings → Advanced → Live entry limit*. The workspace displays the current
+live-entry count and its limit; duplicate entries that are not stored do not
+consume additional capacity.
+
+When the limit is reached, live sources stop and existing logs remain available
+for searching and exporting. Nothing is automatically deleted. File imports,
+one-shot HTTP loads and Elasticsearch searches are exempt. Raise the limit or
+clear the logs to free capacity, then **restart the live sources manually**.
+Messages arriving while intake is paused may be lost; this is not an archive or
+a guarantee that upstream sources will buffer them. The entry limit is also not
+a hard RAM limit, because message sizes differ.
+
 ## 📡 TCP Log-Streaming Configuration
 
 Lumberjack can receive logs in real-time via TCP. Configure your application to send logs to Lumberjack:

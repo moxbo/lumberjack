@@ -9,6 +9,7 @@ import {
 } from "preact/hooks";
 import { highlightAll } from "../utils/highlight";
 import logger from "../utils/logger";
+import { LiveIngestionLimitError } from "../utils/liveIngestionLimit";
 import { rendererPerf } from "../utils/rendererPerf";
 import { useI18n } from "../utils/i18n";
 import { LoggingStore } from "../store/loggingStore";
@@ -32,6 +33,7 @@ import {
   httpLoadOnce as typedHttpLoadOnce,
   httpStartPoll as typedHttpStartPoll,
   httpStopPoll as typedHttpStopPoll,
+  liveSetPaused as typedLiveSetPaused,
   onAppend as typedOnAppend,
   onMenu as typedOnMenu,
   onStreamChunk as typedOnStreamChunk,
@@ -111,6 +113,7 @@ import type { VirtualizedLogListHandle } from "./components";
 import { SkeletonLoader } from "./components/SkeletonLoader";
 import { ElasticStatusBar } from "./components/ElasticStatusBar";
 import { FilterProgressStatus } from "./components/FilterProgressStatus";
+import { LiveIntakeStatus } from "./components/LiveIntakeStatus";
 import { WorkspaceToolbar, WorkspaceIcon } from "./components/WorkspaceToolbar";
 import { adjacentSearchMatch, searchMatchPositions } from "./progressiveSearch";
 import { JSX } from "preact/jsx-runtime";
@@ -279,30 +282,6 @@ export default function App(): JSX.Element {
     }
   }, [httpTail.tails.length]);
 
-  // Entry management hook (entries, IPC batching, deduplication)
-  const projectionBridgeRef = useRef<ProjectionBridge | null>(null);
-  const {
-    entries,
-    entryGeneration,
-    getDataGeneration,
-    appendEntriesAsync,
-    clearEntries,
-    isClearing,
-    clearPhase,
-    storageError,
-    usesPagedStorage,
-    repository,
-    getMetadata,
-    getIdsBySignature,
-  } = useEntryManagement({
-    marksMap,
-    projectionBridgeRef,
-  });
-
-  useEffect(() => {
-    if (storageError) showAlert(storageError.message);
-  }, [storageError, showAlert]);
-
   const [selected, setSelected] = useState<Set<number>>(new Set());
   const lastClicked = useRef<number | null>(null);
 
@@ -329,24 +308,6 @@ export default function App(): JSX.Element {
     filtersExpanded,
     setFiltersExpanded,
   } = filterState;
-
-  // Gedrosseltes `entries`-Snapshot als Filter-Trigger.
-  // Beim Streaming wird `entries` bis zu ~60×/Sekunde aktualisiert. Ohne
-  // Koaleszenz würde jeder Append (a) einen Worker-Filterlauf UND (b) die
-  // O(n)-Neuberechnung von `markedIdx`/`searchMatchIdx` auf dem Main-Thread
-  // auslösen → bei 100k–300k Einträgen friert die Oberfläche beim gleichzeitigen
-  // Tippen/Einstellen ein. Das Throttling veröffentlicht den ersten Block
-  // sofort und bündelt danach Bursts auf höchstens einen Filterlauf je 120 ms.
-  const filterInput = useMemo(
-    () => ({ entries, generation: entryGeneration }),
-    [entries, entryGeneration],
-  );
-  const throttledFilterInput = useThrottledValue(filterInput, 120);
-  // Never submit an older snapshot under the generation of a cleared dataset.
-  const visibleEntries =
-    throttledFilterInput.generation === entryGeneration
-      ? throttledFilterInput.entries
-      : entries;
 
   // History popovers - using extracted hook
   const {
@@ -443,6 +404,7 @@ export default function App(): JSX.Element {
     elasticUrl,
     elasticSize,
     elasticHasPass,
+    liveEntryLimit,
     follow,
     setFollow,
     themeMode,
@@ -480,6 +442,51 @@ export default function App(): JSX.Element {
         setOnlyMarked(settings.onlyMarked);
     },
   });
+
+  const projectionBridgeRef = useRef<ProjectionBridge | null>(null);
+  const {
+    entries,
+    entryGeneration,
+    getDataGeneration,
+    appendEntriesAsync,
+    clearEntries,
+    isClearing,
+    clearPhase,
+    storageError,
+    liveEntryCount,
+    liveLimitReached,
+    usesPagedStorage,
+    repository,
+    getMetadata,
+    getIdsBySignature,
+  } = useEntryManagement({
+    marksMap,
+    projectionBridgeRef,
+    liveEntryLimit,
+  });
+
+  useEffect(() => {
+    if (storageError) showAlert(storageError.message);
+  }, [storageError, showAlert]);
+
+  // Gedrosseltes `entries`-Snapshot als Filter-Trigger.
+  // Beim Streaming wird `entries` bis zu ~60×/Sekunde aktualisiert. Ohne
+  // Koaleszenz würde jeder Append (a) einen Worker-Filterlauf UND (b) die
+  // O(n)-Neuberechnung von `markedIdx`/`searchMatchIdx` auf dem Main-Thread
+  // auslösen → bei 100k–300k Einträgen friert die Oberfläche beim gleichzeitigen
+  // Tippen/Einstellen ein. Das Throttling veröffentlicht den ersten Block
+  // sofort und bündelt danach Bursts auf höchstens einen Filterlauf je 120 ms.
+  const filterInput = useMemo(
+    () => ({ entries, generation: entryGeneration }),
+    [entries, entryGeneration],
+  );
+  const throttledFilterInput = useThrottledValue(filterInput, 120);
+  // Never submit an older snapshot under the generation of a cleared dataset.
+  const visibleEntries =
+    throttledFilterInput.generation === entryGeneration
+      ? throttledFilterInput.entries
+      : entries;
+
   const [tcpStatus, setTcpStatus] = useState<string>(t("status.tcpStopped"));
   const [httpStatus, setHttpStatus] = useState<string>(
     t("status.httpPollStopped"),
@@ -820,6 +827,31 @@ export default function App(): JSX.Element {
     httpPollId,
     currentPollInterval,
   });
+
+  const liveControlTail = useRef(Promise.resolve());
+  useEffect(() => {
+    if (!settingsLoaded) return;
+    liveControlTail.current = liveControlTail.current
+      .then(async () => {
+        const result = await typedLiveSetPaused(liveLimitReached);
+        if (!result.ok)
+          throw new Error(result.error || tRef.current("status.errorUnknown"));
+        if (liveLimitReached) {
+          setHttpPollId(null);
+          setCurrentPollInterval(null);
+          setNextPollDueAt(null);
+          setHttpStatus(tRef.current("status.httpPollStopped"));
+        }
+      })
+      .catch((error) => {
+        logger.error("Updating live source pause state failed:", error);
+        showAlert(
+          tRef.current("liveIntake.controlError", {
+            message: error instanceof Error ? error.message : String(error),
+          }),
+        );
+      });
+  }, [liveLimitReached, settingsLoaded, setNextPollDueAt, showAlert]);
 
   // Filter statistics for debugging why entries are filtered out
   const [lastFilterStats, setLastFilterStats] = useState<FilterStats | null>(
@@ -1751,13 +1783,20 @@ export default function App(): JSX.Element {
               `[renderer-diag] Received IPC logs:append with ${newEntries?.length || 0} entries`,
             );
           }
-          const persistence = appendEntriesAsync(newEntries as any[])
+          const persistence = appendEntriesAsync(newEntries as any[], {
+            live: newEntries[0]?._ingestionKind !== "import",
+          })
             .then(() => {
               hydrateMarksFromEntries(newEntries);
               announceAppend(newEntries as any[]);
             })
             .catch((error) => {
-              logger.error("Persisting appended IPC logs failed:", error);
+              if (error instanceof LiveIngestionLimitError)
+                logger.warn(
+                  "Live intake paused at the configured limit:",
+                  error,
+                );
+              else logger.error("Persisting appended IPC logs failed:", error);
               throw error;
             });
           // Sprint 5: feed alert evaluator with new entries.
@@ -2958,6 +2997,13 @@ export default function App(): JSX.Element {
             t={t}
           />
         </div>
+        <LiveIntakeStatus
+          count={liveEntryCount}
+          limit={liveEntryLimit}
+          locale={locale}
+          onOpenSettings={() => void openSettingsModal("features")}
+          t={t}
+        />
       </header>
 
       {/* Resize-Indikator für Detail-Panel */}

@@ -8,6 +8,8 @@
  */
 export interface LogEntry {
   _id?: number;
+  /** Main-process transport metadata; remove before canonical persistence. */
+  _ingestionKind?: "live" | "import";
   timestamp: string | number | Date | null;
   level?: string | null;
   logger?: string | null;
@@ -122,6 +124,8 @@ export interface Settings {
   // Performance / Memory
   /** V8 heap size in MB (default: 4096, min: 512, max: 8192). Requires restart. */
   heapSizeMB?: number;
+  /** Maximum accumulated live entries per log session; imports are exempt. */
+  liveEntryLimit?: number;
 }
 
 /**
@@ -444,6 +448,8 @@ export type ElectronAPI = {
   streamReady: (sessionId: string) => void;
   streamAck: (sessionId: string, chunkIndex: number) => void;
   streamCancel: (sessionId: string) => void;
+  /** Pauses only this window's live sources; unpausing does not restart them. */
+  liveSetPaused: (paused: boolean) => Promise<Result<void>>;
   tcpStart: (port: number) => void;
   tcpStop: () => void;
   httpLoadOnce: (url: string) => Promise<ParseResult>;

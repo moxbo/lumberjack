@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { normalizeSettingsForm, settingsFormPatch } from "../settingsForm";
+import { DEFAULT_LIVE_ENTRY_LIMIT } from "../liveIngestionLimit";
 
 describe("settings form normalization", () => {
   it("uses the application's 4GB heap default and clears password edits", () => {
@@ -7,6 +8,7 @@ describe("settings form normalization", () => {
       tcpPort: 5000,
       httpInterval: 5000,
       heapSizeMB: 4096,
+      liveEntryLimit: DEFAULT_LIVE_ENTRY_LIMIT,
       elasticPassNew: "",
       elasticPassClear: false,
       themeMode: "system",
@@ -21,6 +23,44 @@ describe("settings form normalization", () => {
     (tcpPort) => {
       expect(
         settingsFormPatch({ ...normalizeSettingsForm({}), tcpPort }),
+      ).toBeNull();
+    },
+  );
+
+  it.each([1, 42, DEFAULT_LIVE_ENTRY_LIMIT, Number.MAX_SAFE_INTEGER])(
+    "preserves live entry limit %s on load and save",
+    (liveEntryLimit) => {
+      const form = normalizeSettingsForm({ liveEntryLimit });
+      expect(form.liveEntryLimit).toBe(liveEntryLimit);
+      expect(settingsFormPatch(form)?.liveEntryLimit).toBe(liveEntryLimit);
+    },
+  );
+
+  it.each([
+    undefined,
+    null,
+    0,
+    -1,
+    1.5,
+    NaN,
+    Infinity,
+    -Infinity,
+    Number.MAX_SAFE_INTEGER + 1,
+    "",
+    "500000",
+    true,
+  ])(
+    "defaults invalid persisted live entry limit %s but rejects it on save",
+    (value) => {
+      const liveEntryLimit = value as number;
+      expect(normalizeSettingsForm({ liveEntryLimit }).liveEntryLimit).toBe(
+        DEFAULT_LIVE_ENTRY_LIMIT,
+      );
+      expect(
+        settingsFormPatch({
+          ...normalizeSettingsForm({}),
+          liveEntryLimit,
+        }),
       ).toBeNull();
     },
   );
@@ -42,6 +82,7 @@ describe("settings form normalization", () => {
         elasticMaxParallel: 0,
         allowPrerelease: true,
         heapSizeMB: 99999,
+        liveEntryLimit: 123456,
       },
       3,
     );
@@ -59,6 +100,7 @@ describe("settings form normalization", () => {
       elasticMaxParallel: 3,
       allowPrerelease: true,
       heapSizeMB: 8192,
+      liveEntryLimit: 123456,
     });
     expect(patch).not.toHaveProperty("httpTailEmitInitial");
     expect(patch).not.toHaveProperty("marksMap");

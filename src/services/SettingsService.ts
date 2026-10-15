@@ -9,6 +9,10 @@ import * as path from "path";
 import * as crypto from "crypto";
 import { app, safeStorage } from "electron";
 import log from "electron-log/main";
+import {
+  DEFAULT_LIVE_ENTRY_LIMIT,
+  isValidLiveEntryLimit,
+} from "../utils/liveIngestionLimit";
 
 /**
  * Default settings values
@@ -51,7 +55,18 @@ const DEFAULT_SETTINGS: Settings = {
   allowPrerelease: false,
   // Performance / Memory - heap size in MB (requires restart)
   heapSizeMB: 4096,
+  liveEntryLimit: DEFAULT_LIVE_ENTRY_LIMIT,
 };
+
+function settingsWithDefaults(settings: Partial<Settings>): Settings {
+  return {
+    ...DEFAULT_SETTINGS,
+    ...settings,
+    liveEntryLimit: isValidLiveEntryLimit(settings.liveEntryLimit)
+      ? settings.liveEntryLimit
+      : DEFAULT_LIVE_ENTRY_LIMIT,
+  };
+}
 
 /**
  * Settings validation result
@@ -145,7 +160,7 @@ export class SettingsService {
       }
 
       // Merge with defaults to ensure all required fields exist
-      this.settings = { ...DEFAULT_SETTINGS, ...parsed } as Settings;
+      this.settings = settingsWithDefaults(parsed);
       this.baseline = structuredClone(this.settings);
       this.loaded = true;
       log.info("Settings loaded successfully from", this.settingsPath);
@@ -186,7 +201,7 @@ export class SettingsService {
       if ("marksMap" in parsed) {
         delete (parsed as Record<string, unknown>)["marksMap"];
       }
-      this.settings = { ...DEFAULT_SETTINGS, ...parsed } as Settings;
+      this.settings = settingsWithDefaults(parsed);
       this.baseline = structuredClone(this.settings);
       log.info(
         "[settings] loadSync(): merged httpUrl:",
@@ -229,10 +244,7 @@ export class SettingsService {
     try {
       if (fs.existsSync(this.settingsPath)) {
         const raw = fs.readFileSync(this.settingsPath, "utf8");
-        return {
-          ...DEFAULT_SETTINGS,
-          ...(JSON.parse(raw) as Partial<Settings>),
-        } as Settings;
+        return settingsWithDefaults(JSON.parse(raw) as Partial<Settings>);
       }
     } catch (e) {
       log.warn(
@@ -247,10 +259,7 @@ export class SettingsService {
     try {
       if (fs.existsSync(this.settingsPath)) {
         const raw = await fs.promises.readFile(this.settingsPath, "utf8");
-        return {
-          ...DEFAULT_SETTINGS,
-          ...(JSON.parse(raw) as Partial<Settings>),
-        } as Settings;
+        return settingsWithDefaults(JSON.parse(raw) as Partial<Settings>);
       }
     } catch (e) {
       log.warn(
@@ -269,7 +278,7 @@ export class SettingsService {
     const delta = this.computeLocalDelta();
     const mergedNoMarks = { ...prev, ...delta } as Record<string, unknown>;
     delete mergedNoMarks.marksMap;
-    return { ...DEFAULT_SETTINGS, ...mergedNoMarks } as Settings;
+    return settingsWithDefaults(mergedNoMarks);
   }
 
   /**
@@ -591,6 +600,16 @@ export class SettingsService {
           error: "heapSizeMB must be between 512 and 8192",
         };
       }
+    }
+
+    if (
+      settings.liveEntryLimit !== undefined &&
+      !isValidLiveEntryLimit(settings.liveEntryLimit)
+    ) {
+      return {
+        success: false,
+        error: `liveEntryLimit must be an integer between 1 and ${Number.MAX_SAFE_INTEGER}`,
+      };
     }
 
     return { success: true };

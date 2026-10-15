@@ -330,6 +330,37 @@
   accent-color: var(--ui-accent);
 }
 
+.live-intake-status {
+  padding: 0 18px 8px;
+  color: var(--ui-muted);
+  font-size: 11px;
+}
+
+.live-intake-usage {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.live-intake-usage meter {
+  width: 90px;
+}
+
+.live-intake-usage button {
+  border: 0;
+  padding: 0;
+  background: transparent;
+  color: var(--ui-accent);
+  font-size: inherit;
+  text-decoration: underline dotted;
+}
+
+.live-intake-paused {
+  margin-top: 6px;
+  color: var(--color-level-warn);
+}
+
 .workspace-app .layout {
   min-width: 0;
 }

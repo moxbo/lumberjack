@@ -13,6 +13,31 @@ const deferred = () => {
 };
 
 describe("AppendBlocks", () => {
+  it("removes only failed-origin blocks after a partially acknowledged prefix", () => {
+    const blocks = new AppendBlocks<number>();
+    blocks.enqueue([1, 2], 3000, "import");
+    blocks.enqueue(
+      Array.from({ length: 2050 }, () => -1),
+      3000,
+      "live",
+    );
+    blocks.enqueue([3, 4], 3000, "import");
+    const drained = blocks.drain();
+    expect(drained.failureGroupAt(2)).toBe("live");
+    blocks.requeue(drained, 1);
+    blocks.removeFailureGroup("live");
+    expect(values(blocks)).toEqual([2, 3, 4]);
+    expect(blocks.length).toBe(3);
+    expect(blocks.failureGroupAt(2)).toBe("import");
+    expect(blocks.failureGroupAt(3)).toBeUndefined();
+    blocks.enqueue([5], 3000, "live");
+    blocks.removeFailureGroup("import");
+    expect(values(blocks)).toEqual([5]);
+    blocks.removeFailureGroup("live");
+    blocks.enqueue([6], 3000, "import");
+    expect(values(blocks)).toEqual([6]);
+  });
+
   it("snapshots fixed-size blocks and retains only the unacknowledged suffix", () => {
     const blocks = new AppendBlocks<number>();
     const entries = Array.from({ length: 2050 }, (_, i) => i);
@@ -36,6 +61,194 @@ describe("AppendBlocks", () => {
 });
 
 describe("WindowAppendQueue", () => {
+  it.each(["import", "live"])(
+    "keeps an acknowledged %s receipt successful while rejecting later live receipts",
+    async (firstOrigin) => {
+      const queue = new WindowAppendQueue<number>();
+      const capped = new Error("live cap reached");
+      const receipts = [
+        queue.enqueue([1, 2], 10, firstOrigin),
+        queue.enqueue([3, 4], 10, "live"),
+        queue.enqueue([5, 6], 10, "import"),
+        queue.enqueue([7], 10, "live"),
+      ];
+      const outcomes = Promise.allSettled(receipts);
+      const attempted: number[][] = [];
+      await queue.flush(
+        async (blocks) => {
+          const batch = values(blocks);
+          if (batch.includes(3)) {
+            attempted.push(batch.slice(0, 4));
+            throw capped;
+          }
+          attempted.push(batch);
+        },
+        () => 2,
+        false,
+        (error) => (error === capped ? "live" : undefined),
+      );
+      expect(attempted).toEqual([
+        [1, 2, 3, 4],
+        [5, 6],
+      ]);
+      expect(await outcomes).toEqual([
+        { status: "fulfilled", value: undefined },
+        { status: "rejected", reason: capped },
+        { status: "fulfilled", value: undefined },
+        { status: "rejected", reason: capped },
+      ]);
+      expect(queue.isDisposed).toBe(false);
+      expect(queue.length).toBe(0);
+      expect(queue.bytes).toBe(0);
+      const restarted = queue.enqueue([8], 10, "live");
+      await queue.flush(
+        async (blocks) => {
+          attempted.push(values(blocks));
+        },
+        () => 0,
+        false,
+      );
+      await restarted;
+      expect(attempted.at(-1)).toEqual([8]);
+    },
+  );
+
+  it("rejects a partially acknowledged producer without replaying its prefix or corrupting byte accounting", async () => {
+    const queue = new WindowAppendQueue<number>(() => 4, 20);
+    const capped = new Error("live cap reached after prefix");
+    const outcomes = Promise.allSettled([
+      queue.enqueue([1, 2, 3, 4], 10, "live"),
+      queue.enqueue([5], 10, "import"),
+    ]);
+    const attempts: number[][] = [];
+    await queue.flush(
+      async (blocks) => {
+        const batch = values(blocks);
+        if (batch.includes(1)) {
+          attempts.push(batch.slice(0, 4));
+          throw capped;
+        }
+        expect(queue.length).toBe(1);
+        expect(queue.bytes).toBe(4);
+        attempts.push(batch);
+      },
+      () => 2,
+      false,
+      (error) => (error === capped ? "live" : undefined),
+    );
+    expect(attempts).toEqual([[1, 2, 3, 4], [5]]);
+    expect(await outcomes).toEqual([
+      { status: "rejected", reason: capped },
+      { status: "fulfilled", value: undefined },
+    ]);
+    expect(queue.length).toBe(0);
+    expect(queue.bytes).toBe(0);
+  });
+
+  it("also isolates live receipts admitted while the failing delivery is in flight", async () => {
+    const queue = new WindowAppendQueue<number>();
+    const capped = new Error("live cap reached");
+    const gate = deferred();
+    const first = queue.enqueue([1, 2], 10, "live");
+    const firstResult = Promise.allSettled([first]);
+    const delivered: number[][] = [];
+    const flushing = queue.flush(
+      async (blocks) => {
+        const batch = values(blocks);
+        if (batch.includes(1)) {
+          await gate.promise;
+          throw capped;
+        }
+        delivered.push(batch);
+      },
+      () => 0,
+      false,
+      () => "live",
+    );
+    await Promise.resolve();
+    const imported = queue.enqueue([3, 4], 10, "import");
+    const lateLive = queue.enqueue([5, 6], 10, "live");
+    const lateResults = Promise.allSettled([imported, lateLive]);
+    gate.resolve();
+    await flushing;
+    expect(await firstResult).toEqual([{ status: "rejected", reason: capped }]);
+    expect(await lateResults).toEqual([
+      { status: "fulfilled", value: undefined },
+      { status: "rejected", reason: capped },
+    ]);
+    expect(delivered).toEqual([[3, 4]]);
+    expect(queue.length).toBe(0);
+    expect(queue.bytes).toBe(0);
+  });
+
+  it("shares count and byte limits across origins and releases only failed receipts", async () => {
+    const queue = new WindowAppendQueue<number>((value) => value, 10);
+    queue.cap(2);
+    const capped = new Error("live cap reached");
+    const live = queue.enqueue([6], 2, "live");
+    const liveResult = Promise.allSettled([live]);
+    const imported = queue.enqueue([4], 2, "import");
+    await expect(queue.enqueue([0], 2, "import")).rejects.toThrow("capacity");
+    const gate = deferred();
+    const received: number[][] = [];
+    let delivery = 0;
+    const flushing = queue.flush(
+      async (blocks) => {
+        if (delivery++ === 0) throw capped;
+        received.push(values(blocks));
+        await gate.promise;
+      },
+      () => 0,
+      false,
+      () => "live",
+    );
+    await vi.waitFor(() => expect(received).toEqual([[4]]));
+    expect(await liveResult).toEqual([{ status: "rejected", reason: capped }]);
+    expect(queue.length).toBe(1);
+    expect(queue.bytes).toBe(4);
+    const next = queue.enqueue([6], 2, "import");
+    await expect(queue.enqueue([0], 2, "live")).rejects.toThrow("capacity");
+    queue.cap(3);
+    await expect(queue.enqueue([1], 3, "import")).rejects.toThrow("capacity");
+    expect(queue.bytes).toBe(10);
+    gate.resolve();
+    await Promise.all([flushing, imported, next]);
+    expect(received).toEqual([[4], [6]]);
+    expect(queue.length).toBe(0);
+    expect(queue.bytes).toBe(0);
+  });
+
+  it.each(["storage", "misclassified-import"])(
+    "keeps %s failures terminal across origins without retrying",
+    async (scenario) => {
+      const queue = new WindowAppendQueue<number>();
+      const failure = new Error("storage failed");
+      const outcomes = Promise.allSettled([
+        queue.enqueue([1], 10, "import"),
+        queue.enqueue([2], 10, "live"),
+      ]);
+      const deliver = vi.fn(async () => {
+        throw failure;
+      });
+      await expect(
+        queue.flush(
+          deliver,
+          () => 0,
+          false,
+          () => (scenario === "storage" ? undefined : "live"),
+        ),
+      ).rejects.toBe(failure);
+      expect(deliver).toHaveBeenCalledOnce();
+      expect(await outcomes).toEqual([
+        { status: "rejected", reason: failure },
+        { status: "rejected", reason: failure },
+      ]);
+      expect(queue.isDisposed).toBe(true);
+      expect(queue.length).toBe(0);
+      expect(queue.bytes).toBe(0);
+    },
+  );
+
   it("does not strand an admission between the final ACK and flush completion", async () => {
     vi.useFakeTimers();
     const queue = new WindowAppendQueue<number>();

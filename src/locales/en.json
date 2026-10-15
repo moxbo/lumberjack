@@ -2,6 +2,14 @@
   "app": {
     "title": "Lumberjack"
   },
+  "liveIntake": {
+    "usage": "Live entries: {{count}} / {{limit}}",
+    "label": "Live intake utilization",
+    "settings": "Change limit",
+    "paused": "Live intake paused.",
+    "pausedHint": "Existing entries are preserved. New messages may be lost while paused. Raise the limit or clear logs, then manually restart sources. Imports remain available.",
+    "controlError": "Could not change the live sources' intake state: {{message}}"
+  },
   "inspector": {
     "title": "Entry details",
     "message": "Message",
@@ -293,6 +301,9 @@
     "performance": {
       "heapSize": "Memory Limit",
       "heapSizeHint": "Maximum memory for the application. Higher values allow more log entries but require a restart.",
+      "liveEntryLimit": "Live Entry Limit",
+      "liveEntryLimitHint": "Default: 500,000. Caps accumulated live TCP, HTTP polling, HTTP tail and file-watching entries in the current log session. File, manual HTTP and Elasticsearch imports are exempt. Reaching the limit pauses live intake without deleting saved logs. Entries may be missed while paused. Raise the limit or clear logs, then manually restart the source. This is not a hard memory guarantee.",
+      "liveEntryLimitInvalid": "Live entry limit must be a whole number between 1 and 9007199254740991.",
       "default": "Default",
       "restartRequired": "The memory limit has been changed. The change will take effect after a restart.\n\nDo you want to restart the application now?"
     },
@@ -302,7 +313,7 @@
     "navAriaLabel": "Settings Navigation",
     "descriptions": {
       "general": "Application language and updates.",
-      "advanced": "Memory limit and optional application features.",
+      "advanced": "Live-entry and memory limits, and optional application features.",
       "tcp": "Configure the TCP server for incoming log messages.",
       "tcpPortHint": "Port on which the TCP server listens (1-65535)",
       "tcpWindowControlHint": "Allow TCP clients to control this window",

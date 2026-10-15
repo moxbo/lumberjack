@@ -44,6 +44,7 @@ import {
   StreamParseComplete,
   StreamParseError,
   StreamParseStartResult,
+  TcpStatus,
   WindowPermsResult,
 } from "../types/ipc";
 import type { SettingsService } from "../services/SettingsService";
@@ -355,11 +356,221 @@ export function registerIpcHandlers(
   enqueueWatchEntries?: (
     entries: LogEntry[],
     senderWebContentsId: number,
+    kind?: "live" | "import",
   ) => void | Promise<void>,
   onLoggingSettingsChanged?: () => Promise<void>,
   onBeforeRelaunch?: () => Promise<void>,
+  /** A per-poll sink that retains the default sink's required file logging. */
+  consumeHttpPollEntries?: (
+    entries: LogEntry[],
+    senderWebContentsId: number,
+  ) => void | Promise<void>,
 ): void {
   const sharedApi = getSharedMainApi();
+  const watchManager = new WatchManager();
+  const httpTailManager = new HttpTailManager();
+  const pausedMessage =
+    "Live ingestion is paused. Clear logs or raise the entry limit before restarting sources.";
+  interface LiveOwner {
+    sender: Electron.WebContents;
+    windowId: number | null;
+    paused: boolean;
+    destroyed: boolean;
+    generation: number;
+    polls: Map<number, string>;
+    watchers: Map<number, string>;
+    tails: Map<number, string>;
+    starting: Set<Promise<unknown>>;
+    stopping?: Promise<Result<void>>;
+  }
+  const liveOwners = new Map<number, LiveOwner>();
+  let tcpOperation: Promise<unknown> = Promise.resolve();
+
+  function serializeTcp<T>(operation: () => Promise<T>): Promise<T> {
+    const pending = tcpOperation.then(operation);
+    tcpOperation = pending.catch(() => undefined);
+    return pending;
+  }
+
+  function trackStart<T>(owner: LiveOwner, pending: Promise<T>): Promise<T> {
+    owner.starting.add(pending);
+    void pending.then(
+      () => owner.starting.delete(pending),
+      () => owner.starting.delete(pending),
+    );
+    return pending;
+  }
+
+  function canIngest(owner: LiveOwner, generation = owner.generation): boolean {
+    return (
+      !owner.paused &&
+      !owner.destroyed &&
+      !owner.sender.isDestroyed() &&
+      generation === owner.generation
+    );
+  }
+
+  function ownsTcp(owner: LiveOwner): boolean {
+    return (
+      owner.windowId !== null &&
+      sharedApi.getTcpOwnerWindowId?.() === owner.windowId
+    );
+  }
+
+  function sendTcpStatus(owner: LiveOwner, status: TcpStatus): void {
+    try {
+      if (!owner.sender.isDestroyed()) owner.sender.send("tcp:status", status);
+    } catch (error) {
+      log.warn("[tcp] Status notification failed:", error);
+    }
+  }
+
+  async function stopOwnedTcp(owner: LiveOwner): Promise<void> {
+    if (!ownsTcp(owner)) return;
+    const status = await networkService.stopTcpServer();
+    if (!status.ok && status.running !== false)
+      throw new Error(status.message || "TCP server could not be stopped");
+    if (ownsTcp(owner)) sharedApi.setTcpOwnerWindowId?.(null);
+    sendTcpStatus(owner, { ...status, ok: true, running: false });
+    updateWindowTitles();
+    updateAppMenu();
+  }
+
+  function stopOwnedPoll(owner: LiveOwner, id: number): Result<void> {
+    if (!owner.polls.has(id))
+      return { ok: false, error: "HTTP poller is not owned by this window" };
+    const result = networkService.httpStopPoll(id);
+    if (result.ok) owner.polls.delete(id);
+    return result;
+  }
+
+  function stopOwnedWatcher(owner: LiveOwner, id: number): Result<void> {
+    const filePath = owner.watchers.get(id);
+    if (filePath === undefined)
+      return { ok: false, error: "File watcher is not owned by this window" };
+    const stopped = watchManager.stop(id);
+    owner.watchers.delete(id);
+    if (stopped)
+      emitWatchStatus(owner.sender.id, { type: "stopped", id, filePath });
+    return { ok: true };
+  }
+
+  function stopOwnedTail(owner: LiveOwner, id: number): Result<void> {
+    const url = owner.tails.get(id);
+    if (url === undefined)
+      return { ok: false, error: "HTTP tail is not owned by this window" };
+    const stopped = httpTailManager.stop(id);
+    owner.tails.delete(id);
+    if (stopped)
+      emitHttpTailStatus(owner.sender.id, { type: "stopped", id, url });
+    return { ok: true };
+  }
+
+  async function stopOwnedSources(owner: LiveOwner): Promise<Result<void>> {
+    const errors = new Set<string>();
+    const stopKnownSources = (): void => {
+      const stop = (label: string, action: () => Result<void>): void => {
+        try {
+          const result = action();
+          if (!result.ok)
+            errors.add(`${label}: ${result.error || "stop failed"}`);
+        } catch (error) {
+          errors.add(
+            `${label}: ${error instanceof Error ? error.message : String(error)}`,
+          );
+        }
+      };
+      for (const id of owner.polls.keys())
+        stop(`HTTP poll ${id}`, () => stopOwnedPoll(owner, id));
+      for (const id of owner.watchers.keys())
+        stop(`File watcher ${id}`, () => stopOwnedWatcher(owner, id));
+      for (const id of owner.tails.keys())
+        stop(`HTTP tail ${id}`, () => stopOwnedTail(owner, id));
+    };
+    stopKnownSources();
+    // A source created after pause must be closed before the pause is confirmed.
+    await Promise.allSettled([...owner.starting]);
+    stopKnownSources();
+    if (ownsTcp(owner)) {
+      try {
+        await serializeTcp(() => stopOwnedTcp(owner));
+      } catch (error) {
+        errors.add(
+          `TCP: ${error instanceof Error ? error.message : String(error)}`,
+        );
+      }
+    }
+    return errors.size
+      ? { ok: false, error: [...errors].join("; ") }
+      : { ok: true };
+  }
+
+  function pauseOwner(owner: LiveOwner): Promise<Result<void>> {
+    owner.paused = true;
+    owner.generation++;
+    if (owner.stopping) return owner.stopping;
+    const stopping = stopOwnedSources(owner).catch((error: unknown) => ({
+      ok: false,
+      error: error instanceof Error ? error.message : String(error),
+    }));
+    owner.stopping = stopping;
+    void stopping.finally(() => {
+      if (owner.stopping === stopping) owner.stopping = undefined;
+    });
+    return stopping;
+  }
+
+  function getLiveOwner(sender: Electron.WebContents): LiveOwner {
+    const existing = liveOwners.get(sender.id);
+    if (existing) return existing;
+    const owner: LiveOwner = {
+      sender,
+      windowId: BrowserWindow.fromWebContents(sender)?.id ?? null,
+      paused: false,
+      destroyed: sender.isDestroyed(),
+      generation: 0,
+      polls: new Map(),
+      watchers: new Map(),
+      tails: new Map(),
+      starting: new Set(),
+    };
+    if (owner.destroyed) return owner;
+    liveOwners.set(sender.id, owner);
+    sender.once("destroyed", () => {
+      owner.destroyed = true;
+      liveOwners.delete(sender.id);
+      void pauseOwner(owner).then((result) => {
+        if (!result.ok)
+          log.error("[live] Window source cleanup failed:", result.error);
+      });
+    });
+    return owner;
+  }
+
+  ipcMain.handle(
+    "live:setPaused",
+    async (event, paused: boolean): Promise<Result<void>> => {
+      if (typeof paused !== "boolean")
+        return { ok: false, error: "paused must be a boolean" };
+      try {
+        const owner = getLiveOwner(event.sender);
+        if (paused) return await pauseOwner(owner);
+        const generation = owner.generation;
+        const stopped = await owner.stopping;
+        if (stopped && !stopped.ok) return stopped;
+        if (owner.destroyed || owner.sender.isDestroyed())
+          return { ok: false, error: "Receiving window was destroyed" };
+        if (generation === owner.generation) owner.paused = false;
+        return { ok: true };
+      } catch (error) {
+        return {
+          ok: false,
+          error: error instanceof Error ? error.message : String(error),
+        };
+      }
+    },
+  );
+
   const exportFiles = new ExportFileService((error) =>
     log.error("Export cleanup failed:", error),
   );
@@ -1189,7 +1400,7 @@ export function registerIpcHandlers(
               entries,
               STREAM_PARSE_CHUNK_SIZE,
             )) {
-              await enqueueWatchEntries(batch, event.sender.id);
+              await enqueueWatchEntries(batch, event.sender.id, "import");
             }
           } else {
             for (const entry of entries) all.push(entry);
@@ -1262,109 +1473,97 @@ export function registerIpcHandlers(
 
   // TCP handlers
   ipcMain.on("tcp:start", (event, { port }: { port: number }) => {
-    (async () => {
-      try {
-        // Check if TCP_SERVER feature is enabled
-        if (featureFlags && !featureFlags.isEnabled("TCP_SERVER")) {
-          const reason = featureFlags.getDisableReason("TCP_SERVER");
-          const msg = t("main.errors.tcpDisabled");
-          event.reply("tcp:status", {
-            ok: false,
-            message: reason ? `${msg}: ${reason}` : msg,
-            running: false,
-          });
-          return;
-        }
-
-        const win = BrowserWindow.fromWebContents(event.sender);
-        const allowed = win
-          ? !!sharedApi.getWindowCanTcpControl?.(win.id)
-          : true;
-        if (!allowed) {
-          if (win) sharedApi.setTcpOwnerWindowId?.(win.id);
-          event.reply("tcp:status", {
-            ok: false,
-            message: t("main.errors.tcpWindowNotAllowed"),
-          });
-          return;
-        }
-        const status = await networkService.startTcpServer(port);
-        event.reply("tcp:status", status);
-
-        if (status.ok && win) {
-          // Nur speichern, wenn sich der Port tatsächlich geändert hat
-          const prevSettings = settingsService.get();
-          if (prevSettings.tcpPort !== port) {
+    const owner = getLiveOwner(event.sender);
+    const generation = owner.generation;
+    void trackStart(
+      owner,
+      serializeTcp(async () => {
+        let reserved = false;
+        try {
+          if (!canIngest(owner, generation)) throw new Error(pausedMessage);
+          if (featureFlags && !featureFlags.isEnabled("TCP_SERVER")) {
+            const reason = featureFlags.getDisableReason("TCP_SERVER");
+            const message = t("main.errors.tcpDisabled");
+            throw new Error(reason ? `${message}: ${reason}` : message);
+          }
+          if (
+            owner.windowId === null ||
+            sharedApi.getWindowCanTcpControl?.(owner.windowId) === false
+          ) {
+            throw new Error(t("main.errors.tcpWindowNotAllowed"));
+          }
+          const currentStatus = networkService.getTcpStatus();
+          if (currentStatus.running) {
+            sendTcpStatus(owner, {
+              ...currentStatus,
+              ok: false,
+              message: "TCP server already running",
+            });
+            return;
+          }
+          // Reserve routing before listen() can accept the first connection.
+          sharedApi.setTcpOwnerWindowId?.(owner.windowId);
+          reserved = true;
+          const status = await networkService.startTcpServer(port);
+          if (!canIngest(owner, generation)) {
+            await stopOwnedTcp(owner);
+            throw new Error(pausedMessage);
+          }
+          if (!status.ok) {
+            if (ownsTcp(owner)) sharedApi.setTcpOwnerWindowId?.(null);
+          } else if (settingsService.get().tcpPort !== port) {
             settingsService.update({ tcpPort: port });
             void settingsService.save();
-          } else {
-            // Keine Änderung – kein persistenter Save nötig
           }
-          // Eigentümer auf dieses Fenster setzen (ephemeral, nicht persistiert)
-          try {
-            sharedApi.setTcpOwnerWindowId?.(win.id);
-          } catch {
-            // Intentionally empty - ignore errors
+          sendTcpStatus(owner, status);
+          updateAppMenu();
+          updateWindowTitles();
+        } catch (error) {
+          let message = error instanceof Error ? error.message : String(error);
+          if (reserved && ownsTcp(owner)) {
+            try {
+              await stopOwnedTcp(owner);
+            } catch (stopError) {
+              message += `; TCP stop failed: ${
+                stopError instanceof Error
+                  ? stopError.message
+                  : String(stopError)
+              }`;
+            }
           }
+          log.error("Error starting TCP server:", message);
+          sendTcpStatus(owner, {
+            ok: false,
+            message,
+            running: ownsTcp(owner) && networkService.getTcpStatus().running,
+          });
         }
-
-        // Titel und Menü aktualisieren
-        updateAppMenu();
-        setTimeout(updateWindowTitles, 50);
-        setTimeout(updateWindowTitles, 200);
-      } catch (err) {
-        log.error(
-          "Error starting TCP server:",
-          err instanceof Error ? err.message : String(err),
-        );
-        event.reply("tcp:status", {
-          ok: false,
-          message: err instanceof Error ? err.message : String(err),
-        });
-        sharedApi.setTcpOwnerWindowId?.(null);
-      }
-    })().catch(() => {});
+      }),
+    );
   });
 
   ipcMain.on("tcp:stop", (event) => {
-    (async () => {
+    const owner = getLiveOwner(event.sender);
+    void serializeTcp(async () => {
       try {
-        const win = BrowserWindow.fromWebContents(event.sender);
-        const allowed = win
-          ? !!sharedApi.getWindowCanTcpControl?.(win.id)
-          : true;
-        if (!allowed) {
-          event.reply("tcp:status", {
-            ok: false,
-            message: t("main.errors.tcpWindowNotAllowed"),
-          });
-          return;
+        if (
+          owner.windowId === null ||
+          sharedApi.getWindowCanTcpControl?.(owner.windowId) === false
+        ) {
+          throw new Error(t("main.errors.tcpWindowNotAllowed"));
         }
-        const status = await networkService.stopTcpServer();
-        event.reply("tcp:status", status);
-        if (status.ok) {
-          try {
-            sharedApi.setTcpOwnerWindowId?.(null);
-          } catch {
-            // Intentionally empty - ignore errors
-          }
+        if (!ownsTcp(owner)) {
+          throw new Error("TCP server is not owned by this window");
         }
-        // Titel und Menü aktualisieren
-        updateWindowTitles();
-        updateAppMenu();
-        setTimeout(updateWindowTitles, 50);
-        setTimeout(updateWindowTitles, 200);
-      } catch (err) {
-        log.error(
-          "Error stopping TCP server:",
-          err instanceof Error ? err.message : String(err),
-        );
-        event.reply("tcp:status", {
+        await stopOwnedTcp(owner);
+      } catch (error) {
+        sendTcpStatus(owner, {
           ok: false,
-          message: err instanceof Error ? err.message : String(err),
+          message: error instanceof Error ? error.message : String(error),
+          running: ownsTcp(owner) && networkService.getTcpStatus().running,
         });
       }
-    })().catch(() => {});
+    });
   });
 
   // HTTP handlers
@@ -1385,7 +1584,7 @@ export function registerIpcHandlers(
       return await networkService.httpLoadOnce(
         url,
         enqueueWatchEntries
-          ? (entries) => enqueueWatchEntries(entries, event.sender.id)
+          ? (entries) => enqueueWatchEntries(entries, event.sender.id, "import")
           : undefined,
       );
     },
@@ -1397,6 +1596,10 @@ export function registerIpcHandlers(
       event,
       { url, intervalSec }: { url: string; intervalSec: number },
     ) => {
+      const owner = getLiveOwner(event.sender);
+      const generation = owner.generation;
+      if (!canIngest(owner, generation))
+        return { ok: false, error: pausedMessage };
       // Check if HTTP_POLLING feature is enabled
       if (featureFlags && !featureFlags.isEnabled("HTTP_POLLING")) {
         const reason = featureFlags.getDisableReason("HTTP_POLLING");
@@ -1406,33 +1609,78 @@ export function registerIpcHandlers(
           error: reason ? `${msg}: ${reason}` : msg,
         };
       }
-      return await networkService.httpStartPoll(
-        url,
-        intervalSec,
-        (id, error) => {
+      const consume = consumeHttpPollEntries ?? enqueueWatchEntries;
+      let terminalError: Error | undefined;
+      return await trackStart(
+        owner,
+        (async () => {
           try {
-            if (!event.sender.isDestroyed())
-              event.sender.send("http:pollError", {
-                id,
-                url,
-                error: error.message,
-              });
-          } catch (notificationError) {
-            log.warn(
-              "[http:poll] Failure notification failed:",
-              notificationError,
+            const result = await networkService.httpStartPoll(
+              url,
+              intervalSec,
+              (id, error) => {
+                terminalError = error;
+                owner.polls.delete(id);
+                try {
+                  if (!event.sender.isDestroyed())
+                    event.sender.send("http:pollError", {
+                      id,
+                      url,
+                      error: error.message,
+                    });
+                } catch (notificationError) {
+                  log.warn(
+                    "[http:poll] Failure notification failed:",
+                    notificationError,
+                  );
+                }
+              },
+              consume
+                ? async (entries) => {
+                    if (!canIngest(owner, generation))
+                      throw new Error(pausedMessage);
+                    await consume(entries, event.sender.id);
+                  }
+                : undefined,
             );
+            if (terminalError)
+              return { ok: false, error: terminalError.message };
+            if (result.ok && result.id !== undefined) {
+              owner.polls.set(result.id, url);
+              if (!canIngest(owner, generation)) {
+                const stopped = stopOwnedPoll(owner, result.id);
+                return {
+                  ok: false,
+                  error: stopped.ok
+                    ? pausedMessage
+                    : `${pausedMessage} HTTP stop failed: ${stopped.error}`,
+                };
+              }
+            }
+            return result;
+          } catch (error) {
+            return {
+              ok: false,
+              error: error instanceof Error ? error.message : String(error),
+            };
           }
-        },
+        })(),
       );
     },
   );
 
-  ipcMain.handle("http:stopPoll", async (_event, id: number) => {
-    log.info(`[ipc] http:stopPoll called with id=${id}`);
-    const result = networkService.httpStopPoll(id);
-    log.info(`[ipc] http:stopPoll result: ${JSON.stringify(result)}`);
-    return result;
+  ipcMain.handle("http:stopPoll", (event, id: number) => {
+    try {
+      const owner = liveOwners.get(event.sender.id);
+      return owner
+        ? stopOwnedPoll(owner, id)
+        : { ok: false, error: "HTTP poller is not owned by this window" };
+    } catch (error) {
+      return {
+        ok: false,
+        error: error instanceof Error ? error.message : String(error),
+      };
+    }
   });
 
   // HTTP insecure SSL handler
@@ -1962,8 +2210,6 @@ export function registerIpcHandlers(
   // ============================================================================
   // Sprint 5 – C3: Tail/Watch mode for log files
   // ============================================================================
-  const watchManager = new WatchManager();
-
   /**
    * Send watcher status updates (started/stopped/rotated/error) to the owning
    * window so the renderer can show toasts and keep its watcher list in sync.
@@ -2006,6 +2252,10 @@ export function registerIpcHandlers(
       },
     ) => {
       try {
+        const owner = getLiveOwner(event.sender);
+        const generation = owner.generation;
+        if (!canIngest(owner, generation))
+          return { ok: false, error: pausedMessage };
         if (!args?.filePath || typeof args.filePath !== "string") {
           return { ok: false, error: "filePath required" };
         }
@@ -2017,13 +2267,23 @@ export function registerIpcHandlers(
           args.filePath,
           {
             onLines: async (lines: string[]) => {
-              if (lines.length === 0) return;
+              if (
+                lines.length === 0 ||
+                !canIngest(owner, generation) ||
+                !owner.watchers.has(watcher.id)
+              )
+                return;
               try {
                 const data = lines.join("\n");
                 const entries = parseTextLines(fileName, data);
                 if (entries.length > 0 && enqueueWatchEntries) {
                   await enqueueWatchEntries(entries, senderId);
                 }
+                if (
+                  !canIngest(owner, generation) ||
+                  !owner.watchers.has(watcher.id)
+                )
+                  return;
                 emitWatchStatus(senderId, {
                   type: "lines",
                   id: watcher.id,
@@ -2039,6 +2299,8 @@ export function registerIpcHandlers(
               }
             },
             onError: (err: Error) => {
+              owner.watchers.delete(watcher.id);
+              if (!canIngest(owner, generation)) return;
               emitWatchStatus(senderId, {
                 type: "error",
                 id: watcher.id,
@@ -2047,6 +2309,11 @@ export function registerIpcHandlers(
               });
             },
             onRotated: () => {
+              if (
+                !canIngest(owner, generation) ||
+                !owner.watchers.has(watcher.id)
+              )
+                return;
               emitWatchStatus(senderId, {
                 type: "rotated",
                 id: watcher.id,
@@ -2060,6 +2327,7 @@ export function registerIpcHandlers(
           },
         );
 
+        owner.watchers.set(watcher.id, args.filePath);
         emitWatchStatus(senderId, {
           type: "started",
           id: watcher.id,
@@ -2078,28 +2346,30 @@ export function registerIpcHandlers(
 
   ipcMain.handle("watch:stop", (event, args: { id: number }) => {
     try {
-      const ok = watchManager.stop(args?.id);
-      if (ok) {
-        emitWatchStatus(event.sender.id, {
-          type: "stopped",
-          id: args.id,
-          filePath: "",
-        });
-      }
-      return { ok };
+      const owner = liveOwners.get(event.sender.id);
+      return owner
+        ? stopOwnedWatcher(owner, args?.id)
+        : { ok: false, error: "File watcher is not owned by this window" };
     } catch (e) {
       return { ok: false, error: String(e) };
     }
   });
 
-  ipcMain.handle("watch:list", () => {
-    return { ok: true, watchers: watchManager.list() };
+  ipcMain.handle("watch:list", (event) => {
+    const owner = liveOwners.get(event.sender.id);
+    return {
+      ok: true,
+      watchers: watchManager
+        .list()
+        .filter((watcher) => owner?.watchers.has(watcher.id)),
+    };
   });
 
   // Stop all watchers when the app quits.
   app.on("before-quit", () => {
     try {
       watchManager.stopAll();
+      for (const owner of liveOwners.values()) owner.watchers.clear();
     } catch {
       // ignore
     }
@@ -2109,8 +2379,6 @@ export function registerIpcHandlers(
   // HTTP Tail – incremental Range-based polling for endpoints like
   // Spring Boot Actuator's `/actuator/logfile`.
   // ============================================================================
-  const httpTailManager = new HttpTailManager();
-
   function emitHttpTailStatus(
     senderId: number,
     payload: {
@@ -2165,6 +2433,10 @@ export function registerIpcHandlers(
       },
     ) => {
       try {
+        const owner = getLiveOwner(event.sender);
+        const generation = owner.generation;
+        if (!canIngest(owner, generation))
+          return { ok: false, error: pausedMessage };
         if (!args?.url || typeof args.url !== "string") {
           return { ok: false, error: "url required" };
         }
@@ -2184,7 +2456,12 @@ export function registerIpcHandlers(
           args.url,
           {
             onLines: async (lines: string[]) => {
-              if (lines.length === 0) return;
+              if (
+                lines.length === 0 ||
+                !canIngest(owner, generation) ||
+                !owner.tails.has(tail.id)
+              )
+                return;
               try {
                 // Only a single JSON *array* must be parsed as one unit – it
                 // cannot be split by lines. NDJSON (one JSON object per line,
@@ -2227,6 +2504,11 @@ export function registerIpcHandlers(
                     i < lines.length;
                     i += HTTP_TAIL_PARSE_CHUNK_LINES
                   ) {
+                    if (
+                      !canIngest(owner, generation) ||
+                      !owner.tails.has(tail.id)
+                    )
+                      return;
                     const slice = lines.slice(
                       i,
                       i + HTTP_TAIL_PARSE_CHUNK_LINES,
@@ -2235,6 +2517,11 @@ export function registerIpcHandlers(
                     if (part.length > 0 && enqueueWatchEntries) {
                       await enqueueWatchEntries(part, senderId);
                     }
+                    if (
+                      !canIngest(owner, generation) ||
+                      !owner.tails.has(tail.id)
+                    )
+                      return;
                     // Report incremental progress so the UI status reflects the
                     // streaming load rather than a single end-of-parse jump.
                     emitHttpTailStatus(senderId, {
@@ -2254,6 +2541,8 @@ export function registerIpcHandlers(
                   }
                   return;
                 }
+                if (!canIngest(owner, generation) || !owner.tails.has(tail.id))
+                  return;
                 emitHttpTailStatus(senderId, {
                   type: "lines",
                   id: tail.id,
@@ -2269,6 +2558,16 @@ export function registerIpcHandlers(
               }
             },
             onError: (err: Error) => {
+              // Terminal tail errors stop the manager immediately after this callback.
+              queueMicrotask(() => {
+                if (
+                  !httpTailManager
+                    .list()
+                    .some((active) => active.id === tail.id)
+                )
+                  owner.tails.delete(tail.id);
+              });
+              if (!canIngest(owner, generation)) return;
               emitHttpTailStatus(senderId, {
                 type: "error",
                 id: tail.id,
@@ -2277,6 +2576,8 @@ export function registerIpcHandlers(
               });
             },
             onRotated: () => {
+              if (!canIngest(owner, generation) || !owner.tails.has(tail.id))
+                return;
               emitHttpTailStatus(senderId, {
                 type: "rotated",
                 id: tail.id,
@@ -2284,6 +2585,8 @@ export function registerIpcHandlers(
               });
             },
             onProgress: (p) => {
+              if (!canIngest(owner, generation) || !owner.tails.has(tail.id))
+                return;
               emitHttpTailStatus(senderId, {
                 type: "progress",
                 id: tail.id,
@@ -2293,6 +2596,8 @@ export function registerIpcHandlers(
               });
             },
             onBackpressure: (state) => {
+              if (!canIngest(owner, generation) || !owner.tails.has(tail.id))
+                return;
               emitHttpTailStatus(senderId, {
                 type: state.paused ? "paused" : "resumed",
                 id: tail.id,
@@ -2302,6 +2607,8 @@ export function registerIpcHandlers(
               });
             },
             onScheduled: (state) => {
+              if (!canIngest(owner, generation) || !owner.tails.has(tail.id))
+                return;
               emitHttpTailStatus(senderId, {
                 type: "scheduled",
                 id: tail.id,
@@ -2319,6 +2626,7 @@ export function registerIpcHandlers(
           },
         );
 
+        owner.tails.set(tail.id, args.url);
         emitHttpTailStatus(senderId, {
           type: "started",
           id: tail.id,
@@ -2337,22 +2645,21 @@ export function registerIpcHandlers(
 
   ipcMain.handle("httpTail:stop", (event, args: { id: number }) => {
     try {
-      const ok = httpTailManager.stop(args?.id);
-      if (ok) {
-        emitHttpTailStatus(event.sender.id, {
-          type: "stopped",
-          id: args.id,
-          url: "",
-        });
-      }
-      return { ok };
+      const owner = liveOwners.get(event.sender.id);
+      return owner
+        ? stopOwnedTail(owner, args?.id)
+        : { ok: false, error: "HTTP tail is not owned by this window" };
     } catch (e) {
       return { ok: false, error: String(e) };
     }
   });
 
-  ipcMain.handle("httpTail:list", () => {
-    return { ok: true, tails: httpTailManager.list() };
+  ipcMain.handle("httpTail:list", (event) => {
+    const owner = liveOwners.get(event.sender.id);
+    return {
+      ok: true,
+      tails: httpTailManager.list().filter((tail) => owner?.tails.has(tail.id)),
+    };
   });
 
   ipcMain.handle("httpTail:getAuthHeader", () => {
@@ -2372,6 +2679,7 @@ export function registerIpcHandlers(
   app.on("before-quit", () => {
     try {
       httpTailManager.stopAll();
+      for (const owner of liveOwners.values()) owner.tails.clear();
     } catch {
       // ignore
     }

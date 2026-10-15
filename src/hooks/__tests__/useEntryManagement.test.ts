@@ -7,6 +7,10 @@ import {
 import { pagedLogRepository } from "../../store/paged/session";
 import { IPC_BATCH_SIZE } from "../../constants";
 import type { IngestionLimits } from "../ingestionBudget";
+import {
+  DEFAULT_LIVE_ENTRY_LIMIT,
+  LiveIngestionLimitError,
+} from "../../utils/liveIngestionLimit";
 
 const hooks = vi.hoisted(() => ({
   slots: [] as unknown[],
@@ -72,9 +76,12 @@ vi.mock("../../utils/logger", () => ({
   default: { warn: vi.fn(), error: vi.fn() },
 }));
 
-function render(ingestionLimits?: Partial<IngestionLimits>) {
+function render(
+  ingestionLimits?: Partial<IngestionLimits>,
+  liveEntryLimit = DEFAULT_LIVE_ENTRY_LIMIT,
+) {
   hooks.cursor = 0;
-  return useEntryManagement({ marksMap: {}, ingestionLimits });
+  return useEntryManagement({ marksMap: {}, ingestionLimits, liveEntryLimit });
 }
 
 function input(timestamp: number, message = `message-${timestamp}`) {
@@ -101,6 +108,151 @@ describe("getMetadataPublishDelay", () => {
     expect(getMetadataPublishDelay(100_000)).toBe(100);
     expect(getMetadataPublishDelay(499_999)).toBe(100);
     expect(getMetadataPublishDelay(500_000)).toBe(250);
+  });
+
+  describe("live intake limit", () => {
+    it("pauses exactly at the limit without poisoning storage or deleting rows", async () => {
+      const hook = render(undefined, 3);
+      await expect(
+        hook.appendEntriesAsync([input(1), input(2), input(3)], { live: true }),
+      ).resolves.toBe(3);
+      expect(render(undefined, 3).liveLimitReached).toBe(true);
+      expect(render(undefined, 3).liveEntryCount).toBe(3);
+      const previous = render(undefined, 3).entries;
+      await expect(
+        hook.appendEntriesAsync([input(4)], { live: true }),
+      ).rejects.toBeInstanceOf(LiveIngestionLimitError);
+      expect(render(undefined, 3).storageError).toBeNull();
+      expect(render(undefined, 3).entries).toBe(previous);
+      expect(pagedLogRepository.putMany).toHaveBeenCalledTimes(1);
+    });
+
+    it("persists only the available prefix and reports how many live rows were stored", async () => {
+      const hook = render(undefined, 3);
+      const append = hook.appendEntriesAsync(
+        [input(1), input(2), input(3), input(4), input(5)],
+        { live: true },
+      );
+      await expect(append).rejects.toMatchObject({
+        name: "LiveIngestionLimitError",
+        storedEntries: 3,
+        limit: 3,
+      });
+      expect([...render(undefined, 3).entries.ids]).toEqual([1, 2, 3]);
+      expect(render(undefined, 3).storageError).toBeNull();
+      expect((await hook.repository.getPayloads([4])).size).toBe(0);
+    });
+
+    it("serializes concurrent live producers while still admitting queued imports", async () => {
+      const hook = render(undefined, 3);
+      const results = await Promise.allSettled([
+        hook.appendEntriesAsync([input(1), input(2)], { live: true }),
+        hook.appendEntriesAsync([input(3), input(4)], { live: true }),
+        hook.appendEntriesAsync([input(5), input(6), input(7)]),
+        hook.appendEntriesAsync([input(8)], { live: true }),
+      ]);
+      expect(results.map((result) => result.status)).toEqual([
+        "fulfilled",
+        "rejected",
+        "fulfilled",
+        "rejected",
+      ]);
+      await vi.advanceTimersByTimeAsync(100);
+      expect(render(undefined, 3).liveEntryCount).toBe(3);
+      expect(render(undefined, 3).entries.length).toBe(6);
+      expect(render(undefined, 3).storageError).toBeNull();
+    });
+
+    it("counts only persisted unique live entries, not duplicates or imports", async () => {
+      const hook = render(undefined, 3);
+      await hook.appendEntriesAsync([input(1), input(2), input(3), input(4)]);
+      await expect(
+        hook.appendEntriesAsync([input(1), input(5), input(5)], { live: true }),
+      ).resolves.toBe(1);
+      await vi.advanceTimersByTimeAsync(100);
+      expect(render(undefined, 3).liveEntryCount).toBe(1);
+      expect(render(undefined, 3).liveLimitReached).toBe(false);
+      expect(render(undefined, 3).entries.length).toBe(5);
+    });
+
+    it("does not classify file imports by source name or persist transport markers", async () => {
+      const hook = render(undefined, 1);
+      await hook.appendEntriesAsync([input(1)], { live: true });
+      await expect(
+        hook.appendEntriesAsync([
+          { ...input(2), source: "tcp:imported", _ingestionKind: "live" },
+          { ...input(3), source: "http:imported", _ingestionKind: "import" },
+        ]),
+      ).resolves.toBe(2);
+      expect(render(undefined, 1).liveEntryCount).toBe(1);
+      for (const call of vi.mocked(pagedLogRepository.putMany).mock.calls) {
+        for (const entry of call[0]) {
+          expect(entry).not.toHaveProperty("_ingestionKind");
+        }
+      }
+    });
+
+    it("counts prefixes across multiple persistence transactions", async () => {
+      const limit = IPC_BATCH_SIZE + 1;
+      const hook = render(undefined, limit);
+      const rows = Array.from({ length: limit + 2 }, (_, index) =>
+        input(index),
+      );
+      await expect(
+        hook.appendEntriesAsync(rows, { live: true }),
+      ).rejects.toMatchObject({ storedEntries: limit });
+      expect(render(undefined, limit).liveEntryCount).toBe(limit);
+      expect(
+        vi
+          .mocked(pagedLogRepository.putMany)
+          .mock.calls.map(([batch]) => batch.length),
+      ).toEqual([IPC_BATCH_SIZE, 1]);
+    });
+
+    it("can raise or lower the limit without discarding existing data", async () => {
+      let hook = render(undefined, 2);
+      await hook.appendEntriesAsync([input(1), input(2)], { live: true });
+      hook = render(undefined, 3);
+      expect(hook.liveLimitReached).toBe(false);
+      await expect(
+        hook.appendEntriesAsync([input(3)], { live: true }),
+      ).resolves.toBe(1);
+      hook = render(undefined, 1);
+      expect(hook.liveLimitReached).toBe(true);
+      expect(hook.entries.length).toBe(3);
+      await expect(
+        hook.appendEntriesAsync([input(4)], { live: true }),
+      ).rejects.toBeInstanceOf(LiveIngestionLimitError);
+    });
+
+    it("resets the live budget only after a successful clear", async () => {
+      const hook = render(undefined, 1);
+      await hook.appendEntriesAsync([input(1)], { live: true });
+      vi.mocked(pagedLogRepository.clear).mockRejectedValueOnce(
+        new Error("clear failed"),
+      );
+      await expect(hook.clearEntries()).rejects.toThrow("clear failed");
+      expect(render(undefined, 1).liveEntryCount).toBe(1);
+      await hook.clearEntries();
+      expect(render(undefined, 1).liveEntryCount).toBe(0);
+      expect(render(undefined, 1).liveLimitReached).toBe(false);
+      await expect(
+        hook.appendEntriesAsync([input(2)], { live: true }),
+      ).resolves.toBe(1);
+    });
+
+    it("keeps storage failures distinct from the live limit", async () => {
+      const hook = render(undefined, 1);
+      vi.mocked(pagedLogRepository.putMany).mockRejectedValueOnce(
+        new Error("quota"),
+      );
+      await expect(
+        hook.appendEntriesAsync([input(1)], { live: true }),
+      ).rejects.toThrow("quota");
+      expect(render(undefined, 1).liveEntryCount).toBe(0);
+      expect(render(undefined, 1).liveLimitReached).toBe(false);
+      expect(render(undefined, 1).storageError?.message).toContain("quota");
+    });
   });
 
   describe("useEntryManagement publications", () => {

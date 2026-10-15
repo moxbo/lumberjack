@@ -157,9 +157,12 @@ export class NetworkService {
    * Send log entries to the callback. The consumer owns delivery timeouts;
    * a fixed deadline here would reset sources whose sink is slow but alive.
    */
-  private async sendLogs(entries: LogEntry[]): Promise<void> {
-    if (this.logCallback && entries.length > 0) {
-      const delivery = Promise.resolve().then(() => this.logCallback!(entries));
+  private async sendLogs(
+    entries: LogEntry[],
+    consume: LogCallback | null = this.logCallback,
+  ): Promise<void> {
+    if (consume && entries.length > 0) {
+      const delivery = Promise.resolve().then(() => consume(entries));
       this.logDeliveries.add(delivery);
       try {
         await delivery;
@@ -820,11 +823,13 @@ export class NetworkService {
    * Start HTTP polling
    * @param url - URL to poll
    * @param intervalSec - Polling interval in seconds (minimum 1 second)
+   * @param consume - Optional owned-window sink, including any required file logging
    */
   async httpStartPoll(
     url: string,
     intervalSec: number,
     onError?: (id: number, error: Error) => void,
+    consume?: LogCallback,
   ): Promise<{ ok: boolean; id?: number; error?: string }> {
     // Convert seconds to milliseconds, minimum 1 second (1000ms)
     const intervalMs = Math.max(1, intervalSec) * 1000;
@@ -881,7 +886,7 @@ export class NetworkService {
             const fresh = this.dedupeNewEntries(entries, nextSeen);
             if (fresh.length) {
               try {
-                await this.sendLogs(fresh);
+                await this.sendLogs(fresh, consume);
                 delivered = true;
               } catch (error) {
                 if (!isPollerActive()) return;

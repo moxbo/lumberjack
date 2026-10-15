@@ -32,6 +32,7 @@ import type {
   TcpStatus,
   WindowTitleResult,
 } from "./src/types/ipc";
+import { isLiveAppendRejection } from "./src/utils/appendRejection";
 
 // Must stay well below the main-process renderer ack deadline (30 s).
 const APPEND_PROGRESS_INTERVAL_MS = 10_000;
@@ -138,6 +139,9 @@ const api: ElectronAPI = {
     ipcRenderer.send("logs:streamCancel", { sessionId });
   },
 
+  liveSetPaused: (paused: boolean): Promise<Result<void>> =>
+    ipcRenderer.invoke("live:setPaused", paused),
+
   // TCP operations
   tcpStart: (port: number): void => {
     ipcRenderer.send("tcp:start", { port });
@@ -213,9 +217,18 @@ const api: ElectronAPI = {
           },
           (error) => {
             if (batchId) {
+              const liveLimit =
+                entries.length > 0 &&
+                entries.every((entry) => entry._ingestionKind !== "import") &&
+                isLiveAppendRejection(error);
               ipcRenderer.send("logs:appendAck", {
                 batchId,
-                error: error instanceof Error ? error.message : String(error),
+                error: liveLimit
+                  ? error.message
+                  : error instanceof Error
+                    ? error.message
+                    : String(error),
+                ...(liveLimit ? { failureKind: error.kind } : {}),
               });
             }
           },

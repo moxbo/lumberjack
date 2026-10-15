@@ -1,5 +1,9 @@
 import type { Settings } from "../types/ipc";
 import type { SettingsFormState, ThemeMode } from "../types/renderer";
+import {
+  DEFAULT_LIVE_ENTRY_LIMIT,
+  isValidLiveEntryLimit,
+} from "./liveIngestionLimit";
 
 const MB = 1024 * 1024;
 const numberOr = (value: unknown, fallback: number): number => {
@@ -37,6 +41,9 @@ export function normalizeSettingsForm(
     elasticMaxParallel: Math.max(1, numberOr(settings.elasticMaxParallel, 1)),
     allowPrerelease: !!settings.allowPrerelease,
     heapSizeMB: heapSize(settings.heapSizeMB),
+    liveEntryLimit: isValidLiveEntryLimit(settings.liveEntryLimit)
+      ? settings.liveEntryLimit
+      : DEFAULT_LIVE_ENTRY_LIMIT,
   };
 }
 
@@ -46,6 +53,7 @@ export function settingsFormPatch(
 ): Partial<Settings> | null {
   const port = Number(form.tcpPort);
   if (!Number.isInteger(port) || port < 1 || port > 65535) return null;
+  if (!isValidLiveEntryLimit(form.liveEntryLimit)) return null;
   const patch: Partial<Settings> = {
     tcpPort: port,
     httpUrl: form.httpUrl.trim(),
@@ -64,6 +72,7 @@ export function settingsFormPatch(
     ),
     allowPrerelease: form.allowPrerelease,
     heapSizeMB: heapSize(form.heapSizeMB),
+    liveEntryLimit: form.liveEntryLimit,
   };
   if (form.elasticPassClear) patch.elasticPassClear = true;
   else if (form.elasticPassNew.trim())

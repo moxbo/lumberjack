@@ -131,6 +131,7 @@ export interface SettingsFormState {
   elasticMaxParallel: number;
   allowPrerelease: boolean;
   heapSizeMB: number;
+  liveEntryLimit: number;
 }
 
 /**

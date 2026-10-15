@@ -127,6 +127,35 @@ progress follow persistence. Do not acknowledge an errored batch or automaticall
 replay it: an earlier transaction may already have committed. `clearEntries`
 returns a promise; replacement imports must await its successful completion.
 
+## Live intake limit
+
+The persisted `liveEntryLimit` setting defaults to 500,000 unique live entries
+per window's current dataset. `useEntryManagement` enforces it inside the
+serialized persistence queue, after deduplication, for `appendEntriesAsync`
+calls with `{ live: true }`. Imported files, manual HTTP loads and Elasticsearch
+searches do not consume this allowance and remain usable when live intake pauses.
+An entry-count limit is not a process-wide memory limit.
+
+At the limit, existing entries remain intact and available for search/export.
+An overflowing batch persists only the available prefix and rejects with
+`LiveIngestionLimitError`; this must not trigger storage-failure recovery or
+automatic replay. In-flight live batches cannot exceed the remaining allowance.
+The UI shows utilization and warns that messages arriving while paused may be
+lost. Raising the limit or successfully clearing the dataset releases the intake
+gate; sources must then be restarted manually. Lowering a limit below the current
+live count pauses intake without deleting existing data.
+
+Main-process delivery stamps `_ingestionKind` on append batches, preserving
+import/live boundaries when batching. The renderer removes this transport field
+before persistence. Never infer live provenance from an entry's source string:
+an imported export can contain TCP or HTTP source names.
+
+Cap failures remain negative ACKs, not success acknowledgements of partially
+persisted batches. A structured `live-entry-limit` rejection lets the shared,
+bounded window queue reject pending live receipts while continuing untouched
+imports. Never replay acknowledged prefixes or rejected live batches. Ordinary
+persistence failures still terminate delivery across both origins.
+
 ## Source backpressure
 
 TCP delivery awaits file logging and the existing renderer `logs:appendAck`

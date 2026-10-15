@@ -19,7 +19,10 @@ import {
 const ipc = vi.hoisted(() => ({ handle: vi.fn(), on: vi.fn() }));
 vi.mock("electron", () => ({
   app: { on: vi.fn() },
-  BrowserWindow: {},
+  BrowserWindow: {
+    fromWebContents: vi.fn(() => null),
+    getAllWindows: vi.fn(() => []),
+  },
   dialog: {},
   Notification: {},
   safeStorage: {},
@@ -287,6 +290,7 @@ describe("terminal ingestion error notifications", () => {
         },
       ],
       42,
+      "import",
     );
     release();
     await expect(loading).resolves.toEqual({ ok: true, entries: [] });
@@ -301,7 +305,11 @@ describe("terminal ingestion error notifications", () => {
       },
     );
     register({}, network);
-    const sender = { isDestroyed: () => false, send: vi.fn() };
+    const sender = Object.assign(new EventEmitter(), {
+      id: 42,
+      isDestroyed: () => false,
+      send: vi.fn(),
+    });
     const handler = ipc.handle.mock.calls.find(
       ([channel]) => channel === "http:startPoll",
     )![1];

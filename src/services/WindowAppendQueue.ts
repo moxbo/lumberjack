@@ -1,6 +1,7 @@
 interface EntryBlock<T> {
   entries: readonly T[];
   offset: number;
+  failureGroup?: string;
   next: EntryBlock<T> | null;
 }
 
@@ -12,7 +13,11 @@ export class AppendBlocks<T> {
   private tail: EntryBlock<T> | null = null;
   length = 0;
 
-  enqueue(entries: readonly T[], maxPending: number): void {
+  enqueue(
+    entries: readonly T[],
+    maxPending: number,
+    failureGroup?: string,
+  ): void {
     if (!entries.length) return;
     if (this.length + entries.length > maxPending) {
       throw new Error(
@@ -25,6 +30,7 @@ export class AppendBlocks<T> {
       const block: EntryBlock<T> = {
         entries: entries.slice(start, start + BLOCK_SIZE),
         offset: 0,
+        failureGroup,
         next: null,
       };
       if (this.tail) this.tail.next = block;
@@ -76,6 +82,33 @@ export class AppendBlocks<T> {
     drained.length = 0;
   }
 
+  failureGroupAt(index: number): string | undefined {
+    if (index < 0) return undefined;
+    for (let block = this.head; block; block = block.next) {
+      const available = block.entries.length - block.offset;
+      if (index < available) return block.failureGroup;
+      index -= available;
+    }
+    return undefined;
+  }
+
+  removeFailureGroup(group: string): void {
+    let previous: EntryBlock<T> | null = null;
+    for (let block = this.head; block;) {
+      const next = block.next;
+      if (block.failureGroup === group) {
+        this.length -= block.entries.length - block.offset;
+        if (previous) previous.next = next;
+        else this.head = next;
+        if (this.tail === block) this.tail = previous;
+        block.next = null;
+      } else {
+        previous = block;
+      }
+      block = next;
+    }
+  }
+
   *batches(batchSize: number): IterableIterator<T[]> {
     if (!Number.isInteger(batchSize) || batchSize < 1) {
       throw new Error("Batch size must be a positive integer");
@@ -113,6 +146,7 @@ export class WindowAppendQueue<T> {
   private receipts: Array<{
     remaining: number;
     bytes: number;
+    failureGroup?: string;
     resolve: () => void;
     reject: (error: Error) => void;
     timer: ReturnType<typeof setTimeout>;
@@ -150,7 +184,12 @@ export class WindowAppendQueue<T> {
       : Promise.resolve();
   }
 
-  enqueue(entries: readonly T[], maxPending = this.limit): Promise<void> {
+  /** Failure groups share this queue's existing count and byte admission budget. */
+  enqueue(
+    entries: readonly T[],
+    maxPending = this.limit,
+    failureGroup?: string,
+  ): Promise<void> {
     if (this.disposed)
       return Promise.reject(new Error("Window queue disposed"));
     if (!entries.length) return Promise.resolve();
@@ -161,7 +200,7 @@ export class WindowAppendQueue<T> {
     ) {
       return Promise.reject(new WindowAppendCapacityError());
     }
-    this.blocks.enqueue(entries, Infinity);
+    this.blocks.enqueue(entries, Infinity, failureGroup);
     this.pendingCount += entries.length;
     this.pendingBytes += bytes;
     return new Promise<void>((resolve, reject) => {
@@ -171,6 +210,7 @@ export class WindowAppendQueue<T> {
       this.receipts.push({
         remaining: entries.length,
         bytes,
+        failureGroup,
         resolve,
         reject,
         timer,
@@ -208,10 +248,31 @@ export class WindowAppendQueue<T> {
     }
   }
 
+  private rejectFailureGroup(group: string, error: Error): void {
+    const retained: typeof this.receipts = [];
+    for (const receipt of this.receipts) {
+      if (receipt.failureGroup !== group) {
+        retained.push(receipt);
+        continue;
+      }
+      this.pendingCount -= receipt.remaining;
+      this.pendingBytes -= receipt.bytes;
+      clearTimeout(receipt.timer);
+      receipt.reject(error);
+    }
+    this.receipts = retained;
+    this.blocks.removeFailureGroup(group);
+  }
+
+  /**
+   * Isolation rejects producer receipts in the failed group while the pump
+   * continues only untouched input from other groups. Failed data is not replayed.
+   */
   flush(
     deliver: (blocks: AppendBlocks<T>) => Promise<void>,
     acknowledgedEntries: (error: unknown) => number,
     retry = true,
+    isolatedFailureGroup?: (error: unknown) => string | undefined,
   ): Promise<void> {
     if (this.inFlight) return this.inFlight;
     if (this.disposed || !this.blocks.length) return Promise.resolve();
@@ -232,6 +293,21 @@ export class WindowAppendQueue<T> {
               Math.max(0, acknowledgedEntries(error)),
             );
             this.acknowledge(count);
+            const group = isolatedFailureGroup?.(error);
+            if (
+              !this.disposed &&
+              group !== undefined &&
+              drained.failureGroupAt(count) === group
+            ) {
+              // Only the untouched suffix is restored. Failed-origin entries are
+              // rejected and removed, never replayed or acknowledged as persisted.
+              this.blocks.requeue(drained, count);
+              this.rejectFailureGroup(
+                group,
+                error instanceof Error ? error : new Error(String(error)),
+              );
+              continue;
+            }
             if (retry && !this.disposed) this.blocks.requeue(drained, count);
             else
               this.dispose(
@@ -247,7 +323,12 @@ export class WindowAppendQueue<T> {
         // ACK continuations can enqueue after the drain's last empty check.
         // Restart only successful drains; failed retryable suffixes stay queued.
         if (completed && !this.disposed && this.blocks.length) {
-          return this.flush(deliver, acknowledgedEntries, retry);
+          return this.flush(
+            deliver,
+            acknowledgedEntries,
+            retry,
+            isolatedFailureGroup,
+          );
         }
         return undefined;
       });

@@ -9,6 +9,7 @@ import {
 import logger from "../utils/logger";
 import { rendererPerf } from "../utils/rendererPerf";
 import { nativeConfirm } from "../utils/nativeDialog";
+import { isValidLiveEntryLimit } from "../utils/liveIngestionLimit";
 import {
   getSettings,
   patchSettings,
@@ -142,6 +143,10 @@ export function useSettings({ t, showAlert, onLoaded }: UseSettingsOptions) {
   );
 
   const saveSettingsModal = useStableCallback(async () => {
+    if (!isValidLiveEntryLimit(form.liveEntryLimit)) {
+      showAlert(t("settings.performance.liveEntryLimitInvalid"));
+      return;
+    }
     const patch = settingsFormPatch(form, current.elasticMaxParallel);
     if (!patch) {
       showAlert(t("errors.invalidTcpPort"));
@@ -246,6 +251,7 @@ export function useSettings({ t, showAlert, onLoaded }: UseSettingsOptions) {
   return {
     settingsLoaded,
     tcpPort: current.tcpPort,
+    liveEntryLimit: current.liveEntryLimit,
     canTcpControlWindow,
     setCanTcpControlWindow,
     httpUrl: current.httpUrl,

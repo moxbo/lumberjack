@@ -3,6 +3,11 @@
  * Provides type-safe settings validation and migration
  */
 
+import {
+  DEFAULT_LIVE_ENTRY_LIMIT,
+  isValidLiveEntryLimit,
+} from "./liveIngestionLimit";
+
 /**
  * Constants for validation bounds
  */
@@ -163,6 +168,12 @@ export const SETTINGS_SCHEMA = {
     type: "number",
     default: 3,
     validate: (val: number) => Number.isInteger(val) && val >= 0 && val <= 99,
+  },
+
+  liveEntryLimit: {
+    type: "number",
+    default: DEFAULT_LIVE_ENTRY_LIMIT,
+    validate: isValidLiveEntryLimit,
   },
 
   // Elasticsearch settings

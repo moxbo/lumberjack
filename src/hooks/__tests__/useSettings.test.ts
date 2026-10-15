@@ -9,6 +9,7 @@ import {
 } from "../../utils/typedApi";
 import { nativeConfirm } from "../../utils/nativeDialog";
 import type { Settings } from "../../types/ipc";
+import { DEFAULT_LIVE_ENTRY_LIMIT } from "../../utils/liveIngestionLimit";
 
 const hooks = vi.hoisted(() => ({
   slots: [] as unknown[],
@@ -151,6 +152,7 @@ describe("useSettings integration", () => {
     const settings = {
       isMaximized: false,
       tcpPort: 6123,
+      liveEntryLimit: 123456,
       httpUrl: "https://logs.test",
       httpPollInterval: 7,
       httpTailEmitInitial: true,
@@ -177,6 +179,7 @@ describe("useSettings integration", () => {
     expect(render()).toMatchObject({
       settingsLoaded: true,
       tcpPort: 6123,
+      liveEntryLimit: 123456,
       httpInterval: 7,
       httpTailEmitInitial: true,
       httpTailAllowInsecureSSL: true,
@@ -234,6 +237,7 @@ describe("useSettings integration", () => {
       elasticMaxParallel: 6,
       elasticPassNew: "new-password",
       heapSizeMB: 8192,
+      liveEntryLimit: 750000,
       allowPrerelease: true,
     });
     render((key) => `translated:${key}`);
@@ -242,6 +246,7 @@ describe("useSettings integration", () => {
     hook = render();
     expect(hook).toMatchObject({
       tcpPort: 6124,
+      liveEntryLimit: 750000,
       elasticMaxParallel: 6,
       elasticHasPass: true,
       showSettings: false,
@@ -252,6 +257,74 @@ describe("useSettings integration", () => {
       "translated:settings.performance.restartRequired",
     );
     expect(appRelaunch).toHaveBeenCalledOnce();
+  });
+
+  it.each([undefined, 0, -1, 1.5, Number.MAX_SAFE_INTEGER + 1])(
+    "exports the default for missing or invalid stored live entry limit %s",
+    async (liveEntryLimit) => {
+      vi.mocked(getSettings).mockResolvedValue({
+        liveEntryLimit,
+      } as Settings);
+      await mount();
+      expect(render().liveEntryLimit).toBe(DEFAULT_LIVE_ENTRY_LIMIT);
+      await render().openSettingsModal("features");
+      expect(render().form.liveEntryLimit).toBe(DEFAULT_LIVE_ENTRY_LIMIT);
+    },
+  );
+
+  it.each([0, -1, 1.5, NaN, Infinity, Number.MAX_SAFE_INTEGER + 1])(
+    "reports invalid live entry limit %s without misreporting the TCP port",
+    async (liveEntryLimit) => {
+      await mount();
+      await render().openSettingsModal("features");
+      const hook = render();
+      hook.setForm({ ...hook.form, liveEntryLimit });
+      await render().saveSettingsModal();
+      expect(showAlert).toHaveBeenCalledExactlyOnceWith(
+        "settings.performance.liveEntryLimitInvalid",
+      );
+      expect(patchSettings).not.toHaveBeenCalled();
+      expect(autoUpdaterSetAllowPrerelease).not.toHaveBeenCalled();
+      expect(render()).toMatchObject({
+        liveEntryLimit: DEFAULT_LIVE_ENTRY_LIMIT,
+        showSettings: true,
+      });
+    },
+  );
+
+  it("saves a corrected live entry limit without an application restart", async () => {
+    await mount();
+    await render().openSettingsModal("features");
+    let hook = render();
+    hook.setForm({ ...hook.form, liveEntryLimit: 0 });
+    await render().saveSettingsModal();
+    expect(patchSettings).not.toHaveBeenCalled();
+
+    showAlert.mockClear();
+    hook = render();
+    hook.setForm({ ...hook.form, liveEntryLimit: 1 });
+    await render().saveSettingsModal();
+    expect(showAlert).not.toHaveBeenCalled();
+    expect(patchSettings).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({ liveEntryLimit: 1 }),
+    );
+    expect(render()).toMatchObject({
+      liveEntryLimit: 1,
+      showSettings: false,
+    });
+    await vi.advanceTimersByTimeAsync(100);
+    expect(nativeConfirm).not.toHaveBeenCalled();
+    expect(appRelaunch).not.toHaveBeenCalled();
+  });
+
+  it("still reports invalid TCP ports when the live entry limit is valid", async () => {
+    await mount();
+    await render().openSettingsModal();
+    const hook = render();
+    hook.setForm({ ...hook.form, tcpPort: 0 });
+    await render().saveSettingsModal();
+    expect(showAlert).toHaveBeenCalledExactlyOnceWith("errors.invalidTcpPort");
+    expect(patchSettings).not.toHaveBeenCalled();
   });
 
   it("keeps the modal and committed settings unchanged on failed saves", async () => {

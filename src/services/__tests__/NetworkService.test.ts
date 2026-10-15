@@ -270,6 +270,58 @@ describe("source backpressure", () => {
     }
   });
 
+  it("awaits a per-poll consumer without bypassing delivery tracking or changing the default sink", async () => {
+    vi.spyOn(globalThis, "fetch").mockImplementation(
+      async () => new Response("entry\n"),
+    );
+    const service = new NetworkService();
+    service.setParsers(parsers);
+    const defaultSink = vi.fn();
+    service.setLogCallback(defaultSink);
+    let release!: () => void;
+    const persisted = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const consume = vi.fn(() => persisted);
+    const first = await service.httpStartPoll(
+      "http://example.test/owned",
+      1,
+      undefined,
+      consume,
+    );
+    try {
+      await vi.waitFor(() => expect(consume).toHaveBeenCalledOnce());
+      expect(defaultSink).not.toHaveBeenCalled();
+      let drained = false;
+      const draining = service.waitForPendingLogs().then(() => {
+        drained = true;
+      });
+      service.httpStopPoll(first.id!);
+      await Promise.resolve();
+      expect(drained).toBe(false);
+      release();
+      await draining;
+      expect(drained).toBe(true);
+
+      const second = await service.httpStartPoll(
+        "http://example.test/default",
+        1,
+      );
+      await vi.waitFor(() => expect(defaultSink).toHaveBeenCalledOnce());
+      service.httpStopPoll(second.id!);
+      expect(defaultSink).toHaveBeenCalledWith([
+        expect.objectContaining({
+          message: "entry",
+          source: "http://example.test/default",
+        }),
+      ]);
+    } finally {
+      release();
+      service.stopAllHttpPollers();
+      await service.waitForPendingLogs();
+    }
+  });
+
   it.each(["text", "array"] as const)(
     "polls large %s responses with backpressure and cancels on stop",
     async (format) => {

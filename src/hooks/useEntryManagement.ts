@@ -32,16 +32,23 @@ import {
   IngestionBudget,
   type IngestionLimits,
 } from "./ingestionBudget";
+import {
+  DEFAULT_LIVE_ENTRY_LIMIT,
+  isValidLiveEntryLimit,
+  LiveIngestionLimitError,
+} from "../utils/liveIngestionLimit";
 
 interface UseEntryManagementOptions {
   marksMap: Record<string, string>;
   projectionBridgeRef?: { current: ProjectionBridge | null };
   ingestionLimits?: Partial<IngestionLimits>;
+  liveEntryLimit?: number;
 }
 
 interface AppendEntriesOptions {
   ignoreExistingForElastic?: boolean;
   onProgress?: (processed: number, total: number) => void;
+  live?: boolean;
 }
 
 export interface PagedEntryMetadata {
@@ -68,12 +75,19 @@ export function useEntryManagement({
   marksMap,
   projectionBridgeRef: externalBridgeRef,
   ingestionLimits,
+  liveEntryLimit = DEFAULT_LIVE_ENTRY_LIMIT,
 }: UseEntryManagementOptions) {
+  if (!isValidLiveEntryLimit(liveEntryLimit))
+    throw new Error("Live entry limit must be a positive safe integer");
   const metadataStoreRef = useRef(new MetadataStore());
   const [entries, setMetadataEntries] = useState(() =>
     metadataStoreRef.current.publish(),
   );
   const [storageError, setStorageError] = useState<Error | null>(null);
+  const [liveEntryCount, setLiveEntryCount] = useState(0);
+  const liveEntryCountRef = useRef(0);
+  const liveEntryLimitRef = useRef(liveEntryLimit);
+  liveEntryLimitRef.current = liveEntryLimit;
   const [clearPhase, setClearPhase] = useState<"waiting" | "clearing" | null>(
     null,
   );
@@ -158,6 +172,7 @@ export function useEntryManagement({
     const snapshot = metadataStoreRef.current.publish();
     publishedMetadataCountRef.current = snapshot.length;
     setMetadataEntries(snapshot);
+    setLiveEntryCount(liveEntryCountRef.current);
   }, []);
 
   const scheduleMetadataPublish = useCallback((): void => {
@@ -228,6 +243,11 @@ export function useEntryManagement({
         if (pausedErrorRef.current) throw pausedErrorRef.current;
       };
       assertActive();
+      if (
+        options?.live &&
+        liveEntryCountRef.current >= liveEntryLimitRef.current
+      )
+        throw new LiveIngestionLimitError(liveEntryLimitRef.current);
       const repository = repositoryRef.current;
 
       const batchKeys = new Set<string>();
@@ -263,7 +283,7 @@ export function useEntryManagement({
         existing = await repository.findExistingSignatures(candidates);
       }
       assertActive();
-      const accepted = prepared
+      let accepted = prepared
         .filter(
           ({ source, signature, deduplicate, ignoreExisting }) =>
             !deduplicate ||
@@ -274,10 +294,17 @@ export function useEntryManagement({
           const entry = { ...input };
           delete entry.id;
           delete entry._id;
+          delete entry._ingestionKind;
           entry.signature = signature;
           return entry;
         });
       if (accepted.length === 0) return 0;
+      const limit = liveEntryLimitRef.current;
+      const remaining = Math.max(0, limit - liveEntryCountRef.current);
+      const limitExceeded =
+        options?.live === true && accepted.length > remaining;
+      if (limitExceeded) accepted = accepted.slice(0, remaining);
+      if (accepted.length === 0) throw new LiveIngestionLimitError(limit);
 
       try {
         LoggingStore.addEvents(accepted as any);
@@ -347,10 +374,24 @@ export function useEntryManagement({
       metadata.sort(compareByTimestampId);
 
       metadataStoreRef.current.appendSorted(metadata);
-      scheduleMetadataPublish();
+      if (options?.live) liveEntryCountRef.current += metadata.length;
+      if (
+        options?.live &&
+        liveEntryCountRef.current >= liveEntryLimitRef.current
+      ) {
+        publishMetadata();
+        logger.warn("Live entry limit reached; live intake is paused", {
+          count: liveEntryCountRef.current,
+          limit: liveEntryLimitRef.current,
+        });
+      } else {
+        scheduleMetadataPublish();
+      }
+      if (limitExceeded)
+        throw new LiveIngestionLimitError(limit, metadata.length);
       return metadata.length;
     },
-    [scheduleMetadataPublish],
+    [publishMetadata, scheduleMetadataPublish],
   );
 
   const drainQueue = useCallback(async (): Promise<void> => {
@@ -371,7 +412,10 @@ export function useEntryManagement({
           const stored = await operation;
           batch.resolve(stored ?? 0);
         } catch (error) {
-          const normalized = pauseStorage(error, batch.generation);
+          const normalized =
+            error instanceof LiveIngestionLimitError
+              ? error
+              : pauseStorage(error, batch.generation);
           batch.reject(normalized);
         } finally {
           batch.entries = [];
@@ -399,6 +443,13 @@ export function useEntryManagement({
       if (!Array.isArray(newEntries) || newEntries.length === 0) {
         return Promise.resolve(0);
       }
+      if (
+        options?.live &&
+        liveEntryCountRef.current >= liveEntryLimitRef.current
+      )
+        return Promise.reject(
+          new LiveIngestionLimitError(liveEntryLimitRef.current),
+        );
       let release: () => void;
       try {
         release = budgetRef.current.reserve(newEntries);
@@ -450,7 +501,14 @@ export function useEntryManagement({
             resolveProducer(storedTotal);
           } catch (error) {
             rejectProducer(
-              error instanceof Error ? error : new Error(String(error)),
+              error instanceof LiveIngestionLimitError
+                ? new LiveIngestionLimitError(
+                    error.limit,
+                    storedTotal + error.storedEntries,
+                  )
+                : error instanceof Error
+                  ? error
+                  : new Error(String(error)),
             );
           } finally {
             producer.entries = [];
@@ -467,6 +525,7 @@ export function useEntryManagement({
     (newEntries: any[], options?: AppendEntriesOptions) => {
       const generation = generationRef.current;
       void appendEntriesAsync(newEntries, options).catch((error) => {
+        if (error instanceof LiveIngestionLimitError) return;
         if (mountedRef.current && generation === generationRef.current) {
           setStorageError(
             error instanceof Error ? error : new Error(String(error)),
@@ -511,6 +570,8 @@ export function useEntryManagement({
         metadataByIdRef.current = [];
         metadataStoreRef.current.clear();
         publishedMetadataCountRef.current = 0;
+        liveEntryCountRef.current = 0;
+        setLiveEntryCount(0);
         idsBySignatureRef.current.clear();
         setMetadataEntries(metadataStoreRef.current.publish());
         clearHighlightCache();
@@ -561,6 +622,9 @@ export function useEntryManagement({
     clearPhase,
     isClearing: clearPhase !== null,
     storageError,
+    liveEntryCount,
+    liveEntryLimit,
+    liveLimitReached: liveEntryCount >= liveEntryLimit,
     usesPagedStorage,
     repository: repositoryRef.current,
     getMetadata,

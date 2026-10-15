@@ -38,6 +38,8 @@ import type {
   WindowPermsResult,
   WindowTitleResult,
 } from "../types/ipc";
+import { LiveIngestionLimitError } from "./liveIngestionLimit";
+import type { LiveAppendRejection } from "./appendRejection";
 
 // ─────────────────────────── Settings ───────────────────────────
 
@@ -357,6 +359,20 @@ export function streamCancel(sessionId: string): void {
 
 // ─────────────────────────── TCP ───────────────────────────
 
+/** Stops this window's live sources, or reopens admission without restarting. */
+export async function liveSetPaused(paused: boolean): Promise<Result<void>> {
+  if (!window.api?.liveSetPaused)
+    return { ok: false, error: "liveSetPaused unavailable" };
+  try {
+    const result = await window.api.liveSetPaused(paused);
+    return result && typeof result.ok === "boolean"
+      ? result
+      : { ok: false, error: "Invalid liveSetPaused response" };
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : String(e) };
+  }
+}
+
 /**
  * Start TCP log server on given port.
  */
@@ -623,6 +639,7 @@ const noop = (): void => {};
 
 /**
  * Subscribe to log append events.
+ * Preserve explicit cap rejections so main can isolate live receipts from imports.
  * Returns a cleanup function.
  */
 export function onAppend(
@@ -630,7 +647,25 @@ export function onAppend(
 ): () => void {
   if (!window.api?.onAppend) return noop;
   try {
-    return window.api.onAppend(callback);
+    return window.api.onAppend(async (entries) => {
+      try {
+        await callback(entries);
+      } catch (error) {
+        if (
+          entries.length > 0 &&
+          entries[0]?._ingestionKind !== "import" &&
+          error instanceof LiveIngestionLimitError
+        ) {
+          const rejection: LiveAppendRejection = {
+            kind: "live-entry-limit",
+            message: error.message,
+          };
+          // eslint-disable-next-line @typescript-eslint/prefer-promise-reject-errors -- contextBridge drops Error metadata; preserve an explicit rejection.
+          return Promise.reject(rejection);
+        }
+        throw error;
+      }
+    });
   } catch {
     return noop;
   }

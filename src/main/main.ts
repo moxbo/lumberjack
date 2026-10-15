@@ -29,10 +29,7 @@ import {
   WindowAppendQueue,
 } from "../services/WindowAppendQueue";
 import { estimatePayloadBytes } from "../utils/estimatePayloadBytes";
-import {
-  MAX_ENTRY_PAYLOAD_BYTES,
-  boundEntryPayload,
-} from "../utils/entryLimits";
+import { MAX_ENTRY_PAYLOAD_BYTES } from "../utils/entryLimits";
 import { HealthMonitor } from "../services/HealthMonitor";
 import { LoggingStrategy, LogLevel } from "../services/LoggingStrategy";
 import { FeatureFlags } from "../services/FeatureFlags";
@@ -56,7 +53,11 @@ import {
   NEW_WINDOW_FLAG,
 } from "./util/constants";
 import { loadHeapSizeSync } from "./util/settingsLoader";
-import { prepareRenderBatch } from "./util/logEntryUtils";
+import { prepareAppendBatch, renderBatches } from "./util/appendBatches";
+import {
+  getAppendFailureGroup,
+  RendererBatchDeliveryError,
+} from "./util/appendDelivery";
 import {
   resolveIconPathAsync,
   resolveIconPathSync,
@@ -800,17 +801,11 @@ const observedRenderers = new WeakSet<Electron.WebContents>();
 let nextRendererBatchId = 1;
 const RENDERER_BATCH_ACK_TIMEOUT_MS = 30_000;
 
-class RendererBatchDeliveryError extends Error {
-  constructor(
-    message: string,
-    readonly acknowledgedEntries: number,
-  ) {
-    super(message);
-    this.name = "RendererBatchDeliveryError";
-  }
-}
-
-function failRendererBatchQueue(queue: RendererBatchQueue, error: Error): void {
+function failRendererBatchQueue(
+  queue: RendererBatchQueue,
+  error: Error,
+  isolatedFailureGroup?: "live",
+): void {
   if (queue.timeout) clearTimeout(queue.timeout);
   queue.timeout = null;
   const batches = queue.inFlight
@@ -827,6 +822,7 @@ function failRendererBatchQueue(queue: RendererBatchQueue, error: Error): void {
         new RendererBatchDeliveryError(
           error.message,
           group.acknowledgedEntries,
+          isolatedFailureGroup,
         ),
       );
     }
@@ -889,15 +885,20 @@ function acknowledgeRendererBatch(
   webContentsId: number,
   batchId: string,
   error?: string,
+  failureKind?: string,
 ): void {
   const queue = rendererBatchQueues.get(webContentsId);
   const batch = queue?.inFlight;
   if (!queue || !batch || batch.batchId !== batchId) return;
   if (queue.timeout) clearTimeout(queue.timeout);
   queue.timeout = null;
-  if (error) {
+  if (error !== undefined) {
     batchSendStats.failed++;
-    failRendererBatchQueue(queue, new Error(error));
+    failRendererBatchQueue(
+      queue,
+      new Error(error || "Renderer rejected the append batch"),
+      getAppendFailureGroup(batch.entries, failureKind),
+    );
     return;
   }
   queue.inFlight = null;
@@ -1063,7 +1064,11 @@ function enqueueAppendsFor(winId: number, entries: LogEntry[]): Promise<void> {
     queue = new WindowAppendQueue<LogEntry>(entryBytes);
     pendingAppendsByWindow.set(winId, queue);
   }
-  return queue.enqueue(entries, MAX_PENDING_APPENDS);
+  return queue.enqueue(
+    entries,
+    MAX_PENDING_APPENDS,
+    entries[0]?._ingestionKind ?? "live",
+  );
 }
 async function flushPendingAppendsFor(win: BrowserWindow): Promise<void> {
   const queue = pendingAppendsByWindow.get(win.id);
@@ -1087,7 +1092,7 @@ async function flushAppendQueue(
               await sendBatchesAsyncTo(
                 win.webContents,
                 "logs:append",
-                [prepareRenderBatch(batch)],
+                [prepareAppendBatch(batch)],
                 () => queue.touch(),
               );
               acknowledged += batch.length;
@@ -1100,6 +1105,9 @@ async function flushAppendQueue(
               (error instanceof RendererBatchDeliveryError
                 ? error.acknowledgedEntries
                 : 0),
+            error instanceof RendererBatchDeliveryError
+              ? error.isolatedFailureGroup
+              : undefined,
           );
         }
       },
@@ -1108,6 +1116,10 @@ async function flushAppendQueue(
           ? error.acknowledgedEntries
           : 0,
       false,
+      (error) =>
+        error instanceof RendererBatchDeliveryError
+          ? error.isolatedFailureGroup
+          : undefined,
     );
   } catch (e) {
     log.error(
@@ -1116,29 +1128,6 @@ async function flushAppendQueue(
     );
     throw e;
   }
-}
-
-function* renderBatches(
-  entries: readonly LogEntry[],
-): IterableIterator<LogEntry[]> {
-  let batch: LogEntry[] = [];
-  let bytes = 0;
-  for (const original of entries) {
-    // Oversized entries are shrunk, never rejected: a failure here would
-    // terminate the producing source (e.g. reset a TCP connection).
-    const { entry, bytes: size } = boundEntryPayload(original);
-    if (
-      batch.length &&
-      (bytes + size > 1024 * 1024 || batch.length >= MAX_BATCH_ENTRIES)
-    ) {
-      yield batch;
-      batch = [];
-      bytes = 0;
-    }
-    batch.push(entry);
-    bytes += size;
-  }
-  if (batch.length) yield batch;
 }
 
 const CAPACITY_WAIT_IDLE_MS = 100;
@@ -1178,13 +1167,26 @@ async function enqueueWithBackpressure(
 async function appendToWindow(
   win: BrowserWindow | null,
   entries: LogEntry[],
+  kind: "live" | "import" = "live",
 ): Promise<void> {
   if (!win || win.isDestroyed())
     throw new Error("No receiving window available");
   // Split a bulk producer input rather than accepting only its prefix.
-  for (const batch of renderBatches(entries)) {
+  for (const batch of renderBatches(entries, kind)) {
     await enqueueWithBackpressure(win, batch);
   }
+}
+
+async function appendToSender(
+  entries: LogEntry[],
+  senderWcId: number,
+  kind: "live" | "import" = "live",
+): Promise<void> {
+  const win =
+    BrowserWindow.getAllWindows().find(
+      (window) => window.webContents?.id === senderWcId,
+    ) ?? null;
+  await appendToWindow(win, entries, kind);
 }
 
 // Resolve to the source only after required file logging AND renderer persistence.
@@ -2247,16 +2249,7 @@ function createWindow(opts: { makePrimary?: boolean } = {}): BrowserWindow {
     pendingAppendsByWindow.delete(win.id);
     loadedWindows.delete(win.id); // Remove from loaded windows set
     httpTailCountByWindow.delete(win.id);
-    if (tcpOwnerWindowId != null && tcpOwnerWindowId === win.id) {
-      try {
-        void networkService.stopTcpServer().catch((error) => {
-          log.error("[file-logging] TCP stop failed:", error);
-        });
-      } catch {
-        // Intentionally empty - ignore errors
-      }
-      setTcpOwnerWindowId(null);
-    }
+    // Live sources are closed by IPC ownership cleanup on webContents destruction.
     if (win === mainWindow) mainWindow = null;
   });
 
@@ -2488,18 +2481,13 @@ try {
     getParsers,
     getAdmZip,
     featureFlags,
-    // Sprint 5 – C3: route tail-watcher entries through the same per-window
-    // append pipeline as TCP/HTTP/Elasticsearch.
-    async (entries: LogEntry[], senderWcId: number): Promise<void> => {
-      const win = BrowserWindow.fromId(
-        BrowserWindow.getAllWindows().find(
-          (w) => w.webContents?.id === senderWcId,
-        )?.id ?? -1,
-      );
-      await appendToWindow(win, entries);
-    },
+    appendToSender,
     configureFileLogging,
     stopSourcesAndCloseFileLogging,
+    async (entries, senderWcId) => {
+      await writeEntriesToFile(entries);
+      await appendToSender(entries, senderWcId);
+    },
   );
   log.info("[diag] IPC handlers registered successfully");
 } catch (err) {
@@ -2517,10 +2505,15 @@ try {
     "logs:appendAck",
     (
       event: Electron.IpcMainEvent,
-      payload: { batchId?: string; error?: string },
+      payload: { batchId?: string; error?: string; failureKind?: string },
     ) => {
       if (typeof payload?.batchId !== "string") return;
-      acknowledgeRendererBatch(event.sender.id, payload.batchId, payload.error);
+      acknowledgeRendererBatch(
+        event.sender.id,
+        payload.batchId,
+        payload.error,
+        payload.failureKind,
+      );
     },
   );
 
