@@ -2,6 +2,86 @@ import { test, expect } from "./electron-fixtures";
 import { writeFile } from "node:fs/promises";
 import * as path from "node:path";
 
+for (const theme of ["light", "dark"] as const) {
+  test(`preserves inspector tab surfaces for marked entries in ${theme} mode`, async ({
+    electronApp,
+    window,
+    testUserData,
+  }) => {
+    await expect(window.locator("#splash-screen")).toHaveCount(0);
+    await window.evaluate(
+      (themeMode) => globalThis.window.api.settingsSet({ themeMode }),
+      theme,
+    );
+    await window.reload();
+    await expect(window.locator("#splash-screen")).toHaveCount(0);
+    await expect(window.locator("html")).toHaveAttribute("data-theme", theme);
+    await window.setViewportSize({ width: 1440, height: 960 });
+    const filePath = path.join(testUserData, "marked-entry.ndjson");
+    await writeFile(
+      filePath,
+      JSON.stringify({
+        timestamp: "2026-10-15T08:00:00.000Z",
+        level: "ERROR",
+        logger: "orders.PaymentGateway",
+        message: "Marked entry",
+        mdc: { requestId: "request-42" },
+      }),
+    );
+    await electronApp.evaluate(({ dialog, BrowserWindow }, input) => {
+      BrowserWindow.getFocusedWindow = () =>
+        BrowserWindow.getAllWindows()[0] ?? null;
+      dialog.showOpenDialog = async () => ({
+        canceled: false,
+        filePaths: [input],
+      });
+    }, filePath);
+    await window.locator("#btnOpenLogs").click();
+    await expect(window.locator("#countTotal")).toHaveText("1");
+    const row = window.locator('.row[data-vi="0"]');
+    await row.click();
+    const inspector = window.locator(".details.inspector");
+    await expect(inspector).toHaveAttribute("data-tinted", "0");
+    await row.click({ button: "right" });
+    await window.locator(".context-menu .colors .swatch").first().click();
+    await expect(inspector).toHaveAttribute("data-tinted", "1");
+
+    for (const layout of ["bottom", "right"]) {
+      await window.locator(`#layout-${layout}`).click();
+      await expect(window.locator(".layout")).toHaveAttribute(
+        "data-detail-layout",
+        layout,
+      );
+      await expect(inspector).not.toHaveCSS("background-image", "none");
+      const tabs = inspector.getByRole("tab");
+      for (let index = 0; index < (await tabs.count()); index++) {
+        const tab = tabs.nth(index);
+        await tab.click();
+        await expect(tab).toHaveAttribute("aria-selected", "true");
+        await expect(inspector.getByRole("tabpanel")).toBeVisible();
+        // Move off the tab to distinguish its normal surface from hover.
+        await window.mouse.move(0, 0);
+        for (const sibling of await tabs.all()) {
+          await expect(sibling).toHaveCSS(
+            "background-color",
+            "rgba(0, 0, 0, 0)",
+          );
+        }
+        await tab.hover();
+        const hoverColor = await tab.evaluate((element) => {
+          const probe = document.createElement("span");
+          probe.style.color = "var(--color-bg-hover)";
+          element.append(probe);
+          const color = getComputedStyle(probe).color;
+          probe.remove();
+          return color;
+        });
+        await expect(tab).toHaveCSS("background-color", hoverColor);
+      }
+    }
+  });
+}
+
 test("switches and restores layouts independently of theme, with accessible resizing", async ({
   window,
 }) => {

@@ -2098,11 +2098,11 @@ input[type="checkbox"] {
   background: transparent;
 }
 
-/* Tinted details: Kinder-Elemente nutzen gläserische (halbtransparente) Flächen,
-   damit die Tönung sichtbar bleibt und der Text lesbar ist. */
-.details[data-tinted="1"] button,
-.details[data-tinted="1"] input:not([type="checkbox"]),
-.details[data-tinted="1"] select {
+/* Legacy-Details nutzen gläserische Flächen; der Inspector gestaltet seine
+   Bedienelemente einschließlich Tabs selbst. */
+.details[data-tinted="1"]:not(.inspector) button,
+.details[data-tinted="1"]:not(.inspector) input:not([type="checkbox"]),
+.details[data-tinted="1"]:not(.inspector) select {
   background-color: var(--glass-bg);
 }
 
