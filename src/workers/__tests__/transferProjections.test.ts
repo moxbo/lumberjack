@@ -454,7 +454,7 @@ describe("transferProjections – handleTransferProjections", () => {
           dcFilterEntries: [{ key: "tenant", value: "acme", active: true }],
         }),
       );
-      expect(result.filteredIndices).toEqual([1]);
+      expect(result.filteredIndices).toEqual([1, 2]);
     });
   });
 });

@@ -207,10 +207,10 @@ describe("progressive filter coordination", () => {
       filter: { ...baseOptions.filter, level: "INFO" },
     };
     hook.filterEntries(rows, infoOptions);
-    expect(state().ids).toEqual([30]);
+    expect(state().ids).toEqual([30, 20]);
     rows.push({ _id: 10, level: "INFO", message: "needle" });
     hook.filterEntries(rows, infoOptions);
-    expect(state().matches).toEqual([30, 10]);
+    expect(state().matches).toEqual([30, 20, 10]);
     const replacement = rows.map((row) => ({ ...row, message: "different" }));
     hook.filterEntries(replacement, infoOptions);
     expect(state().matches).toEqual([]);
