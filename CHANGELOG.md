@@ -5,6 +5,24 @@ Alle nennenswerten Änderungen an diesem Projekt werden in dieser Datei dokument
 Das Format orientiert sich an [Keep a Changelog](https://keepachangelog.com/de/1.1.0/),
 und dieses Projekt folgt [Semantic Versioning](https://semver.org/lang/de/).
 
+## [1.2.0-beta.10] - 2026-10-15 _(Pre-Release)_
+
+
+### Added
+- Implement fixed row virtualization for large log lists with scroll optimization
+- Limit live intake and pause window-owned sources
+- Implement log level severity matrix (#41)
+
+
+### Docs
+- Explain minimum log level filtering (#41)
+
+
+### Fixed
+- Bundle standalone settings schema dependencies
+- Preserve inspector tab styling for marked entries (#43)
+- Retain complete large log payloads (#44)
+
 ## [1.2.0-beta.9] - 2026-10-12 _(Pre-Release)_
 
 
