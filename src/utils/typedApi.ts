@@ -41,6 +41,30 @@ import type {
 import { LiveIngestionLimitError } from "./liveIngestionLimit";
 import type { LiveAppendRejection } from "./appendRejection";
 
+export async function entryPayloadLoad(reference: string): Promise<LogEntry> {
+  if (!window.api?.entryPayloadLoad)
+    throw new Error("Original log payload loading is unavailable");
+  const result = await window.api.entryPayloadLoad(reference);
+  if (!result.ok || !result.data)
+    throw new Error(result.error || "Original log payload is unavailable");
+  return result.data;
+}
+
+export async function entryPayloadRelease(
+  references: readonly string[],
+): Promise<void> {
+  if (!references.length) return;
+  if (!window.api?.entryPayloadRelease)
+    throw new Error("Original log payload cleanup is unavailable");
+  for (let start = 0; start < references.length; start += 256) {
+    const result = await window.api.entryPayloadRelease(
+      references.slice(start, start + 256),
+    );
+    if (!result.ok)
+      throw new Error(result.error || "Original log payload cleanup failed");
+  }
+}
+
 // ─────────────────────────── Settings ───────────────────────────
 
 /**

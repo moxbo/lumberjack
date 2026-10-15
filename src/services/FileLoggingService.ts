@@ -1,6 +1,10 @@
 import * as fs from "fs";
 import * as path from "path";
 import { AsyncFileWriter, type FileWriterQueueLimits } from "./AsyncFileWriter";
+import { estimatePayloadBytes } from "../utils/estimatePayloadBytes";
+import { textChunks } from "../utils/textChunks";
+
+const RECORD_BUFFER_BYTES = 1024 * 1024;
 
 export interface FileLoggingConfiguration {
   enabled: boolean;
@@ -48,7 +52,7 @@ export class FileLoggingService extends AsyncFileWriter {
   }
 
   protected override async writeData(
-    data: string,
+    data: string | Uint8Array,
     bytes: number,
   ): Promise<void> {
     const config = this.configuration;
@@ -57,6 +61,71 @@ export class FileLoggingService extends AsyncFileWriter {
     if (this.fileBytes + bytes > config.maxBytes) {
       await this.rotateFile(config.maxBackups);
     }
+    await this.appendData(data, bytes);
+  }
+
+  writeRecord(record: Record<string, unknown>): Promise<void> {
+    return this.writeRecords([record]);
+  }
+
+  /** Serialize after admission; records cannot interleave or rotate between chunks. */
+  writeRecords(records: readonly Record<string, unknown>[]): Promise<void> {
+    const bufferBytes = Math.max(
+      1,
+      Math.floor(
+        Math.min(
+          RECORD_BUFFER_BYTES,
+          this.maxQueuedBytes,
+          estimatePayloadBytes(records, RECORD_BUFFER_BYTES),
+        ),
+      ),
+    );
+    return this.enqueueWrite(async () => {
+      const config = this.configuration;
+      if (!config?.enabled) return;
+      let pending: string[] = [];
+      let pendingBytes = 0;
+      const flush = async () => {
+        if (!pending.length) return;
+        await this.writeData(pending.join(""), pendingBytes);
+        pending = [];
+        pendingBytes = 0;
+      };
+      for (const record of records) {
+        const serialized = JSON.stringify(record);
+        if (serialized === undefined)
+          throw new TypeError("Log record could not be serialized");
+        const data = serialized + "\n";
+        const bytes = Buffer.byteLength(data, "utf8");
+        if (bytes <= bufferBytes) {
+          if (pendingBytes + bytes > bufferBytes) await flush();
+          pending.push(data);
+          pendingBytes += bytes;
+          continue;
+        }
+        await flush();
+        await this.initialize();
+        if (this.fileBytes + bytes > config.maxBytes)
+          await this.rotateFile(config.maxBackups);
+        for (const text of textChunks(
+          data,
+          Math.max(2, Math.floor(bufferBytes / 3)),
+        )) {
+          const encoded = Buffer.from(text, "utf8");
+          for (let offset = 0; offset < encoded.length; offset += bufferBytes) {
+            const chunk = encoded.subarray(offset, offset + bufferBytes);
+            await this.appendData(chunk, chunk.byteLength);
+          }
+        }
+      }
+      await flush();
+    }, bufferBytes);
+  }
+
+  private async appendData(
+    data: string | Uint8Array,
+    bytes: number,
+  ): Promise<void> {
     try {
       await super.writeData(data, bytes);
       this.fileBytes += bytes;

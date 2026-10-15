@@ -64,6 +64,7 @@ vi.mock("../../store/paged/session", async () => {
         repository.findExistingSignatures.bind(repository),
       ),
       getPayloads: vi.fn(repository.getPayloads.bind(repository)),
+      registerPayloadReferences: vi.fn(),
     },
     startPagedSessionLifecycle: () => () => undefined,
   };

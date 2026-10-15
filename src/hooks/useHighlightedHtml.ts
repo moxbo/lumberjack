@@ -4,13 +4,18 @@ import {
   highlightCacheKey,
   requestHighlight,
 } from "../services/highlightWorkerClient";
-import { escapeHtml, highlightAll } from "../utils/highlight";
+import {
+  escapeHtml,
+  highlightAll,
+  MAX_HIGHLIGHT_LENGTH,
+} from "../utils/highlight";
 
 const ASYNC_HIGHLIGHT_MIN_LENGTH = 2000;
 const syncCache = new Map<string, string>();
 const MAX_SYNC_CACHE_SIZE = 2000;
 
 function getSyncHighlight(text: string, search: string): string {
+  if (text.length > MAX_HIGHLIGHT_LENGTH) return escapeHtml(text);
   const key = highlightCacheKey(text, search);
   const cached = syncCache.get(key);
   if (cached !== undefined) return cached;
@@ -32,7 +37,9 @@ function getSyncHighlight(text: string, search: string): string {
 export function useHighlightedHtml(text: string, search: string): string {
   const key = highlightCacheKey(text, search);
   const useWorker =
-    text.length >= ASYNC_HIGHLIGHT_MIN_LENGTH && search.trim().length > 0;
+    text.length >= ASYNC_HIGHLIGHT_MIN_LENGTH &&
+    text.length <= MAX_HIGHLIGHT_LENGTH &&
+    search.trim().length > 0;
   const [resolved, setResolved] = useState<{ key: string; html: string }>(
     () => ({
       key,

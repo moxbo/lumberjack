@@ -17,6 +17,10 @@ export interface LogEntry {
   message: string;
   /** Original full message before truncation (only set if truncated) */
   _fullMessage?: string;
+  /** Window-owned reference to the complete original retained on disk. */
+  _payloadRef?: string;
+  _payloadMdcTruncated?: boolean;
+  _messageSize?: number;
   /** Flag indicating this entry was truncated for display */
   _truncated?: boolean;
   traceId?: string | null;
@@ -445,6 +449,8 @@ export type ElectronAPI = {
   parsePaths: (paths: string[]) => Promise<ParseResult>;
   streamParsePaths: (paths: string[]) => Promise<StreamParsePathsResult>;
   parseRawDrops: (files: DroppedFile[]) => Promise<ParseResult>;
+  entryPayloadLoad: (reference: string) => Promise<Result<LogEntry>>;
+  entryPayloadRelease: (references: string[]) => Promise<Result<void>>;
   streamReady: (sessionId: string) => void;
   streamAck: (sessionId: string, chunkIndex: number) => void;
   streamCancel: (sessionId: string) => void;

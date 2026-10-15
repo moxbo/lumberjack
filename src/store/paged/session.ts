@@ -1,5 +1,6 @@
 import { PagedLogRepository } from "./PagedLogRepository";
 import { PAGED_DB_NAME } from "./indexedDb";
+import { entryPayloadRelease } from "../../utils/typedApi";
 
 const sessionId =
   typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
@@ -18,6 +19,7 @@ export const pagedLogRepository = new PagedLogRepository({
   pageSize: 256,
   maxCachedPages: 32,
   databaseName: PAGED_SESSION_DATABASE_NAME,
+  releasePayloads: entryPayloadRelease,
 });
 
 function readRegistry(): Record<string, number> {

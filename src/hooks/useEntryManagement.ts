@@ -433,6 +433,8 @@ export function useEntryManagement({
       if (!mountedRef.current) {
         return Promise.reject(new Error("Log view is closed"));
       }
+      if (Array.isArray(newEntries))
+        repositoryRef.current.registerPayloadReferences(newEntries);
       if (pausedErrorRef.current) {
         const error = new Error(pausedErrorRef.current.message, {
           cause: pausedErrorRef.current,

@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { estimatePayloadBytes } from "../estimatePayloadBytes";
 import {
-  BoundedLineSplitter,
-  boundEntryPayload,
+  LogLineSplitter,
+  measureEntryPayload,
   truncateUtf8,
 } from "../entryLimits";
 
@@ -18,53 +18,49 @@ describe("truncateUtf8", () => {
   });
 });
 
-describe("BoundedLineSplitter", () => {
+describe("LogLineSplitter", () => {
   it("splits lines across chunk boundaries", () => {
-    const splitter = new BoundedLineSplitter(64);
+    const splitter = new LogLineSplitter();
     const lines = [...splitter.push("one\ntw"), ...splitter.push("o\n\nthree")];
     expect(lines.map((line) => line.text)).toEqual(["one", "two"]);
-    expect(splitter.flush()).toMatchObject({ text: "three", truncated: false });
+    expect(splitter.flush()).toEqual({ text: "three", originalBytes: 5 });
     expect(splitter.flush()).toBeNull();
   });
 
-  it("truncates an oversized line, discards its remainder and recovers", () => {
-    const truncations: number[] = [];
-    const splitter = new BoundedLineSplitter(8, (bytes) =>
-      truncations.push(bytes),
-    );
+  it("preserves a complete large line and the following record", () => {
+    const splitter = new LogLineSplitter();
+    const large = "x".repeat(4 * 1024 * 1024 + 1);
     const lines = [
-      ...splitter.push("12345"),
-      ...splitter.push("6789abc"),
-      ...splitter.push("def\nnext\n"),
+      ...splitter.push(large.slice(0, 2 * 1024 * 1024)),
+      ...splitter.push(large.slice(2 * 1024 * 1024)),
+      ...splitter.push("\nnext\n"),
     ];
     expect(lines).toEqual([
-      { text: "12345678", truncated: true, originalBytes: 15 },
-      { text: "next", truncated: false, originalBytes: 4 },
+      { text: large, originalBytes: large.length },
+      { text: "next", originalBytes: 4 },
     ]);
-    expect(truncations).toEqual([12]);
   });
 
-  it("flushes a truncated tail without newline", () => {
-    const splitter = new BoundedLineSplitter(4);
-    expect(splitter.push("abcdef")).toEqual([]);
+  it("flushes the entire UTF-8 tail without a newline", () => {
+    const splitter = new LogLineSplitter();
+    expect(splitter.push("abcdefä😀")).toEqual([]);
     expect(splitter.hasPartial).toBe(true);
     expect(splitter.flush()).toEqual({
-      text: "abcd",
-      truncated: true,
-      originalBytes: 6,
+      text: "abcdefä😀",
+      originalBytes: 12,
     });
   });
 });
 
-describe("boundEntryPayload", () => {
+describe("measureEntryPayload", () => {
   it("returns small entries untouched", () => {
     const entry = { message: "hi", raw: { message: "hi" } };
-    const result = boundEntryPayload(entry, 1024);
+    const result = measureEntryPayload(entry, 1024);
     expect(result.entry).toBe(entry);
     expect(Number.isFinite(result.bytes)).toBe(true);
   });
 
-  it("drops raw first and keeps the full message when that suffices", () => {
+  it("does not drop raw to make an original fit a transport budget", () => {
     const big = "x".repeat(1000);
     const entry = {
       message: "preview",
@@ -72,14 +68,13 @@ describe("boundEntryPayload", () => {
       raw: { message: big, extra: big },
     };
     const limit = 4000;
-    const result = boundEntryPayload(entry, limit);
-    expect(result.entry._fullMessage).toBe(big);
-    expect(result.entry.raw).toMatchObject({ message: expect.any(String) });
-    expect(result.bytes).toBeLessThanOrEqual(limit);
+    expect(() => measureEntryPayload(entry, limit)).toThrow("retain");
+    expect(entry._fullMessage).toBe(big);
+    expect(entry.raw.message).toBe(big);
     expect(entry.raw.extra).toBe(big);
   });
 
-  it("shrinks heavy fields instead of failing when even raw removal is not enough", () => {
+  it("never clips heavy fields or changes the original size", () => {
     const big = "y".repeat(10_000);
     const entry = {
       message: big,
@@ -87,13 +82,12 @@ describe("boundEntryPayload", () => {
       stackTrace: big,
     };
     const limit = 8000;
-    const result = boundEntryPayload(entry, limit);
-    expect(result.entry._truncated).toBe(true);
-    expect(result.entry._messageSize).toBe(big.length);
-    expect(result.entry._fullMessage!.length).toBeLessThanOrEqual(limit / 4);
-    expect(result.entry.stackTrace!.length).toBeLessThanOrEqual(limit / 4);
-    expect(result.entry.message.endsWith("… [truncated]")).toBe(true);
-    expect(Number.isFinite(estimatePayloadBytes(result.entry))).toBe(true);
-    expect(Number.isFinite(result.bytes)).toBe(true);
+    expect(() => measureEntryPayload(entry, limit)).toThrow("retain");
+    expect(entry).toEqual({
+      message: big,
+      _fullMessage: big,
+      stackTrace: big,
+    });
+    expect(Number.isFinite(estimatePayloadBytes(entry))).toBe(true);
   });
 });

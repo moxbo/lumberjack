@@ -4,6 +4,7 @@ import { streamExport, type ExportEntry } from "./exportFormats";
 import { captureHtmlExportOptions, type ExportTranslate } from "./htmlExport";
 import * as typedApi from "./typedApi";
 import { EntryIdSnapshot, type ReadonlySequence } from "./metadataSnapshot";
+import { loadFullEntry } from "./entryPayload";
 
 export type ExportTransport = Pick<
   ElectronAPI,
@@ -134,8 +135,10 @@ export async function exportCurrentView(
             `Export payload missing for entry ${id}; the view may have been cleared`,
           );
         }
-        const entry = payload as ExportEntry;
-        const mark = marks[entrySignature(entry)] || entry._mark;
+        const preview = payload as ExportEntry;
+        const mark = marks[entrySignature(preview)] || preview._mark;
+        const entry = await loadFullEntry(preview);
+        checkSnapshot();
         yield mark ? { ...entry, _mark: mark } : entry;
         checkSnapshot();
       }

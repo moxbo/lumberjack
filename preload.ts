@@ -131,6 +131,12 @@ const api: ElectronAPI = {
   parseRawDrops: (files: DroppedFile[]): Promise<ParseResult> =>
     ipcRenderer.invoke("logs:parseRaw", files),
 
+  entryPayloadLoad: (reference: string) =>
+    ipcRenderer.invoke("logs:payloadLoad", reference),
+
+  entryPayloadRelease: (references: string[]) =>
+    ipcRenderer.invoke("logs:payloadRelease", references),
+
   streamAck: (sessionId: string, chunkIndex: number): void => {
     ipcRenderer.send("logs:streamAck", { sessionId, chunkIndex });
   },

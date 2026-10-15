@@ -466,13 +466,6 @@ export class HttpTailManager {
   private async consume(state: TailState, chunk: string): Promise<void> {
     if (chunk.length === 0) return;
     const combined = state.partial + chunk;
-    if (
-      combined
-        .split("\n")
-        .some((line) => Buffer.byteLength(line, "utf8") > 1024 * 1024)
-    ) {
-      throw new TailDeliveryError("HTTP tail line exceeds 1 MiB; tail stopped");
-    }
     const lastNl = combined.lastIndexOf("\n");
     if (lastNl < 0) {
       // No complete line yet – buffer.

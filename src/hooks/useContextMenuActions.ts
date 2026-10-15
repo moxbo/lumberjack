@@ -29,6 +29,7 @@ import type { PagedLogRepository } from "../store/paged/PagedLogRepository";
 import type { PagedTimestamp } from "../store/paged/types";
 import { pagedLogRepository } from "../store/paged/session";
 import logger from "../utils/logger";
+import { loadFullEntry } from "../utils/entryPayload";
 
 type PayloadRepository = Pick<PagedLogRepository, "getPayloads">;
 
@@ -262,8 +263,9 @@ export function useContextMenuActions(
         const ids = selectedIdsInVisualOrder.slice(start, start + 256);
         const payloads = await repository.getPayloads(ids);
         for (const id of ids) {
-          const entry = payloads.get(id);
-          if (!entry) continue;
+          const preview = payloads.get(id);
+          if (!preview) continue;
+          const entry = await loadFullEntry(preview);
           lines.push(
             `${fmtTimestamp(entry.timestamp as PagedTimestamp)}\n${String(
               entry.message ?? "",

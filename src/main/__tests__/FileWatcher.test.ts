@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import * as fs from "fs";
 import * as os from "os";
 import * as path from "path";
@@ -152,6 +152,33 @@ describe("WatchManager", () => {
 
     mgr.stop(w.id);
     expect(received).toEqual(["partial-rest"]);
+  });
+
+  it("delivers an entire large JSON line across read chunks", async () => {
+    const file = path.join(tmpDir, "large-json.log");
+    const record = { message: "x".repeat(5 * 1024 * 1024), level: "INFO" };
+    fs.writeFileSync(file, JSON.stringify(record) + "\nnext\n");
+    const received: string[] = [];
+    const errors: Error[] = [];
+    const mgr = new WatchManager();
+    mgr.start(
+      file,
+      {
+        onLines: (lines) => received.push(...lines),
+        onError: (error) => errors.push(error),
+      },
+      { emitInitial: true, maxReadBytes: 64 * 1024 },
+    );
+    try {
+      await vi.waitFor(() => expect(received).toHaveLength(2), {
+        timeout: 5000,
+      });
+      expect(JSON.parse(received[0]!)).toEqual(record);
+      expect(received[1]).toBe("next");
+      expect(errors).toEqual([]);
+    } finally {
+      mgr.stopAll();
+    }
   });
 
   it("detects truncation and notifies via onRotated", async () => {

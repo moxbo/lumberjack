@@ -321,28 +321,14 @@ function estimatePayloadBytes(value, maxBytes = Number.MAX_SAFE_INTEGER) {
 }
 
 // src/utils/entryLimits.ts
-var MAX_LOG_LINE_BYTES = 4 * 1024 * 1024;
+var MESSAGE_TRUNCATE_THRESHOLD = 100 * 1024;
+var MESSAGE_PREVIEW_LENGTH = 50 * 1024;
 var MAX_ENTRY_PAYLOAD_BYTES = 32 * 1024 * 1024;
-function truncateUtf8(text, maxBytes) {
-  const bytes = Buffer.from(text, "utf8");
-  if (bytes.length <= maxBytes) return text;
-  let end = maxBytes;
-  while (end > 0 && (bytes[end] & 192) === 128) end--;
-  return bytes.subarray(0, end).toString("utf8");
-}
-var BoundedLineSplitter = class {
-  constructor(maxBytes = MAX_LOG_LINE_BYTES, onTruncate) {
-    this.maxBytes = maxBytes;
-    this.onTruncate = onTruncate;
-  }
-  maxBytes;
-  onTruncate;
-  partial = "";
+var LogLineSplitter = class {
+  parts = [];
   partialBytes = 0;
-  partialTruncated = false;
-  discardedBytes = 0;
   get hasPartial() {
-    return this.partial.length > 0 || this.partialTruncated;
+    return this.parts.length > 0;
   }
   push(chunk) {
     const lines = [];
@@ -363,67 +349,21 @@ var BoundedLineSplitter = class {
     return this.complete();
   }
   append(segment) {
-    const segmentBytes = Buffer.byteLength(segment, "utf8");
-    if (this.partialTruncated) {
-      this.discardedBytes += segmentBytes;
-      return;
-    }
-    if (this.partialBytes + segmentBytes <= this.maxBytes) {
-      this.partial += segment;
-      this.partialBytes += segmentBytes;
-      return;
-    }
-    const kept = truncateUtf8(this.partial + segment, this.maxBytes);
-    const keptBytes = Buffer.byteLength(kept, "utf8");
-    this.discardedBytes += this.partialBytes + segmentBytes - keptBytes;
-    this.partial = kept;
-    this.partialBytes = keptBytes;
-    this.partialTruncated = true;
-    this.onTruncate?.(this.partialBytes + this.discardedBytes);
+    if (!segment) return;
+    this.parts.push(segment);
+    this.partialBytes += Buffer.byteLength(segment, "utf8");
   }
   complete() {
     if (!this.hasPartial) return null;
     const line = {
-      text: this.partial,
-      truncated: this.partialTruncated,
-      originalBytes: this.partialBytes + this.discardedBytes
+      text: this.parts.length === 1 ? this.parts[0] : this.parts.join(""),
+      originalBytes: this.partialBytes
     };
-    this.partial = "";
+    this.parts = [];
     this.partialBytes = 0;
-    this.partialTruncated = false;
-    this.discardedBytes = 0;
     return line;
   }
 };
-function boundEntryPayload(entry, limit = MAX_ENTRY_PAYLOAD_BYTES) {
-  let bytes = estimatePayloadBytes(entry, limit);
-  if (Number.isFinite(bytes)) return { entry, bytes };
-  const bounded = { ...entry };
-  if (bounded.raw !== void 0) {
-    bounded.raw = { message: "[raw payload omitted: exceeds delivery limit]" };
-    bytes = estimatePayloadBytes(bounded, limit);
-    if (Number.isFinite(bytes)) return { entry: bounded, bytes };
-  }
-  const maxChars = Math.floor(limit / 4);
-  if (typeof bounded._fullMessage === "string") {
-    bounded._messageSize ??= bounded._fullMessage.length;
-    bounded._fullMessage = bounded._fullMessage.slice(0, maxChars);
-    bounded._truncated = true;
-  }
-  if (typeof bounded.stackTrace === "string" && bounded.stackTrace.length > maxChars) {
-    bounded.stackTrace = bounded.stackTrace.slice(0, maxChars);
-  }
-  if (bounded.message.length > maxChars) {
-    bounded._messageSize ??= bounded.message.length;
-    bounded.message = bounded.message.slice(0, maxChars) + "\u2026 [truncated]";
-    bounded._truncated = true;
-  }
-  bytes = estimatePayloadBytes(bounded, limit);
-  if (!Number.isFinite(bytes)) {
-    bytes = estimatePayloadBytes(bounded);
-  }
-  return { entry: bounded, bytes };
-}
 
 // src/utils/dcMatch.ts
 var TRACE_KEY_VARIANTS = /* @__PURE__ */ new Set([
@@ -488,6 +428,9 @@ var RESERVED_STD_FIELDS = /* @__PURE__ */ new Set([
   "_fullMessage",
   "_truncated",
   "_messageSize",
+  "_payloadRef",
+  "_payloadMdcTruncated",
+  "_hasStack",
   "source",
   "signature",
   "_id",
@@ -557,8 +500,6 @@ var HTTPS_INSECURE_KEEPALIVE_AGENT = new import_https.default.Agent({
   keepAlive: true,
   rejectUnauthorized: false
 });
-var MESSAGE_TRUNCATE_THRESHOLD = 100 * 1024;
-var MESSAGE_PREVIEW_LENGTH = 50 * 1024;
 var LARGE_MESSAGE_WARNING_THRESHOLD = 1024 * 1024;
 var DEFAULT_STREAM_PARSE_THRESHOLD_BYTES = 1024 * 1024;
 var DEFAULT_STREAM_PARSE_CHUNK_SIZE = 1e3;
@@ -659,7 +600,7 @@ function toEntry(obj = {}, fallbackMessage = "", source = "") {
   const msgVal = obj.message ?? obj.msg ?? obj.log ?? fallbackMessage ?? "";
   const traceVal = obj.traceId ?? obj.trace_id ?? obj.trace ?? obj["trace.id"] ?? obj.TraceID;
   const fullMessage = toStringOr(msgVal, "");
-  const messageSize = fullMessage.length;
+  const messageSize = Buffer.byteLength(fullMessage, "utf8");
   let displayMessage = fullMessage;
   let truncated = false;
   let originalMessage;
@@ -849,16 +790,11 @@ async function* streamParseFile(filePath, options = {}) {
   options.signal?.addEventListener("abort", onAbort, { once: true });
   let pending = [];
   let pendingBytes = 0;
-  async function* boundedLines() {
-    const splitter = new BoundedLineSplitter(
-      MAX_LOG_LINE_BYTES,
-      (bytes) => import_main.default.warn(
-        `[parser] Line in ${filePath} exceeds ${MAX_LOG_LINE_BYTES} bytes (${bytes} so far); truncating and discarding the remainder`
-      )
-    );
+  async function* completeLines() {
+    const splitter = new LogLineSplitter();
     for await (const chunk of stream) {
       for (const line of splitter.push(String(chunk))) {
-        if (!line.truncated && line.text.endsWith("\r")) {
+        if (line.text.endsWith("\r")) {
           line.text = line.text.slice(0, -1);
         }
         yield line;
@@ -868,15 +804,12 @@ async function* streamParseFile(filePath, options = {}) {
     if (tail) yield tail;
   }
   try {
-    for await (const line of boundedLines()) {
+    for await (const line of completeLines()) {
       if (options.signal?.aborted) throw createAbortError();
       const parsed = parseTextLine(filePath, line.text);
       if (parsed) {
-        if (line.truncated) {
-          parsed._truncated = true;
-          parsed._messageSize = line.originalBytes;
-        }
-        const { entry, bytes } = boundEntryPayload(parsed);
+        const entry = parsed;
+        const bytes = estimatePayloadBytes(entry);
         if (pending.length && pendingBytes + bytes > 2 * 1024 * 1024) {
           yield {
             entries: pending,

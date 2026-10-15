@@ -68,10 +68,12 @@ function transport(format: ExportFormat = "ndjson") {
       ok: true as const,
       sessionId: "session",
     })),
-    exportWrite: vi.fn(async (r: { chunkIndex: number }) => ({
-      ok: true as const,
-      chunkIndex: r.chunkIndex,
-    })),
+    exportWrite: vi.fn(
+      async (r: Parameters<ExportTransport["exportWrite"]>[0]) => ({
+        ok: true as const,
+        chunkIndex: r.chunkIndex,
+      }),
+    ),
     exportFinish: vi.fn(async () => ({
       ok: true as const,
       filePath: "/chosen/export",
@@ -198,6 +200,81 @@ describe("incremental export formats", () => {
 });
 
 describe("export orchestration", () => {
+  it("loads complete originals for export while preserving preview-based marks", async () => {
+    const api = transport();
+    const opts = options(api);
+    const complete = "<xml>" + "x".repeat(200_000) + "</xml>";
+    const preview = {
+      ...sample[0]!,
+      message: "preview",
+      _payloadRef: "original",
+    };
+    const mark = "#00ff00";
+    opts.marks[entrySignature(preview)] = mark;
+    opts.repository.getPayloads.mockResolvedValueOnce(
+      new Map<number, ExportEntry>([
+        [1, preview],
+        [
+          2,
+          {
+            ...sample[1]!,
+            message: "legacy preview",
+            _fullMessage: "legacy full",
+          },
+        ],
+      ]),
+    );
+    const load = vi.fn(async () => ({
+      ok: true,
+      data: {
+        timestamp: null,
+        source: "test",
+        message: complete,
+        stackTrace: "full trace",
+      },
+    }));
+    vi.stubGlobal("window", { api: { entryPayloadLoad: load } });
+    const chunks: Uint8Array[] = [];
+    api.exportWrite.mockImplementation(async (request) => {
+      chunks.push(request.chunk);
+      return { ok: true as const, chunkIndex: request.chunkIndex };
+    });
+    await exportCurrentView(opts);
+    const rows = Buffer.concat(chunks)
+      .toString("utf8")
+      .split("\n")
+      .map((line) => JSON.parse(line) as Record<string, unknown>);
+    expect(rows[0]).toMatchObject({
+      message: complete,
+      stackTrace: "full trace",
+      markColor: mark,
+    });
+    expect(rows[1]!.message).toBe("legacy full");
+    expect(rows[0]).not.toHaveProperty("_payloadRef");
+    expect(load).toHaveBeenCalledOnce();
+    expect(api.exportFinish).toHaveBeenCalledOnce();
+  });
+
+  it("cancels export when an original cannot be loaded instead of exporting its preview", async () => {
+    const api = transport();
+    const opts = options(api);
+    opts.repository.getPayloads.mockResolvedValueOnce(
+      new Map([[1, { ...sample[0]!, _payloadRef: "missing" }]]),
+    );
+    vi.stubGlobal("window", {
+      api: {
+        entryPayloadLoad: vi.fn(async () => ({
+          ok: false,
+          error: "Original missing",
+        })),
+      },
+    });
+    await expect(exportCurrentView(opts)).rejects.toThrow("Original missing");
+    expect(api.exportWrite).not.toHaveBeenCalled();
+    expect(api.exportFinish).not.toHaveBeenCalled();
+    expect(api.exportCancel).toHaveBeenCalledOnce();
+  });
+
   it("retains bounded ID snapshots without copying the historical prefix", async () => {
     const api = transport();
     const opts = options(api);

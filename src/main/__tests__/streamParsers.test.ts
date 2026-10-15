@@ -2,7 +2,6 @@ import fs from "fs";
 import path from "path";
 import AdmZip from "adm-zip";
 import { estimatePayloadBytes } from "../../utils/estimatePayloadBytes";
-import { MAX_LOG_LINE_BYTES } from "../../utils/entryLimits";
 import { afterEach, describe, expect, it } from "vitest";
 import type { LogEntry } from "../../types/ipc";
 import {
@@ -87,8 +86,8 @@ describe("streamParseFile", () => {
     }
   });
 
-  it("truncates oversized unbroken lines instead of failing the import", async () => {
-    const size = MAX_LOG_LINE_BYTES + 3 * 1024 * 1024;
+  it("preserves oversized unbroken lines and only shortens their display preview", async () => {
+    const size = 7 * 1024 * 1024;
     const filePath = await writeFixture(
       "oversized-line.log",
       `before\n${"x".repeat(size)}\nafter\n`,
@@ -105,8 +104,40 @@ describe("streamParseFile", () => {
     expect(truncated._truncated).toBe(true);
     expect(truncated._messageSize).toBe(size);
     const retained = truncated._fullMessage ?? truncated.message;
-    expect(retained.length).toBeLessThanOrEqual(MAX_LOG_LINE_BYTES);
-    expect(retained.length).toBeGreaterThan(MAX_LOG_LINE_BYTES - 8);
+    expect(retained).toBe("x".repeat(size));
+    expect(truncated.message.length).toBeLessThan(51 * 1024);
+  });
+
+  it("parses a complete large JSON envelope including fields after the message", async () => {
+    const message =
+      '<xml quote="value">\\\n' + "ä😀".repeat(1024 * 1024) + "</xml>";
+    const record = {
+      "@timestamp": "2026-10-15T06:21:26.613Z",
+      message,
+      level: "INFO",
+      logger_name: "large-message",
+      thread_name: "worker",
+      mdc: { tenant: "example" },
+    };
+    const filePath = await writeFixture(
+      "large-json.log",
+      JSON.stringify(record),
+    );
+    const entries = (
+      await collectStreamEntries(filePath, 1000, 64 * 1024)
+    ).flatMap((chunk) => chunk.entries);
+    expect(entries).toHaveLength(1);
+    expect(entries[0]).toMatchObject({
+      timestamp: record["@timestamp"],
+      level: record.level,
+      logger: record.logger_name,
+      thread: record.thread_name,
+      mdc: record.mdc,
+      _fullMessage: message,
+      _messageSize: Buffer.byteLength(message),
+    });
+    expect(entries[0]!.message.startsWith("<xml")).toBe(true);
+    expect(entries[0]!.raw).toEqual(record);
   });
 
   it("preserves UTF-8 lines and final line without trailing newline", async () => {

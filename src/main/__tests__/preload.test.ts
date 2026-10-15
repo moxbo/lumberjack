@@ -57,6 +57,27 @@ function deliver(callback: Parameters<ElectronAPI["onAppend"]>[0]) {
 }
 
 describe("renderer persistence acknowledgements", () => {
+  it("maps full-payload loading and release to their IPC channels", async () => {
+    const result = {
+      ok: true,
+      data: { timestamp: null, source: "test", message: "complete message" },
+    };
+    electron.ipcRenderer.invoke.mockResolvedValueOnce(result);
+    await expect(api.entryPayloadLoad("original")).resolves.toEqual(result);
+    expect(electron.ipcRenderer.invoke).toHaveBeenLastCalledWith(
+      "logs:payloadLoad",
+      "original",
+    );
+    electron.ipcRenderer.invoke.mockResolvedValueOnce({ ok: true });
+    await expect(api.entryPayloadRelease(["original"])).resolves.toEqual({
+      ok: true,
+    });
+    expect(electron.ipcRenderer.invoke).toHaveBeenLastCalledWith(
+      "logs:payloadRelease",
+      ["original"],
+    );
+  });
+
   it("exposes live pause control as an acknowledged IPC invocation", async () => {
     const result = { ok: false, error: "TCP stop failed" };
     electron.ipcRenderer.invoke.mockResolvedValueOnce(result);

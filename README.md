@@ -67,6 +67,18 @@ Messages arriving while intake is paused may be lost; this is not an archive or
 a guarantee that upstream sources will buffer them. The entry limit is also not
 a hard RAM limit, because message sizes differ.
 
+## Large messages
+
+Large messages and payloads are retained **in full for the current log session**.
+Only their display previews are shortened. Select **Full / Vollständig** in the
+entry details to load the complete message; copying and exporting also use the
+original rather than its preview.
+
+Large originals are stored compressed on disk, while the list keeps lightweight
+previews and references. **Clear Logs** and closing the window delete the
+associated originals. Content discarded by older versions cannot be recovered;
+reimport the source file or send those entries again.
+
 ## 📡 TCP Log-Streaming Configuration
 
 Lumberjack can receive logs in real-time via TCP. Configure your application to send logs to Lumberjack:

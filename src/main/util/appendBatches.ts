@@ -1,5 +1,5 @@
 import type { LogEntry } from "../../types/ipc";
-import { boundEntryPayload } from "../../utils/entryLimits";
+import { measureEntryPayload } from "../../utils/entryLimits";
 import { MAX_BATCH_ENTRIES } from "./constants";
 import { prepareRenderBatch } from "./logEntryUtils";
 
@@ -30,7 +30,7 @@ export function* renderBatches(
   let bytes = 0;
   for (const original of entries) {
     const transport = kind ? { ...original, _ingestionKind: kind } : original;
-    const { entry, bytes: size } = boundEntryPayload(transport);
+    const { entry, bytes: size } = measureEntryPayload(transport);
     if (
       batch.length &&
       (bytes + size > 1024 * 1024 ||

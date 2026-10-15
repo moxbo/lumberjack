@@ -7,6 +7,7 @@ import type { PagedLogEntry } from "../../store/paged/types";
 import { useI18n } from "../../utils/i18n";
 import { levelClass, fmtTimestamp, computeTint, fmt } from "../../utils/format";
 import logger from "../../utils/logger";
+import { loadFullEntry } from "../../utils/entryPayload";
 import "./DetailPanel.css";
 
 type InspectorEntry = Partial<PagedLogEntry>;
@@ -173,6 +174,12 @@ export function DetailPanelComponent({
     settled: boolean;
     failed?: boolean;
   } | null>(null);
+  const [retainedFields, setRetainedFields] = useState<{
+    entry: InspectorEntry;
+    value?: InspectorEntry;
+    settled: boolean;
+    failed?: boolean;
+  } | null>(null);
   const entryId = selectedEntry?._id;
   const offloaded = selectedEntry?._offloaded === true;
 
@@ -208,23 +215,67 @@ export function DetailPanelComponent({
   }, [entryId, offloaded, selectedEntry]);
 
   const heavy = heavyFields?.entry === selectedEntry ? heavyFields : null;
+  const showFullMessage =
+    selectedEntry !== null && fullMessageEntry === selectedEntry;
+  const showRaw = selectedEntry !== null && rawEntry === selectedEntry;
+  const needsOriginal = Boolean(
+    selectedEntry?._payloadRef &&
+    (showFullMessage ||
+      (tab === "stacktrace" &&
+        selectedEntry._hasStack === true &&
+        !selectedEntry.stackTrace) ||
+      (tab === "advanced" && showRaw) ||
+      (tab === "context" && selectedEntry._payloadMdcTruncated)),
+  );
+  useEffect(() => {
+    let cancelled = false;
+    if (!selectedEntry || !needsOriginal) {
+      setRetainedFields(null);
+      return;
+    }
+    const entry = selectedEntry;
+    setRetainedFields({ entry, settled: false });
+    void loadFullEntry(entry).then(
+      (value) => {
+        if (!cancelled) setRetainedFields({ entry, value, settled: true });
+      },
+      (error: unknown) => {
+        logger.error("Failed to load original inspector payload:", error);
+        if (!cancelled) {
+          setRetainedFields({ entry, settled: true, failed: true });
+          reportUnavailable.current();
+        }
+      },
+    );
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedEntry, needsOriginal]);
+
+  const original =
+    retainedFields?.entry === selectedEntry ? retainedFields : null;
+  const loadingOriginal = needsOriginal && !original?.settled;
   const loadingHeavy = offloaded && entryId !== undefined && !heavy?.settled;
   const effectiveStackTrace =
+    original?.value?.stackTrace ||
     heavy?.record?.stackTrace ||
     fmt(selectedEntry?.stack_trace) ||
     selectedEntry?.stackTrace ||
     "";
   const effectiveFullMessage =
-    heavy?.record?._fullMessage ||
-    selectedEntry?._fullMessage ||
-    selectedEntry?.message ||
+    original?.value?.message ??
+    heavy?.record?._fullMessage ??
+    selectedEntry?._fullMessage ??
+    selectedEntry?.message ??
     "";
   const isTruncated = selectedEntry?._truncated === true;
   const fullMessageAvailable =
     !isTruncated ||
-    Boolean(heavy?.record?._fullMessage || selectedEntry?._fullMessage);
-  const showFullMessage =
-    selectedEntry !== null && fullMessageEntry === selectedEntry;
+    Boolean(
+      selectedEntry?._payloadRef ||
+      heavy?.record?._fullMessage ||
+      selectedEntry?._fullMessage,
+    );
   const displayedMessage = showFullMessage
     ? effectiveFullMessage
     : selectedEntry?.message || "";
@@ -239,10 +290,16 @@ export function DetailPanelComponent({
     (typeof selectedEntry?._messageSize === "number"
       ? selectedEntry._messageSize
       : effectiveFullMessage.length);
-  const showRaw = selectedEntry !== null && rawEntry === selectedEntry;
+  const displayedMdcPairs: Array<[string, string]> =
+    original?.value?.mdc && selectedEntry?._payloadMdcTruncated
+      ? Object.entries(original.value.mdc).map(([key, value]) => [
+          key,
+          fmt(value),
+        ])
+      : mdcPairs;
   const rawPreview = useMemo(() => {
     if (tab !== "advanced" || !showRaw || !selectedEntry) return null;
-    const raw = selectedEntry.raw;
+    const raw = original?.value?.raw ?? selectedEntry.raw;
     return createRawPreview(
       raw ?? selectedEntry,
       raw == null
@@ -257,6 +314,7 @@ export function DetailPanelComponent({
     tab,
     showRaw,
     selectedEntry,
+    original?.value,
     heavy?.record,
     effectiveFullMessage,
     effectiveStackTrace,
@@ -264,8 +322,20 @@ export function DetailPanelComponent({
 
   const copyMessage = async () => {
     if (!selectedEntry) return;
+    let message = effectiveFullMessage;
+    if (selectedEntry._payloadRef && !original?.value) {
+      try {
+        const full = await loadFullEntry(selectedEntry);
+        message = full.message ?? "";
+      } catch (error) {
+        logger.error("Failed to load original message for copying:", error);
+        setCopyStatus({ entry: selectedEntry, error: true });
+        onError?.(t("inspector.unavailable"));
+        return;
+      }
+    }
     try {
-      await navigator.clipboard.writeText(effectiveFullMessage);
+      await navigator.clipboard.writeText(message);
     } catch {
       setCopyStatus({ entry: selectedEntry, error: true });
       onError?.(t("inspector.copyFailed"));
@@ -416,8 +486,10 @@ export function DetailPanelComponent({
                 }}
               >
                 {t(`inspector.${name}`)}
-                {name === "context" && mdcPairs.length > 0 && (
-                  <span className="inspector-count">{mdcPairs.length}</span>
+                {name === "context" && displayedMdcPairs.length > 0 && (
+                  <span className="inspector-count">
+                    {displayedMdcPairs.length}
+                  </span>
                 )}
               </button>
             ))}
@@ -432,9 +504,14 @@ export function DetailPanelComponent({
               )}
             </div>
           )}
-          {heavy?.failed && (
+          {(heavy?.failed || original?.failed) && (
             <div className="inspector-notice" role="alert">
               {t("inspector.unavailable")}
+            </div>
+          )}
+          {loadingOriginal && (
+            <div className="inspector-notice" role="status">
+              {t("details.loading")}
             </div>
           )}
           <div
@@ -484,7 +561,7 @@ export function DetailPanelComponent({
                   {isTruncated && !fullMessageAvailable && (
                     <p className="inspector-hint" role="status">
                       {t(
-                        loadingHeavy
+                        loadingHeavy || loadingOriginal
                           ? "details.loading"
                           : "inspector.unavailable",
                       )}
@@ -505,7 +582,7 @@ export function DetailPanelComponent({
               ) : (
                 <p className="inspector-hint" role="status">
                   {t(
-                    loadingHeavy
+                    loadingHeavy || loadingOriginal
                       ? "details.loading"
                       : selectedEntry._hasStack
                         ? "inspector.unavailable"
@@ -518,11 +595,11 @@ export function DetailPanelComponent({
                 {metadata}
                 <section className="inspector-context">
                   <h3>{t("details.diagnosticContext")}</h3>
-                  {mdcPairs.length === 0 ? (
+                  {displayedMdcPairs.length === 0 ? (
                     <p className="inspector-hint">{t("inspector.noContext")}</p>
                   ) : (
                     <dl>
-                      {mdcPairs.map(([key, value]) => (
+                      {displayedMdcPairs.map(([key, value]) => (
                         <div key={key}>
                           <dt>{key}</dt>
                           <dd>

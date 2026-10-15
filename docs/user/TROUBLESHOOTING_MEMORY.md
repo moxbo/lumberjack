@@ -455,9 +455,17 @@ need additional memory.
 Network and streaming sources wait for their batches to be consumed. Capacity
 limits, oversized inputs and acknowledgement timeouts are reported as errors;
 affected sources stop rather than silently dropping data or replaying it
-uncontrollably. TCP/streaming lines are limited to 1 MiB. Restart a stopped source
-only after resolving the cause and account for already persisted partial input:
-raw TCP does not provide exactly-once delivery.
+uncontrollably. Complete TCP/streaming lines are parsed before display previews
+are generated; large accepted messages are not cut at a line-size limit.
+Restart a stopped source only after resolving the cause and account for already
+persisted partial input: raw TCP does not provide exactly-once delivery.
+
+Large originals are compressed on disk for the current window's log session.
+The renderer stores previews and references; **Full / Vollständig**, copying
+and exporting load the original on demand. Clearing logs or closing the window
+deletes the originals. Older, already-discarded content must be reimported or
+resent. Processing or explicitly displaying a complete large entry still needs
+memory for that entry; the preview/cache budget is not a per-process RAM cap.
 
 Large whole-document JSON and ZIP imports still use full parsers. Prefer
 line-oriented streaming import, such as NDJSON, for large datasets; the cache

@@ -34,6 +34,7 @@ export interface PagedLogRepositoryOptions {
   maxCachedBytes?: number;
   indexedDbFactory?: IDBFactory;
   databaseName?: string;
+  releasePayloads?: (references: readonly string[]) => Promise<void>;
 }
 
 function transactionDone(
@@ -87,10 +88,16 @@ export class PagedLogRepository {
   private signaturesLoaded = false;
   private signatureLoadPromise: Promise<void> | null = null;
   private readonly factory?: IDBFactory;
+  private readonly payloadReferences = new Map<string, number>();
+  private payloadReferenceVersion = 0;
+  private readonly retiredPayloadReferences = new Set<string>();
+  private payloadCleanup: Promise<void> | null = null;
+  private readonly releasePayloads?: PagedLogRepositoryOptions["releasePayloads"];
   private readonly payloadCache: PageLruCache<CanonicalLogEntry>;
 
   constructor(options: PagedLogRepositoryOptions = {}) {
     this.factory = options.indexedDbFactory;
+    this.releasePayloads = options.releasePayloads;
     this.baseDatabaseName = options.databaseName ?? PAGED_DB_NAME;
     this.activeDatabaseName = this.baseDatabaseName;
     this.payloadCache = new PageLruCache(
@@ -118,6 +125,7 @@ export class PagedLogRepository {
 
   async putMany(entries: readonly PagedLogEntry[]): Promise<number[]> {
     if (entries.length === 0) return [];
+    this.registerPayloadReferences(entries);
     return this.runMutation(async () => {
       const db = await this.getDb();
       const ids = entries.map((entry) => {
@@ -193,6 +201,19 @@ export class PagedLogRepository {
       this.payloadCache.invalidateIds(ids);
       return ids;
     });
+  }
+
+  /** Also track duplicates/rejected inputs so a successful clear reclaims their originals. */
+  registerPayloadReferences(
+    entries: readonly { _payloadRef?: string }[],
+  ): void {
+    for (const entry of entries) {
+      if (typeof entry?._payloadRef === "string")
+        this.payloadReferences.set(
+          entry._payloadRef,
+          ++this.payloadReferenceVersion,
+        );
+    }
   }
 
   async getPayload(id: number): Promise<CanonicalLogEntry | undefined> {
@@ -314,6 +335,7 @@ export class PagedLogRepository {
   }
 
   async clear(): Promise<void> {
+    const references = new Map(this.payloadReferences);
     await this.runMutation(async () => {
       const db = await this.getDb();
       const generation = this.lifecycleGeneration;
@@ -346,9 +368,16 @@ export class PagedLogRepository {
       this.signaturesLoaded = true;
       this.signatureLoadPromise = null;
       this.payloadCache.invalidate();
+      this.retirePayloadReferences(references);
       db.close();
       this.retiredDatabases.add(previousName);
       this.reclaimRetiredDatabases();
+      void this.reclaimPayloads().catch((error) => {
+        console.warn(
+          "Reclaiming original log payloads failed; will retry:",
+          error,
+        );
+      });
     });
   }
 
@@ -395,6 +424,39 @@ export class PagedLogRepository {
     }
   }
 
+  private retirePayloadReferences(
+    references: ReadonlyMap<string, number>,
+  ): void {
+    for (const [reference, version] of references) {
+      // Later registrations belong to writes queued after this clear/destroy.
+      if (this.payloadReferences.get(reference) !== version) continue;
+      this.retiredPayloadReferences.add(reference);
+      this.payloadReferences.delete(reference);
+    }
+  }
+
+  private reclaimPayloads(): Promise<void> {
+    if (this.payloadCleanup) return this.payloadCleanup;
+    if (!this.releasePayloads) {
+      this.retiredPayloadReferences.clear();
+      return Promise.resolve();
+    }
+    const release = this.releasePayloads;
+    this.payloadCleanup = Promise.resolve()
+      .then(async () => {
+        while (this.retiredPayloadReferences.size) {
+          const references = [...this.retiredPayloadReferences];
+          await release(references);
+          for (const reference of references)
+            this.retiredPayloadReferences.delete(reference);
+        }
+      })
+      .finally(() => {
+        this.payloadCleanup = null;
+      });
+    return this.payloadCleanup;
+  }
+
   close(): void {
     this.lifecycleGeneration++;
     this.payloadCache.invalidate();
@@ -405,12 +467,15 @@ export class PagedLogRepository {
   }
 
   async destroy(): Promise<void> {
+    const references = new Map(this.payloadReferences);
     await this.runMutation(async () => {
       this.close();
       this.retiredDatabases.add(this.databaseName);
       await Promise.all(
         [...this.retiredDatabases].map((name) => this.deleteDatabase(name)),
       );
+      this.retirePayloadReferences(references);
+      await this.reclaimPayloads();
       this.signatureKeys.clear();
       this.signaturesLoaded = false;
       this.signatureLoadPromise = null;

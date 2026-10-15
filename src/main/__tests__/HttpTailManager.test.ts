@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import * as http from "http";
 import type { AddressInfo } from "net";
 import { HttpTailManager, splitTailLines } from "../HttpTailManager";
@@ -327,8 +327,9 @@ describe("HttpTailManager", () => {
     }
   });
 
-  it("rejects oversized unterminated lines rather than growing carry indefinitely", async () => {
-    server.body = "x".repeat(1024 * 1024 + 1);
+  it("retains a large partial line until its complete JSON envelope arrives", async () => {
+    const record = { message: "x".repeat(5 * 1024 * 1024), level: "INFO" };
+    server.body = JSON.stringify(record);
     const errors: string[] = [];
     const received: string[] = [];
     const mgr = new HttpTailManager();
@@ -340,13 +341,23 @@ describe("HttpTailManager", () => {
         },
         onError: (error) => errors.push(error.message),
       },
-      { emitInitial: true },
+      { emitInitial: true, intervalMs: 250 },
     );
-    await delay(200);
-    expect(received).toEqual([]);
-    expect(errors[0]).toContain("1 MiB");
-    expect(mgr.list()).toEqual([]);
-    mgr.stopAll();
+    try {
+      await delay(200);
+      expect(received).toEqual([]);
+      expect(errors).toEqual([]);
+      expect(mgr.list()).toHaveLength(1);
+      server.body += "\nnext\n";
+      await vi.waitFor(() => expect(received).toHaveLength(2), {
+        timeout: 5000,
+      });
+      expect(JSON.parse(received[0]!)).toEqual(record);
+      expect(received[1]).toBe("next");
+      expect(errors).toEqual([]);
+    } finally {
+      mgr.stopAll();
+    }
   });
 
   it("buffers partial last line across ticks", async () => {

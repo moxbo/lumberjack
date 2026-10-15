@@ -16,6 +16,8 @@ export interface PagedLogEntry {
   traceId?: string | null;
   stackTrace?: string | null;
   _fullMessage?: string;
+  _payloadRef?: string;
+  _payloadMdcTruncated?: boolean;
   _truncated?: boolean;
   signature?: string;
   mark?: string | null;

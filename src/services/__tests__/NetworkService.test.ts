@@ -3,7 +3,7 @@ import { once } from "events";
 import { connect } from "net";
 import { NetworkService } from "../NetworkService";
 import type { LogEntry } from "../../types/ipc";
-import { MAX_LOG_LINE_BYTES } from "../../utils/entryLimits";
+import { toEntry } from "../../main/parsers";
 
 vi.mock("electron-log/main", () => ({
   default: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() },
@@ -156,9 +156,9 @@ describe("source backpressure", () => {
     }
   });
 
-  it("truncates oversized TCP lines and keeps the connection open", async () => {
+  it("preserves oversized TCP JSON messages and metadata while keeping the connection open", async () => {
     const service = new NetworkService();
-    service.setParsers(parsers);
+    service.setParsers({ ...parsers, toEntry });
     const received: LogEntry[] = [];
     service.setLogCallback((entries) => {
       received.push(...entries);
@@ -169,24 +169,35 @@ describe("source backpressure", () => {
     socket.resume();
     try {
       await once(socket, "connect");
-      // 6 MiB without newline, including a multi-byte char straddling the cut.
-      const huge = "ä".repeat((6 * 1024 * 1024) / 2);
+      const huge = "<xml>" + "ä".repeat((6 * 1024 * 1024) / 2) + "</xml>";
+      const record = {
+        "@timestamp": "2026-10-15T06:21:26.613Z",
+        message: huge,
+        level: "INFO",
+        logger_name: "large-message",
+        thread_name: "worker",
+      };
       await new Promise<void>((resolve) =>
-        socket.write(`before\n${huge}\nafter\n`, () => resolve()),
+        socket.write(`before\n${JSON.stringify(record)}\nafter\n`, () =>
+          resolve(),
+        ),
       );
       await vi.waitFor(() => expect(received).toHaveLength(3), {
         timeout: 5000,
       });
       expect(received[0]!.message).toBe("before");
       expect(received[2]!.message).toBe("after");
-      const truncated = received[1]!;
-      expect(truncated._truncated).toBe(true);
-      expect(truncated._messageSize).toBe(6 * 1024 * 1024);
-      expect(truncated.message.endsWith("… [truncated]")).toBe(true);
-      expect(truncated.message).not.toContain("\uFFFD");
-      expect(Buffer.byteLength(truncated.message, "utf8")).toBeLessThanOrEqual(
-        MAX_LOG_LINE_BYTES + 32,
-      );
+      const large = received[1]!;
+      expect(large._truncated).toBe(true);
+      expect(large._fullMessage).toBe(huge);
+      expect(large._messageSize).toBe(Buffer.byteLength(huge));
+      expect(large.timestamp).toBe(record["@timestamp"]);
+      expect(large.level).toBe(record.level);
+      expect(large.logger).toBe(record.logger_name);
+      expect(large.thread).toBe(record.thread_name);
+      expect(large.message.startsWith("<xml>")).toBe(true);
+      expect(large.message).not.toContain("\uFFFD");
+      expect(large.message.length).toBeLessThan(51 * 1024);
       expect(socket.destroyed).toBe(false);
       expect(service.getTcpStatus().activeConnections).toBe(1);
     } finally {

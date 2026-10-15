@@ -45,6 +45,107 @@ describe("serialized file logging", () => {
     maxBackups,
   });
 
+  it("keeps records larger than the writer budget complete across rotation", async () => {
+    const service = new FileLoggingService();
+    await service.configure(configuration(filepath, 128 * 1024));
+    const before = [{ message: "before" }, { message: "also before" }];
+    const large = {
+      message: "x".repeat(17 * 1024 * 1024) + "\u00fc\u{1f600}\n",
+    };
+    const after = [{ message: "after" }, { message: "also after" }];
+    await service.writeRecords([...before, large, ...after]);
+    await service.close();
+    expect(await fs.promises.readFile(`${filepath}.2`, "utf8")).toBe(
+      before.map((record) => JSON.stringify(record) + "\n").join(""),
+    );
+    expect(await fs.promises.readFile(`${filepath}.1`, "utf8")).toBe(
+      JSON.stringify(large) + "\n",
+    );
+    expect(await fs.promises.readFile(filepath, "utf8")).toBe(
+      after.map((record) => JSON.stringify(record) + "\n").join(""),
+    );
+  });
+
+  it("does not interleave concurrent records or configuration changes between chunks", async () => {
+    const service = new FileLoggingService();
+    const other = path.join(directory, "other.log");
+    await service.configure(configuration(filepath, Infinity));
+    const first = { message: "first\u{1f600}".repeat(300_000) };
+    const second = { message: "second\n".repeat(300_000) };
+    const third = { message: "third\u00fc".repeat(200_000) };
+    await Promise.all([
+      service.writeRecord(first),
+      service.writeRecord(second),
+      service.configure(configuration(other, Infinity)),
+      service.writeRecord(third),
+      service.close(),
+    ]);
+    expect(await fs.promises.readFile(filepath, "utf8")).toBe(
+      JSON.stringify(first) + "\n" + JSON.stringify(second) + "\n",
+    );
+    expect(await fs.promises.readFile(other, "utf8")).toBe(
+      JSON.stringify(third) + "\n",
+    );
+  });
+
+  it("reserves bounded record buffers and reports backpressure without discarding content", async () => {
+    const maxQueuedBytes = 16 * 1024;
+    const service = new FileLoggingService({ maxQueuedBytes });
+    await service.configure(configuration(filepath, Infinity));
+    const append = vi.spyOn(fs.promises, "appendFile");
+    const record = { message: "\u00fc\u{1f600}".repeat(50_000) };
+    const writing = service.writeRecord(record);
+    await expect(service.write("blocked")).rejects.toBeInstanceOf(
+      FileWriterBackpressureError,
+    );
+    await writing;
+    for (const [, data] of append.mock.calls) {
+      if (typeof data === "string")
+        expect(Buffer.byteLength(data)).toBeLessThanOrEqual(maxQueuedBytes);
+      else if (data instanceof Uint8Array)
+        expect(data.byteLength).toBeLessThanOrEqual(maxQueuedBytes);
+      else throw new Error("Unexpected record write buffer");
+    }
+    await expect(service.flush()).rejects.toBeInstanceOf(
+      FileWriterBackpressureError,
+    );
+    await service.close();
+    expect(await fs.promises.readFile(filepath, "utf8")).toBe(
+      JSON.stringify(record) + "\n",
+    );
+  });
+
+  it("cancels queued records before serialization while completing the active record", async () => {
+    const service = new FileLoggingService();
+    await service.configure(configuration(filepath, Infinity));
+    const release = deferred();
+    const started = deferred();
+    const append = fs.promises.appendFile.bind(fs.promises);
+    vi.spyOn(fs.promises, "appendFile").mockImplementationOnce(
+      async (...args) => {
+        started.resolve();
+        await release.promise;
+        await append(...args);
+      },
+    );
+    const first = { message: "active".repeat(50_000) };
+    const writing = service.writeRecord(first);
+    await started.promise;
+    const toJSON = vi.fn(() => ({ message: "cancelled" }));
+    const queued = service.writeRecord({ toJSON });
+    const rejected = expect(queued).rejects.toThrow("cleared");
+    service.clearQueue();
+    release.resolve();
+    await writing;
+    await rejected;
+    expect(toJSON).not.toHaveBeenCalled();
+    await expect(service.flush()).rejects.toThrow("cleared");
+    await service.close();
+    expect(await fs.promises.readFile(filepath, "utf8")).toBe(
+      JSON.stringify(first) + "\n",
+    );
+  });
+
   it("waits for pending writes before rotating and counts UTF-8 bytes", async () => {
     const service = new FileLoggingService();
     await service.configure(configuration(filepath, 4));

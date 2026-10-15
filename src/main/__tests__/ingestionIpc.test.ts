@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterAll, afterEach, describe, expect, it, vi } from "vitest";
 import { EventEmitter } from "node:events";
 import AdmZip from "adm-zip";
 import { parseJsonFile, parseTextLines } from "../parsers";
@@ -10,7 +10,9 @@ import type {
 import { SettingsService } from "../../services/SettingsService";
 import { NetworkService } from "../../services/NetworkService";
 import { registerIpcHandlers } from "../ipcHandlers";
+import { entryPayloadStore } from "../EntryPayloadStore";
 import { IPC_BATCH_SIZE } from "../../constants/logViewer";
+import { MESSAGE_PREVIEW_LENGTH } from "../../utils/entryLimits";
 import {
   DEFAULT_INGESTION_LIMITS,
   IngestionBudget,
@@ -33,6 +35,7 @@ vi.mock("electron-log/main", () => ({
 }));
 
 afterEach(() => vi.useRealTimers());
+afterAll(() => entryPayloadStore.close());
 
 type Parsers = ReturnType<Parameters<typeof registerIpcHandlers>[2]>;
 function register(
@@ -51,6 +54,252 @@ function register(
     enqueue,
   );
 }
+
+describe("original payload IPC", () => {
+  it.each([
+    "logs:parsePaths",
+    "logs:parseRaw",
+    "http:loadOnce",
+    "elastic:search",
+  ] as const)(
+    "retains complete originals behind window-owned references for %s",
+    async (channel) => {
+      const message = "<xml>" + "\u00fc\u{1f600}".repeat(50_000) + "</xml>";
+      const raw = {
+        timestamp: "2026-09-14T10:34:25.128Z",
+        level: "INFO",
+        logger: "large.payload",
+        thread: "worker-44",
+        message,
+      };
+      const entries = parseTextLines("original.ndjson", JSON.stringify(raw));
+      const network = new NetworkService();
+      vi.spyOn(network, "httpLoadOnce").mockResolvedValue({
+        ok: true,
+        entries,
+      });
+      register(
+        {
+          parsePaths: () => entries,
+          parseJsonFile,
+          parseTextLines,
+          fetchElasticPitPage: async () => ({
+            entries,
+            total: 1,
+            hasMore: false,
+            nextSearchAfter: null,
+            pitSessionId: "test",
+          }),
+        },
+        network,
+      );
+      const sender = Object.assign(new EventEmitter(), {
+        id: 42,
+        isDestroyed: () => false,
+        send: vi.fn(),
+      });
+      const other = Object.assign(new EventEmitter(), {
+        id: 43,
+        isDestroyed: () => false,
+        send: vi.fn(),
+      });
+      const handler = ipc.handle.mock.calls.find(
+        ([name]) => name === channel,
+      )![1];
+      const load = ipc.handle.mock.calls.find(
+        ([name]) => name === "logs:payloadLoad",
+      )![1];
+      const release = ipc.handle.mock.calls.find(
+        ([name]) => name === "logs:payloadRelease",
+      )![1];
+      const request =
+        channel === "logs:parsePaths"
+          ? ["original.ndjson"]
+          : channel === "logs:parseRaw"
+            ? [
+                {
+                  name: "original.ndjson",
+                  encoding: "utf8",
+                  data: JSON.stringify(raw),
+                },
+              ]
+            : channel === "elastic:search"
+              ? { url: "http://example.test" }
+              : "http://example.test/log";
+      const result: ParseResult = await handler({ sender }, request);
+      expect(result.ok).toBe(true);
+      expect(result.entries).toHaveLength(1);
+      const preview = result.entries![0]!;
+      expect(preview.message).not.toBe(message);
+      expect(preview.message.length).toBeLessThanOrEqual(
+        MESSAGE_PREVIEW_LENGTH + 256,
+      );
+      expect(
+        preview.message.startsWith(message.slice(0, MESSAGE_PREVIEW_LENGTH)),
+      ).toBe(true);
+      expect(preview).not.toHaveProperty("_fullMessage");
+      expect(preview).toMatchObject({
+        logger: raw.logger,
+        thread: raw.thread,
+        _messageSize: Buffer.byteLength(message),
+      });
+      const reference = preview._payloadRef;
+      if (!reference) throw new Error("Missing original payload reference");
+      try {
+        await expect(load({ sender }, reference)).resolves.toMatchObject({
+          ok: true,
+          data: { message, raw },
+        });
+        await expect(load({ sender: other }, reference)).resolves.toMatchObject(
+          {
+            ok: false,
+            error: expect.stringContaining("another window"),
+          },
+        );
+        await expect(
+          release({ sender: other }, [reference]),
+        ).resolves.toMatchObject({
+          ok: false,
+          error: expect.stringContaining("another window"),
+        });
+        await expect(
+          release({ sender }, [reference, 42]),
+        ).resolves.toMatchObject({
+          ok: false,
+          error: expect.stringContaining("Invalid"),
+        });
+        await expect(
+          release({ sender }, Array(257).fill(reference)),
+        ).resolves.toMatchObject({
+          ok: false,
+          error: expect.stringContaining("Invalid"),
+        });
+        await expect(load({ sender }, reference)).resolves.toMatchObject({
+          ok: true,
+          data: { message },
+        });
+        await expect(release({ sender }, [reference])).resolves.toEqual({
+          ok: true,
+        });
+        await expect(load({ sender }, reference)).resolves.toMatchObject({
+          ok: false,
+          error: expect.stringContaining("unavailable"),
+        });
+      } finally {
+        await entryPayloadStore.release(sender, [reference]);
+      }
+    },
+  );
+
+  it("reports HTTP original-storage failures instead of returning a preview", async () => {
+    const network = new NetworkService();
+    vi.spyOn(network, "httpLoadOnce").mockResolvedValue({
+      ok: true,
+      entries: [{ timestamp: null, source: "test", message: "large" }],
+    });
+    register({}, network);
+    const preparation = vi
+      .spyOn(entryPayloadStore, "prepare")
+      .mockRejectedValueOnce(new Error("ENOSPC"));
+    const handler = ipc.handle.mock.calls.find(
+      ([channel]) => channel === "http:loadOnce",
+    )![1];
+    try {
+      await expect(
+        handler({ sender: {} }, "http://example.test/log"),
+      ).resolves.toEqual({
+        ok: false,
+        error: "ENOSPC",
+      });
+    } finally {
+      preparation.mockRestore();
+    }
+  });
+
+  it.each(["cancel", "send-failure"])(
+    "reclaims staged stream originals that were not delivered after %s",
+    async (failure) => {
+      const entries = parseTextLines(
+        "original.ndjson",
+        JSON.stringify({ message: "x".repeat(200_000) }),
+      );
+      register({
+        getStreamParseStrategy: async () => ({
+          streamable: true,
+          reason: "stream",
+          totalBytes: 200_000,
+        }),
+        streamParseFile: async function* () {
+          yield {
+            entries,
+            bytesRead: 200_000,
+            totalBytes: 200_000,
+            filePath: "original.ndjson",
+            done: true,
+          };
+        },
+      });
+      const sender = Object.assign(new EventEmitter(), {
+        id: 42,
+        isDestroyed: () => false,
+        send: vi.fn((channel: string) => {
+          if (channel === "logs:streamChunk" && failure === "send-failure")
+            throw new Error("send failed");
+        }),
+      });
+      const start = ipc.handle.mock.calls.find(
+        ([channel]) => channel === "logs:streamParsePaths",
+      )![1];
+      const ready = ipc.on.mock.calls.find(
+        ([channel]) => channel === "logs:streamReady",
+      )![1];
+      const cancel = ipc.on.mock.calls.find(
+        ([channel]) => channel === "logs:streamCancel",
+      )![1];
+      let finishStaging!: () => void;
+      const staged = new Promise<void>((resolve) => {
+        finishStaging = resolve;
+      });
+      const prepare = entryPayloadStore.prepare.bind(entryPayloadStore);
+      let reference: string | undefined;
+      const preparation = vi
+        .spyOn(entryPayloadStore, "prepare")
+        .mockImplementationOnce(async (owner, entries) => {
+          const prepared = await prepare(owner, entries);
+          reference = prepared[0]?._payloadRef;
+          await staged;
+          return prepared;
+        });
+      const { sessionId } = await start({ sender }, ["original.ndjson"]);
+      try {
+        ready({ sender }, { sessionId });
+        await vi.waitFor(() => expect(reference).toBeTypeOf("string"));
+        const retainedReference = reference!;
+        if (failure === "cancel") cancel({ sender }, { sessionId });
+        finishStaging();
+        await vi.waitFor(async () => {
+          await expect(
+            entryPayloadStore.load(sender, retainedReference),
+          ).rejects.toThrow("unavailable");
+        });
+        expect(
+          sender.send.mock.calls.filter(
+            ([channel]) => channel === "logs:streamChunk",
+          ),
+        ).toHaveLength(failure === "cancel" ? 0 : 1);
+        expect(sender.send).not.toHaveBeenCalledWith(
+          "logs:streamComplete",
+          expect.anything(),
+        );
+      } finally {
+        finishStaging();
+        cancel({ sender }, { sessionId });
+        preparation.mockRestore();
+        if (reference) await entryPayloadStore.release(sender, [reference]);
+      }
+    },
+  );
+});
 
 describe("raw drop ingestion", () => {
   it("bounds decoded drop payload bytes even when the entry count is small", async () => {

@@ -71,7 +71,7 @@ function getCachedRegex(query: string): RegExp | null {
 }
 
 // Maximale Textlänge für Highlighting um Performance-Probleme zu vermeiden
-const MAX_HIGHLIGHT_LENGTH = 50_000;
+export const MAX_HIGHLIGHT_LENGTH = 50_000;
 
 // Highlight all occurrences of needle in text (case-insensitive), returns safe HTML
 export function highlightAll(text: unknown, needle: unknown): string {

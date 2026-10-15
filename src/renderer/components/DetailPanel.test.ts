@@ -18,6 +18,10 @@ const hooks = vi.hoisted(() => ({
   getHeavy: vi.fn<(id: number) => Promise<HeavyRecord | undefined>>(),
   writeText: vi.fn<(text: string) => Promise<void>>(),
   logError: vi.fn(),
+  loadFull:
+    vi.fn<
+      (entry: Record<string, unknown>) => Promise<Record<string, unknown>>
+    >(),
   comparator: undefined as
     ((prev: DetailPanelProps, next: DetailPanelProps) => boolean) | undefined,
 }));
@@ -75,6 +79,9 @@ vi.mock("../../store/heavyFieldStore", () => ({
 }));
 vi.mock("../../utils/logger", () => ({
   default: { error: hooks.logError },
+}));
+vi.mock("../../utils/entryPayload", () => ({
+  loadFullEntry: hooks.loadFull,
 }));
 
 type TestNode = { props: Record<string, unknown> };
@@ -143,6 +150,7 @@ beforeEach(() => {
   hooks.cursor = 0;
   hooks.effects = [];
   vi.clearAllMocks();
+  hooks.loadFull.mockReset();
   hooks.writeText.mockResolvedValue(undefined);
   vi.stubGlobal("navigator", {
     clipboard: { writeText: hooks.writeText },
@@ -298,6 +306,121 @@ describe("DetailPanel inspector", () => {
       "Payment timeout",
       "timeout",
     );
+  });
+
+  it("loads a disk-backed original only after full-message opt-in and releases the view on collapse", async () => {
+    let resolve!: (entry: Record<string, unknown>) => void;
+    hooks.loadFull.mockReturnValueOnce(new Promise((done) => (resolve = done)));
+    const options = props();
+    Object.assign(options.selectedEntry!, {
+      _payloadRef: "original",
+      _truncated: true,
+    });
+    let tree = render(options);
+    expect(hooks.loadFull).not.toHaveBeenCalled();
+    expect(
+      find(tree, "aria-label", "inspector.copyMessage").props.disabled,
+    ).toBe(false);
+    click(find(tree, "aria-pressed", false));
+    tree = render(options);
+    expect(hooks.loadFull).toHaveBeenCalledOnce();
+    expect(text(tree)).toContain("details.loading");
+    resolve({
+      ...options.selectedEntry,
+      message: "Complete original message and tail",
+    });
+    await Promise.resolve();
+    tree = render(options);
+    expect(useHighlightedHtml).toHaveBeenLastCalledWith(
+      "Complete original message and tail",
+      "timeout",
+    );
+    click(find(tree, "aria-pressed", true));
+    render(options);
+    expect(useHighlightedHtml).toHaveBeenLastCalledWith(
+      "Payment timeout",
+      "timeout",
+    );
+  });
+
+  it("does not show an original returned for a previous selection", async () => {
+    let resolve!: (entry: Record<string, unknown>) => void;
+    hooks.loadFull.mockReturnValueOnce(new Promise((done) => (resolve = done)));
+    const options = props();
+    Object.assign(options.selectedEntry!, {
+      _payloadRef: "old",
+      _truncated: true,
+    });
+    click(find(render(options), "aria-pressed", false));
+    render(options);
+    const next = props();
+    render(next);
+    resolve({ message: "Stale original" });
+    await Promise.resolve();
+    expect(text(render(next))).not.toContain("Stale original");
+    expect(useHighlightedHtml).toHaveBeenLastCalledWith(
+      "Payment timeout",
+      "timeout",
+    );
+  });
+
+  it("loads the complete original for copy without expanding the preview", async () => {
+    const options = props();
+    Object.assign(options.selectedEntry!, {
+      _payloadRef: "copy",
+      _truncated: true,
+    });
+    hooks.loadFull.mockResolvedValueOnce({
+      message: "Complete copied original",
+    });
+    const tree = render(options);
+    click(find(tree, "aria-label", "inspector.copyMessage"));
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(hooks.writeText).toHaveBeenCalledWith("Complete copied original");
+    render(options);
+    expect(useHighlightedHtml).toHaveBeenLastCalledWith(
+      "Payment timeout",
+      "timeout",
+    );
+  });
+
+  it("surfaces original-storage failures instead of presenting the preview as complete", async () => {
+    const options = props({ onError: vi.fn() });
+    Object.assign(options.selectedEntry!, {
+      _payloadRef: "missing",
+      _truncated: true,
+    });
+    const error = new Error("Original file missing");
+    hooks.loadFull.mockRejectedValueOnce(error);
+    click(find(render(options), "aria-pressed", false));
+    render(options);
+    await Promise.resolve();
+    expect(text(render(options))).toContain("inspector.unavailable");
+    expect(options.onError).toHaveBeenCalledWith("inspector.unavailable");
+    expect(hooks.logError).toHaveBeenCalledWith(
+      "Failed to load original inspector payload:",
+      error,
+    );
+    expect(hooks.writeText).not.toHaveBeenCalled();
+  });
+
+  it("loads a raw original only when the advanced disclosure is opened", async () => {
+    const options = props();
+    options.selectedEntry!._payloadRef = "raw";
+    hooks.loadFull.mockResolvedValueOnce({
+      ...options.selectedEntry,
+      raw: { originalField: "complete raw data" },
+    });
+    let tree = render(options);
+    click(find(tree, "id", "inspector-test-tab-advanced"));
+    tree = render(options);
+    expect(hooks.loadFull).not.toHaveBeenCalled();
+    toggleRaw(tree, true);
+    render(options);
+    await Promise.resolve();
+    tree = render(options);
+    expect(text(tree)).toContain("complete raw data");
   });
 
   it("loads offloaded messages, disables premature copy and ignores stale loads", async () => {

@@ -10,12 +10,13 @@ import log from "electron-log/main";
 import zlib from "zlib";
 import { buildElasticMessageQuery } from "../utils/esMessageQuery";
 import {
-  BoundedLineSplitter,
-  MAX_LOG_LINE_BYTES,
-  boundEntryPayload,
-  type BoundedLine,
+  LogLineSplitter,
+  MESSAGE_PREVIEW_LENGTH,
+  MESSAGE_TRUNCATE_THRESHOLD,
+  type LogLine,
 } from "../utils/entryLimits";
 import { computeMdcFromRaw } from "../utils/mdc";
+import { estimatePayloadBytes } from "../utils/estimatePayloadBytes";
 
 // Keep-Alive Agents für HTTP/HTTPS (inkl. unsicherem TLS)
 const HTTP_KEEPALIVE_AGENT = new http.Agent({ keepAlive: true, maxSockets: 8 });
@@ -28,8 +29,6 @@ const HTTPS_INSECURE_KEEPALIVE_AGENT = new https.Agent({
 // Message size limits for performance optimization
 // Messages larger than TRUNCATE_THRESHOLD will be truncated for display,
 // but the full message is preserved in _fullMessage for viewing on demand
-const MESSAGE_TRUNCATE_THRESHOLD = 100 * 1024; // 100 KB - truncate for display
-const MESSAGE_PREVIEW_LENGTH = 50 * 1024; // 50 KB - preview shown in list
 const LARGE_MESSAGE_WARNING_THRESHOLD = 1024 * 1024; // 1 MB - log warning
 const DEFAULT_STREAM_PARSE_THRESHOLD_BYTES = 1024 * 1024;
 const DEFAULT_STREAM_PARSE_CHUNK_SIZE = 1000;
@@ -214,7 +213,7 @@ function toEntry(obj: AnyMap = {}, fallbackMessage = "", source = ""): Entry {
 
   // Handle large messages - truncate for display but preserve original
   const fullMessage = toStringOr(msgVal, "");
-  const messageSize = fullMessage.length;
+  const messageSize = Buffer.byteLength(fullMessage, "utf8");
   let displayMessage = fullMessage;
   let truncated = false;
   let originalMessage: string | undefined;
@@ -449,16 +448,11 @@ async function* streamParseFile(
   let pending: Entry[] = [];
   let pendingBytes = 0;
 
-  async function* boundedLines(): AsyncGenerator<BoundedLine> {
-    // Oversized lines are truncated rather than failing the whole import.
-    const splitter = new BoundedLineSplitter(MAX_LOG_LINE_BYTES, (bytes) =>
-      log.warn(
-        `[parser] Line in ${filePath} exceeds ${MAX_LOG_LINE_BYTES} bytes (${bytes} so far); truncating and discarding the remainder`,
-      ),
-    );
+  async function* completeLines(): AsyncGenerator<LogLine> {
+    const splitter = new LogLineSplitter();
     for await (const chunk of stream) {
       for (const line of splitter.push(String(chunk))) {
-        if (!line.truncated && line.text.endsWith("\r")) {
+        if (line.text.endsWith("\r")) {
           line.text = line.text.slice(0, -1);
         }
         yield line;
@@ -469,15 +463,12 @@ async function* streamParseFile(
   }
 
   try {
-    for await (const line of boundedLines()) {
+    for await (const line of completeLines()) {
       if (options.signal?.aborted) throw createAbortError();
       const parsed = parseTextLine(filePath, line.text);
       if (parsed) {
-        if (line.truncated) {
-          parsed._truncated = true;
-          parsed._messageSize = line.originalBytes;
-        }
-        const { entry, bytes } = boundEntryPayload(parsed);
+        const entry = parsed;
+        const bytes = estimatePayloadBytes(entry);
         if (pending.length && pendingBytes + bytes > 2 * 1024 * 1024) {
           yield {
             entries: pending,

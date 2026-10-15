@@ -30,6 +30,7 @@ import {
 } from "../services/WindowAppendQueue";
 import { estimatePayloadBytes } from "../utils/estimatePayloadBytes";
 import { MAX_ENTRY_PAYLOAD_BYTES } from "../utils/entryLimits";
+import { entryPayloadStore } from "./EntryPayloadStore";
 import { HealthMonitor } from "../services/HealthMonitor";
 import { LoggingStrategy, LogLevel } from "../services/LoggingStrategy";
 import { FeatureFlags } from "../services/FeatureFlags";
@@ -974,7 +975,7 @@ async function stopSourcesAndCloseFileLogging(): Promise<void> {
     await networkService.stopTcpServer();
     await networkService.waitForPendingLogs();
   } finally {
-    await fileLogging.close();
+    await Promise.all([fileLogging.close(), entryPayloadStore.close()]);
   }
 }
 
@@ -1001,11 +1002,12 @@ function configureFileLogging(): Promise<void> {
 async function writeEntriesToFile(entries: LogEntry[]): Promise<void> {
   if (!settingsService.get().logToFile || !entries?.length) return;
   await fileLoggingReady;
-  for (const batch of renderBatches(entries)) {
-    await fileLogging.write(
-      batch.map((entry) => JSON.stringify(entry) + "\n").join(""),
-    );
-  }
+  const records = entries.map((entry) => {
+    const full = { ...entry, message: entry._fullMessage ?? entry.message };
+    delete full._fullMessage;
+    return full;
+  });
+  await fileLogging.writeRecords(records);
 }
 
 function exitAfterFileLogging(code: number): void {
@@ -1171,8 +1173,8 @@ async function appendToWindow(
 ): Promise<void> {
   if (!win || win.isDestroyed())
     throw new Error("No receiving window available");
-  // Split a bulk producer input rather than accepting only its prefix.
-  for (const batch of renderBatches(entries, kind)) {
+  const prepared = await entryPayloadStore.prepare(win.webContents, entries);
+  for (const batch of renderBatches(prepared, kind)) {
     await enqueueWithBackpressure(win, batch);
   }
 }

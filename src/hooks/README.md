@@ -17,6 +17,12 @@ and dialogs in `App.tsx`.
   arrays receive a fresh index because their ordering may have changed.
 - `useFilterWorker` sends projections to the filter worker.
   `usePagedLogHydration` loads payloads needed by visible rows.
+- `main/EntryPayloadStore.ts` retains large originals before delivery.
+  Paged entries keep `_payloadRef` and a display preview, not the full strings.
+  Use `utils/entryPayload.ts`'s `loadFullEntry` only for explicit full inspection,
+  copying or export, never for list hydration. References belong to one window
+  and are reclaimed after a committed clear or window destruction; failed
+  replacement preparation preserves the originals.
 - `useFixedRowVirtualizer` maps fixed-height log rows onto a scroll surface
   capped at 8,000,000 CSS pixels, below browser layout limits. Navigation and
   stable-ID anchoring use logical offsets; DOM row positions and scrollbar
@@ -169,20 +175,27 @@ dead renderer or a persistence error terminates the connection. TCP sockets
 have no inactivity timeout (log sources are legitimately idle); dead peers are
 detected via TCP keepalive (60 s). File
 writers also have finite defaults: 1,024 operations and 16 MiB. These are
-independent budgets, not a shared process-wide cap.
+independent budgets, not a shared process-wide cap. Automatic file logging
+serializes records only after writer admission, uses bounded write buffers and
+rotates only between complete records. An individual record may exceed the
+rotation target; it must not be split across backups or interleaved with another
+source. Parsing and serializing an original still needs per-record memory.
 
 HTTP polling and file/HTTP tailing await downstream consumption before reading
 the next chunk. HTTP-tail reads are 64 KiB. TCP and streamed file imports split
-lines with `BoundedLineSplitter` (`src/utils/entryLimits.ts`): a line longer
-than `MAX_LOG_LINE_BYTES` (4 MiB) is truncated UTF-8-safely, flagged
-`_truncated` with `_messageSize` set to the original byte count, and the
-remainder up to the next newline is discarded. Neither source fails because of
-line size. Within that cap the normal display truncation applies: the list shows
-a preview and the detail panel loads `_fullMessage` on demand, exactly as for
-file imports. `boundEntryPayload` shrinks entries above
-`MAX_ENTRY_PAYLOAD_BYTES` (32 MiB estimated) instead of rejecting the batch, and
-window-queue capacity refusals make TCP delivery wait for in-flight progress
-rather than terminate the connection. Streaming imports allow one active
+lines with `LogLineSplitter` (`src/utils/entryLimits.ts`), preserving complete
+JSON envelopes and UTF-8 content regardless of the display-preview length.
+File/HTTP tails also wait for complete lines instead of enforcing a display-size
+limit on input. The main process retains large originals as compressed,
+window-owned disk payloads before admitting their previews to the append queue.
+`_truncated` describes only the view; `_messageSize` is the complete message's
+UTF-8 byte count. Full inspection, copying and export resolve `_payloadRef` on
+demand, while ordinary row hydration never loads the original. Highlighting
+caches do not retain these large originals after inspection.
+`measureEntryPayload` validates the 32 MiB transport budget without modifying
+content; it must only receive already-prepared previews. Window-queue capacity
+refusals make TCP delivery wait for in-flight progress rather than terminate
+the connection. Streaming imports allow one active
 session per renderer and 16 globally, and require readiness/persistence
 acknowledgements within 30 seconds.
 

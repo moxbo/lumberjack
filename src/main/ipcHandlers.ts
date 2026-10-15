@@ -17,8 +17,9 @@ import { WatchManager } from "./FileWatcher";
 import { HttpTailManager } from "./HttpTailManager";
 import { getSharedMainApi } from "./sharedMainApi";
 import { ExportFileService } from "./ExportFileService";
+import { entryPayloadStore } from "./EntryPayloadStore";
 import { IPC_BATCH_SIZE } from "../constants/logViewer";
-import { boundEntryPayload } from "../utils/entryLimits";
+import { estimatePayloadBytes } from "../utils/estimatePayloadBytes";
 import type {
   ExportBeginRequest,
   ExportBeginResult,
@@ -198,8 +199,8 @@ function* boundedImportBatches(
   }
   let batch: LogEntry[] = [];
   let bytes = 64;
-  for (const original of entries) {
-    const { entry, bytes: size } = boundEntryPayload(original);
+  for (const entry of entries) {
+    const size = estimatePayloadBytes(entry);
     if (
       batch.length &&
       (batch.length >= Math.min(chunkSize, STREAM_PARSE_CHUNK_SIZE) ||
@@ -367,6 +368,48 @@ export function registerIpcHandlers(
   ) => void | Promise<void>,
 ): void {
   const sharedApi = getSharedMainApi();
+  ipcMain.handle(
+    "logs:payloadLoad",
+    async (event, reference: unknown): Promise<Result<LogEntry>> => {
+      try {
+        if (typeof reference !== "string")
+          throw new TypeError("Invalid log payload reference");
+        return {
+          ok: true,
+          data: await entryPayloadStore.load(event.sender, reference),
+        };
+      } catch (error) {
+        log.error("Loading original log payload failed:", error);
+        return {
+          ok: false,
+          error: error instanceof Error ? error.message : String(error),
+        };
+      }
+    },
+  );
+  ipcMain.handle(
+    "logs:payloadRelease",
+    async (event, references: unknown): Promise<Result<void>> => {
+      try {
+        if (
+          !Array.isArray(references) ||
+          references.length > 256 ||
+          !references.every(
+            (reference): reference is string => typeof reference === "string",
+          )
+        )
+          throw new TypeError("Invalid log payload references");
+        await entryPayloadStore.release(event.sender, references);
+        return { ok: true };
+      } catch (error) {
+        log.error("Releasing original log payloads failed:", error);
+        return {
+          ok: false,
+          error: error instanceof Error ? error.message : String(error),
+        };
+      }
+    },
+  );
   const watchManager = new WatchManager();
   const httpTailManager = new HttpTailManager();
   const pausedMessage =
@@ -1270,9 +1313,35 @@ export function registerIpcHandlers(
                 if (!session || session.sender.isDestroyed()) {
                   throw createAbortError();
                 }
+                const entries = await entryPayloadStore.prepare(
+                  session.sender,
+                  chunk.entries,
+                );
+                const createdReferences = entries.flatMap((entry, index) =>
+                  entry._payloadRef &&
+                  entry._payloadRef !== chunk.entries[index]?._payloadRef
+                    ? [entry._payloadRef]
+                    : [],
+                );
+                if (
+                  abortController.signal.aborted ||
+                  streamSessions.get(sessionId) !== session ||
+                  session.sender.isDestroyed()
+                ) {
+                  await entryPayloadStore.release(
+                    session.sender,
+                    createdReferences,
+                  );
+                  throw createAbortError();
+                }
                 const ack = waitForStreamAck(sessionId, chunk.chunkIndex);
+                let sent = false;
                 try {
-                  session.sender.send("logs:streamChunk", chunk);
+                  session.sender.send("logs:streamChunk", {
+                    ...chunk,
+                    entries,
+                  });
+                  sent = true;
                 } catch (error) {
                   session.ackWaiters
                     .get(String(chunk.chunkIndex))
@@ -1284,7 +1353,15 @@ export function registerIpcHandlers(
                     error instanceof Error ? error : new Error(String(error)),
                   );
                 }
-                await ack;
+                try {
+                  await ack;
+                } finally {
+                  if (!sent)
+                    await entryPayloadStore.release(
+                      session.sender,
+                      createdReferences,
+                    );
+                }
               },
               sendComplete: (result) => {
                 const session = streamSessions.get(sessionId);
@@ -1323,7 +1400,7 @@ export function registerIpcHandlers(
 
   ipcMain.handle(
     "logs:parsePaths",
-    async (_event, filePaths: string[]): Promise<ParseResult> => {
+    async (event, filePaths: string[]): Promise<ParseResult> => {
       try {
         const { parsePaths, parsePathsAsync } = getParsers();
 
@@ -1353,7 +1430,10 @@ export function registerIpcHandlers(
           );
         }
 
-        return { ok: true, entries };
+        return {
+          ok: true,
+          entries: await entryPayloadStore.prepare(event.sender, entries),
+        };
       } catch (err) {
         log.error(
           "Error parsing paths:",
@@ -1453,7 +1533,10 @@ export function registerIpcHandlers(
             await deliver(entries);
           }
         }
-        return { ok: true, entries: all };
+        return {
+          ok: true,
+          entries: await entryPayloadStore.prepare(event.sender, all),
+        };
       } catch (err) {
         log.error(
           "Error parsing raw drops:",
@@ -1581,12 +1664,28 @@ export function registerIpcHandlers(
       }
       // Deliver to the requesting window through the ACK-backed append pipeline,
       // not as one giant invoke result exceeding renderer ingestion admission.
-      return await networkService.httpLoadOnce(
-        url,
-        enqueueWatchEntries
-          ? (entries) => enqueueWatchEntries(entries, event.sender.id, "import")
-          : undefined,
-      );
+      try {
+        const result = await networkService.httpLoadOnce(
+          url,
+          enqueueWatchEntries
+            ? (entries) =>
+                enqueueWatchEntries(entries, event.sender.id, "import")
+            : undefined,
+        );
+        if (result.ok && result.entries?.length) {
+          result.entries = await entryPayloadStore.prepare(
+            event.sender,
+            result.entries,
+          );
+        }
+        return result;
+      } catch (error) {
+        log.error("Loading HTTP logs failed:", error);
+        return {
+          ok: false,
+          error: error instanceof Error ? error.message : String(error),
+        };
+      }
     },
   );
 
@@ -1699,7 +1798,7 @@ export function registerIpcHandlers(
   // Elasticsearch handler
   ipcMain.handle(
     "elastic:search",
-    async (_event, opts: ElasticSearchOptions): Promise<ParseResult> => {
+    async (event, opts: ElasticSearchOptions): Promise<ParseResult> => {
       // Check if ELASTICSEARCH feature is enabled
       if (featureFlags && !featureFlags.isEnabled("ELASTICSEARCH")) {
         const reason = featureFlags.getDisableReason("ELASTICSEARCH");
@@ -1790,7 +1889,7 @@ export function registerIpcHandlers(
 
         return {
           ok: true,
-          entries: page.entries,
+          entries: await entryPayloadStore.prepare(event.sender, page.entries),
           hasMore: page.hasMore,
           nextSearchAfter: page.nextSearchAfter,
           total: page.total == null ? undefined : page.total,

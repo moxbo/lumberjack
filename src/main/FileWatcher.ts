@@ -194,12 +194,6 @@ export class WatchManager {
         const text = w.carry + w.decoder.write(buf.subarray(0, bytesRead));
         const newlineIdx = text.lastIndexOf("\n");
         if (newlineIdx === -1) {
-          // No newline yet → keep buffering. Cap the carry size to avoid OOM
-          // for pathological inputs without line breaks.
-          const MAX_CARRY = 1024 * 1024;
-          if (Buffer.byteLength(text, "utf8") > MAX_CARRY) {
-            throw new Error("File watcher line exceeds 1 MiB; watcher stopped");
-          }
           w.carry = text;
           w.offset = start + bytesRead;
           continue;
@@ -211,12 +205,6 @@ export class WatchManager {
           .map((s) => (s.endsWith("\r") ? s.slice(0, -1) : s));
         // Drop empty last item from a trailing newline
         if (lines.length > 0 && lines[lines.length - 1] === "") lines.pop();
-        if (
-          lines.some((line) => Buffer.byteLength(line, "utf8") > 1024 * 1024) ||
-          Buffer.byteLength(w.carry, "utf8") > 1024 * 1024
-        ) {
-          throw new Error("File watcher line exceeds 1 MiB; watcher stopped");
-        }
         if (lines.length > 0) await cbs.onLines(lines);
         w.offset = start + bytesRead;
       }

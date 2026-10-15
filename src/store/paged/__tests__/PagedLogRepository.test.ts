@@ -135,6 +135,81 @@ afterEach(() => {
 });
 
 describe("PagedLogRepository byte cache", () => {
+  it("keeps original references lightweight and releases them only after a successful clear", async () => {
+    const releasePayloads = vi.fn(async (_references: readonly string[]) => {});
+    const { repository } = fixture([], { releasePayloads });
+    await repository.putMany([
+      {
+        timestamp: null,
+        message: "preview",
+        source: "test",
+        _payloadRef: "original",
+      },
+    ]);
+    await expect(repository.getPayload(1)).resolves.toMatchObject({
+      message: "preview",
+      _payloadRef: "original",
+    });
+    expect(releasePayloads).not.toHaveBeenCalled();
+    await repository.clear();
+    await vi.waitFor(() =>
+      expect(releasePayloads).toHaveBeenCalledWith(["original"]),
+    );
+  });
+
+  it("does not release originals when replacement storage preparation fails", async () => {
+    const releasePayloads = vi.fn(async (_references: readonly string[]) => {});
+    const { repository, open } = fixture([], { releasePayloads });
+    await repository.putMany([
+      {
+        timestamp: null,
+        message: "preview",
+        source: "test",
+        _payloadRef: "original",
+      },
+    ]);
+    open.mockRejectedValueOnce(new Error("replacement failed"));
+    await expect(repository.clear()).rejects.toThrow("replacement failed");
+    expect(releasePayloads).not.toHaveBeenCalled();
+    await expect(repository.getPayload(1)).resolves.toMatchObject({
+      _payloadRef: "original",
+    });
+    await repository.clear();
+    await vi.waitFor(() =>
+      expect(releasePayloads).toHaveBeenCalledWith(["original"]),
+    );
+  });
+
+  it("retries original-file cleanup without rolling back a committed clear", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const releasePayloads = vi
+      .fn<(references: readonly string[]) => Promise<void>>()
+      .mockRejectedValueOnce(new Error("cleanup failed"))
+      .mockResolvedValue(undefined);
+    const { repository } = fixture([], { releasePayloads });
+    repository.registerPayloadReferences([{ _payloadRef: "rejected-input" }]);
+    await expect(repository.clear()).resolves.toBeUndefined();
+    await vi.waitFor(() =>
+      expect(warn).toHaveBeenCalledWith(
+        "Reclaiming original log payloads failed; will retry:",
+        expect.any(Error),
+      ),
+    );
+    await repository.putMany([
+      {
+        timestamp: null,
+        message: "new",
+        source: "test",
+        _payloadRef: "new-original",
+      },
+    ]);
+    await repository.destroy();
+    expect(releasePayloads).toHaveBeenLastCalledWith([
+      "rejected-input",
+      "new-original",
+    ]);
+  });
+
   it("keeps the original database and readable cached records when replacement preparation fails", async () => {
     const { repository, open, db, transaction } = fixture(
       [
@@ -159,36 +234,60 @@ describe("PagedLogRepository byte cache", () => {
     expect(transaction).toHaveBeenCalledTimes(1);
   });
 
-  it("switches only after preparation commits and serializes writes into the new dense-ID dataset", async () => {
-    const { repository, open, db } = fixture([], {});
-    await repository.putMany([
-      { timestamp: null, message: "old", source: "test" },
-    ]);
-    const originalName = repository.databaseName;
-    const prepare = open.getMockImplementation()!;
-    let release!: (db: IDBDatabase) => void;
-    open.mockImplementationOnce(
-      () =>
-        new Promise((resolve) => {
-          release = resolve;
-        }),
-    );
-    const clear = repository.clear();
-    await vi.waitFor(() => expect(release).toBeTypeOf("function"));
-    expect(repository.databaseName).toBe(originalName);
-    expect(db.close).not.toHaveBeenCalled();
-    const write = repository.putMany([
-      { timestamp: null, message: "new", source: "test" },
-    ]);
-    release(await prepare());
-    await clear;
-    expect(repository.databaseName).not.toBe(originalName);
-    await expect(write).resolves.toEqual([1]);
-    await expect(repository.getPayload(1)).resolves.toMatchObject({
-      message: "new",
-    });
-    expect(db.close).toHaveBeenCalledOnce();
-  });
+  it.each(["old-original", "new-original"])(
+    "serializes writes with %s into the new dataset without releasing their originals",
+    async (reference) => {
+      const releasePayloads = vi.fn(
+        async (_references: readonly string[]) => {},
+      );
+      const { repository, open, db } = fixture([], { releasePayloads });
+      await repository.putMany([
+        {
+          timestamp: null,
+          message: "old",
+          source: "test",
+          _payloadRef: "old-original",
+        },
+      ]);
+      const originalName = repository.databaseName;
+      const prepare = open.getMockImplementation()!;
+      let release!: (db: IDBDatabase) => void;
+      open.mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            release = resolve;
+          }),
+      );
+      const clear = repository.clear();
+      await vi.waitFor(() => expect(release).toBeTypeOf("function"));
+      expect(repository.databaseName).toBe(originalName);
+      expect(db.close).not.toHaveBeenCalled();
+      const write = repository.putMany([
+        {
+          timestamp: null,
+          message: "new",
+          source: "test",
+          _payloadRef: reference,
+        },
+      ]);
+      release(await prepare());
+      await clear;
+      expect(repository.databaseName).not.toBe(originalName);
+      await expect(write).resolves.toEqual([1]);
+      await expect(repository.getPayload(1)).resolves.toMatchObject({
+        message: "new",
+        _payloadRef: reference,
+      });
+      expect(db.close).toHaveBeenCalledOnce();
+      if (reference === "old-original")
+        expect(releasePayloads).not.toHaveBeenCalled();
+      else expect(releasePayloads).toHaveBeenCalledWith(["old-original"]);
+      await repository.clear();
+      await vi.waitFor(() =>
+        expect(releasePayloads).toHaveBeenLastCalledWith([reference]),
+      );
+    },
+  );
 
   it("does not turn a committed clear into failure when retired database cleanup fails", async () => {
     const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);

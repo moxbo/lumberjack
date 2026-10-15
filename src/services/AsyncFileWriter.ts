@@ -31,7 +31,7 @@ export class AsyncFileWriter {
   private accepting = true;
   private closePromise: Promise<void> | null = null;
   private firstFailure: Error | null = null;
-  private readonly maxQueuedBytes: number;
+  protected readonly maxQueuedBytes: number;
   private readonly maxQueuedWrites: number;
 
   constructor(filepath: string, limits: FileWriterQueueLimits = {}) {
@@ -79,6 +79,16 @@ export class AsyncFileWriter {
       return Promise.reject(new Error("File writer is closed"));
     }
     const bytes = Buffer.byteLength(data, "utf8");
+    return this.enqueueWrite(() => this.writeData(data, bytes), bytes);
+  }
+
+  protected enqueueWrite(
+    operation: () => Promise<void>,
+    bytes: number,
+  ): Promise<void> {
+    if (!this.accepting) {
+      return Promise.reject(new Error("File writer is closed"));
+    }
     if (
       this.pendingOperations >= this.maxQueuedWrites ||
       this.pendingBytes + bytes > this.maxQueuedBytes
@@ -96,7 +106,7 @@ export class AsyncFileWriter {
           throw new Error("File writer queue cleared");
         }
         this.isWriting = true;
-        await this.writeData(data, bytes);
+        await operation();
       } finally {
         this.isWriting = false;
         this.pendingWrites--;
@@ -105,7 +115,10 @@ export class AsyncFileWriter {
     });
   }
 
-  protected async writeData(data: string, bytes: number): Promise<void> {
+  protected async writeData(
+    data: string | Uint8Array,
+    bytes: number,
+  ): Promise<void> {
     await fs.promises.appendFile(this.filepath, data, "utf8");
     this.bytesWritten += bytes;
     this.writeCount++;

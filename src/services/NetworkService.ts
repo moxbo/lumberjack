@@ -10,11 +10,7 @@ import log from "electron-log/main";
 import type { LogEntry } from "../types/ipc";
 import { responseChunks } from "./ResponseStream";
 import { httpLogBatches } from "./HttpLogStream";
-import {
-  BoundedLineSplitter,
-  MAX_LOG_LINE_BYTES,
-  type BoundedLine,
-} from "../utils/entryLimits";
+import { LogLineSplitter, type LogLine } from "../utils/entryLimits";
 
 /**
  * TCP Status
@@ -237,15 +233,8 @@ export class NetworkService {
       let closed = false;
       let failed = false;
 
-      // Completed lines awaiting delivery. Oversized lines are truncated and
-      // the remainder discarded until the next newline; the connection itself
-      // is never reset because of content size.
-      const lines: BoundedLine[] = [];
-      const splitter = new BoundedLineSplitter(MAX_LOG_LINE_BYTES, (bytes) =>
-        log.warn(
-          `[tcp] Line on ${socketId} exceeds ${MAX_LOG_LINE_BYTES} bytes (${bytes} so far); truncating and discarding the remainder`,
-        ),
-      );
+      const lines: LogLine[] = [];
+      const splitter = new LogLineSplitter();
       const ingest = (chunk: string): void => {
         lines.push(...splitter.push(chunk));
       };
@@ -254,33 +243,22 @@ export class NetworkService {
         if (tail) lines.push(tail);
       };
 
-      const processLine = (pending: BoundedLine): LogEntry | undefined => {
+      const processLine = (pending: LogLine): LogEntry | undefined => {
         const line = pending.text.trim();
         if (!line) return;
 
         let obj: Record<string, unknown>;
-        if (pending.truncated) {
-          // A cut line is never valid JSON; keep the readable prefix instead.
-          obj = { message: line + "… [truncated]" };
-        } else {
-          // Parse JSON line, fallback to plain text
-          try {
-            obj = JSON.parse(line) as Record<string, unknown>;
-          } catch (e) {
-            log.warn(
-              "TCP JSON parse failed, treating as plain text:",
-              e instanceof Error ? e.message : String(e),
-            );
-            obj = { message: line };
-          }
+        try {
+          obj = JSON.parse(line) as Record<string, unknown>;
+        } catch (e) {
+          log.warn(
+            "TCP JSON parse failed, treating as plain text:",
+            e instanceof Error ? e.message : String(e),
+          );
+          obj = { message: line };
         }
 
-        const entry = toEntry(obj, "", `tcp:${remoteAddr}:${remotePort}`);
-        if (pending.truncated) {
-          entry._truncated = true;
-          entry._messageSize = pending.originalBytes;
-        }
-        return entry;
+        return toEntry(obj, "", `tcp:${remoteAddr}:${remotePort}`);
       };
 
       const pump = (): void => {
