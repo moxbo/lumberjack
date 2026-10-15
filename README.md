@@ -51,6 +51,25 @@ A fast, lightweight Electron-based log viewer with powerful filtering capabiliti
 
 ---
 
+## Log-level filtering
+
+The level selector sets a **minimum severity**, not an exact level:
+
+| Minimum level | Visible levels                       |
+| ------------- | ------------------------------------ |
+| All           | Every entry                          |
+| TRACE         | TRACE, DEBUG, INFO, WARN, ERROR, FATAL |
+| DEBUG         | DEBUG, INFO, WARN, ERROR, FATAL        |
+| INFO          | INFO, WARN, ERROR, FATAL              |
+| WARN          | WARN, ERROR, FATAL                    |
+| ERROR         | ERROR, FATAL                          |
+| FATAL         | FATAL                                |
+
+**All** also includes entries with missing or non-standard levels. Other
+choices include only the listed levels, regardless of letter case. Disabling
+standard filters temporarily bypasses the threshold without clearing the
+selection. Saved filter profiles use the same matrix.
+
 ## Live intake limit
 
 Live TCP reception, HTTP polling, HTTP tailing and file watching share a
