@@ -223,6 +223,19 @@
   max-width: 100%;
 }
 
+.workspace-app .filter-chip:not(.trace-timeline-chip) {
+  color: var(--color-text-primary);
+}
+
+.workspace-app .filter-chip .chip-remove {
+  background: transparent;
+  color: inherit;
+}
+
+.workspace-app .filter-chip .chip-remove:hover {
+  background: var(--color-bg-hover);
+}
+
 .workspace-app .chip-value {
   max-width: 240px;
   overflow: hidden;
