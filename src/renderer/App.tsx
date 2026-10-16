@@ -2956,6 +2956,13 @@ export default function App(): JSX.Element {
             onClearLogs={onClearLogs}
             t={t}
           />
+          <LiveIntakeStatus
+            count={liveEntryCount}
+            limit={liveEntryLimit}
+            locale={locale}
+            onOpenSettings={() => void openSettingsModal("features")}
+            t={t}
+          />
           <div className="workspace-progress-slot">
             {queryActive && !filterWorkerError && (
               <FilterProgressStatus
@@ -2997,13 +3004,6 @@ export default function App(): JSX.Element {
             t={t}
           />
         </div>
-        <LiveIntakeStatus
-          count={liveEntryCount}
-          limit={liveEntryLimit}
-          locale={locale}
-          onOpenSettings={() => void openSettingsModal("features")}
-          t={t}
-        />
       </header>
 
       {/* Resize-Indikator für Detail-Panel */}

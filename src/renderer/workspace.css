@@ -344,34 +344,85 @@
 }
 
 .live-intake-status {
-  padding: 0 18px 8px;
-  color: var(--ui-muted);
+  display: inline-flex;
+  align-items: center;
+  flex-shrink: 0;
+  gap: 6px;
+  color: var(--ui-accent);
   font-size: 11px;
 }
 
-.live-intake-usage {
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 8px;
+.live-intake-status[data-warning="true"] {
+  color: var(--color-level-warn);
 }
 
-.live-intake-usage meter {
-  width: 90px;
+.live-intake-status[data-paused="true"] {
+  color: var(--color-level-error);
 }
 
-.live-intake-usage button {
+.workspace-app .toolbar .live-intake-trigger {
+  width: 28px;
+  height: 28px;
+  padding: 2px;
   border: 0;
-  padding: 0;
   background: transparent;
-  color: var(--ui-accent);
-  font-size: inherit;
-  text-decoration: underline dotted;
+  color: inherit;
+}
+
+.workspace-app .toolbar .live-intake-trigger:hover {
+  background: var(--ui-panel);
+}
+
+.live-intake-trigger svg {
+  width: 24px;
+  height: 24px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2;
+}
+
+.live-intake-track {
+  stroke: var(--ui-line);
+}
+
+.live-intake-meter {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
 }
 
 .live-intake-paused {
-  margin-top: 6px;
-  color: var(--color-level-warn);
+  white-space: nowrap;
+}
+
+.live-intake-tooltip {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+  max-width: min(320px, calc(100vw - 38px));
+  white-space: normal;
+  line-height: 1.5;
+  font-variant-numeric: tabular-nums;
+}
+
+.live-intake-tooltip p {
+  margin: 0;
+}
+
+.live-intake-tooltip button {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--ui-accent);
+  font-size: inherit;
+  text-decoration: underline;
 }
 
 .workspace-app .layout {

@@ -146,8 +146,11 @@ At the limit, existing entries remain intact and available for search/export.
 An overflowing batch persists only the available prefix and rejects with
 `LiveIngestionLimitError`; this must not trigger storage-failure recovery or
 automatic replay. In-flight live batches cannot exceed the remaining allowance.
-The UI shows utilization and warns that messages arriving while paused may be
-lost. Raising the limit or successfully clearing the dataset releases the intake
+The workspace status row shows live utilization as a circular indicator. Hover
+or focus reveals the current count, maximum, and a link to the limit setting;
+clicking the indicator opens that setting directly. A paused intake is also
+marked inline, with the warning about potentially lost messages in the tooltip.
+Raising the limit or successfully clearing the dataset releases the intake
 gate; sources must then be restarted manually. Lowering a limit below the current
 live count pauses intake without deleting existing data.
 

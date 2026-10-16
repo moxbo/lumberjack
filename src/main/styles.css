@@ -2979,6 +2979,10 @@ button.filter-chip.trace-timeline-chip .chip-label {
   transform: translateY(-100%);
 }
 
+.portal-tooltip--interactive {
+  pointer-events: auto;
+}
+
 .portal-tooltip--bottom {
   /* positioned via inline style */
 }

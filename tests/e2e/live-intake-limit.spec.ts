@@ -13,8 +13,14 @@ test("pauses live intake at its configured limit without limiting imports or del
   await expect(window.locator("#splash-screen")).toHaveCount(0);
   const status = window.locator(".live-intake-status");
   await expect(status.locator("meter")).toHaveAttribute("max", "500000");
+  await expect(status.locator(".live-intake-value")).toHaveAttribute(
+    "stroke-dashoffset",
+    "100",
+  );
   const configureLimit = async (limit: number) => {
-    await status.getByRole("button").click();
+    await status.getByRole("button").hover();
+    const tooltip = window.locator(".portal-tooltip--interactive");
+    await tooltip.getByRole("button").click();
     const dialog = window.getByRole("dialog", {
       name: /^(Settings|Einstellungen)$/,
     });
@@ -62,9 +68,17 @@ test("pauses live intake at its configured limit without limiting imports or del
     await expect(window.locator("#countTotal")).toHaveText("3");
     await expect(status).toHaveAttribute("data-paused", "true");
     await expect(status.locator("meter")).toHaveAttribute("value", "3");
-    await expect(status.getByRole("status")).toContainText(/verloren|lost/);
+    await expect(status.getByRole("status")).toContainText(/pausiert|paused/);
     await expect.poll(async () => (await startPoll()).ok).toBe(false);
     await dismissSourceError();
+    await status.getByRole("button").hover();
+    await expect(window.locator(".live-intake-tooltip")).toContainText(
+      /verloren|lost/,
+    );
+    await expect(status.locator(".live-intake-value")).toHaveAttribute(
+      "stroke-dashoffset",
+      "0",
+    );
     await expect(window.locator(".workspace-storage-error")).toHaveCount(0);
 
     const inputPath = path.join(testUserData, "import.ndjson");
@@ -104,8 +118,23 @@ test("pauses live intake at its configured limit without limiting imports or del
     await expect(status.locator("meter")).toHaveAttribute("value", "3");
     await expect(status).toHaveAttribute("data-paused", "true");
 
+    await configureLimit(2);
+    await expect(status.locator("meter")).toHaveAttribute(
+      "aria-valuetext",
+      /3 \/ 2$/,
+    );
+    await expect(status.locator(".live-intake-value")).toHaveAttribute(
+      "stroke-dashoffset",
+      "0",
+    );
+    await expect(status).toHaveAttribute("data-paused", "true");
+
     await configureLimit(5);
     await expect(status).toHaveAttribute("data-paused", "false");
+    await expect(status.locator(".live-intake-value")).toHaveAttribute(
+      "stroke-dashoffset",
+      "40",
+    );
     await expect(window.locator("#countTotal")).toHaveText("19");
     await expect.poll(async () => (await startPoll()).ok).toBe(true);
     await expect(window.locator("#countTotal")).toHaveText("21");
@@ -130,6 +159,54 @@ test("pauses live intake at its configured limit without limiting imports or del
       server.close((error) => (error ? reject(error) : resolve())),
     );
   }
+});
+
+test("keeps the live indicator inline with an accessible settings tooltip", async ({
+  window,
+}) => {
+  await expect(window.locator("#splash-screen")).toHaveCount(0);
+  const status = window.locator(".workspace-infobar > .live-intake-status");
+  const trigger = status.getByRole("button");
+  const tooltip = window.locator(".portal-tooltip--interactive");
+  await expect(status.locator("svg")).toBeVisible();
+  const countsBox = await window.locator("#countTotal").boundingBox();
+  const indicatorBox = await trigger.boundingBox();
+  expect(countsBox).not.toBeNull();
+  expect(indicatorBox).not.toBeNull();
+  expect(Math.abs(countsBox!.y - indicatorBox!.y)).toBeLessThan(15);
+
+  await trigger.hover();
+  await expect(tooltip).toContainText(
+    /^(Live entries|Live-Einträge): 0 \/ 500[.,]000/,
+  );
+  await tooltip.hover();
+  await expect(tooltip.getByRole("button")).toBeVisible();
+  await window.mouse.move(0, 0);
+  await expect(tooltip).toBeHidden();
+
+  await trigger.focus();
+  await expect(tooltip).toBeVisible();
+  await window.keyboard.press("Tab");
+  await expect(tooltip.getByRole("button")).toBeFocused();
+  await window.keyboard.press("Shift+Tab");
+  await expect(trigger).toBeFocused();
+  await window.keyboard.press("Tab");
+  await expect(tooltip.getByRole("button")).toBeFocused();
+  await window.keyboard.press("Tab");
+  await expect(window.locator(".workspace-follow input")).toBeFocused();
+  await expect(tooltip).toBeHidden();
+
+  await trigger.focus();
+  await window.keyboard.press("Tab");
+  await window.keyboard.press("Escape");
+  await expect(tooltip).toBeHidden();
+  await expect(trigger).toBeFocused();
+
+  await trigger.click();
+  const dialog = window.getByRole("dialog", {
+    name: /^(Settings|Einstellungen)$/,
+  });
+  await expect(dialog.locator("#liveEntryLimit")).toBeVisible();
 });
 
 test("stops TCP reception and rejects source restarts while the limit is reached", async ({
