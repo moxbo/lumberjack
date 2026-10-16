@@ -1,18 +1,30 @@
 import { entrySignature } from "./entryUtils";
+import type { ReadonlySequence } from "./metadataSnapshot";
+import type { IdPositions } from "../hooks/useIdPositions";
 
 export type MarkedPositionIndex = Map<string, number | number[]>;
 
 export function buildMarkedPositionIndex(
-  entries: unknown[],
-  filteredIndices: number[],
+  entries: ReadonlySequence<unknown>,
+  filteredIndices: ReadonlySequence<number>,
   limit = 100_000,
 ): MarkedPositionIndex {
   const index: MarkedPositionIndex = new Map();
   const scanLimit = Math.min(filteredIndices.length, limit);
-
+  const visualPositionById = new Map<number, number>();
   for (let visualIndex = 0; visualIndex < scanLimit; visualIndex++) {
-    const entry = entries[filteredIndices[visualIndex]!] as object | undefined;
+    visualPositionById.set(filteredIndices.at(visualIndex)!, visualIndex);
+  }
+
+  for (let entryIndex = 0; entryIndex < entries.length; entryIndex++) {
+    const candidate = entries.at(entryIndex);
+    const entry = candidate as { _id?: number } | undefined;
     if (!entry) continue;
+    const visualIndex =
+      typeof entry._id === "number"
+        ? visualPositionById.get(entry._id)
+        : visualPositionById.get(entryIndex);
+    if (visualIndex === undefined) continue;
     const signature = entrySignature(entry);
     const current = index.get(signature);
     if (current === undefined) {
@@ -38,6 +50,30 @@ export function resolveMarkedPositions(
     if (matched === undefined) continue;
     if (typeof matched === "number") positions.push(matched);
     else positions.push(...matched);
+  }
+
+  positions.sort((a, b) => a - b);
+  return positions;
+}
+
+export function resolveMarkedPositionsById(
+  marksMap: Record<string, string>,
+  getIdsBySignature: (
+    signature: string,
+  ) => number | readonly number[] | undefined,
+  visualPositionById: IdPositions,
+  limit = 100_000,
+): number[] {
+  const positions: number[] = [];
+  for (const signature of Object.keys(marksMap)) {
+    const ids = getIdsBySignature(signature);
+    if (ids === undefined) continue;
+    const append = (id: number): void => {
+      const visualIndex = visualPositionById.get(id);
+      if (visualIndex >= 0 && visualIndex < limit) positions.push(visualIndex);
+    };
+    if (typeof ids === "number") append(ids);
+    else for (const id of ids) append(id);
   }
   positions.sort((a, b) => a - b);
   return positions;

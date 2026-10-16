@@ -38,6 +38,48 @@ function cleanupTestFile(filePath: string): void {
 }
 
 test.describe("File Operations", () => {
+  test("imports a raw file drop beyond the renderer ingestion limit", async ({
+    window,
+  }) => {
+    const count = 100_005;
+    await expect(window.locator("#splash-screen")).toHaveCount(0);
+    await expect(window.locator("#countTotal")).toHaveText("0");
+    await window.evaluate((entryCount) => {
+      const content = Array.from({ length: entryCount }, (_, index) =>
+        JSON.stringify({
+          message: `raw-drop-${index}`,
+          timestamp: new Date(1_700_000_000_000 + index).toISOString(),
+          mdc: { tenant: "orders" },
+          ...(index === 0 ? { markColor: "#ff0000" } : {}),
+        }),
+      ).join("\n");
+      const file = new File([content], "raw-drop.ndjson", {
+        type: "application/x-ndjson",
+      });
+      if (globalThis.window.api.getPathForFile(file)) {
+        throw new Error("Regression must exercise the raw-data fallback");
+      }
+      const transfer = new DataTransfer();
+      transfer.items.add(file);
+      globalThis.window.dispatchEvent(
+        new DragEvent("drop", {
+          dataTransfer: transfer,
+          bubbles: true,
+          cancelable: true,
+        }),
+      );
+    }, count);
+    await expect(window.locator("#countTotal")).toHaveText(String(count), {
+      timeout: 45_000,
+    });
+    await expect(
+      window.getByText("Log ingestion capacity exceeded", { exact: false }),
+    ).toHaveCount(0);
+    await expect(window.locator(".row .col.msg").first()).toContainText(
+      "raw-drop-0",
+    );
+  });
+
   test("should open file via dialog", async ({ electronApp, window }) => {
     // Create test file
     const testLogPath = createTestLogFile();

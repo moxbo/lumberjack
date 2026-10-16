@@ -4,7 +4,7 @@ A fast, lightweight Electron-based log viewer with powerful filtering capabiliti
 
 [![Version](https://img.shields.io/github/v/release/moxbo/lumberjack)](https://github.com/moxbo/lumberjack/releases/latest)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
-[![Electron](https://img.shields.io/badge/electron-41.x-brightgreen.svg)](https://electronjs.org)
+[![Electron](https://img.shields.io/badge/electron-44.x-brightgreen.svg)](https://electronjs.org)
 [![CI](https://github.com/moxbo/lumberjack/actions/workflows/ci.yml/badge.svg)](https://github.com/moxbo/lumberjack/actions/workflows/ci.yml)
 [![codecov](https://codecov.io/gh/moxbo/lumberjack/branch/main/graph/badge.svg)](https://codecov.io/gh/moxbo/lumberjack)
 [![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](CONTRIBUTING.md)
@@ -50,6 +50,53 @@ A fast, lightweight Electron-based log viewer with powerful filtering capabiliti
 - **Cross-Platform**: Windows, macOS, Linux
 
 ---
+
+## Log-level filtering
+
+The level selector sets a **minimum severity**, not an exact level:
+
+| Minimum level | Visible levels                       |
+| ------------- | ------------------------------------ |
+| All           | Every entry                          |
+| TRACE         | TRACE, DEBUG, INFO, WARN, ERROR, FATAL |
+| DEBUG         | DEBUG, INFO, WARN, ERROR, FATAL        |
+| INFO          | INFO, WARN, ERROR, FATAL              |
+| WARN          | WARN, ERROR, FATAL                    |
+| ERROR         | ERROR, FATAL                          |
+| FATAL         | FATAL                                |
+
+**All** also includes entries with missing or non-standard levels. Other
+choices include only the listed levels, regardless of letter case. Disabling
+standard filters temporarily bypasses the threshold without clearing the
+selection. Saved filter profiles use the same matrix.
+
+## Live intake limit
+
+Live TCP reception, HTTP polling, HTTP tailing and file watching share a
+**500,000-entry limit per window's log session** by default. Change it under
+*Settings → Advanced → Live entry limit*. The workspace displays the current
+live-entry count and its limit; duplicate entries that are not stored do not
+consume additional capacity.
+
+When the limit is reached, live sources stop and existing logs remain available
+for searching and exporting. Nothing is automatically deleted. File imports,
+one-shot HTTP loads and Elasticsearch searches are exempt. Raise the limit or
+clear the logs to free capacity, then **restart the live sources manually**.
+Messages arriving while intake is paused may be lost; this is not an archive or
+a guarantee that upstream sources will buffer them. The entry limit is also not
+a hard RAM limit, because message sizes differ.
+
+## Large messages
+
+Large messages and payloads are retained **in full for the current log session**.
+Only their display previews are shortened. Select **Full / Vollständig** in the
+entry details to load the complete message; copying and exporting also use the
+original rather than its preview.
+
+Large originals are stored compressed on disk, while the list keeps lightweight
+previews and references. **Clear Logs** and closing the window delete the
+associated originals. Content discarded by older versions cannot be recovered;
+reimport the source file or send those entries again.
 
 ## 📡 TCP Log-Streaming Configuration
 
@@ -143,7 +190,7 @@ log4j.appender.lumberjack.reconnectionDelay=10000
 log4j.rootLogger=INFO, console, lumberjack
 ```
 
-> 💡 **Tip**: Configure the TCP port in Lumberjack under *Settings → TCP Port* (default: 4445)
+> 💡 **Tip**: Configure the TCP port in Lumberjack under *Settings → Connections → TCP* (default: 4445)
 
 ---
 
@@ -207,8 +254,16 @@ via the bookmarks popover in the toolbar. Bookmarks survive filter changes.
 ## 🌍 Internationalization
 
 Lumberjack ships with German (`de`) and English (`en`) translations.
-Switch the UI language under *Settings → Language*. Both Electron menus and
+Switch the UI language under *Settings → General → Language*. Both Electron menus and
 renderer UI are localized.
+
+Settings are grouped into **General**, **Appearance**, **Connections**,
+**Logging**, and **Advanced**. General contains language and updates;
+Advanced contains the memory limit and feature controls. The dialog uses
+macOS-inspired controls, keyboard category navigation, visible focus indicators,
+and system preferences for contrast and reduced motion. The existing
+Save/Cancel flow remains unchanged; language, window permissions, and feature
+controls retain their immediate-apply behavior.
 
 ---
 
@@ -425,4 +480,3 @@ Quick guide:
 ## 🔒 Security
 
 Found a security vulnerability? See [SECURITY.md](SECURITY.md).
-

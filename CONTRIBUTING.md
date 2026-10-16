@@ -18,6 +18,12 @@ npm install
 npm run dev
 ```
 
+Use the Node.js version range declared in `package.json`. When updating
+dependencies with `npx npm-check-updates --upgrade`, retain TypeScript 6.x
+until the stable `@typescript-eslint/parser` supports TypeScript 7. Do not
+bypass this peer dependency constraint with `--force` or `--legacy-peer-deps`.
+Commit both `package.json` and `package-lock.json` together.
+
 ---
 
 ## 📋 Contribution Workflow

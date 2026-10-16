@@ -86,7 +86,7 @@ async function testRobustnessFeatures(): Promise<void> {
     `  - HTTP max response: ${diag.limits.httpMaxResponseSize / 1024 / 1024}MB`,
   );
   console.log(`  - TCP buffer size: ${diag.limits.tcpBufferSize / 1024}KB`);
-  console.log(`  - TCP timeout: ${diag.limits.tcpTimeout / 1000}s\n`);
+  console.log(`  - TCP keepalive: ${diag.limits.tcpKeepAliveMs / 1000}s\n`);
 
   // Test 2: Verify TCP connection limit warning threshold
   console.log("Test 2: Starting TCP server...");

@@ -22,50 +22,52 @@ export function useDebounce<T>(value: T, delay: number): T {
 }
 
 /**
- * Hook that debounces a value but also exposes a `flush` function that
- * immediately applies the current value (skipping the remaining delay).
- *
- * Useful for "type-to-filter with debounce" inputs where pressing Enter
- * should apply the filter right away instead of waiting for the delay.
- *
- * Returns a tuple of `[debouncedValue, flush]`.
+ * Publishes the first changed value immediately, then coalesces rapid updates
+ * to at most one publication per interval while retaining the latest value.
  */
-export function useDebouncedValueWithFlush<T>(
-  value: T,
-  delay: number,
-): [T, (overrideValue?: T) => void] {
-  const [debouncedValue, setDebouncedValue] = useState<T>(value);
-  const valueRef = useRef<T>(value);
-  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+export function useThrottledValue<T>(value: T, interval: number): T {
+  const [throttledValue, setThrottledValue] = useState<T>(value);
+  const latestValueRef = useRef(value);
+  const lastPublishedAtRef = useRef(0);
+  const timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const initializedRef = useRef(false);
 
   useEffect(() => {
-    valueRef.current = value;
-    if (timerRef.current) {
-      clearTimeout(timerRef.current);
+    latestValueRef.current = value;
+    if (!initializedRef.current) {
+      initializedRef.current = true;
+      return;
     }
-    timerRef.current = setTimeout(() => {
-      setDebouncedValue(value);
-      timerRef.current = null;
-    }, delay);
 
-    return () => {
-      if (timerRef.current) {
-        clearTimeout(timerRef.current);
+    const now = Date.now();
+    const elapsed = now - lastPublishedAtRef.current;
+    if (elapsed >= interval) {
+      if (timeoutRef.current) {
+        clearTimeout(timeoutRef.current);
+        timeoutRef.current = null;
       }
-    };
-  }, [value, delay]);
-
-  const flush = useCallback((overrideValue?: T) => {
-    if (timerRef.current) {
-      clearTimeout(timerRef.current);
-      timerRef.current = null;
+      lastPublishedAtRef.current = now;
+      setThrottledValue(value);
+      return;
     }
-    setDebouncedValue(
-      overrideValue !== undefined ? overrideValue : valueRef.current,
-    );
-  }, []);
 
-  return [debouncedValue, flush];
+    if (!timeoutRef.current) {
+      timeoutRef.current = setTimeout(() => {
+        timeoutRef.current = null;
+        lastPublishedAtRef.current = Date.now();
+        setThrottledValue(latestValueRef.current);
+      }, interval - elapsed);
+    }
+  }, [value, interval]);
+
+  useEffect(
+    () => () => {
+      if (timeoutRef.current) clearTimeout(timeoutRef.current);
+    },
+    [],
+  );
+
+  return throttledValue;
 }
 
 /**

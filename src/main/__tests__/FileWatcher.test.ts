@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import * as fs from "fs";
 import * as os from "os";
 import * as path from "path";
@@ -154,6 +154,33 @@ describe("WatchManager", () => {
     expect(received).toEqual(["partial-rest"]);
   });
 
+  it("delivers an entire large JSON line across read chunks", async () => {
+    const file = path.join(tmpDir, "large-json.log");
+    const record = { message: "x".repeat(5 * 1024 * 1024), level: "INFO" };
+    fs.writeFileSync(file, JSON.stringify(record) + "\nnext\n");
+    const received: string[] = [];
+    const errors: Error[] = [];
+    const mgr = new WatchManager();
+    mgr.start(
+      file,
+      {
+        onLines: (lines) => received.push(...lines),
+        onError: (error) => errors.push(error),
+      },
+      { emitInitial: true, maxReadBytes: 64 * 1024 },
+    );
+    try {
+      await vi.waitFor(() => expect(received).toHaveLength(2), {
+        timeout: 5000,
+      });
+      expect(JSON.parse(received[0]!)).toEqual(record);
+      expect(received[1]).toBe("next");
+      expect(errors).toEqual([]);
+    } finally {
+      mgr.stopAll();
+    }
+  });
+
   it("detects truncation and notifies via onRotated", async () => {
     const file = path.join(tmpDir, "d.log");
     fs.writeFileSync(file, "before-rotation\n");
@@ -192,6 +219,68 @@ describe("WatchManager", () => {
     expect(mgr.stop(w.id)).toBe(true);
     expect(mgr.list()).toHaveLength(0);
     expect(mgr.stop(w.id)).toBe(false);
+  });
+
+  it("awaits the sink without overlapping change reads and cancels before the next chunk", async () => {
+    const file = path.join(tmpDir, "backpressure.log");
+    fs.writeFileSync(file, "line\n".repeat(40_000));
+    const mgr = new WatchManager();
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const batches: string[][] = [];
+    const watcher = mgr.start(
+      file,
+      {
+        onLines: async (lines) => {
+          batches.push(lines);
+          await gate;
+        },
+      },
+      { emitInitial: true, pollIntervalMs: 50, maxReadBytes: 64 * 1024 },
+    );
+    try {
+      await delay(80);
+      expect(batches).toHaveLength(1);
+      fs.appendFileSync(file, "new\n");
+      await delay(150);
+      expect(batches).toHaveLength(1);
+      mgr.stop(watcher.id);
+      release();
+      await delay(80);
+      expect(batches).toHaveLength(1);
+      expect(mgr.list()).toEqual([]);
+    } finally {
+      release();
+      mgr.stopAll();
+    }
+  });
+
+  it("stops and reports rejected persistence instead of reading or retrying later chunks", async () => {
+    const file = path.join(tmpDir, "failed-delivery.log");
+    fs.writeFileSync(file, "line\n".repeat(40_000));
+    const mgr = new WatchManager();
+    let calls = 0;
+    const errors: string[] = [];
+    mgr.start(
+      file,
+      {
+        onLines: async () => {
+          calls++;
+          throw new Error("disk full");
+        },
+        onError: (error) => errors.push(error.message),
+      },
+      { emitInitial: true, pollIntervalMs: 50, maxReadBytes: 64 * 1024 },
+    );
+    await delay(100);
+    fs.appendFileSync(file, "later\n");
+    await delay(100);
+    expect(calls).toBe(1);
+    expect(errors).toEqual(["disk full"]);
+    expect(mgr.list()).toEqual([]);
+    mgr.stopAll();
   });
 
   it("throws when path is not a regular file", () => {

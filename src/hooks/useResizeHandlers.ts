@@ -3,13 +3,14 @@
  * Manages column and divider resize functionality
  */
 
-import { useRef, useEffect, useCallback, useState } from "preact/hooks";
+import { useRef, useLayoutEffect, useCallback, useState } from "preact/hooks";
 import type { ColumnResizeState, DividerResizeState } from "../types/renderer";
 import logger from "../utils/logger";
 import { patchSettingsQuiet } from "../utils/typedApi";
 
 export interface UseResizeHandlersOptions {
   layoutRef: React.RefObject<HTMLDivElement | null>;
+  detailLayout?: "bottom" | "right";
 }
 
 export interface UseResizeHandlersReturn {
@@ -29,7 +30,7 @@ export interface UseResizeHandlersReturn {
 export function useResizeHandlers(
   options: UseResizeHandlersOptions,
 ): UseResizeHandlersReturn {
-  const { layoutRef } = options;
+  const { layoutRef, detailLayout = "bottom" } = options;
 
   // Resize feedback state
   const [resizeHeight, setResizeHeight] = useState<number | null>(null);
@@ -50,33 +51,52 @@ export function useResizeHandlers(
   });
 
   // Divider drag effect
-  useEffect(() => {
+  useLayoutEffect(() => {
+    const side = detailLayout === "right";
+    const sizeProperty = side ? "--detail-width" : "--detail-height";
+    const defaultSize = side ? 420 : 300;
+    function applySize(size: number): number {
+      const layout = layoutRef.current;
+      const total = side
+        ? (layout?.clientWidth ?? window.innerWidth)
+        : (layout?.clientHeight ?? window.innerHeight);
+      const minDetail = side ? 280 : 150;
+      const minList = side ? 320 : 140;
+      const maxDetail = Math.max(
+        0,
+        Math.min(
+          total - minList - 8,
+          side ? total * 0.55 - 8 : 2000,
+          side ? 1600 : 2000,
+        ),
+      );
+      const next = Math.round(Math.min(maxDetail, Math.max(minDetail, size)));
+      document.documentElement.style.setProperty(sizeProperty, `${next}px`);
+      return next;
+    }
+    function renderedSize(): number {
+      const overlay = dividerElRef.current?.parentElement;
+      return overlay
+        ? (side ? overlay.clientWidth : overlay.clientHeight) - 8
+        : defaultSize;
+    }
+    function persistSize(): void {
+      const value =
+        parseFloat(
+          getComputedStyle(document.documentElement).getPropertyValue(
+            sizeProperty,
+          ),
+        ) || defaultSize;
+      patchSettingsQuiet(
+        side ? { detailWidth: value } : { detailHeight: value },
+      );
+    }
     function onMouseMove(e: MouseEvent): void {
       if (!dividerStateRef.current._resizing) return;
       const startY = dividerStateRef.current._startY;
       const startH = dividerStateRef.current._startH;
-      const dy = e.clientY - startY;
-      let newH = startH - dy;
-      const layout = layoutRef.current;
-      const total = layout
-        ? (layout as any).clientHeight
-        : document.body.clientHeight || window.innerHeight;
-      const minDetail = 150;
-      const minList = 140;
-      const csRoot = getComputedStyle(document.documentElement);
-      const divVar = csRoot.getPropertyValue("--divider-h").trim();
-      const dividerSize = Math.max(
-        0,
-        parseInt(divVar.replace("px", ""), 10) || 8,
-      );
-      const maxDetail = Math.max(minDetail, total - minList - dividerSize);
-      if (newH < minDetail) newH = minDetail;
-      if (newH > maxDetail) newH = maxDetail;
-      document.documentElement.style.setProperty(
-        "--detail-height",
-        `${Math.round(newH)}px`,
-      );
-      setResizeHeight(Math.round(newH));
+      const delta = (side ? e.clientX : e.clientY) - startY;
+      setResizeHeight(applySize(startH - delta));
     }
 
     async function onMouseUp(): Promise<void> {
@@ -88,37 +108,50 @@ export function useResizeHandlers(
       window.removeEventListener("mousemove", onMouseMove);
       window.removeEventListener("mouseup", onMouseUp);
       try {
-        const cs = getComputedStyle(document.documentElement);
-        const h = cs.getPropertyValue("--detail-height").trim();
-        const num = Number(h.replace("px", "")) || 300;
-        patchSettingsQuiet({ detailHeight: Math.round(num) });
+        persistSize();
       } catch (e) {
         logger.warn("Setting detailHeight via API failed:", e);
       }
     }
 
     function onMouseDown(e: MouseEvent): void {
+      if (e.button !== 0) return;
+      e.preventDefault();
       dividerStateRef.current._resizing = true;
-      dividerStateRef.current._startY = e.clientY;
-      const cs = getComputedStyle(document.documentElement);
-      const h = cs.getPropertyValue("--detail-height").trim();
-      dividerStateRef.current._startH = Number(h.replace("px", "")) || 300;
+      dividerStateRef.current._startY = side ? e.clientX : e.clientY;
+      dividerStateRef.current._startH = renderedSize();
       document.body.style.userSelect = "none";
-      document.body.style.cursor = "row-resize";
+      document.body.style.cursor = side ? "col-resize" : "row-resize";
       dividerElRef.current?.classList.add("resizing");
       setResizeHeight(dividerStateRef.current._startH);
       window.addEventListener("mousemove", onMouseMove);
       window.addEventListener("mouseup", onMouseUp);
     }
 
+    function onKeyDown(e: KeyboardEvent): void {
+      const grow = side ? "ArrowLeft" : "ArrowUp";
+      const shrink = side ? "ArrowRight" : "ArrowDown";
+      if (e.key !== grow && e.key !== shrink) return;
+      e.preventDefault();
+      applySize(renderedSize() + (e.key === grow ? 20 : -20));
+      persistSize();
+    }
     const el = dividerElRef.current;
-    if (el) el.addEventListener("mousedown", onMouseDown as any);
+    el?.addEventListener("mousedown", onMouseDown);
+    el?.addEventListener("keydown", onKeyDown);
     return () => {
-      if (el) el.removeEventListener("mousedown", onMouseDown as any);
+      el?.removeEventListener("mousedown", onMouseDown);
+      el?.removeEventListener("keydown", onKeyDown);
       window.removeEventListener("mousemove", onMouseMove);
       window.removeEventListener("mouseup", onMouseUp);
+      if (dividerStateRef.current._resizing) {
+        dividerStateRef.current._resizing = false;
+        document.body.style.userSelect = "";
+        document.body.style.cursor = "";
+        setResizeHeight(null);
+      }
     };
-  }, [layoutRef]);
+  }, [layoutRef, detailLayout]);
 
   // Column mouse move handler
   const onColMouseMove = useCallback((e: MouseEvent): void => {
@@ -127,9 +160,9 @@ export function useResizeHandlers(
     let newW = st.startW + (e.clientX - st.startX);
     const clamp = (v: number, min: number, max: number): number =>
       Math.max(min, Math.min(max, v));
-    if (st.active === "--col-ts") newW = clamp(newW, 140, 600);
-    if (st.active === "--col-lvl") newW = clamp(newW, 70, 200);
-    if (st.active === "--col-logger") newW = clamp(newW, 160, 800);
+    if (st.active === "--col-ts") newW = clamp(newW, 100, st.maxW ?? 600);
+    if (st.active === "--col-lvl") newW = clamp(newW, 50, st.maxW ?? 200);
+    if (st.active === "--col-logger") newW = clamp(newW, 100, st.maxW ?? 800);
     document.documentElement.style.setProperty(
       st.active,
       `${Math.round(newW)}px`,
@@ -176,8 +209,24 @@ export function useResizeHandlers(
       if (!active) return;
       const cs = getComputedStyle(document.documentElement);
       const cur = cs.getPropertyValue(active).trim();
-      const curW = Number(cur.replace("px", "")) || 0;
-      colResize.current = { active, startX: e.clientX, startW: curW };
+      const handle =
+        e.currentTarget instanceof HTMLElement ? e.currentTarget : null;
+      const cell = handle?.parentElement;
+      const header = cell?.parentElement;
+      const curW =
+        cell?.getBoundingClientRect().width ?? (parseFloat(cur) || 0);
+      const limit = cs.getPropertyValue(`${active}-max`).trim();
+      const hardMax = key === "ts" ? 600 : key === "lvl" ? 200 : 800;
+      let maxW = hardMax;
+      if (header && limit.endsWith("%")) {
+        const headerStyle = getComputedStyle(header);
+        const contentWidth =
+          header.clientWidth -
+          parseFloat(headerStyle.paddingLeft) -
+          parseFloat(headerStyle.paddingRight);
+        maxW = Math.min(hardMax, (contentWidth * parseFloat(limit)) / 100);
+      }
+      colResize.current = { active, startX: e.clientX, startW: curW, maxW };
       document.body.style.userSelect = "none";
       document.body.style.cursor = "col-resize";
       window.addEventListener("mousemove", onColMouseMove as any);

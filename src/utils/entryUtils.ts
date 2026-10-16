@@ -3,6 +3,8 @@
  */
 
 import { compareByTimestampId } from "./sort";
+import { compactEntrySignature } from "./signature";
+export { compactEntrySignature, legacyEntrySignature } from "./signature";
 
 // Cache für Entry-Signaturen - reduziert String-Operationen bei wiederholten Aufrufen
 // WeakMap ermöglicht automatische Garbage Collection wenn Entries entfernt werden
@@ -20,6 +22,10 @@ const MAX_SIG_MSG_LENGTH = 10 * 1024; // 10 KB
  */
 export function entrySignatureForMerge(e: any): string {
   if (!e) return "";
+  if (typeof e.signature === "string") {
+    const src = e?.source != null ? String(e.source) : "";
+    return `${e.signature}|${src}`;
+  }
 
   // Check cache first
   const cached = mergeSignatureCache.get(e);
@@ -60,35 +66,13 @@ export function entrySignatureForMerge(e: any): string {
  */
 export function entrySignature(e: any): string {
   if (!e) return "";
+  if (typeof e.signature === "string") return e.signature;
 
   // Check cache first
   const cached = signatureCache.get(e);
   if (cached !== undefined) return cached;
 
-  const ts = e?.timestamp != null ? String(e.timestamp) : "";
-  const lg = e?.logger != null ? String(e.logger) : "";
-
-  // Use _fullMessage (original before truncation) if available, otherwise use message
-  let msg =
-    e?._fullMessage != null
-      ? String(e._fullMessage)
-      : e?.message != null
-        ? String(e.message)
-        : "";
-
-  // For very large messages, use prefix + length to create unique but memory-efficient signature
-  if (msg.length > MAX_SIG_MSG_LENGTH) {
-    msg = msg.substring(0, MAX_SIG_MSG_LENGTH) + `[len:${msg.length}]`;
-  }
-
-  // For ES entries, include source (contains doc ID) to distinguish same-content entries
-  const src = e?.source;
-  let result: string;
-  if (typeof src === "string" && src.startsWith("elastic://")) {
-    result = `${ts}|${lg}|${msg}|${src}`;
-  } else {
-    result = `${ts}|${lg}|${msg}`;
-  }
+  const result = compactEntrySignature(e);
 
   // Cache the result
   if (typeof e === "object") {
@@ -163,7 +147,9 @@ export function isElasticSource(e: any): boolean {
  */
 export function isFileSource(e: any): boolean {
   const s = e?.source;
-  return typeof s === "string" && !s.includes("://");
+  if (typeof s !== "string") return false;
+  if (/^[A-Za-z]:[\\/]/.test(s)) return true;
+  return !/^[A-Za-z][A-Za-z0-9+.-]*:/.test(s);
 }
 
 /**
@@ -175,4 +161,8 @@ export function isHttpSource(e: any): boolean {
     typeof s === "string" &&
     (s.startsWith("http://") || s.startsWith("https://"))
   );
+}
+
+export function shouldDeduplicateSource(e: any): boolean {
+  return isElasticSource(e) || isFileSource(e) || isHttpSource(e);
 }

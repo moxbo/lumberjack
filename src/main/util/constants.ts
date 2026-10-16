@@ -15,7 +15,7 @@ export const NEW_WINDOW_FLAG = "--new-window";
 // Buffer and batch limits - reduced batch size to prevent UI freezes ("Keine Rückmeldung")
 export const DEFAULT_MAX_PENDING_APPENDS = 5000;
 export const MIN_PENDING_APPENDS = 1000;
-export const MAX_BATCH_ENTRIES = 100; // Reduced from 200 for smoother UI
+export const MAX_BATCH_ENTRIES = 5000;
 export const MAX_MESSAGE_LENGTH = 20 * 1024 * 1024; // 20 MB per text field (increased for large XML messages)
 
 // Memory thresholds for adaptive buffer sizing

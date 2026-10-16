@@ -1,97 +1,137 @@
-/**
- * AsyncFileWriter
- * Non-blocking file I/O service with queue management
- * Prevents main thread blocking during file operations
- */
-
 import * as fs from "fs";
-import log from "electron-log/main";
 
-interface WriteTask {
-  data: string;
-  resolve: () => void;
-  reject: (error: Error) => void;
+export interface FileWriterQueueLimits {
+  /** UTF-8 output bytes, not decoded heap size (ASCII strings may cost 2x). */
+  maxQueuedBytes?: number;
+  maxQueuedWrites?: number;
+}
+
+export class FileWriterBackpressureError extends Error {
+  constructor() {
+    super("File writer queue is full; await pending writes before retrying");
+    this.name = "FileWriterBackpressureError";
+  }
 }
 
 /**
- * AsyncFileWriter provides non-blocking file writes with automatic queue management
+ * Writes resolve only after appendFile completes. Await write() for backpressure.
+ * Admission is bounded, including active writes. Producers must await write()
+ * and propagate failures; a rejected write has not been accepted for persistence.
  */
 export class AsyncFileWriter {
-  private queue: WriteTask[] = [];
+  protected filepath: string;
+  private tail: Promise<void> = Promise.resolve();
+  private pendingOperations = 0;
+  private pendingWrites = 0;
+  private pendingBytes = 0;
   private isWriting = false;
-  private filepath: string;
   private bytesWritten = 0;
   private writeCount = 0;
+  private generation = 0;
+  private accepting = true;
+  private closePromise: Promise<void> | null = null;
+  private firstFailure: Error | null = null;
+  protected readonly maxQueuedBytes: number;
+  private readonly maxQueuedWrites: number;
 
-  constructor(filepath: string) {
+  constructor(filepath: string, limits: FileWriterQueueLimits = {}) {
     this.filepath = filepath;
+    this.maxQueuedBytes = limits.maxQueuedBytes ?? 16 * 1024 * 1024;
+    this.maxQueuedWrites = limits.maxQueuedWrites ?? 1024;
+    if (
+      !Number.isFinite(this.maxQueuedBytes) ||
+      !Number.isFinite(this.maxQueuedWrites) ||
+      this.maxQueuedBytes <= 0 ||
+      this.maxQueuedWrites < 1
+    ) {
+      throw new Error("File writer queue limits must be positive");
+    }
   }
 
-  /**
-   * Queue a write operation
-   */
+  protected enqueueOperation(operation: () => Promise<void>): Promise<void> {
+    if (!this.accepting) {
+      return Promise.reject(new Error("File writer is closed"));
+    }
+    if (this.pendingOperations >= this.maxQueuedWrites) {
+      return Promise.reject(new FileWriterBackpressureError());
+    }
+    return this.enqueue(operation);
+  }
+
+  private enqueue(operation: () => Promise<void>): Promise<void> {
+    this.pendingOperations++;
+    const result = this.tail.then(operation);
+    this.tail = result.then(
+      () => {
+        this.pendingOperations--;
+      },
+      (error: unknown) => {
+        this.pendingOperations--;
+        this.firstFailure ??=
+          error instanceof Error ? error : new Error(String(error));
+      },
+    );
+    return result;
+  }
+
   write(data: string): Promise<void> {
-    return new Promise((resolve, reject) => {
-      this.queue.push({ data, resolve, reject });
-      void this.processQueue();
+    if (!this.accepting) {
+      return Promise.reject(new Error("File writer is closed"));
+    }
+    const bytes = Buffer.byteLength(data, "utf8");
+    return this.enqueueWrite(() => this.writeData(data, bytes), bytes);
+  }
+
+  protected enqueueWrite(
+    operation: () => Promise<void>,
+    bytes: number,
+  ): Promise<void> {
+    if (!this.accepting) {
+      return Promise.reject(new Error("File writer is closed"));
+    }
+    if (
+      this.pendingOperations >= this.maxQueuedWrites ||
+      this.pendingBytes + bytes > this.maxQueuedBytes
+    ) {
+      const error = new FileWriterBackpressureError();
+      this.firstFailure ??= error;
+      return Promise.reject(error);
+    }
+    this.pendingWrites++;
+    this.pendingBytes += bytes;
+    const generation = this.generation;
+    return this.enqueue(async () => {
+      try {
+        if (generation !== this.generation) {
+          throw new Error("File writer queue cleared");
+        }
+        this.isWriting = true;
+        await operation();
+      } finally {
+        this.isWriting = false;
+        this.pendingWrites--;
+        this.pendingBytes -= bytes;
+      }
     });
   }
 
-  /**
-   * Process the write queue
-   */
-  private async processQueue(): Promise<void> {
-    if (this.isWriting || this.queue.length === 0) {
-      return;
-    }
-
-    this.isWriting = true;
-    const task = this.queue.shift();
-
-    if (!task) {
-      this.isWriting = false;
-      return;
-    }
-
-    try {
-      await fs.promises.appendFile(this.filepath, task.data, "utf8");
-      this.bytesWritten += task.data.length;
-      this.writeCount++;
-      task.resolve();
-    } catch (error) {
-      const err = error instanceof Error ? error : new Error(String(error));
-      log.error("[async-file-writer] Write error:", {
-        filepath: this.filepath,
-        error: err.message,
-        queueSize: this.queue.length,
-      });
-      task.reject(err);
-    } finally {
-      this.isWriting = false;
-      // Continue processing queue
-      if (this.queue.length > 0) {
-        void this.processQueue();
-      }
-    }
+  protected async writeData(
+    data: string | Uint8Array,
+    bytes: number,
+  ): Promise<void> {
+    await fs.promises.appendFile(this.filepath, data, "utf8");
+    this.bytesWritten += bytes;
+    this.writeCount++;
   }
 
-  /**
-   * Get current queue size
-   */
   getQueueSize(): number {
-    return this.queue.length;
+    return this.pendingWrites - Number(this.isWriting);
   }
 
-  /**
-   * Check if writer is busy
-   */
   isBusy(): boolean {
-    return this.isWriting || this.queue.length > 0;
+    return this.pendingOperations > 0;
   }
 
-  /**
-   * Get write statistics
-   */
   getStats(): {
     filepath: string;
     bytesWritten: number;
@@ -103,37 +143,36 @@ export class AsyncFileWriter {
       filepath: this.filepath,
       bytesWritten: this.bytesWritten,
       writeCount: this.writeCount,
-      queueSize: this.queue.length,
+      queueSize: this.getQueueSize(),
       isWriting: this.isWriting,
     };
   }
 
-  /**
-   * Wait for all pending writes to complete
-   */
-  async flush(): Promise<void> {
-    // Keep processing until queue is empty
-    while (this.queue.length > 0 || this.isWriting) {
-      await new Promise((resolve) => setTimeout(resolve, 10));
-    }
+  private async reportFailures(): Promise<void> {
+    const error = this.firstFailure;
+    this.firstFailure = null;
+    if (error) throw error;
   }
 
-  /**
-   * Clear the queue without processing
-   * Note: Pending writes are silently discarded (expected during rotation)
-   */
-  clearQueue(): void {
-    const cleared = this.queue.length;
-    // Silently resolve instead of rejecting - clearing is expected during rotation
-    this.queue.forEach((task) => {
-      task.resolve();
-    });
-    this.queue = [];
-    if (cleared > 0) {
-      log.debug("[async-file-writer] Queue cleared", {
-        filepath: this.filepath,
-        tasksCleared: cleared,
-      });
+  /** A barrier for all operations submitted before this call, including errors. */
+  flush(): Promise<void> {
+    // Do not record the barrier's own error again.
+    const result = this.tail.then(() => this.reportFailures());
+    this.tail = result.catch(() => {});
+    return result;
+  }
+
+  /** Stop admission immediately, then drain all previously accepted operations. */
+  close(): Promise<void> {
+    if (!this.closePromise) {
+      this.accepting = false;
+      this.closePromise = this.flush();
     }
+    return this.closePromise;
+  }
+
+  /** Cancel queued (not active) writes with explicit promise rejections. */
+  clearQueue(): void {
+    this.generation++;
   }
 }

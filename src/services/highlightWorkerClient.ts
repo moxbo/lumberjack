@@ -1,4 +1,8 @@
-import { highlightAll } from "../utils/highlight";
+import {
+  escapeHtml,
+  highlightAll,
+  MAX_HIGHLIGHT_LENGTH,
+} from "../utils/highlight";
 import type {
   HighlightBatchItem,
   HighlightBatchRequest,
@@ -112,6 +116,8 @@ export function requestHighlight(
   text: string,
   search: string,
 ): Promise<string> {
+  if (text.length > MAX_HIGHLIGHT_LENGTH)
+    return Promise.resolve(escapeHtml(text));
   const key = highlightCacheKey(text, search);
   const cached = resultCache.get(key);
   if (cached !== undefined) return Promise.resolve(cached);

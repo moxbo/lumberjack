@@ -3,6 +3,7 @@ import App from "../../renderer/App";
 import { ErrorBoundary } from "../../renderer/ErrorBoundary";
 import { I18nProvider } from "../../utils/i18n";
 import "../styles.css";
+import "../../renderer/workspace.css";
 import logger from "../../utils/logger";
 import { rendererPerf } from "../../utils/rendererPerf";
 

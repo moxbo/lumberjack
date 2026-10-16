@@ -16,6 +16,20 @@ import * as fs from "fs";
 import { WatchManager } from "./FileWatcher";
 import { HttpTailManager } from "./HttpTailManager";
 import { getSharedMainApi } from "./sharedMainApi";
+import { ExportFileService } from "./ExportFileService";
+import { entryPayloadStore } from "./EntryPayloadStore";
+import { IPC_BATCH_SIZE } from "../constants/logViewer";
+import { estimatePayloadBytes } from "../utils/estimatePayloadBytes";
+import type {
+  ExportBeginRequest,
+  ExportBeginResult,
+  ExportWriteRequest,
+  ExportWriteResult,
+  ExportFinishRequest,
+  ExportFinishResult,
+  ExportSessionRequest,
+  ExportStreamResult,
+} from "../types/ipc";
 import { setLocale, t } from "../locales/mainI18n";
 import {
   DroppedFile,
@@ -27,6 +41,11 @@ import {
   Result,
   Settings,
   SettingsResult,
+  StreamParseChunk,
+  StreamParseComplete,
+  StreamParseError,
+  StreamParseStartResult,
+  TcpStatus,
   WindowPermsResult,
 } from "../types/ipc";
 import type { SettingsService } from "../services/SettingsService";
@@ -41,11 +60,43 @@ interface ParsersModule {
   parsePathsAsync?: (paths: string[]) => Promise<LogEntry[]>;
   parseJsonFile: (name: string, data: string) => LogEntry[];
   parseTextLines: (name: string, data: string) => LogEntry[];
+  streamParseFile?: (
+    filePath: string,
+    options?: {
+      chunkSize?: number;
+      signal?: AbortSignal;
+      highWaterMark?: number;
+    },
+  ) => AsyncGenerator<{
+    entries: LogEntry[];
+    bytesRead: number;
+    totalBytes: number;
+    done: boolean;
+    filePath: string;
+  }>;
+  getStreamParseStrategy?: (
+    filePath: string,
+    thresholdBytes?: number,
+  ) => Promise<{
+    streamable: boolean;
+    totalBytes: number;
+    reason: string;
+  }>;
   fetchElasticPitPage: (
     opts: ElasticSearchOptions,
   ) => Promise<ElasticPitPageResult>;
   closeElasticPitSession: (sessionId: string) => Promise<void>;
 }
+
+type StreamParsersModule = Pick<
+  ParsersModule,
+  | "parsePaths"
+  | "parsePathsAsync"
+  | "parseJsonFile"
+  | "parseTextLines"
+  | "streamParseFile"
+  | "getStreamParseStrategy"
+>;
 
 interface ElasticPitPageResult {
   entries: LogEntry[];
@@ -60,6 +111,235 @@ interface ZipEntry {
   entryName: string;
   isDirectory: boolean;
   getData: () => Buffer;
+}
+
+const STREAM_PARSE_THRESHOLD_BYTES = 1024 * 1024;
+const STREAM_PARSE_CHUNK_SIZE = 1000;
+
+interface StreamParseFilePlan {
+  filePath: string;
+  fileIndex: number;
+  totalBytes: number;
+  streamable: boolean;
+}
+
+interface StreamPathsWithBackpressureOptions {
+  sessionId: string;
+  filePaths: string[];
+  plans?: StreamParseFilePlan[];
+  parsers: StreamParsersModule;
+  sendChunk: (chunk: StreamParseChunk) => Promise<void>;
+  sendComplete: (result: StreamParseComplete) => void | Promise<void>;
+  sendError: (error: StreamParseError) => void | Promise<void>;
+  signal?: AbortSignal;
+  thresholdBytes?: number;
+  chunkSize?: number;
+}
+
+function createAbortError(message = "Stream parsing aborted"): Error {
+  const error = new Error(message);
+  error.name = "AbortError";
+  return error;
+}
+
+function isAbortError(error: unknown): boolean {
+  return error instanceof Error && error.name === "AbortError";
+}
+
+async function planStreamParseFiles(
+  filePaths: string[],
+  parsers: StreamParsersModule,
+  thresholdBytes = STREAM_PARSE_THRESHOLD_BYTES,
+): Promise<StreamParseFilePlan[]> {
+  const plans: StreamParseFilePlan[] = [];
+  for (let fileIndex = 0; fileIndex < filePaths.length; fileIndex++) {
+    const filePath = filePaths[fileIndex]!;
+    try {
+      if (parsers.getStreamParseStrategy) {
+        const strategy = await parsers.getStreamParseStrategy(
+          filePath,
+          thresholdBytes,
+        );
+        plans.push({
+          filePath,
+          fileIndex,
+          totalBytes: strategy.totalBytes,
+          streamable:
+            !!parsers.streamParseFile &&
+            strategy.streamable &&
+            strategy.reason === "stream",
+        });
+        continue;
+      }
+      const stat = await fs.promises.stat(filePath);
+      plans.push({
+        filePath,
+        fileIndex,
+        totalBytes: stat.isDirectory() ? 0 : stat.size,
+        streamable: false,
+      });
+    } catch {
+      plans.push({
+        filePath,
+        fileIndex,
+        totalBytes: 0,
+        streamable: false,
+      });
+    }
+  }
+  return plans;
+}
+
+function* boundedImportBatches(
+  entries: readonly LogEntry[],
+  chunkSize: number,
+): IterableIterator<LogEntry[]> {
+  if (!Number.isSafeInteger(chunkSize) || chunkSize < 1) {
+    throw new Error("Import chunk size must be a positive integer");
+  }
+  let batch: LogEntry[] = [];
+  let bytes = 64;
+  for (const entry of entries) {
+    const size = estimatePayloadBytes(entry);
+    if (
+      batch.length &&
+      (batch.length >= Math.min(chunkSize, STREAM_PARSE_CHUNK_SIZE) ||
+        bytes + size > 2 * 1024 * 1024)
+    ) {
+      yield batch;
+      batch = [];
+      bytes = 64;
+    }
+    batch.push(entry);
+    bytes += size;
+  }
+  if (batch.length) yield batch;
+}
+
+export async function streamPathsWithBackpressure({
+  sessionId,
+  filePaths,
+  plans: suppliedPlans,
+  parsers,
+  sendChunk,
+  sendComplete,
+  sendError,
+  signal,
+  thresholdBytes = STREAM_PARSE_THRESHOLD_BYTES,
+  chunkSize = STREAM_PARSE_CHUNK_SIZE,
+}: StreamPathsWithBackpressureOptions): Promise<void> {
+  const plans =
+    suppliedPlans ??
+    (await planStreamParseFiles(filePaths, parsers, thresholdBytes));
+  const totalBytes = plans.reduce((sum, plan) => sum + plan.totalBytes, 0);
+  const totalFiles = filePaths.length;
+
+  let completedBytes = 0;
+  let chunkIndex = 0;
+  let totalEntries = 0;
+  let currentFilePath: string | undefined;
+  const errors: string[] = [];
+
+  try {
+    for (const plan of plans) {
+      if (signal?.aborted) throw createAbortError();
+      currentFilePath = plan.filePath;
+
+      try {
+        if (plan.streamable && parsers.streamParseFile) {
+          for await (const chunk of parsers.streamParseFile(plan.filePath, {
+            chunkSize,
+            signal,
+          })) {
+            if (signal?.aborted) throw createAbortError();
+            totalEntries += chunk.entries.length;
+            await sendChunk({
+              sessionId,
+              chunkIndex,
+              entries: chunk.entries,
+              bytesRead: Math.min(totalBytes, completedBytes + chunk.bytesRead),
+              totalBytes,
+              filePath: plan.filePath,
+              done: chunk.done,
+              fileIndex: plan.fileIndex,
+              totalFiles,
+            });
+            chunkIndex++;
+          }
+        } else {
+          const parsed = parsers.parsePathsAsync
+            ? await parsers.parsePathsAsync([plan.filePath])
+            : parsers.parsePaths([plan.filePath]);
+          if (parsed.length === 0) {
+            await sendChunk({
+              sessionId,
+              chunkIndex,
+              entries: [],
+              bytesRead: Math.min(totalBytes, completedBytes + plan.totalBytes),
+              totalBytes,
+              filePath: plan.filePath,
+              done: true,
+              fileIndex: plan.fileIndex,
+              totalFiles,
+            });
+            chunkIndex++;
+          } else {
+            let processed = 0;
+            for (const entries of boundedImportBatches(parsed, chunkSize)) {
+              processed += entries.length;
+              totalEntries += entries.length;
+              await sendChunk({
+                sessionId,
+                chunkIndex,
+                entries,
+                bytesRead: Math.min(
+                  totalBytes,
+                  completedBytes + plan.totalBytes,
+                ),
+                totalBytes,
+                filePath: plan.filePath,
+                done: processed === parsed.length,
+                fileIndex: plan.fileIndex,
+                totalFiles,
+              });
+              chunkIndex++;
+            }
+          }
+        }
+      } catch (error) {
+        if (isAbortError(error) || signal?.aborted) throw error;
+        errors.push(
+          `${plan.filePath}: ${
+            error instanceof Error ? error.message : String(error)
+          }`,
+        );
+      }
+
+      completedBytes += plan.totalBytes;
+    }
+
+    await sendComplete({
+      sessionId,
+      totalEntries,
+      totalFiles,
+      errors,
+    });
+  } catch (error) {
+    if (isAbortError(error) || signal?.aborted) return;
+    await sendError({
+      sessionId,
+      error: error instanceof Error ? error.message : String(error),
+      filePath: currentFilePath,
+    });
+  }
+}
+
+export function isJsonArrayLinePayload(lines: readonly string[]): boolean {
+  for (const line of lines) {
+    const content = line.trimStart();
+    if (content.length > 0) return content.startsWith("[");
+  }
+  return false;
 }
 
 export function registerIpcHandlers(
@@ -77,9 +357,356 @@ export function registerIpcHandlers(
   enqueueWatchEntries?: (
     entries: LogEntry[],
     senderWebContentsId: number,
-  ) => void,
+    kind?: "live" | "import",
+  ) => void | Promise<void>,
+  onLoggingSettingsChanged?: () => Promise<void>,
+  onBeforeRelaunch?: () => Promise<void>,
+  /** A per-poll sink that retains the default sink's required file logging. */
+  consumeHttpPollEntries?: (
+    entries: LogEntry[],
+    senderWebContentsId: number,
+  ) => void | Promise<void>,
 ): void {
   const sharedApi = getSharedMainApi();
+  ipcMain.handle(
+    "logs:payloadLoad",
+    async (event, reference: unknown): Promise<Result<LogEntry>> => {
+      try {
+        if (typeof reference !== "string")
+          throw new TypeError("Invalid log payload reference");
+        return {
+          ok: true,
+          data: await entryPayloadStore.load(event.sender, reference),
+        };
+      } catch (error) {
+        log.error("Loading original log payload failed:", error);
+        return {
+          ok: false,
+          error: error instanceof Error ? error.message : String(error),
+        };
+      }
+    },
+  );
+  ipcMain.handle(
+    "logs:payloadRelease",
+    async (event, references: unknown): Promise<Result<void>> => {
+      try {
+        if (
+          !Array.isArray(references) ||
+          references.length > 256 ||
+          !references.every(
+            (reference): reference is string => typeof reference === "string",
+          )
+        )
+          throw new TypeError("Invalid log payload references");
+        await entryPayloadStore.release(event.sender, references);
+        return { ok: true };
+      } catch (error) {
+        log.error("Releasing original log payloads failed:", error);
+        return {
+          ok: false,
+          error: error instanceof Error ? error.message : String(error),
+        };
+      }
+    },
+  );
+  const watchManager = new WatchManager();
+  const httpTailManager = new HttpTailManager();
+  const pausedMessage =
+    "Live ingestion is paused. Clear logs or raise the entry limit before restarting sources.";
+  interface LiveOwner {
+    sender: Electron.WebContents;
+    windowId: number | null;
+    paused: boolean;
+    destroyed: boolean;
+    generation: number;
+    polls: Map<number, string>;
+    watchers: Map<number, string>;
+    tails: Map<number, string>;
+    starting: Set<Promise<unknown>>;
+    stopping?: Promise<Result<void>>;
+  }
+  const liveOwners = new Map<number, LiveOwner>();
+  let tcpOperation: Promise<unknown> = Promise.resolve();
+
+  function serializeTcp<T>(operation: () => Promise<T>): Promise<T> {
+    const pending = tcpOperation.then(operation);
+    tcpOperation = pending.catch(() => undefined);
+    return pending;
+  }
+
+  function trackStart<T>(owner: LiveOwner, pending: Promise<T>): Promise<T> {
+    owner.starting.add(pending);
+    void pending.then(
+      () => owner.starting.delete(pending),
+      () => owner.starting.delete(pending),
+    );
+    return pending;
+  }
+
+  function canIngest(owner: LiveOwner, generation = owner.generation): boolean {
+    return (
+      !owner.paused &&
+      !owner.destroyed &&
+      !owner.sender.isDestroyed() &&
+      generation === owner.generation
+    );
+  }
+
+  function ownsTcp(owner: LiveOwner): boolean {
+    return (
+      owner.windowId !== null &&
+      sharedApi.getTcpOwnerWindowId?.() === owner.windowId
+    );
+  }
+
+  function sendTcpStatus(owner: LiveOwner, status: TcpStatus): void {
+    try {
+      if (!owner.sender.isDestroyed()) owner.sender.send("tcp:status", status);
+    } catch (error) {
+      log.warn("[tcp] Status notification failed:", error);
+    }
+  }
+
+  async function stopOwnedTcp(owner: LiveOwner): Promise<void> {
+    if (!ownsTcp(owner)) return;
+    const status = await networkService.stopTcpServer();
+    if (!status.ok && status.running !== false)
+      throw new Error(status.message || "TCP server could not be stopped");
+    if (ownsTcp(owner)) sharedApi.setTcpOwnerWindowId?.(null);
+    sendTcpStatus(owner, { ...status, ok: true, running: false });
+    updateWindowTitles();
+    updateAppMenu();
+  }
+
+  function stopOwnedPoll(owner: LiveOwner, id: number): Result<void> {
+    if (!owner.polls.has(id))
+      return { ok: false, error: "HTTP poller is not owned by this window" };
+    const result = networkService.httpStopPoll(id);
+    if (result.ok) owner.polls.delete(id);
+    return result;
+  }
+
+  function stopOwnedWatcher(owner: LiveOwner, id: number): Result<void> {
+    const filePath = owner.watchers.get(id);
+    if (filePath === undefined)
+      return { ok: false, error: "File watcher is not owned by this window" };
+    const stopped = watchManager.stop(id);
+    owner.watchers.delete(id);
+    if (stopped)
+      emitWatchStatus(owner.sender.id, { type: "stopped", id, filePath });
+    return { ok: true };
+  }
+
+  function stopOwnedTail(owner: LiveOwner, id: number): Result<void> {
+    const url = owner.tails.get(id);
+    if (url === undefined)
+      return { ok: false, error: "HTTP tail is not owned by this window" };
+    const stopped = httpTailManager.stop(id);
+    owner.tails.delete(id);
+    if (stopped)
+      emitHttpTailStatus(owner.sender.id, { type: "stopped", id, url });
+    return { ok: true };
+  }
+
+  async function stopOwnedSources(owner: LiveOwner): Promise<Result<void>> {
+    const errors = new Set<string>();
+    const stopKnownSources = (): void => {
+      const stop = (label: string, action: () => Result<void>): void => {
+        try {
+          const result = action();
+          if (!result.ok)
+            errors.add(`${label}: ${result.error || "stop failed"}`);
+        } catch (error) {
+          errors.add(
+            `${label}: ${error instanceof Error ? error.message : String(error)}`,
+          );
+        }
+      };
+      for (const id of owner.polls.keys())
+        stop(`HTTP poll ${id}`, () => stopOwnedPoll(owner, id));
+      for (const id of owner.watchers.keys())
+        stop(`File watcher ${id}`, () => stopOwnedWatcher(owner, id));
+      for (const id of owner.tails.keys())
+        stop(`HTTP tail ${id}`, () => stopOwnedTail(owner, id));
+    };
+    stopKnownSources();
+    // A source created after pause must be closed before the pause is confirmed.
+    await Promise.allSettled([...owner.starting]);
+    stopKnownSources();
+    if (ownsTcp(owner)) {
+      try {
+        await serializeTcp(() => stopOwnedTcp(owner));
+      } catch (error) {
+        errors.add(
+          `TCP: ${error instanceof Error ? error.message : String(error)}`,
+        );
+      }
+    }
+    return errors.size
+      ? { ok: false, error: [...errors].join("; ") }
+      : { ok: true };
+  }
+
+  function pauseOwner(owner: LiveOwner): Promise<Result<void>> {
+    owner.paused = true;
+    owner.generation++;
+    if (owner.stopping) return owner.stopping;
+    const stopping = stopOwnedSources(owner).catch((error: unknown) => ({
+      ok: false,
+      error: error instanceof Error ? error.message : String(error),
+    }));
+    owner.stopping = stopping;
+    void stopping.finally(() => {
+      if (owner.stopping === stopping) owner.stopping = undefined;
+    });
+    return stopping;
+  }
+
+  function getLiveOwner(sender: Electron.WebContents): LiveOwner {
+    const existing = liveOwners.get(sender.id);
+    if (existing) return existing;
+    const owner: LiveOwner = {
+      sender,
+      windowId: BrowserWindow.fromWebContents(sender)?.id ?? null,
+      paused: false,
+      destroyed: sender.isDestroyed(),
+      generation: 0,
+      polls: new Map(),
+      watchers: new Map(),
+      tails: new Map(),
+      starting: new Set(),
+    };
+    if (owner.destroyed) return owner;
+    liveOwners.set(sender.id, owner);
+    sender.once("destroyed", () => {
+      owner.destroyed = true;
+      liveOwners.delete(sender.id);
+      void pauseOwner(owner).then((result) => {
+        if (!result.ok)
+          log.error("[live] Window source cleanup failed:", result.error);
+      });
+    });
+    return owner;
+  }
+
+  ipcMain.handle(
+    "live:setPaused",
+    async (event, paused: boolean): Promise<Result<void>> => {
+      if (typeof paused !== "boolean")
+        return { ok: false, error: "paused must be a boolean" };
+      try {
+        const owner = getLiveOwner(event.sender);
+        if (paused) return await pauseOwner(owner);
+        const generation = owner.generation;
+        const stopped = await owner.stopping;
+        if (stopped && !stopped.ok) return stopped;
+        if (owner.destroyed || owner.sender.isDestroyed())
+          return { ok: false, error: "Receiving window was destroyed" };
+        if (generation === owner.generation) owner.paused = false;
+        return { ok: true };
+      } catch (error) {
+        return {
+          ok: false,
+          error: error instanceof Error ? error.message : String(error),
+        };
+      }
+    },
+  );
+
+  const exportFiles = new ExportFileService((error) =>
+    log.error("Export cleanup failed:", error),
+  );
+  const startingStreams = new Set<number>();
+  const streamSessions = new Map<
+    string,
+    {
+      sender: Electron.WebContents;
+      abortController: AbortController;
+      ackWaiters: Map<
+        string,
+        { resolve: () => void; reject: (error: Error) => void }
+      >;
+      ready: Promise<void>;
+      resolveReady: () => void;
+      onDestroyed: () => void;
+      readyTimeout: ReturnType<typeof setTimeout>;
+    }
+  >();
+
+  function cleanupStreamSession(sessionId: string): void {
+    const session = streamSessions.get(sessionId);
+    if (!session) return;
+    session.resolveReady();
+    clearTimeout(session.readyTimeout);
+    streamSessions.delete(sessionId);
+    try {
+      session.sender.removeListener("destroyed", session.onDestroyed);
+    } catch {
+      // Intentionally empty - ignore cleanup errors
+    }
+    for (const waiter of session.ackWaiters.values()) {
+      waiter.reject(createAbortError());
+    }
+    session.ackWaiters.clear();
+  }
+
+  function cancelStreamSession(sessionId: string): void {
+    const session = streamSessions.get(sessionId);
+    if (!session) return;
+    session.abortController.abort();
+    cleanupStreamSession(sessionId);
+  }
+
+  function failStreamSession(sessionId: string, error: Error): void {
+    const session = streamSessions.get(sessionId);
+    if (!session) return;
+    try {
+      if (!session.sender.isDestroyed()) {
+        session.sender.send("logs:streamError", {
+          sessionId,
+          error: error.message,
+        });
+      }
+    } catch (notificationError) {
+      log.warn("[stream] Failure notification failed:", notificationError);
+    } finally {
+      cancelStreamSession(sessionId);
+    }
+  }
+
+  function waitForStreamAck(
+    sessionId: string,
+    chunkIndex: number,
+  ): Promise<void> {
+    const session = streamSessions.get(sessionId);
+    if (
+      !session ||
+      session.abortController.signal.aborted ||
+      session.sender.isDestroyed()
+    ) {
+      return Promise.reject(createAbortError());
+    }
+    const key = String(chunkIndex);
+    return new Promise<void>((resolve, reject) => {
+      const timer = setTimeout(() => {
+        session.ackWaiters.delete(key);
+        const error = new Error("Stream persistence acknowledgement timed out");
+        failStreamSession(sessionId, error);
+        reject(error);
+      }, 30_000);
+      session.ackWaiters.set(key, {
+        resolve: () => {
+          clearTimeout(timer);
+          resolve();
+        },
+        reject: (error) => {
+          clearTimeout(timer);
+          reject(error);
+        },
+      });
+    });
+  }
 
   function updateWindowTitles(): void {
     try {
@@ -237,17 +864,20 @@ export function registerIpcHandlers(
           return { ok: false, error: validation.error };
         }
 
-        const updated = settingsService.update(clone);
-
         if (passClear) {
-          updated.elasticPassEnc = "";
+          clone.elasticPassEnc = "";
         } else if (passPlain && passPlain.trim()) {
-          updated.elasticPassEnc = settingsService.encryptSecret(
+          clone.elasticPassEnc = settingsService.encryptSecret(
             passPlain.trim(),
           );
         }
-        if (passClear || passPlain) {
-          settingsService.update(updated);
+        settingsService.update(clone);
+        if (
+          ["logToFile", "logFilePath", "logMaxBytes", "logMaxBackups"].some(
+            (key) => Object.hasOwn(clone, key),
+          )
+        ) {
+          await onLoggingSettingsChanged?.();
         }
 
         // Use async save to avoid blocking the main process
@@ -334,13 +964,15 @@ export function registerIpcHandlers(
   // Export view handler - choose path first, then save
   ipcMain.handle(
     "dialog:chooseExportPath",
-    async (): Promise<{
+    async (
+      event,
+    ): Promise<{
       ok: boolean;
       filePath?: string;
       format?: "html" | "txt" | "json" | "ndjson" | "csv" | "md";
       error?: string;
     }> => {
-      const mainWindow = BrowserWindow.getFocusedWindow();
+      const mainWindow = BrowserWindow.fromWebContents(event.sender);
       if (!mainWindow) {
         return { ok: false, error: t("main.errors.noWindow") };
       }
@@ -387,6 +1019,7 @@ export function registerIpcHandlers(
         else if (ext === ".csv") format = "csv";
         else if (ext === ".md" || ext === ".markdown") format = "md";
 
+        exportFiles.authorize(event.sender, res.filePath);
         return { ok: true, filePath: res.filePath, format };
       } catch (err) {
         log.error(
@@ -401,7 +1034,82 @@ export function registerIpcHandlers(
     },
   );
 
-  // Save export file handler
+  ipcMain.handle(
+    "export:begin",
+    async (event, request: ExportBeginRequest): Promise<ExportBeginResult> => {
+      try {
+        const sessionId = await exportFiles.begin(
+          event.sender,
+          request.filePath,
+        );
+        return { ok: true, sessionId };
+      } catch (error) {
+        return {
+          ok: false,
+          error: error instanceof Error ? error.message : String(error),
+        };
+      }
+    },
+  );
+  ipcMain.handle(
+    "export:write",
+    async (event, request: ExportWriteRequest): Promise<ExportWriteResult> => {
+      try {
+        await exportFiles.write(
+          event.sender,
+          request.sessionId,
+          request.chunkIndex,
+          request.chunk,
+        );
+        return { ok: true, chunkIndex: request.chunkIndex };
+      } catch (error) {
+        return {
+          ok: false,
+          error: error instanceof Error ? error.message : String(error),
+        };
+      }
+    },
+  );
+  ipcMain.handle(
+    "export:finish",
+    async (
+      event,
+      request: ExportFinishRequest,
+    ): Promise<ExportFinishResult> => {
+      try {
+        const filePath = await exportFiles.finish(
+          event.sender,
+          request.sessionId,
+          request.chunkCount,
+        );
+        return { ok: true, filePath };
+      } catch (error) {
+        return {
+          ok: false,
+          error: error instanceof Error ? error.message : String(error),
+        };
+      }
+    },
+  );
+  ipcMain.handle(
+    "export:cancel",
+    async (
+      event,
+      request: ExportSessionRequest,
+    ): Promise<ExportStreamResult> => {
+      try {
+        await exportFiles.cancel(event.sender, request.sessionId);
+        return { ok: true };
+      } catch (error) {
+        return {
+          ok: false,
+          error: error instanceof Error ? error.message : String(error),
+        };
+      }
+    },
+  );
+
+  // Legacy API retained for external callers; renderer exports use the bounded protocol above.
   ipcMain.handle(
     "dialog:saveExportFile",
     async (
@@ -491,9 +1199,208 @@ export function registerIpcHandlers(
   // process responsive instead of freezing on one giant synchronous parse.
   const HTTP_TAIL_PARSE_CHUNK_LINES = 5000;
 
+  ipcMain.on(
+    "logs:streamReady",
+    (event, { sessionId }: { sessionId: string }) => {
+      const session = streamSessions.get(sessionId);
+      if (!session || session.sender !== event.sender) return;
+      clearTimeout(session.readyTimeout);
+      session.resolveReady();
+    },
+  );
+
+  ipcMain.on(
+    "logs:streamAck",
+    (
+      event,
+      { sessionId, chunkIndex }: { sessionId: string; chunkIndex: number },
+    ) => {
+      const session = streamSessions.get(sessionId);
+      if (!session || session.sender !== event.sender) return;
+      const key = String(chunkIndex);
+      const waiter = session.ackWaiters.get(key);
+      if (!waiter) return;
+      session.ackWaiters.delete(key);
+      waiter.resolve();
+    },
+  );
+
+  ipcMain.on(
+    "logs:streamCancel",
+    (event, { sessionId }: { sessionId: string }) => {
+      const session = streamSessions.get(sessionId);
+      if (!session || session.sender !== event.sender) return;
+      cancelStreamSession(sessionId);
+    },
+  );
+
+  ipcMain.handle(
+    "logs:streamParsePaths",
+    async (
+      event,
+      filePaths: string[],
+    ): Promise<ParseResult | StreamParseStartResult> => {
+      if (
+        startingStreams.has(event.sender.id) ||
+        startingStreams.size + streamSessions.size >= 16 ||
+        Array.from(streamSessions.values()).some(
+          (session) => session.sender === event.sender,
+        )
+      ) {
+        return {
+          ok: false,
+          error:
+            "Stream admission capacity exceeded; finish or cancel the current import",
+        };
+      }
+      startingStreams.add(event.sender.id);
+      try {
+        const parsers = getParsers();
+        const plans = await planStreamParseFiles(filePaths, parsers);
+        if (
+          streamSessions.size >= 16 ||
+          Array.from(streamSessions.values()).some(
+            (session) => session.sender === event.sender,
+          )
+        ) {
+          return {
+            ok: false,
+            error:
+              "Stream admission capacity exceeded; finish or cancel the current import",
+          };
+        }
+        // Fallback parsers also need bounded, acknowledged renderer delivery.
+        if (plans.length === 0) return { ok: true, entries: [] };
+
+        const sessionId = `stream-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+        const abortController = new AbortController();
+        const sender = event.sender;
+        let resolveReady!: () => void;
+        const ready = new Promise<void>((resolve) => {
+          resolveReady = resolve;
+        });
+        const onDestroyed = (): void => {
+          cancelStreamSession(sessionId);
+        };
+
+        sender.once("destroyed", onDestroyed);
+        const readyTimeout = setTimeout(() => {
+          failStreamSession(
+            sessionId,
+            new Error("Stream renderer readiness timed out"),
+          );
+        }, 30_000);
+        streamSessions.set(sessionId, {
+          sender,
+          abortController,
+          ackWaiters: new Map(),
+          ready,
+          resolveReady,
+          onDestroyed,
+          readyTimeout,
+        });
+
+        void ready
+          .then(() =>
+            streamPathsWithBackpressure({
+              sessionId,
+              filePaths,
+              plans,
+              parsers,
+              signal: abortController.signal,
+              sendChunk: async (chunk) => {
+                const session = streamSessions.get(sessionId);
+                if (!session || session.sender.isDestroyed()) {
+                  throw createAbortError();
+                }
+                const entries = await entryPayloadStore.prepare(
+                  session.sender,
+                  chunk.entries,
+                );
+                const createdReferences = entries.flatMap((entry, index) =>
+                  entry._payloadRef &&
+                  entry._payloadRef !== chunk.entries[index]?._payloadRef
+                    ? [entry._payloadRef]
+                    : [],
+                );
+                if (
+                  abortController.signal.aborted ||
+                  streamSessions.get(sessionId) !== session ||
+                  session.sender.isDestroyed()
+                ) {
+                  await entryPayloadStore.release(
+                    session.sender,
+                    createdReferences,
+                  );
+                  throw createAbortError();
+                }
+                const ack = waitForStreamAck(sessionId, chunk.chunkIndex);
+                let sent = false;
+                try {
+                  session.sender.send("logs:streamChunk", {
+                    ...chunk,
+                    entries,
+                  });
+                  sent = true;
+                } catch (error) {
+                  session.ackWaiters
+                    .get(String(chunk.chunkIndex))
+                    ?.reject(
+                      error instanceof Error ? error : new Error(String(error)),
+                    );
+                  failStreamSession(
+                    sessionId,
+                    error instanceof Error ? error : new Error(String(error)),
+                  );
+                }
+                try {
+                  await ack;
+                } finally {
+                  if (!sent)
+                    await entryPayloadStore.release(
+                      session.sender,
+                      createdReferences,
+                    );
+                }
+              },
+              sendComplete: (result) => {
+                const session = streamSessions.get(sessionId);
+                if (!session || session.sender.isDestroyed()) return;
+                session.sender.send("logs:streamComplete", result);
+              },
+              sendError: (error) => {
+                const session = streamSessions.get(sessionId);
+                if (!session || session.sender.isDestroyed()) return;
+                session.sender.send("logs:streamError", error);
+              },
+            }),
+          )
+          .catch((error: unknown) => {
+            log.warn("[stream] Delivery failed:", error);
+          })
+          .finally(() => {
+            cleanupStreamSession(sessionId);
+          });
+
+        return { sessionId, streamed: true };
+      } catch (err) {
+        log.error(
+          "Error starting streamed parse:",
+          err instanceof Error ? err.message : String(err),
+        );
+        return {
+          ok: false,
+          error: err instanceof Error ? err.message : String(err),
+        };
+      } finally {
+        startingStreams.delete(event.sender.id);
+      }
+    },
+  );
+
   ipcMain.handle(
     "logs:parsePaths",
-    async (_event, filePaths: string[]): Promise<ParseResult> => {
+    async (event, filePaths: string[]): Promise<ParseResult> => {
       try {
         const { parsePaths, parsePathsAsync } = getParsers();
 
@@ -523,7 +1430,10 @@ export function registerIpcHandlers(
           );
         }
 
-        return { ok: true, entries };
+        return {
+          ok: true,
+          entries: await entryPayloadStore.prepare(event.sender, entries),
+        };
       } catch (err) {
         log.error(
           "Error parsing paths:",
@@ -539,14 +1449,43 @@ export function registerIpcHandlers(
 
   ipcMain.handle(
     "logs:parseRaw",
-    async (_event, files: DroppedFile[]): Promise<ParseResult> => {
+    async (event, files: DroppedFile[]): Promise<ParseResult> => {
+      let admittedSenderId: number | undefined;
       try {
         if (!Array.isArray(files) || !files.length)
           return { ok: true, entries: [] };
 
+        if (enqueueWatchEntries) {
+          if (
+            startingStreams.has(event.sender.id) ||
+            startingStreams.size + streamSessions.size >= 16 ||
+            Array.from(streamSessions.values()).some(
+              (session) => session.sender === event.sender,
+            )
+          ) {
+            return {
+              ok: false,
+              error:
+                "Stream admission capacity exceeded; finish or cancel the current import",
+            };
+          }
+          admittedSenderId = event.sender.id;
+          startingStreams.add(admittedSenderId);
+        }
         const { parseJsonFile, parseTextLines } = getParsers();
-        const ZipClass = getAdmZip();
         const all: LogEntry[] = [];
+        const deliver = async (entries: LogEntry[]): Promise<void> => {
+          if (enqueueWatchEntries) {
+            for (const batch of boundedImportBatches(
+              entries,
+              STREAM_PARSE_CHUNK_SIZE,
+            )) {
+              await enqueueWatchEntries(batch, event.sender.id, "import");
+            }
+          } else {
+            for (const entry of entries) all.push(entry);
+          }
+        };
 
         for (const f of files) {
           // Yield between files to keep UI responsive
@@ -559,8 +1498,8 @@ export function registerIpcHandlers(
           if (!name || !data) continue;
           if (ext === ".zip") {
             const buf = Buffer.from(data, enc === "base64" ? "base64" : "utf8");
-            // AdmZip accepts Buffer but type definitions may be incomplete
-            const zip = new ZipClass(buf as unknown as string);
+            const ZipClass = getAdmZip();
+            const zip = new ZipClass(buf);
             for (const zEntry of zip.getEntries() as ZipEntry[]) {
               const ename = zEntry.entryName;
               const eext = path.extname(ename).toLowerCase();
@@ -583,18 +1522,21 @@ export function registerIpcHandlers(
                 for (const e of parsed) {
                   e.source = `${name}::${ename}`;
                 }
-                all.push(...parsed);
+                await deliver(parsed);
               }
             }
           } else if (ext === ".json") {
             const entries: LogEntry[] = parseJsonFile(name, data);
-            all.push(...entries);
+            await deliver(entries);
           } else {
             const entries: LogEntry[] = parseTextLines(name, data);
-            all.push(...entries);
+            await deliver(entries);
           }
         }
-        return { ok: true, entries: all };
+        return {
+          ok: true,
+          entries: await entryPayloadStore.prepare(event.sender, all),
+        };
       } catch (err) {
         log.error(
           "Error parsing raw drops:",
@@ -604,121 +1546,113 @@ export function registerIpcHandlers(
           ok: false,
           error: err instanceof Error ? err.message : String(err),
         };
+      } finally {
+        if (admittedSenderId !== undefined) {
+          startingStreams.delete(admittedSenderId);
+        }
       }
     },
   );
 
   // TCP handlers
   ipcMain.on("tcp:start", (event, { port }: { port: number }) => {
-    (async () => {
-      try {
-        // Check if TCP_SERVER feature is enabled
-        if (featureFlags && !featureFlags.isEnabled("TCP_SERVER")) {
-          const reason = featureFlags.getDisableReason("TCP_SERVER");
-          const msg = t("main.errors.tcpDisabled");
-          event.reply("tcp:status", {
-            ok: false,
-            message: reason ? `${msg}: ${reason}` : msg,
-            running: false,
-          });
-          return;
-        }
-
-        const win = BrowserWindow.fromWebContents(event.sender);
-        const allowed = win
-          ? !!sharedApi.getWindowCanTcpControl?.(win.id)
-          : true;
-        if (!allowed) {
-          if (win) sharedApi.setTcpOwnerWindowId?.(win.id);
-          event.reply("tcp:status", {
-            ok: false,
-            message: t("main.errors.tcpWindowNotAllowed"),
-          });
-          return;
-        }
-        const status = await networkService.startTcpServer(port);
-        event.reply("tcp:status", status);
-
-        if (status.ok && win) {
-          // Nur speichern, wenn sich der Port tatsächlich geändert hat
-          const prevSettings = settingsService.get();
-          if (prevSettings.tcpPort !== port) {
+    const owner = getLiveOwner(event.sender);
+    const generation = owner.generation;
+    void trackStart(
+      owner,
+      serializeTcp(async () => {
+        let reserved = false;
+        try {
+          if (!canIngest(owner, generation)) throw new Error(pausedMessage);
+          if (featureFlags && !featureFlags.isEnabled("TCP_SERVER")) {
+            const reason = featureFlags.getDisableReason("TCP_SERVER");
+            const message = t("main.errors.tcpDisabled");
+            throw new Error(reason ? `${message}: ${reason}` : message);
+          }
+          if (
+            owner.windowId === null ||
+            sharedApi.getWindowCanTcpControl?.(owner.windowId) === false
+          ) {
+            throw new Error(t("main.errors.tcpWindowNotAllowed"));
+          }
+          const currentStatus = networkService.getTcpStatus();
+          if (currentStatus.running) {
+            sendTcpStatus(owner, {
+              ...currentStatus,
+              ok: false,
+              message: "TCP server already running",
+            });
+            return;
+          }
+          // Reserve routing before listen() can accept the first connection.
+          sharedApi.setTcpOwnerWindowId?.(owner.windowId);
+          reserved = true;
+          const status = await networkService.startTcpServer(port);
+          if (!canIngest(owner, generation)) {
+            await stopOwnedTcp(owner);
+            throw new Error(pausedMessage);
+          }
+          if (!status.ok) {
+            if (ownsTcp(owner)) sharedApi.setTcpOwnerWindowId?.(null);
+          } else if (settingsService.get().tcpPort !== port) {
             settingsService.update({ tcpPort: port });
             void settingsService.save();
-          } else {
-            // Keine Änderung – kein persistenter Save nötig
           }
-          // Eigentümer auf dieses Fenster setzen (ephemeral, nicht persistiert)
-          try {
-            sharedApi.setTcpOwnerWindowId?.(win.id);
-          } catch {
-            // Intentionally empty - ignore errors
+          sendTcpStatus(owner, status);
+          updateAppMenu();
+          updateWindowTitles();
+        } catch (error) {
+          let message = error instanceof Error ? error.message : String(error);
+          if (reserved && ownsTcp(owner)) {
+            try {
+              await stopOwnedTcp(owner);
+            } catch (stopError) {
+              message += `; TCP stop failed: ${
+                stopError instanceof Error
+                  ? stopError.message
+                  : String(stopError)
+              }`;
+            }
           }
+          log.error("Error starting TCP server:", message);
+          sendTcpStatus(owner, {
+            ok: false,
+            message,
+            running: ownsTcp(owner) && networkService.getTcpStatus().running,
+          });
         }
-
-        // Titel und Menü aktualisieren
-        updateAppMenu();
-        setTimeout(updateWindowTitles, 50);
-        setTimeout(updateWindowTitles, 200);
-      } catch (err) {
-        log.error(
-          "Error starting TCP server:",
-          err instanceof Error ? err.message : String(err),
-        );
-        event.reply("tcp:status", {
-          ok: false,
-          message: err instanceof Error ? err.message : String(err),
-        });
-        sharedApi.setTcpOwnerWindowId?.(null);
-      }
-    })().catch(() => {});
+      }),
+    );
   });
 
   ipcMain.on("tcp:stop", (event) => {
-    (async () => {
+    const owner = getLiveOwner(event.sender);
+    void serializeTcp(async () => {
       try {
-        const win = BrowserWindow.fromWebContents(event.sender);
-        const allowed = win
-          ? !!sharedApi.getWindowCanTcpControl?.(win.id)
-          : true;
-        if (!allowed) {
-          event.reply("tcp:status", {
-            ok: false,
-            message: t("main.errors.tcpWindowNotAllowed"),
-          });
-          return;
+        if (
+          owner.windowId === null ||
+          sharedApi.getWindowCanTcpControl?.(owner.windowId) === false
+        ) {
+          throw new Error(t("main.errors.tcpWindowNotAllowed"));
         }
-        const status = await networkService.stopTcpServer();
-        event.reply("tcp:status", status);
-        if (status.ok) {
-          try {
-            sharedApi.setTcpOwnerWindowId?.(null);
-          } catch {
-            // Intentionally empty - ignore errors
-          }
+        if (!ownsTcp(owner)) {
+          throw new Error("TCP server is not owned by this window");
         }
-        // Titel und Menü aktualisieren
-        updateWindowTitles();
-        updateAppMenu();
-        setTimeout(updateWindowTitles, 50);
-        setTimeout(updateWindowTitles, 200);
-      } catch (err) {
-        log.error(
-          "Error stopping TCP server:",
-          err instanceof Error ? err.message : String(err),
-        );
-        event.reply("tcp:status", {
+        await stopOwnedTcp(owner);
+      } catch (error) {
+        sendTcpStatus(owner, {
           ok: false,
-          message: err instanceof Error ? err.message : String(err),
+          message: error instanceof Error ? error.message : String(error),
+          running: ownsTcp(owner) && networkService.getTcpStatus().running,
         });
       }
-    })().catch(() => {});
+    });
   });
 
   // HTTP handlers
   ipcMain.handle(
     "http:loadOnce",
-    async (_event, url: string): Promise<ParseResult> => {
+    async (event, url: string): Promise<ParseResult> => {
       // Check if HTTP_POLLING feature is enabled
       if (featureFlags && !featureFlags.isEnabled("HTTP_POLLING")) {
         const reason = featureFlags.getDisableReason("HTTP_POLLING");
@@ -728,16 +1662,43 @@ export function registerIpcHandlers(
           error: reason ? `${msg}: ${reason}` : msg,
         };
       }
-      return await networkService.httpLoadOnce(url);
+      // Deliver to the requesting window through the ACK-backed append pipeline,
+      // not as one giant invoke result exceeding renderer ingestion admission.
+      try {
+        const result = await networkService.httpLoadOnce(
+          url,
+          enqueueWatchEntries
+            ? (entries) =>
+                enqueueWatchEntries(entries, event.sender.id, "import")
+            : undefined,
+        );
+        if (result.ok && result.entries?.length) {
+          result.entries = await entryPayloadStore.prepare(
+            event.sender,
+            result.entries,
+          );
+        }
+        return result;
+      } catch (error) {
+        log.error("Loading HTTP logs failed:", error);
+        return {
+          ok: false,
+          error: error instanceof Error ? error.message : String(error),
+        };
+      }
     },
   );
 
   ipcMain.handle(
     "http:startPoll",
     async (
-      _event,
+      event,
       { url, intervalSec }: { url: string; intervalSec: number },
     ) => {
+      const owner = getLiveOwner(event.sender);
+      const generation = owner.generation;
+      if (!canIngest(owner, generation))
+        return { ok: false, error: pausedMessage };
       // Check if HTTP_POLLING feature is enabled
       if (featureFlags && !featureFlags.isEnabled("HTTP_POLLING")) {
         const reason = featureFlags.getDisableReason("HTTP_POLLING");
@@ -747,15 +1708,78 @@ export function registerIpcHandlers(
           error: reason ? `${msg}: ${reason}` : msg,
         };
       }
-      return await networkService.httpStartPoll(url, intervalSec);
+      const consume = consumeHttpPollEntries ?? enqueueWatchEntries;
+      let terminalError: Error | undefined;
+      return await trackStart(
+        owner,
+        (async () => {
+          try {
+            const result = await networkService.httpStartPoll(
+              url,
+              intervalSec,
+              (id, error) => {
+                terminalError = error;
+                owner.polls.delete(id);
+                try {
+                  if (!event.sender.isDestroyed())
+                    event.sender.send("http:pollError", {
+                      id,
+                      url,
+                      error: error.message,
+                    });
+                } catch (notificationError) {
+                  log.warn(
+                    "[http:poll] Failure notification failed:",
+                    notificationError,
+                  );
+                }
+              },
+              consume
+                ? async (entries) => {
+                    if (!canIngest(owner, generation))
+                      throw new Error(pausedMessage);
+                    await consume(entries, event.sender.id);
+                  }
+                : undefined,
+            );
+            if (terminalError)
+              return { ok: false, error: terminalError.message };
+            if (result.ok && result.id !== undefined) {
+              owner.polls.set(result.id, url);
+              if (!canIngest(owner, generation)) {
+                const stopped = stopOwnedPoll(owner, result.id);
+                return {
+                  ok: false,
+                  error: stopped.ok
+                    ? pausedMessage
+                    : `${pausedMessage} HTTP stop failed: ${stopped.error}`,
+                };
+              }
+            }
+            return result;
+          } catch (error) {
+            return {
+              ok: false,
+              error: error instanceof Error ? error.message : String(error),
+            };
+          }
+        })(),
+      );
     },
   );
 
-  ipcMain.handle("http:stopPoll", async (_event, id: number) => {
-    log.info(`[ipc] http:stopPoll called with id=${id}`);
-    const result = networkService.httpStopPoll(id);
-    log.info(`[ipc] http:stopPoll result: ${JSON.stringify(result)}`);
-    return result;
+  ipcMain.handle("http:stopPoll", (event, id: number) => {
+    try {
+      const owner = liveOwners.get(event.sender.id);
+      return owner
+        ? stopOwnedPoll(owner, id)
+        : { ok: false, error: "HTTP poller is not owned by this window" };
+    } catch (error) {
+      return {
+        ok: false,
+        error: error instanceof Error ? error.message : String(error),
+      };
+    }
   });
 
   // HTTP insecure SSL handler
@@ -774,7 +1798,7 @@ export function registerIpcHandlers(
   // Elasticsearch handler
   ipcMain.handle(
     "elastic:search",
-    async (_event, opts: ElasticSearchOptions): Promise<ParseResult> => {
+    async (event, opts: ElasticSearchOptions): Promise<ParseResult> => {
       // Check if ELASTICSEARCH feature is enabled
       if (featureFlags && !featureFlags.isEnabled("ELASTICSEARCH")) {
         const reason = featureFlags.getDisableReason("ELASTICSEARCH");
@@ -791,12 +1815,11 @@ export function registerIpcHandlers(
 
         const url = opts.url || settings.elasticUrl || "";
         const requestedSize = Number(opts.size ?? settings.elasticSize ?? 1000);
-        // Page size for each ES request (max 10000 per ES default, but we paginate)
-        // Use smaller page size for pagination efficiency
+        // One producer page must fit the renderer's sequential admission unit.
         const pageSize = Math.max(
           1,
           Math.min(
-            10000,
+            IPC_BATCH_SIZE,
             Number.isFinite(requestedSize) ? requestedSize : 1000,
           ),
         );
@@ -866,7 +1889,7 @@ export function registerIpcHandlers(
 
         return {
           ok: true,
-          entries: page.entries,
+          entries: await entryPayloadStore.prepare(event.sender, page.entries),
           hasMore: page.hasMore,
           nextSearchAfter: page.nextSearchAfter,
           total: page.total == null ? undefined : page.total,
@@ -991,8 +2014,13 @@ export function registerIpcHandlers(
   });
 
   // App relaunch handler
-  ipcMain.handle("app:relaunch", () => {
+  ipcMain.handle("app:relaunch", async () => {
     log.info("[app] Relaunch requested by renderer");
+    try {
+      await onBeforeRelaunch?.();
+    } catch (error) {
+      log.error("[app] File logging flush failed before relaunch:", error);
+    }
     app.relaunch();
     app.exit(0);
     return { ok: true };
@@ -1281,8 +2309,6 @@ export function registerIpcHandlers(
   // ============================================================================
   // Sprint 5 – C3: Tail/Watch mode for log files
   // ============================================================================
-  const watchManager = new WatchManager();
-
   /**
    * Send watcher status updates (started/stopped/rotated/error) to the owning
    * window so the renderer can show toasts and keep its watcher list in sync.
@@ -1325,6 +2351,10 @@ export function registerIpcHandlers(
       },
     ) => {
       try {
+        const owner = getLiveOwner(event.sender);
+        const generation = owner.generation;
+        if (!canIngest(owner, generation))
+          return { ok: false, error: pausedMessage };
         if (!args?.filePath || typeof args.filePath !== "string") {
           return { ok: false, error: "filePath required" };
         }
@@ -1335,14 +2365,24 @@ export function registerIpcHandlers(
         const watcher = watchManager.start(
           args.filePath,
           {
-            onLines: (lines: string[]) => {
-              if (lines.length === 0) return;
+            onLines: async (lines: string[]) => {
+              if (
+                lines.length === 0 ||
+                !canIngest(owner, generation) ||
+                !owner.watchers.has(watcher.id)
+              )
+                return;
               try {
                 const data = lines.join("\n");
                 const entries = parseTextLines(fileName, data);
                 if (entries.length > 0 && enqueueWatchEntries) {
-                  enqueueWatchEntries(entries, senderId);
+                  await enqueueWatchEntries(entries, senderId);
                 }
+                if (
+                  !canIngest(owner, generation) ||
+                  !owner.watchers.has(watcher.id)
+                )
+                  return;
                 emitWatchStatus(senderId, {
                   type: "lines",
                   id: watcher.id,
@@ -1354,9 +2394,12 @@ export function registerIpcHandlers(
                   "[watch] parse failed:",
                   e instanceof Error ? e.message : String(e),
                 );
+                throw e;
               }
             },
             onError: (err: Error) => {
+              owner.watchers.delete(watcher.id);
+              if (!canIngest(owner, generation)) return;
               emitWatchStatus(senderId, {
                 type: "error",
                 id: watcher.id,
@@ -1365,6 +2408,11 @@ export function registerIpcHandlers(
               });
             },
             onRotated: () => {
+              if (
+                !canIngest(owner, generation) ||
+                !owner.watchers.has(watcher.id)
+              )
+                return;
               emitWatchStatus(senderId, {
                 type: "rotated",
                 id: watcher.id,
@@ -1378,6 +2426,7 @@ export function registerIpcHandlers(
           },
         );
 
+        owner.watchers.set(watcher.id, args.filePath);
         emitWatchStatus(senderId, {
           type: "started",
           id: watcher.id,
@@ -1396,28 +2445,30 @@ export function registerIpcHandlers(
 
   ipcMain.handle("watch:stop", (event, args: { id: number }) => {
     try {
-      const ok = watchManager.stop(args?.id);
-      if (ok) {
-        emitWatchStatus(event.sender.id, {
-          type: "stopped",
-          id: args.id,
-          filePath: "",
-        });
-      }
-      return { ok };
+      const owner = liveOwners.get(event.sender.id);
+      return owner
+        ? stopOwnedWatcher(owner, args?.id)
+        : { ok: false, error: "File watcher is not owned by this window" };
     } catch (e) {
       return { ok: false, error: String(e) };
     }
   });
 
-  ipcMain.handle("watch:list", () => {
-    return { ok: true, watchers: watchManager.list() };
+  ipcMain.handle("watch:list", (event) => {
+    const owner = liveOwners.get(event.sender.id);
+    return {
+      ok: true,
+      watchers: watchManager
+        .list()
+        .filter((watcher) => owner?.watchers.has(watcher.id)),
+    };
   });
 
   // Stop all watchers when the app quits.
   app.on("before-quit", () => {
     try {
       watchManager.stopAll();
+      for (const owner of liveOwners.values()) owner.watchers.clear();
     } catch {
       // ignore
     }
@@ -1427,18 +2478,28 @@ export function registerIpcHandlers(
   // HTTP Tail – incremental Range-based polling for endpoints like
   // Spring Boot Actuator's `/actuator/logfile`.
   // ============================================================================
-  const httpTailManager = new HttpTailManager();
-
   function emitHttpTailStatus(
     senderId: number,
     payload: {
-      type: "started" | "stopped" | "rotated" | "error" | "lines" | "progress";
+      type:
+        | "started"
+        | "stopped"
+        | "rotated"
+        | "error"
+        | "lines"
+        | "progress"
+        | "paused"
+        | "resumed"
+        | "scheduled";
       id: number;
       url: string;
       lineCount?: number;
       offset?: number;
       total?: number;
       message?: string;
+      paused?: boolean;
+      nextPollAt?: number;
+      intervalMs?: number;
     },
   ): void {
     for (const win of BrowserWindow.getAllWindows()) {
@@ -1471,6 +2532,10 @@ export function registerIpcHandlers(
       },
     ) => {
       try {
+        const owner = getLiveOwner(event.sender);
+        const generation = owner.generation;
+        if (!canIngest(owner, generation))
+          return { ok: false, error: pausedMessage };
         if (!args?.url || typeof args.url !== "string") {
           return { ok: false, error: "url required" };
         }
@@ -1490,18 +2555,20 @@ export function registerIpcHandlers(
           args.url,
           {
             onLines: async (lines: string[]) => {
-              if (lines.length === 0) return;
+              if (
+                lines.length === 0 ||
+                !canIngest(owner, generation) ||
+                !owner.tails.has(tail.id)
+              )
+                return;
               try {
-                const data = lines.join("\n");
-                // Decide JSON vs text once on the whole chunk.
-                const trimmed = data.trim();
                 // Only a single JSON *array* must be parsed as one unit – it
                 // cannot be split by lines. NDJSON (one JSON object per line,
                 // starts with "{") is handled by parseTextLines, which tries
                 // JSON per line, so it can be chunked exactly like plain text
                 // and must NOT take the single-parse path (that would block the
                 // main process and freeze the app on large initial loads).
-                const isJsonArray = trimmed.startsWith("[");
+                const isJsonArray = isJsonArrayLinePayload(lines);
 
                 if (
                   isJsonArray ||
@@ -1509,11 +2576,12 @@ export function registerIpcHandlers(
                 ) {
                   // Small chunk (normal tailing tick) or a JSON array document
                   // that must be parsed as a single unit.
+                  const data = lines.join("\n");
                   const entries = isJsonArray
                     ? parseJsonFile(source, data)
                     : parseTextLines(source, data);
                   if (entries.length > 0 && enqueueWatchEntries) {
-                    enqueueWatchEntries(entries, senderId);
+                    await enqueueWatchEntries(entries, senderId);
                   }
                 } else {
                   // Large initial payload ("load existing content first") of
@@ -1535,14 +2603,24 @@ export function registerIpcHandlers(
                     i < lines.length;
                     i += HTTP_TAIL_PARSE_CHUNK_LINES
                   ) {
+                    if (
+                      !canIngest(owner, generation) ||
+                      !owner.tails.has(tail.id)
+                    )
+                      return;
                     const slice = lines.slice(
                       i,
                       i + HTTP_TAIL_PARSE_CHUNK_LINES,
                     );
                     const part = parseTextLines(source, slice.join("\n"));
                     if (part.length > 0 && enqueueWatchEntries) {
-                      enqueueWatchEntries(part, senderId);
+                      await enqueueWatchEntries(part, senderId);
                     }
+                    if (
+                      !canIngest(owner, generation) ||
+                      !owner.tails.has(tail.id)
+                    )
+                      return;
                     // Report incremental progress so the UI status reflects the
                     // streaming load rather than a single end-of-parse jump.
                     emitHttpTailStatus(senderId, {
@@ -1551,13 +2629,19 @@ export function registerIpcHandlers(
                       url: args.url,
                       lineCount: slice.length,
                     });
-                    // Yield between chunks (but not after the last one).
-                    if (i + HTTP_TAIL_PARSE_CHUNK_LINES < lines.length) {
+                    // An acknowledged renderer write already yields naturally.
+                    // Keep the explicit yield only when no append sink exists.
+                    if (
+                      !enqueueWatchEntries &&
+                      i + HTTP_TAIL_PARSE_CHUNK_LINES < lines.length
+                    ) {
                       await yieldToEventLoop();
                     }
                   }
                   return;
                 }
+                if (!canIngest(owner, generation) || !owner.tails.has(tail.id))
+                  return;
                 emitHttpTailStatus(senderId, {
                   type: "lines",
                   id: tail.id,
@@ -1569,9 +2653,20 @@ export function registerIpcHandlers(
                   "[httpTail] parse failed:",
                   e instanceof Error ? e.message : String(e),
                 );
+                throw e;
               }
             },
             onError: (err: Error) => {
+              // Terminal tail errors stop the manager immediately after this callback.
+              queueMicrotask(() => {
+                if (
+                  !httpTailManager
+                    .list()
+                    .some((active) => active.id === tail.id)
+                )
+                  owner.tails.delete(tail.id);
+              });
+              if (!canIngest(owner, generation)) return;
               emitHttpTailStatus(senderId, {
                 type: "error",
                 id: tail.id,
@@ -1580,6 +2675,8 @@ export function registerIpcHandlers(
               });
             },
             onRotated: () => {
+              if (!canIngest(owner, generation) || !owner.tails.has(tail.id))
+                return;
               emitHttpTailStatus(senderId, {
                 type: "rotated",
                 id: tail.id,
@@ -1587,12 +2684,36 @@ export function registerIpcHandlers(
               });
             },
             onProgress: (p) => {
+              if (!canIngest(owner, generation) || !owner.tails.has(tail.id))
+                return;
               emitHttpTailStatus(senderId, {
                 type: "progress",
                 id: tail.id,
                 url: args.url,
                 offset: p.offset,
                 total: p.total,
+              });
+            },
+            onBackpressure: (state) => {
+              if (!canIngest(owner, generation) || !owner.tails.has(tail.id))
+                return;
+              emitHttpTailStatus(senderId, {
+                type: state.paused ? "paused" : "resumed",
+                id: tail.id,
+                url: args.url,
+                paused: state.paused,
+                intervalMs: state.intervalMs,
+              });
+            },
+            onScheduled: (state) => {
+              if (!canIngest(owner, generation) || !owner.tails.has(tail.id))
+                return;
+              emitHttpTailStatus(senderId, {
+                type: "scheduled",
+                id: tail.id,
+                url: args.url,
+                nextPollAt: state.nextPollAt,
+                intervalMs: state.intervalMs,
               });
             },
           },
@@ -1604,6 +2725,7 @@ export function registerIpcHandlers(
           },
         );
 
+        owner.tails.set(tail.id, args.url);
         emitHttpTailStatus(senderId, {
           type: "started",
           id: tail.id,
@@ -1622,22 +2744,21 @@ export function registerIpcHandlers(
 
   ipcMain.handle("httpTail:stop", (event, args: { id: number }) => {
     try {
-      const ok = httpTailManager.stop(args?.id);
-      if (ok) {
-        emitHttpTailStatus(event.sender.id, {
-          type: "stopped",
-          id: args.id,
-          url: "",
-        });
-      }
-      return { ok };
+      const owner = liveOwners.get(event.sender.id);
+      return owner
+        ? stopOwnedTail(owner, args?.id)
+        : { ok: false, error: "HTTP tail is not owned by this window" };
     } catch (e) {
       return { ok: false, error: String(e) };
     }
   });
 
-  ipcMain.handle("httpTail:list", () => {
-    return { ok: true, tails: httpTailManager.list() };
+  ipcMain.handle("httpTail:list", (event) => {
+    const owner = liveOwners.get(event.sender.id);
+    return {
+      ok: true,
+      tails: httpTailManager.list().filter((tail) => owner?.tails.has(tail.id)),
+    };
   });
 
   ipcMain.handle("httpTail:getAuthHeader", () => {
@@ -1657,6 +2778,7 @@ export function registerIpcHandlers(
   app.on("before-quit", () => {
     try {
       httpTailManager.stopAll();
+      for (const owner of liveOwners.values()) owner.tails.clear();
     } catch {
       // ignore
     }

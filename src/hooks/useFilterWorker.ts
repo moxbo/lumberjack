@@ -13,13 +13,27 @@
 import { useState, useEffect, useRef, useCallback } from "preact/hooks";
 import { msgMatches, type SearchMode } from "../utils/msgFilter";
 import { entrySignature } from "../utils/entryUtils";
+import {
+  MetadataSnapshot,
+  type ReadonlySequence,
+} from "../utils/metadataSnapshot";
 import { compileDcFilter, matchesCompiledDcFilter } from "../utils/dcMatch";
+import { compileLevelFilter } from "../utils/levelFilter";
 import {
   filterIsAvailable,
   filterEntries as typedFilterEntries,
 } from "../utils/typedApi";
+import {
+  createProjectionBridge,
+  type ProjectionBridge,
+} from "../workers/projectionBridge";
+import type { FilterProgress } from "../types/filterProgress";
+import type {
+  FilterResponse,
+  FilterErrorResponse,
+} from "../workers/filterWorker";
 
-interface FilterOptions {
+export interface FilterOptions {
   stdFiltersEnabled: boolean;
   filter: {
     level: string;
@@ -37,7 +51,7 @@ interface FilterOptions {
   navigationSearchMode?: SearchMode;
 }
 
-interface FilterStats {
+export interface FilterStats {
   total: number;
   passed: number;
   rejectedByOnlyMarked: number;
@@ -49,13 +63,29 @@ interface FilterStats {
   rejectedByDC: number;
 }
 
-interface UseFilterWorkerResult {
+export interface PagedFilterConfig {
+  paged: true;
+  databaseName?: string;
+  generation?: string | number;
+  /** Base filter identity, excluding navigation search. */
+  baseGeneration?: string | number;
+  dataGeneration?: string | number;
+  entryCount: number;
+  pageSize?: number;
+}
+
+export interface UseFilterWorkerResult {
   filteredIndices: number[];
   searchMatchIndices: number[];
+  searchMatchIds: number[];
   isFiltering: boolean;
+  progress: FilterProgress | null;
   stats: FilterStats | null;
+  /** IndexedDB/worker failures. Paged failures never masquerade as empty results. */
+  error: Error | null;
   /**
-   * @param entries  Vollständige Renderer-Einträge.
+   * @param entries  Renderer entries for legacy mode. Paged mode only uses the
+   *                 call as a change trigger and never transfers this array.
    * @param options  Filter-Optionen.
    * @param marksMap Optional: Map signature → Farbe. Wird genutzt, um
    *                 `_mark` für `onlyMarked` und für die Worker-Projektion
@@ -63,12 +93,16 @@ interface UseFilterWorkerResult {
    *                 selbst gepflegt werden muss (Performance-Quick-Win #2).
    */
   filterEntries: (
-    entries: unknown[],
+    entries: ReadonlySequence<unknown>,
     options: FilterOptions,
     marksMap?: Record<string, string>,
+    config?: PagedFilterConfig,
   ) => void;
+  cancelFiltering: (preserveBase?: boolean) => void;
   /** True wenn UtilityProcess verwendet wird, false für Web Worker/Sync */
   useUtilityProcess: boolean;
+  /** Bridge for direct projection transfer to the filter worker. null when no worker. */
+  projectionBridge: ProjectionBridge | null;
 }
 
 // Threshold for using worker/utility process (entries count)
@@ -84,6 +118,7 @@ const MAX_ENTRIES_PER_MESSAGE = 50000;
  * Prevents DataCloneError by not transferring large raw/stackTrace fields
  */
 export interface SlimEntry {
+  _id?: number;
   level?: string | null;
   logger?: string | null;
   thread?: string | null;
@@ -103,14 +138,14 @@ export interface SlimEntry {
  * `_mark`-Property tragen müssen.
  */
 export function projectToSlimEntries(
-  entries: unknown[],
+  entries: ReadonlySequence<unknown>,
   marksMap?: Record<string, string>,
   includeMdc = false,
 ): SlimEntry[] {
   const result: SlimEntry[] = new Array(entries.length);
   const hasMarks = !!marksMap && Object.keys(marksMap).length > 0;
   for (let i = 0; i < entries.length; i++) {
-    const e = entries[i] as Record<string, unknown> | null;
+    const e = entries.at(i) as Record<string, unknown> | null;
     if (!e) {
       result[i] = {};
       continue;
@@ -127,6 +162,7 @@ export function projectToSlimEntries(
     }
     // Only copy fields needed for filtering - skip raw, stackTrace, etc.
     const slimEntry: SlimEntry = {
+      _id: typeof e._id === "number" ? (e._id as number) : undefined,
       level: e.level as string | null | undefined,
       logger: e.logger as string | null | undefined,
       thread: e.thread as string | null | undefined,
@@ -143,18 +179,33 @@ export function projectToSlimEntries(
   return result;
 }
 
+export function resolveFilteredEntryIds(
+  entries: ReadonlySequence<unknown>,
+  filteredOffsets: readonly number[],
+  baseOffset = 0,
+): number[] {
+  return filteredOffsets.map((offset) => {
+    const entry = entries.at(offset) as { _id?: unknown } | null | undefined;
+    return typeof entry?._id === "number" ? entry._id : baseOffset + offset;
+  });
+}
+
 function computeSearchMatchIndices(
-  entries: unknown[],
+  entries: ReadonlySequence<unknown>,
   filteredIndices: number[],
   options: FilterOptions,
 ): number[] {
   const search = String(options.navigationSearch || "").trim();
   if (!search) return [];
 
+  // These are source offsets, not the stable IDs returned to the view.
   const matches: number[] = [];
-  const limit = Math.min(filteredIndices.length, 50_000);
-  for (let visualIndex = 0; visualIndex < limit; visualIndex++) {
-    const entry = entries[filteredIndices[visualIndex]!] as Record<
+  for (
+    let visualIndex = 0;
+    visualIndex < filteredIndices.length;
+    visualIndex++
+  ) {
+    const entry = entries.at(filteredIndices[visualIndex]!) as Record<
       string,
       unknown
     > | null;
@@ -169,36 +220,63 @@ function computeSearchMatchIndices(
   return matches;
 }
 
-/**
- * Hook that uses UtilityProcess (Electron 40+) or Web Worker for filtering large datasets.
- * Falls back to synchronous filtering for kleinere Datensätze oder wenn UtilityProcess nicht verfügbar ist.
- *
- * Priorität:
- * 1. UtilityProcess (beste Performance, separater Prozess)
- * 2. Web Worker (Fallback, läuft im Renderer-Thread-Pool)
- * 3. Synchron (für kleine Datensätze < 5000 Einträge)
- */
+function mergeSearchMatches(
+  previous: { indices: number[]; ids: number[] },
+  incoming: { indices: number[]; ids: number[] },
+): { indices: number[]; ids: number[] } {
+  if (!incoming.indices.length) return previous;
+  if (!previous.indices.length) return incoming;
+  if (previous.indices[previous.indices.length - 1]! < incoming.indices[0]!) {
+    return {
+      indices: previous.indices.concat(incoming.indices),
+      ids: previous.ids.concat(incoming.ids),
+    };
+  }
+  const indices: number[] = [];
+  const ids: number[] = [];
+  let left = 0;
+  let right = 0;
+  while (left < previous.indices.length || right < incoming.indices.length) {
+    const takePrevious =
+      right >= incoming.indices.length ||
+      (left < previous.indices.length &&
+        previous.indices[left]! < incoming.indices[right]!);
+    const source = takePrevious ? previous : incoming;
+    const index = takePrevious ? left++ : right++;
+    indices.push(source.indices[index]!);
+    ids.push(source.ids[index]!);
+  }
+  return { indices, ids };
+}
+
+/** Worker-first filtering with progressive, cancellable fallback pages. */
 export function useFilterWorker(): UseFilterWorkerResult {
   const [filteredIndices, setFilteredIndices] = useState<number[]>([]);
   const [searchMatchIndices, setSearchMatchIndices] = useState<number[]>([]);
   const [isFiltering, setIsFiltering] = useState(false);
   const [stats, setStats] = useState<FilterStats | null>(null);
+  const [error, setError] = useState<Error | null>(null);
   const [useUtilityProcess, setUseUtilityProcess] = useState(false);
+  const [searchMatchIds, setSearchMatchIds] = useState<number[]>([]);
+  const [progress, setProgress] = useState<FilterProgress | null>(null);
 
   const workerRef = useRef<Worker | null>(null);
   const pendingRequestRef = useRef<number>(0);
-  // ID des zuletzt tatsächlich angewendeten Ergebnisses. Der (Single-Thread-)
-  // Worker beantwortet Requests strikt in Reihenfolge, daher kommen Ergebnisse
-  // mit monoton steigender requestId zurück. Wir wenden jedes Ergebnis an, das
-  // NEUER als das zuletzt angewendete ist – nicht nur exakt das allerletzte.
-  //
-  // Vorher wurde nur `requestId === pendingRequestRef.current` angewendet. Bei
-  // kontinuierlichem/schnellem Datenzufluss (Streaming, große Bulk-Ladungen)
-  // liegt jedoch immer schon ein neuerer Request an, während der Worker noch
-  // ein älteres Ergebnis zurückliefert → JEDES Ergebnis wurde als "veraltet"
-  // verworfen. Folge: "Gesamt" stieg, "Gefiltert" blieb stehen und es wurden
-  // keine Einträge angezeigt (auch ohne aktiven Filter).
+  const pendingGenerationRef = useRef<string | number | undefined>(undefined);
+  const pendingBaseGenerationRef = useRef<string | undefined>(undefined);
+  const renderedBaseCountRef = useRef<number | undefined>(undefined);
+  const deltaMatchesRef = useRef<{
+    requestId: number;
+    indices: number[];
+    ids: number[];
+  } | null>(null);
+  // Accept partial snapshots from the current query, including a running scan
+  // of an earlier append, but never from a replaced query or cleared dataset.
   const lastAppliedRequestRef = useRef<number>(0);
+  const cancelledThroughRef = useRef(0);
+  const targetCountRef = useRef(0);
+  const previousSourceRef = useRef<ReadonlySequence<unknown> | null>(null);
+  const sourceRevisionRef = useRef(0);
   const utilityProcessAvailableRef = useRef<boolean | null>(null);
 
   // Monoton steigender Request-Zähler. Date.now() kann bei schnellen Filtern
@@ -209,9 +287,47 @@ export function useFilterWorker(): UseFilterWorkerResult {
   // Filtern NICHT erneut den kompletten (ggf. 300k+) Datensatz zu klonen.
   // Wir merken uns die Array-Referenz + Länge, um Anhänge (Streaming) von
   // einem kompletten Austausch zu unterscheiden.
-  const syncedEntriesRef = useRef<unknown[] | null>(null);
+  const syncedEntriesRef = useRef<ReadonlySequence<unknown> | null>(null);
   const syncedLenRef = useRef<number>(0);
   const syncedIncludesMdcRef = useRef<boolean | null>(null);
+  const projectionBridgeRef = useRef<ProjectionBridge | null>(null);
+  const [projectionBridge, setProjectionBridge] =
+    useState<ProjectionBridge | null>(null);
+  const fallbackRunningRef = useRef(false);
+  const queuedFallbackRef = useRef<(() => Promise<void>) | null>(null);
+  const localBaseRef = useRef<{
+    generation: string;
+    count: number;
+    indices: number[];
+    sourcePositions: number[];
+    stats: FilterStats;
+  } | null>(null);
+
+  const cancelFiltering = useCallback((preserveBase = false) => {
+    const requestId = ++requestSeqRef.current;
+    pendingRequestRef.current = requestId;
+    cancelledThroughRef.current = requestId;
+    pendingGenerationRef.current = undefined;
+    if (!preserveBase) {
+      localBaseRef.current = null;
+      pendingBaseGenerationRef.current = undefined;
+      renderedBaseCountRef.current = undefined;
+      setFilteredIndices([]);
+      setStats(null);
+    }
+    deltaMatchesRef.current = null;
+    queuedFallbackRef.current = null;
+    setSearchMatchIndices([]);
+    setSearchMatchIds([]);
+    setProgress(null);
+    setIsFiltering(false);
+    setError(null);
+    try {
+      workerRef.current?.postMessage({ type: "cancel", requestId });
+    } catch (cause) {
+      setError(cause instanceof Error ? cause : new Error(String(cause)));
+    }
+  }, []);
 
   // Check if UtilityProcess is available on mount
   useEffect(() => {
@@ -253,42 +369,88 @@ export function useFilterWorker(): UseFilterWorkerResult {
       syncedIncludesMdcRef.current = null;
       lastAppliedRequestRef.current = 0;
 
-      workerRef.current.onmessage = (event: MessageEvent) => {
-        const {
-          type,
-          filteredIndices: indices,
-          searchMatchIndices: workerSearchMatchIndices,
-          stats: workerStats,
-          requestId,
-        } = event.data;
-        // Monoton anwenden: jedes Ergebnis, das neuer ist als das zuletzt
-        // angewendete, übernehmen. So bleibt die gefilterte Ansicht auch bei
-        // kontinuierlichem Datenzufluss live, statt einzufrieren, weil ein
-        // noch neuerer Request bereits aussteht.
+      // Create typed projection bridge for this worker instance.
+      projectionBridgeRef.current = createProjectionBridge(workerRef.current);
+      setProjectionBridge(projectionBridgeRef.current);
+
+      workerRef.current.onmessage = (
+        event: MessageEvent<FilterResponse | FilterErrorResponse>,
+      ) => {
+        const data = event.data;
+        const { requestId, generation } = data;
         if (
-          type === "result" &&
-          typeof requestId === "number" &&
-          requestId > lastAppliedRequestRef.current
+          typeof requestId !== "number" ||
+          requestId <= cancelledThroughRef.current ||
+          generation !== pendingGenerationRef.current ||
+          requestId < lastAppliedRequestRef.current
         ) {
-          lastAppliedRequestRef.current = requestId;
-          setFilteredIndices(indices);
-          setSearchMatchIndices(workerSearchMatchIndices || []);
-          setStats(workerStats);
-          // isFiltering erst zurücksetzen, wenn das aktuell jüngste Ergebnis da
-          // ist – sonst würde der Ladeindikator bei jedem Zwischenergebnis
-          // flackern, obwohl noch Requests ausstehen.
-          if (requestId >= pendingRequestRef.current) {
+          return;
+        }
+        if (data.type === "error") {
+          if (requestId === pendingRequestRef.current) {
+            setError(new Error(data.message));
             setIsFiltering(false);
           }
+          return;
+        }
+        if (data.type !== "result") return;
+        lastAppliedRequestRef.current = requestId;
+        setError(null);
+        if (!data.reuseFilteredIndices) {
+          setFilteredIndices(data.filteredIndices);
+          renderedBaseCountRef.current = data.progress?.processed;
+        }
+        if (data.searchMatchesDelta) {
+          const previous = deltaMatchesRef.current;
+          const merged = mergeSearchMatches(
+            previous?.requestId === requestId
+              ? previous
+              : { indices: [], ids: [] },
+            {
+              indices: data.searchMatchIndices,
+              ids: data.searchMatchIds ?? [],
+            },
+          );
+          deltaMatchesRef.current = { requestId, ...merged };
+          setSearchMatchIndices(merged.indices);
+          setSearchMatchIds(merged.ids);
+        } else {
+          deltaMatchesRef.current = null;
+          setSearchMatchIndices(data.searchMatchIndices);
+          setSearchMatchIds(
+            data.searchMatchIds ??
+              data.searchMatchIndices.map(
+                (index) => data.filteredIndices[index]!,
+              ),
+          );
+        }
+        if (data.progress) {
+          setProgress({
+            ...data.progress,
+            total: Math.max(data.progress.total, targetCountRef.current),
+          });
+        }
+        setStats(data.stats);
+        if (!data.partial && requestId >= pendingRequestRef.current) {
+          setIsFiltering(false);
         }
       };
 
       workerRef.current.onerror = (error: ErrorEvent) => {
         console.error("[FilterWorker] Error:", error);
+        setError(new Error(error.message || "Filter worker failed"));
         setIsFiltering(false);
       };
 
       return () => {
+        cancelledThroughRef.current = ++requestSeqRef.current;
+        pendingGenerationRef.current = undefined;
+        queuedFallbackRef.current = null;
+        if (projectionBridgeRef.current) {
+          projectionBridgeRef.current.dispose();
+          projectionBridgeRef.current = null;
+          setProjectionBridge(null);
+        }
         if (workerRef.current) {
           workerRef.current.terminate();
           workerRef.current = null;
@@ -321,7 +483,7 @@ export function useFilterWorker(): UseFilterWorkerResult {
    */
   const syncEntriesToWorker = useCallback(
     (
-      entries: unknown[],
+      entries: ReadonlySequence<unknown>,
       marksMap: Record<string, string> | undefined,
       forceFull: boolean,
       includeMdc: boolean,
@@ -346,20 +508,12 @@ export function useFilterWorker(): UseFilterWorkerResult {
         return true;
       }
 
-      // Append erkennen: gleiche Präfix-Objekte am Anfang und an der bisherigen
-      // Grenze deuten auf reines Anhängen hin (immutable State-Update beim
-      // Streaming erzeugt ein neues Array mit identischen vorhandenen Elementen).
-      let appendOnly = false;
-      if (
+      // Only the immutable backing identity proves the entire prefix unchanged.
+      const appendOnly =
         !requiresFullSync &&
-        prevArr !== null &&
-        prevLen > 0 &&
-        entries.length >= prevLen &&
-        entries[0] === prevArr[0] &&
-        entries[prevLen - 1] === prevArr[prevLen - 1]
-      ) {
-        appendOnly = true;
-      }
+        entries instanceof MetadataSnapshot &&
+        prevArr instanceof MetadataSnapshot &&
+        entries.isAppendOf(prevArr);
 
       const BATCH = MAX_ENTRIES_PER_MESSAGE;
 
@@ -378,14 +532,19 @@ export function useFilterWorker(): UseFilterWorkerResult {
         }
       } else {
         // Kompletter Austausch (erstes Laden, Filterwechsel mit Marks, Reset…).
-        const slim = projectToSlimEntries(entries, marksMap, includeMdc);
-        // Erste Batch ersetzt den Cache, weitere hängen an.
-        const first = slim.length <= BATCH ? slim : slim.slice(0, BATCH);
-        worker.postMessage({ type: "setEntries", entries: first });
-        for (let start = BATCH; start < slim.length; start += BATCH) {
+        // Project and transfer bounded pages, including an empty reset page.
+        for (
+          let start = 0;
+          start < Math.max(1, entries.length);
+          start += BATCH
+        ) {
           worker.postMessage({
-            type: "appendEntries",
-            entries: slim.slice(start, start + BATCH),
+            type: start === 0 ? "setEntries" : "appendEntries",
+            entries: projectToSlimEntries(
+              entries.slice(start, start + BATCH),
+              marksMap,
+              includeMdc,
+            ),
           });
         }
       }
@@ -401,11 +560,13 @@ export function useFilterWorker(): UseFilterWorkerResult {
   // Synchronous filter function (fallback for small datasets)
   const filterSync = useCallback(
     (
-      entries: unknown[],
+      entries: ReadonlySequence<unknown>,
       options: FilterOptions,
       marksMap?: Record<string, string>,
+      baseOffset = 0,
     ): {
       indices: number[];
+      sourcePositions: number[];
       searchMatchIndices: number[];
       stats: FilterStats;
     } => {
@@ -422,18 +583,25 @@ export function useFilterWorker(): UseFilterWorkerResult {
       };
 
       const indices: number[] = [];
+      const sourcePositions: number[] = [];
       const searchMatchIndices: number[] = [];
       const navigationSearch = String(options.navigationSearch || "").trim();
       const hasMarks = !!marksMap && Object.keys(marksMap).length > 0;
-      const levelFilter = options.filter.level.toUpperCase();
+      const levelFilter = compileLevelFilter(options.filter.level);
       const loggerFilter = options.filter.logger.toLowerCase();
       const threadFilter = options.filter.thread.toLowerCase();
       const compiledDcFilter = options.dcFilterEnabled
         ? compileDcFilter(options.dcFilterEntries)
         : [];
+      const fromTs = options.timeFilterFrom
+        ? Date.parse(options.timeFilterFrom)
+        : NaN;
+      const toTs = options.timeFilterTo
+        ? Date.parse(options.timeFilterTo)
+        : NaN;
 
       for (let i = 0; i < entries.length; i++) {
-        const e = entries[i] as Record<string, unknown> | null;
+        const e = entries.at(i) as Record<string, unknown> | null;
         filterStats.total++;
         if (!e) continue;
 
@@ -455,7 +623,7 @@ export function useFilterWorker(): UseFilterWorkerResult {
         if (options.stdFiltersEnabled) {
           if (levelFilter) {
             const lev = String(e.level || "").toUpperCase();
-            if (lev !== levelFilter) {
+            if (!levelFilter.has(lev)) {
               filterStats.rejectedByLevel++;
               continue;
             }
@@ -489,7 +657,21 @@ export function useFilterWorker(): UseFilterWorkerResult {
           }
         }
 
-        // DC Filter support for synchronous filtering
+        if (
+          options.timeFilterEnabled &&
+          typeof e.source === "string" &&
+          e.source.startsWith("elastic://")
+        ) {
+          const timestamp =
+            typeof e.timestamp === "number"
+              ? e.timestamp
+              : Date.parse(String(e.timestamp ?? ""));
+          if (timestamp < fromTs || timestamp > toTs) {
+            filterStats.rejectedByTime++;
+            continue;
+          }
+        }
+
         if (options.dcFilterEnabled) {
           const mdc = e.mdc as Record<string, unknown> | null | undefined;
           if (!matchesCompiledDcFilter(mdc, compiledDcFilter)) {
@@ -500,10 +682,11 @@ export function useFilterWorker(): UseFilterWorkerResult {
 
         filterStats.passed++;
         const visualIndex = indices.length;
-        indices.push(i);
+        const id = typeof e._id === "number" ? e._id : baseOffset + i;
+        indices.push(id);
+        sourcePositions.push(baseOffset + i);
         if (
           navigationSearch &&
-          visualIndex < 50_000 &&
           msgMatches(String(e.message ?? ""), navigationSearch, {
             mode: options.navigationSearchMode,
           })
@@ -512,51 +695,247 @@ export function useFilterWorker(): UseFilterWorkerResult {
         }
       }
 
-      return { indices, searchMatchIndices, stats: filterStats };
+      return {
+        indices,
+        sourcePositions,
+        searchMatchIndices,
+        stats: filterStats,
+      };
     },
     [],
   );
 
-  // Main filter function - uses UtilityProcess, Web Worker, or sync based on availability
   const filterEntries = useCallback(
     (
-      entries: unknown[],
+      entries: ReadonlySequence<unknown>,
       options: FilterOptions,
       marksMap?: Record<string, string>,
+      config?: PagedFilterConfig,
     ) => {
       const requestId = ++requestSeqRef.current;
+      const previousSource = previousSourceRef.current;
+      if (
+        !config?.paged &&
+        ((entries !== previousSource &&
+          !(
+            entries instanceof MetadataSnapshot &&
+            previousSource instanceof MetadataSnapshot &&
+            entries.isAppendOf(previousSource)
+          )) ||
+          entries.length < targetCountRef.current)
+      ) {
+        sourceRevisionRef.current++;
+      }
+      previousSourceRef.current = entries;
+      const generation = JSON.stringify({
+        options,
+        markedSignatures: options.onlyMarked
+          ? Object.keys(marksMap ?? {}).sort()
+          : [],
+        paged: config?.paged ?? false,
+        generation: config?.generation,
+        baseGeneration: config?.baseGeneration,
+        dataGeneration: config?.paged
+          ? config.dataGeneration
+          : sourceRevisionRef.current,
+        databaseName: config?.databaseName,
+      });
+      const {
+        navigationSearch: _search,
+        navigationSearchMode: _mode,
+        ...baseOptions
+      } = options;
+      const baseGeneration = JSON.stringify({
+        options: baseOptions,
+        markedSignatures: options.onlyMarked
+          ? Object.keys(marksMap ?? {}).sort()
+          : [],
+        paged: config?.paged ?? false,
+        generation: config?.baseGeneration ?? config?.generation,
+        dataGeneration: config?.paged
+          ? config.dataGeneration
+          : sourceRevisionRef.current,
+        databaseName: config?.databaseName,
+      });
+      const baseChanged = baseGeneration !== pendingBaseGenerationRef.current;
+      const cachedBase = localBaseRef.current;
+      if (
+        cachedBase &&
+        (cachedBase.generation !== baseGeneration ||
+          cachedBase.count !== entries.length)
+      ) {
+        localBaseRef.current = null;
+      }
+      const queryChanged = generation !== pendingGenerationRef.current;
       pendingRequestRef.current = requestId;
+      pendingGenerationRef.current = generation;
+      pendingBaseGenerationRef.current = baseGeneration;
+      targetCountRef.current = config?.entryCount ?? entries.length;
+      setError(null);
+      if (queryChanged) {
+        cancelledThroughRef.current = requestId - 1;
+        queuedFallbackRef.current = null;
+        if (baseChanged) {
+          renderedBaseCountRef.current = undefined;
+          setFilteredIndices([]);
+          setStats(null);
+        }
+        deltaMatchesRef.current = null;
+        setSearchMatchIndices([]);
+        setSearchMatchIds([]);
+        setProgress({
+          processed: 0,
+          total: targetCountRef.current,
+          matches: 0,
+        });
+      } else {
+        setProgress((previous) =>
+          previous ? { ...previous, total: targetCountRef.current } : null,
+        );
+      }
 
-      // For small datasets, use synchronous filtering (fastest for small data)
-      if (entries.length <= WORKER_THRESHOLD) {
-        const result = filterSync(entries, options, marksMap);
-        // Monotonie wahren: als angewendete Request-ID markieren, damit ein
-        // spät eintreffendes älteres Worker-Ergebnis dieses frischere Resultat
-        // nicht überschreibt.
+      const isCurrent = () =>
+        requestId > cancelledThroughRef.current &&
+        generation === pendingGenerationRef.current;
+      const publish = (
+        result: ReturnType<typeof filterSync>,
+        partial = false,
+      ) => {
+        if (!isCurrent() || requestId < lastAppliedRequestRef.current) return;
         lastAppliedRequestRef.current = requestId;
         setFilteredIndices(result.indices);
+        if (!partial && !config?.paged) {
+          localBaseRef.current = {
+            generation: baseGeneration,
+            count: entries.length,
+            indices: result.indices,
+            sourcePositions: result.sourcePositions,
+            stats: result.stats,
+          };
+          renderedBaseCountRef.current = result.stats.total;
+        }
         setSearchMatchIndices(result.searchMatchIndices);
+        setSearchMatchIds(
+          result.searchMatchIndices.map((index) => result.indices[index]!),
+        );
         setStats(result.stats);
-        setIsFiltering(false);
+        setProgress({
+          processed: result.stats.total,
+          total: targetCountRef.current,
+          matches: String(options.navigationSearch ?? "").trim()
+            ? result.searchMatchIndices.length
+            : result.stats.passed,
+        });
+        if (!partial && requestId === pendingRequestRef.current) {
+          setIsFiltering(false);
+        }
+      };
+
+      if (entries.length === 0) {
+        try {
+          workerRef.current?.postMessage({ type: "cancel", requestId });
+        } catch (cause) {
+          setError(cause instanceof Error ? cause : new Error(String(cause)));
+        }
+        publish(filterSync(entries, options, marksMap));
         return;
       }
 
-      // Bevorzugter Pfad für große Datensätze: zustandsbehafteter Web Worker.
-      //
-      // Der Worker hält die Einträge bereits gecached, daher übertragen wir nur
-      // (a) ggf. neue Einträge inkrementell und (b) die kleine Optionen-
-      // Nachricht. Damit blockiert das Filtern den Renderer-Hauptthread NICHT
-      // mehr – der bisherige Sync-Fallback bei >50k Einträgen war die Hauptur-
-      // sache für Einfrieren der UI bei 300k+ Einträgen.
+      if (config?.paged) {
+        const worker = workerRef.current;
+        if (!worker) {
+          setError(
+            new Error(
+              "Paged filtering requires the IndexedDB filter Web Worker",
+            ),
+          );
+          setIsFiltering(false);
+          return;
+        }
+        setIsFiltering(true);
+        try {
+          worker.postMessage({
+            type: "filterPaged",
+            options,
+            requestId,
+            markedSignatures: marksMap ? Object.keys(marksMap) : [],
+            generation,
+            baseGeneration,
+            knownBaseCount: renderedBaseCountRef.current,
+            dataGeneration: config.dataGeneration,
+            entryCount: config.entryCount,
+            pageSize: config.pageSize,
+            databaseName: config.databaseName,
+          });
+        } catch (postError) {
+          setError(
+            postError instanceof Error
+              ? postError
+              : new Error(String(postError)),
+          );
+          setIsFiltering(false);
+        }
+        return;
+      }
+
+      const reusableBase = localBaseRef.current;
+      if (reusableBase) {
+        if (!options.navigationSearch?.trim()) {
+          publish({ ...reusableBase, searchMatchIndices: [] });
+          return;
+        }
+        const matches: number[] = [];
+        const runSearch = async () => {
+          try {
+            const positions = reusableBase.sourcePositions;
+            for (let start = 0; start < positions.length; start += 2_000) {
+              if (!isCurrent()) return;
+              matches.push(
+                ...computeSearchMatchIndices(
+                  entries,
+                  positions.slice(start, start + 2_000),
+                  options,
+                ).map((index) => start + index),
+              );
+              const done = start + 2_000 >= positions.length;
+              publish(
+                { ...reusableBase, searchMatchIndices: matches.slice() },
+                !done,
+              );
+              if (!done)
+                await new Promise<void>((resolve) => setTimeout(resolve, 0));
+            }
+            if (!positions.length) {
+              publish({ ...reusableBase, searchMatchIndices: [] });
+            }
+          } catch (cause) {
+            if (isCurrent()) {
+              setError(
+                cause instanceof Error ? cause : new Error(String(cause)),
+              );
+              setIsFiltering(false);
+            }
+          }
+        };
+        setIsFiltering(true);
+        void runSearch();
+        return;
+      }
+
+      if (entries.length <= WORKER_THRESHOLD) {
+        if (requestId > 1) {
+          try {
+            workerRef.current?.postMessage({ type: "cancel", requestId });
+          } catch (cause) {
+            setError(cause instanceof Error ? cause : new Error(String(cause)));
+          }
+        }
+        publish(filterSync(entries, options, marksMap));
+        return;
+      }
+
       if (workerRef.current) {
-        // Der Worker wertet `_mark` ausschließlich bei aktivem `onlyMarked` aus
-        // (siehe filterWorker.ts). Nur dann muss der projizierte `_mark`-Stand
-        // aktuell sein → kompletter Re-Sync. Solange die markierte Ansicht NICHT
-        // aktiv ist, beeinflussen Markierungen das Filterergebnis nicht, also
-        // genügt der inkrementelle Sync. Das vermeidet einen teuren Komplett-
-        // Transfer aller Einträge pro Filterlauf, sobald überhaupt Marks
-        // existieren (häufiger Fall bei großen Datenmengen).
-        const forceFull = !!options.onlyMarked;
+        const forceFull = options.onlyMarked && baseChanged;
 
         try {
           const ok = syncEntriesToWorker(
@@ -567,11 +946,14 @@ export function useFilterWorker(): UseFilterWorkerResult {
           );
           if (ok) {
             setIsFiltering(true);
-            // Nur die Optionen senden – Worker filtert den gecachten Datensatz.
             workerRef.current.postMessage({
               type: "filter",
               options,
               requestId,
+              generation,
+              baseGeneration,
+              knownBaseCount: renderedBaseCountRef.current,
+              dataGeneration: sourceRevisionRef.current,
             });
             return;
           }
@@ -582,107 +964,104 @@ export function useFilterWorker(): UseFilterWorkerResult {
             "[FilterWorker] Stateful worker sync failed, falling back:",
             errorMessage,
           );
-          // Cache als ungültig markieren, damit der nächste Versuch neu synct.
           syncedEntriesRef.current = null;
           syncedLenRef.current = 0;
           syncedIncludesMdcRef.current = null;
         }
       }
 
-      // Fallback 1: UtilityProcess (Electron 40+), nur wenn kein Web Worker da.
-      if (utilityProcessAvailableRef.current) {
-        setIsFiltering(true);
-
+      // Keep the fallback cooperative too. Coalesce appends behind the running
+      // scan; cancelling every append would starve results under continuous input.
+      setIsFiltering(true);
+      const runFallback = async () => {
+        fallbackRunningRef.current = true;
+        let useUtility = utilityProcessAvailableRef.current === true;
+        const accumulated = filterSync([], options, marksMap);
+        let lastPublishedAt = 0;
         try {
-          // Check if dataset is too large for IPC transfer
-          if (entries.length > MAX_ENTRIES_PER_MESSAGE) {
-            console.warn(
-              `[FilterWorker] Dataset too large for UtilityProcess (${entries.length} entries), falling back to sync`,
+          for (let start = 0; start < entries.length; start += 2_000) {
+            if (!isCurrent()) return;
+            const page = entries.slice(start, start + 2_000);
+            let pageResult: ReturnType<typeof filterSync> | undefined;
+            if (useUtility) {
+              try {
+                const response = await typedFilterEntries(
+                  projectToSlimEntries(page, marksMap, options.dcFilterEnabled),
+                  options,
+                );
+                if (!isCurrent()) return;
+                if (!response.ok) throw new Error(response.error);
+                pageResult = {
+                  indices: resolveFilteredEntryIds(
+                    page,
+                    response.filteredIndices,
+                    start,
+                  ),
+                  searchMatchIndices: computeSearchMatchIndices(
+                    page,
+                    response.filteredIndices,
+                    options,
+                  ),
+                  sourcePositions: response.filteredIndices.map(
+                    (index) => start + index,
+                  ),
+                  stats: response.stats,
+                };
+              } catch (cause) {
+                if (!isCurrent()) return;
+                console.warn(
+                  "[FilterWorker] UtilityProcess failed, using cooperative fallback:",
+                  cause,
+                );
+                useUtility = false;
+              }
+            }
+            pageResult ??= filterSync(page, options, marksMap, start);
+            const offset = accumulated.indices.length;
+            accumulated.indices.push(...pageResult.indices);
+            accumulated.sourcePositions.push(...pageResult.sourcePositions);
+            accumulated.searchMatchIndices.push(
+              ...pageResult.searchMatchIndices.map((index) => offset + index),
             );
-            const syncResult = filterSync(entries, options, marksMap);
-            lastAppliedRequestRef.current = requestId;
-            setFilteredIndices(syncResult.indices);
-            setSearchMatchIndices(syncResult.searchMatchIndices);
-            setStats(syncResult.stats);
-            setIsFiltering(false);
-            return;
+            for (const key of Object.keys(
+              accumulated.stats,
+            ) as (keyof FilterStats)[]) {
+              accumulated.stats[key] += pageResult.stats[key];
+            }
+            const done = start + page.length >= entries.length;
+            if (
+              start === 0 ||
+              done ||
+              performance.now() - lastPublishedAt >= 100
+            ) {
+              publish(
+                {
+                  indices: accumulated.indices.slice(),
+                  sourcePositions: accumulated.sourcePositions.slice(),
+                  searchMatchIndices: accumulated.searchMatchIndices.slice(),
+                  stats: { ...accumulated.stats },
+                },
+                !done,
+              );
+              lastPublishedAt = performance.now();
+            }
+            if (!done)
+              await new Promise<void>((resolve) => setTimeout(resolve, 0));
           }
-
-          // Project to slim entries to prevent DataCloneError (out of memory)
-          const slimEntries = projectToSlimEntries(
-            entries,
-            marksMap,
-            options.dcFilterEnabled,
-          );
-
-          typedFilterEntries(slimEntries, options)
-            .then((result: import("../types/ipc").FilterResult) => {
-              // Nur anwenden, wenn dieses Ergebnis neuer ist als das zuletzt
-              // angewendete (Promises können out-of-order auflösen).
-              if (requestId > lastAppliedRequestRef.current) {
-                lastAppliedRequestRef.current = requestId;
-                if (result.ok) {
-                  setFilteredIndices(result.filteredIndices);
-                  setSearchMatchIndices(
-                    computeSearchMatchIndices(
-                      entries,
-                      result.filteredIndices,
-                      options,
-                    ),
-                  );
-                  setStats(result.stats);
-                } else {
-                  // UtilityProcess failed, fall back to sync
-                  console.warn(
-                    "[FilterWorker] UtilityProcess failed, falling back to sync:",
-                    result.error,
-                  );
-                  const syncResult = filterSync(entries, options, marksMap);
-                  setFilteredIndices(syncResult.indices);
-                  setSearchMatchIndices(syncResult.searchMatchIndices);
-                  setStats(syncResult.stats);
-                }
-                if (requestId >= pendingRequestRef.current) {
-                  setIsFiltering(false);
-                }
-              }
-            })
-            .catch((error: unknown) => {
-              console.warn("[FilterWorker] UtilityProcess error:", error);
-              // Fall back to sync on error
-              if (requestId > lastAppliedRequestRef.current) {
-                lastAppliedRequestRef.current = requestId;
-                const syncResult = filterSync(entries, options, marksMap);
-                setFilteredIndices(syncResult.indices);
-                setSearchMatchIndices(syncResult.searchMatchIndices);
-                setStats(syncResult.stats);
-                if (requestId >= pendingRequestRef.current) {
-                  setIsFiltering(false);
-                }
-              }
-            });
-        } catch (error) {
-          // Handle DataCloneError or other IPC errors
-          const errorMessage =
-            error instanceof Error ? error.message : String(error);
-          console.warn("[FilterWorker] IPC call failed:", errorMessage);
-          const syncResult = filterSync(entries, options, marksMap);
-          lastAppliedRequestRef.current = requestId;
-          setFilteredIndices(syncResult.indices);
-          setSearchMatchIndices(syncResult.searchMatchIndices);
-          setStats(syncResult.stats);
-          setIsFiltering(false);
+        } catch (cause) {
+          if (isCurrent() && requestId === pendingRequestRef.current) {
+            setError(cause instanceof Error ? cause : new Error(String(cause)));
+            setIsFiltering(false);
+          }
+        } finally {
+          fallbackRunningRef.current = false;
+          const next = queuedFallbackRef.current;
+          queuedFallbackRef.current = null;
+          if (next) void next();
         }
-        return;
-      }
-
-      // Last resort: synchronous filtering
-      const result = filterSync(entries, options, marksMap);
-      lastAppliedRequestRef.current = requestId;
-      setFilteredIndices(result.indices);
-      setSearchMatchIndices(result.searchMatchIndices);
-      setStats(result.stats);
-      setIsFiltering(false);
+      };
+      if (fallbackRunningRef.current) queuedFallbackRef.current = runFallback;
+      else void runFallback();
     },
     [filterSync, syncEntriesToWorker],
   );
@@ -690,9 +1069,14 @@ export function useFilterWorker(): UseFilterWorkerResult {
   return {
     filteredIndices,
     searchMatchIndices,
+    searchMatchIds,
     isFiltering,
+    progress,
     stats,
+    error,
     filterEntries,
+    cancelFiltering,
     useUtilityProcess,
+    projectionBridge,
   };
 }

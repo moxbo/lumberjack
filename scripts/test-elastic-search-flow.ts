@@ -68,7 +68,7 @@ function makeDeps(
       return search(opts);
     },
     // Faithful copy of the hook's appendElasticCapped capping formula.
-    appendCapped: (batch, available, options) => {
+    appendCapped: async (batch, available, options) => {
       h.appendOpts.push(options || {});
       const list = Array.isArray(batch) ? batch : [];
       const take = Math.max(0, Math.min(available, list.length));
@@ -235,13 +235,40 @@ async function testDedupCountsTowardBudget(): Promise<void> {
   }));
   // Override appendCapped to simulate full deduplication (nothing new stored)
   // while still reporting the fetched count as "used".
-  deps.appendCapped = (batch, available) => {
+  deps.appendCapped = async (batch, available) => {
     const take = Math.max(0, Math.min(available, batch.length));
     return take; // pretend all were duplicates: none stored, but counted
   };
   await executeElasticSearch(form, "append", deps);
   eq(h.loaded, 40, "dedup: fetched count consumes the whole budget");
   eq(h.searchOpts.length, 1, "dedup: budget exhausted after one page");
+}
+
+// 8) Search completion waits until the entry store confirms persistence.
+async function testWaitsForPersistence(): Promise<void> {
+  const h = newHarness();
+  let release!: (count: number) => void;
+  const persisted = new Promise<number>((resolve) => {
+    release = resolve;
+  });
+  const deps = makeDeps(h, 100, async () => ({
+    ok: true,
+    entries: entries(1, "persist"),
+    hasMore: false,
+    total: 1,
+  }));
+  deps.appendCapped = () => persisted;
+  let completed = false;
+  const execution = executeElasticSearch(form, "append", deps).then(() => {
+    completed = true;
+  });
+  await Promise.resolve();
+  await Promise.resolve();
+  eq(completed, false, "persistence: search still pending");
+  eq(h.loaded, 0, "persistence: not counted before storage");
+  release(1);
+  await execution;
+  eq(h.loaded, 1, "persistence: counted after storage");
 }
 
 async function run(): Promise<void> {
@@ -260,6 +287,8 @@ async function run(): Promise<void> {
   console.log("[tests] unknown error ok");
   await testDedupCountsTowardBudget();
   console.log("[tests] dedup budgeting ok");
+  await testWaitsForPersistence();
+  console.log("[tests] persistence wait ok");
   console.log("[tests] elasticSearchEngine ok");
   process.exit(0);
 }

@@ -2,6 +2,53 @@
   "app": {
     "title": "Lumberjack"
   },
+  "liveIntake": {
+    "usage": "Live-Einträge: {{count}} / {{limit}}",
+    "label": "Auslastung der Live-Aufnahme",
+    "settings": "Limit ändern",
+    "paused": "Live-Aufnahme pausiert.",
+    "pausedHint": "Bestehende Einträge bleiben erhalten. Während der Pause können neue Nachrichten verloren gehen. Limit erhöhen oder Logs leeren und die Quellen anschließend manuell neu starten. Importe bleiben möglich.",
+    "controlError": "Der Aufnahmestatus der Live-Quellen konnte nicht geändert werden: {{message}}"
+  },
+  "inspector": {
+    "title": "Eintragsdetails",
+    "message": "Nachricht",
+    "stacktrace": "Stacktrace",
+    "context": "Kontext",
+    "advanced": "Erweitert",
+    "raw": "Rohdaten",
+    "entryContext": "Kontext des Eintrags",
+    "close": "Details schließen",
+    "copy": "Kopieren",
+    "copyMessage": "Nachricht kopieren",
+    "copied": "Nachricht kopiert",
+    "copyFailed": "Nachricht konnte nicht kopiert werden.",
+    "unavailable": "Vollständige Details sind nicht verfügbar.",
+    "noStacktrace": "Kein Stacktrace für diesen Eintrag.",
+    "noContext": "Kein Diagnosekontext vorhanden.",
+    "rawHint": "Gespeicherte Quelldaten oder verfügbare Eintragsfelder.",
+    "rawTruncated": "Vorschau aus Leistungsgründen gekürzt; vollständige Daten bitte exportieren."
+  },
+  "workspace": {
+    "open": "Öffnen",
+    "export": "Exportieren",
+    "layout": "Position der Details",
+    "bottom": "Details unten",
+    "right": "Details rechts",
+    "settings": "Darstellung und Einstellungen",
+    "more": "Weitere Aktionen",
+    "follow": "Live folgen",
+    "resizeDetails": "Größe der Details ändern",
+    "clearing": "Logs werden geleert …",
+    "waitingToClear": "Leeren: laufender Schreibvorgang wird abgeschlossen …",
+    "storageError": "Aufnahme-/Speicherfehler",
+    "localSession": "Lokale Sitzung"
+  },
+  "searchProgress": {
+    "label": "Suchfortschritt",
+    "starting": "Suche wird gestartet …",
+    "running": "{{processed}} / {{total}} durchsucht"
+  },
   "status": {
     "tcpActive": "TCP: Port {{port}} aktiv",
     "tcpStopped": "TCP gestoppt",
@@ -10,6 +57,9 @@
     "httpPollStopped": "Poll gestoppt",
     "httpTailing": "HTTP-Tail aktiv",
     "httpTailingMulti": "HTTP-Tail aktiv ({{count}})",
+    "httpTailPaused": "HTTP-Tail pausiert – Verarbeitung läuft ({{count}})",
+    "httpTailNextIn": "Nächster Tail-Abruf in {{seconds}} s",
+    "httpTailNextAfterResume": "Nächster Abruf nach Verarbeitung + {{seconds}} s",
     "error": "Fehler: {{message}}",
     "errorUnknown": "unbekannt",
     "elasticError": "Elastic-Fehler: {{message}}"
@@ -64,6 +114,8 @@
     "nextMatch": "Nächster Treffer",
     "filterActive": "Standard-Filter aktiv",
     "level": "Level",
+    "levelMinimum": "Mindestlevel",
+    "levelTooltip": "Zeigt den gewählten Level und alle höheren Schweregrade (z. B. WARN inklusive ERROR und FATAL).",
     "levelAll": "Alle",
     "logger": "Logger",
     "loggerPlaceholder": "Logger enthält…",
@@ -86,6 +138,9 @@
     "elasticLoadedTooltip": "Geladene ES-Ergebnisse: {{loaded}} von {{total}}",
     "elasticMoreAvailable": " - Weitere verfügbar",
     "busy": "Lädt…",
+    "importFileProgress": "Datei {{current}}/{{total}} eingelesen",
+    "importEntryProgress": "{{current}}/{{total}} Einträge eingelesen",
+    "importEntriesRead": "{{count}} Einträge eingelesen",
     "nextPollIn": "Nächster Poll in",
     "exportView": "View exportieren…",
     "exportViewTooltip": "Aktuellen View als HTML/Text exportieren",
@@ -182,10 +237,13 @@
   "settings": {
     "title": "Einstellungen",
     "tabs": {
+      "general": "Allgemein",
+      "connections": "Verbindungen",
+      "advanced": "Erweitert",
       "tcp": "TCP",
       "http": "HTTP",
       "elastic": "Elasticsearch",
-      "logging": "Logging",
+      "logging": "Protokollierung",
       "appearance": "Darstellung",
       "language": "Sprache",
       "features": "Features"
@@ -220,7 +278,7 @@
       "maxBackups": "Max. Backups"
     },
     "appearance": {
-      "theme": "Theme",
+      "theme": "Erscheinungsbild",
       "themeSystem": "System",
       "themeLight": "Hell",
       "themeDark": "Dunkel",
@@ -245,6 +303,9 @@
     "performance": {
       "heapSize": "Speicherlimit",
       "heapSizeHint": "Maximaler Arbeitsspeicher für die Anwendung. Größere Werte ermöglichen mehr Log-Einträge, benötigen aber einen Neustart.",
+      "liveEntryLimit": "Limit für Live-Einträge",
+      "liveEntryLimitHint": "Standard: 500.000. Begrenzt die angesammelten Live-Einträge aus TCP, HTTP-Polling, HTTP-Tail und Dateibeobachtung in der aktuellen Log-Sitzung. Dateiimporte, manuelle HTTP-Importe und Elasticsearch-Importe sind ausgenommen. Beim Erreichen des Limits pausiert die Live-Aufnahme, ohne gespeicherte Logs zu löschen. Während der Pause können Einträge fehlen. Erhöhen Sie das Limit oder leeren Sie die Logs und starten Sie die Quelle anschließend manuell neu. Dies garantiert keine feste Speicherobergrenze.",
+      "liveEntryLimitInvalid": "Das Limit für Live-Einträge muss eine ganze Zahl zwischen 1 und 9007199254740991 sein.",
       "default": "Standard",
       "restartRequired": "Das Speicherlimit wurde geändert. Die Änderung wird erst nach einem Neustart wirksam.\n\nMöchten Sie die Anwendung jetzt neu starten?"
     },
@@ -253,6 +314,8 @@
     "close": "Schließen",
     "navAriaLabel": "Einstellungen Navigation",
     "descriptions": {
+      "general": "Sprache und Aktualisierungen der Anwendung.",
+      "advanced": "Limits für Live-Einträge und Speicher sowie optionale Funktionen der Anwendung.",
       "tcp": "Konfigurieren Sie den TCP-Server für eingehende Log-Nachrichten.",
       "tcpPortHint": "Port auf dem der TCP-Server lauscht (1-65535)",
       "tcpWindowControlHint": "Erlaubt TCP-Clients, dieses Fenster zu steuern",
@@ -659,7 +722,7 @@
     },
     "filters": {
       "heading": "Filter",
-      "level": "TRACE, DEBUG, INFO, WARN, ERROR, FATAL",
+      "level": "Mindestlevel und alle höheren Schweregrade: TRACE < DEBUG < INFO < WARN < ERROR < FATAL. WARN zeigt auch ERROR und FATAL; Alle zeigt sämtliche Einträge.",
       "logger": "Substring-Suche im Logger-Namen",
       "thread": "Filtern nach Thread-Name",
       "dc": "Mapped Diagnostic Context (MDC) — TraceID, SpanID und benutzerdefinierte Keys",
@@ -841,7 +904,10 @@
     "removeFilter": "Filter entfernen",
     "clearAll": "✕ Alle",
     "clearAllTooltip": "Alle Filter löschen",
-    "marked": "Markierte"
+    "marked": "Markierte",
+    "time": "Zeit",
+    "timeRelative": "Relativer Zeitraum",
+    "timeAbsolute": "Absoluter Zeitraum"
   },
   "filterStats": {
     "filtered": "Gefiltert: {{count}} Einträge",

@@ -1,6 +1,7 @@
 import { memo } from "preact/compat";
 import type { BookmarkItem } from "./BookmarksPopover";
 import { BookmarksPopover } from "./BookmarksPopover";
+import { WorkspaceIcon } from "./WorkspaceToolbar";
 
 interface MarksNavigationProps {
   countFiltered: number;
@@ -36,7 +37,7 @@ function MarksNavigationComponent({
           onClick={onGotoStart}
           disabled={countFiltered === 0}
         >
-          ⏫
+          <WorkspaceIcon name="first" />
         </button>
         <button
           className="btn-icon"
@@ -44,7 +45,7 @@ function MarksNavigationComponent({
           onClick={onGotoEnd}
           disabled={countFiltered === 0}
         >
-          ⏬
+          <WorkspaceIcon name="last" />
         </button>
       </div>
       <div className="btn-group" title={t("toolbar.marks")}>
@@ -54,7 +55,7 @@ function MarksNavigationComponent({
           onClick={() => onGotoMarked(-1)}
           disabled={markedCount === 0}
         >
-          🔺
+          <WorkspaceIcon name="up" />
         </button>
         <button
           className="btn-icon"
@@ -62,7 +63,7 @@ function MarksNavigationComponent({
           onClick={() => onGotoMarked(1)}
           disabled={markedCount === 0}
         >
-          🔻
+          <WorkspaceIcon name="down" />
         </button>
         {markedCount > 0 && (
           <div style={{ position: "relative", display: "inline-flex" }}>

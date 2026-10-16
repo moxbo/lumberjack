@@ -9,6 +9,14 @@ import http from "http";
 import log from "electron-log/main";
 import zlib from "zlib";
 import { buildElasticMessageQuery } from "../utils/esMessageQuery";
+import {
+  LogLineSplitter,
+  MESSAGE_PREVIEW_LENGTH,
+  MESSAGE_TRUNCATE_THRESHOLD,
+  type LogLine,
+} from "../utils/entryLimits";
+import { computeMdcFromRaw } from "../utils/mdc";
+import { estimatePayloadBytes } from "../utils/estimatePayloadBytes";
 
 // Keep-Alive Agents für HTTP/HTTPS (inkl. unsicherem TLS)
 const HTTP_KEEPALIVE_AGENT = new http.Agent({ keepAlive: true, maxSockets: 8 });
@@ -21,9 +29,16 @@ const HTTPS_INSECURE_KEEPALIVE_AGENT = new https.Agent({
 // Message size limits for performance optimization
 // Messages larger than TRUNCATE_THRESHOLD will be truncated for display,
 // but the full message is preserved in _fullMessage for viewing on demand
-const MESSAGE_TRUNCATE_THRESHOLD = 100 * 1024; // 100 KB - truncate for display
-const MESSAGE_PREVIEW_LENGTH = 50 * 1024; // 50 KB - preview shown in list
 const LARGE_MESSAGE_WARNING_THRESHOLD = 1024 * 1024; // 1 MB - log warning
+const DEFAULT_STREAM_PARSE_THRESHOLD_BYTES = 1024 * 1024;
+const DEFAULT_STREAM_PARSE_CHUNK_SIZE = 1000;
+const STREAMABLE_LINE_EXTENSIONS = new Set([
+  "",
+  ".log",
+  ".txt",
+  ".jsonl",
+  ".ndjson",
+]);
 
 // Types
 type AnyMap = Record<string, unknown>;
@@ -45,6 +60,33 @@ export interface Entry {
   _fullMessage?: string; // Original full message if truncated
   _truncated?: boolean; // True if message was truncated
   _messageSize?: number; // Original message size in bytes
+  [key: string]: unknown;
+}
+
+export interface StreamParseFileOptions {
+  chunkSize?: number;
+  signal?: AbortSignal;
+  highWaterMark?: number;
+}
+
+export interface StreamParseFileChunk {
+  entries: Entry[];
+  bytesRead: number;
+  totalBytes: number;
+  done: boolean;
+  filePath: string;
+}
+
+export interface StreamParseStrategy {
+  streamable: boolean;
+  totalBytes: number;
+  reason:
+    | "stream"
+    | "small-file"
+    | "directory"
+    | "unsupported-extension"
+    | "unsupported-format"
+    | "json-array";
 }
 
 // AdmZip lazy
@@ -171,7 +213,7 @@ function toEntry(obj: AnyMap = {}, fallbackMessage = "", source = ""): Entry {
 
   // Handle large messages - truncate for display but preserve original
   const fullMessage = toStringOr(msgVal, "");
-  const messageSize = fullMessage.length;
+  const messageSize = Buffer.byteLength(fullMessage, "utf8");
   let displayMessage = fullMessage;
   let truncated = false;
   let originalMessage: string | undefined;
@@ -201,6 +243,7 @@ function toEntry(obj: AnyMap = {}, fallbackMessage = "", source = ""): Entry {
     stackTrace: stackTrace || null,
     raw: obj,
     source,
+    mdc: computeMdcFromRaw(obj),
   };
 
   // Add truncation metadata if applicable
@@ -295,36 +338,188 @@ function tryParseJsonLoose(line: string): AnyMap | null {
   }
 }
 
+function parseTextLine(filename: string, line: string): Entry | null {
+  if (!line || !line.trim()) return null;
+  let obj = tryParseJson(line.trim());
+  if (!obj) {
+    const match = line.match(/{[\s\S]*}$/);
+    if (match) obj = tryParseJson(match[0]);
+  }
+  if (!obj) {
+    obj = tryParseJsonLoose(line.trim()) || null;
+  }
+  if (obj) {
+    return toEntry(obj, "", filename);
+  }
+
+  let ts: string | null = null;
+  const isoMatch = line.match(
+    /\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.[\d]+)?(?:Z|[+-]\d{2}:?\d{2})?/,
+  );
+  if (isoMatch) ts = isoMatch[0];
+  const entry = toEntry({}, line, filename);
+  if (ts) entry.timestamp = ts;
+  return entry;
+}
+
 function parseTextLines(filename: string, text: string): Entry[] {
   const entries: Entry[] = [];
   const lines = text.split(/\r?\n/);
   for (const line of lines) {
-    if (!line || !line.trim()) continue;
-    let obj = tryParseJson(line.trim());
-    if (!obj) {
-      // try to extract {...} json inside line
-      const match = line.match(/{[\s\S]*}$/);
-      if (match) obj = tryParseJson(match[0]);
-    }
-    if (!obj) {
-      // last resort: tolerant KV scan to salvage structured fields
-      obj = tryParseJsonLoose(line.trim()) || null;
-    }
-    if (obj) {
-      entries.push(toEntry(obj, "", filename));
-    } else {
-      // fallback: plain text line
-      // try to parse timestamp like ISO 8601 at the beginning
-      let ts: string | null = null;
-      const isoMatch = line.match(
-        /\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.[\d]+)?(?:Z|[+-]\d{2}:?\d{2})?/,
-      );
-      if (isoMatch) ts = isoMatch[0];
-      entries.push(toEntry({}, line, filename));
-      if (ts) entries[entries.length - 1]!.timestamp = ts;
-    }
+    const entry = parseTextLine(filename, line);
+    if (entry) entries.push(entry);
   }
   return entries;
+}
+
+function createAbortError(): Error {
+  const error = new Error("Stream parsing aborted");
+  error.name = "AbortError";
+  return error;
+}
+
+async function readFirstNonWhitespaceChar(
+  filePath: string,
+  maxProbeBytes = 4096,
+): Promise<string | null> {
+  const handle = await fs.promises.open(filePath, "r");
+  try {
+    const buffer = Buffer.alloc(maxProbeBytes);
+    const { bytesRead } = await handle.read(buffer, 0, maxProbeBytes, 0);
+    if (bytesRead <= 0) return null;
+    const text = buffer.subarray(0, bytesRead).toString("utf8");
+    const match = text.match(/\S/);
+    return match ? (match[0] ?? null) : null;
+  } finally {
+    await handle.close();
+  }
+}
+
+async function getStreamParseStrategy(
+  filePath: string,
+  thresholdBytes = DEFAULT_STREAM_PARSE_THRESHOLD_BYTES,
+): Promise<StreamParseStrategy> {
+  const stat = await fs.promises.stat(filePath);
+  if (stat.isDirectory()) {
+    return { streamable: false, totalBytes: 0, reason: "directory" };
+  }
+  const totalBytes = stat.size;
+  if (totalBytes < thresholdBytes) {
+    return { streamable: false, totalBytes, reason: "small-file" };
+  }
+  const ext = path.extname(filePath).toLowerCase();
+  if (ext === ".zip") {
+    return { streamable: false, totalBytes, reason: "unsupported-format" };
+  }
+  if (ext === ".json") {
+    const firstToken = await readFirstNonWhitespaceChar(filePath);
+    if (firstToken === "[") {
+      return { streamable: false, totalBytes, reason: "json-array" };
+    }
+    return { streamable: true, totalBytes, reason: "stream" };
+  }
+  if (STREAMABLE_LINE_EXTENSIONS.has(ext)) {
+    return { streamable: true, totalBytes, reason: "stream" };
+  }
+  return { streamable: false, totalBytes, reason: "unsupported-extension" };
+}
+
+async function* streamParseFile(
+  filePath: string,
+  options: StreamParseFileOptions = {},
+): AsyncGenerator<StreamParseFileChunk, void, void> {
+  const stat = await fs.promises.stat(filePath);
+  if (stat.isDirectory()) return;
+
+  const chunkSize = Math.min(
+    1000,
+    Math.max(1, options.chunkSize ?? DEFAULT_STREAM_PARSE_CHUNK_SIZE),
+  );
+  const totalBytes = stat.size;
+  const stream = fs.createReadStream(filePath, {
+    encoding: "utf8",
+    highWaterMark: Math.min(64 * 1024, options.highWaterMark ?? 64 * 1024),
+  });
+  const onAbort = (): void => {
+    stream.destroy(createAbortError());
+  };
+  options.signal?.addEventListener("abort", onAbort, { once: true });
+
+  let pending: Entry[] = [];
+  let pendingBytes = 0;
+
+  async function* completeLines(): AsyncGenerator<LogLine> {
+    const splitter = new LogLineSplitter();
+    for await (const chunk of stream) {
+      for (const line of splitter.push(String(chunk))) {
+        if (line.text.endsWith("\r")) {
+          line.text = line.text.slice(0, -1);
+        }
+        yield line;
+      }
+    }
+    const tail = splitter.flush();
+    if (tail) yield tail;
+  }
+
+  try {
+    for await (const line of completeLines()) {
+      if (options.signal?.aborted) throw createAbortError();
+      const parsed = parseTextLine(filePath, line.text);
+      if (parsed) {
+        const entry = parsed;
+        const bytes = estimatePayloadBytes(entry);
+        if (pending.length && pendingBytes + bytes > 2 * 1024 * 1024) {
+          yield {
+            entries: pending,
+            bytesRead: Math.min(stream.bytesRead, totalBytes),
+            totalBytes,
+            done: false,
+            filePath,
+          };
+          pending = [];
+          pendingBytes = 0;
+        }
+        pending.push(entry);
+        pendingBytes += bytes;
+      }
+      if (pending.length >= chunkSize || pendingBytes >= 2 * 1024 * 1024) {
+        const current = pending;
+        pending = [];
+        pendingBytes = 0;
+        yield {
+          entries: current,
+          bytesRead: Math.min(stream.bytesRead, totalBytes),
+          totalBytes,
+          done: false,
+          filePath,
+        };
+      }
+    }
+
+    if (options.signal?.aborted) throw createAbortError();
+
+    if (pending.length > 0) {
+      yield {
+        entries: pending,
+        bytesRead: totalBytes,
+        totalBytes,
+        done: true,
+        filePath,
+      };
+    } else {
+      yield {
+        entries: [],
+        bytesRead: totalBytes,
+        totalBytes,
+        done: true,
+        filePath,
+      };
+    }
+  } finally {
+    options.signal?.removeEventListener("abort", onAbort);
+    if (!stream.destroyed) stream.destroy();
+  }
 }
 
 function parseJsonFile(filename: string, text: string): Entry[] {
@@ -373,8 +568,10 @@ function parseZipFile(zipPath: string): Entry[] {
         ext === ".json"
           ? parseJsonFile(name, text)
           : parseTextLines(name, text);
-      parsed.forEach((e) => (e.source = `${zipPath}::${name}`));
-      entries.push(...parsed);
+      for (const entry of parsed) {
+        entry.source = `${zipPath}::${name}`;
+        entries.push(entry);
+      }
     }
   });
   return entries;
@@ -397,7 +594,7 @@ function parsePaths(paths: string[]): Entry[] {
   const all: Entry[] = [];
   for (const p of paths) {
     try {
-      all.push(...parsePath(p));
+      for (const entry of parsePath(p)) all.push(entry);
     } catch (err) {
       // include error as a special entry
       const msg = err instanceof Error ? err.message : String(err);
@@ -475,7 +672,11 @@ async function parsePathsAsync(paths: string[]): Promise<Entry[]> {
 
   // Reihenfolge der Eingabe-Pfade bewahren
   const all: Entry[] = [];
-  for (const list of results) if (list) all.push(...list);
+  for (const list of results) {
+    if (list) {
+      for (const entry of list) all.push(entry);
+    }
+  }
   return all;
 }
 
@@ -557,6 +758,11 @@ const DIALECT_CACHE_TTL_MS = 60 * 60 * 1000;
 
 // Type alias for HTTP response
 type HttpResponse = { status: number; text: string; json: unknown };
+const MAX_ELASTIC_RESPONSE_BYTES = 16 * 1024 * 1024;
+const MAX_ELASTIC_REQUESTS = 8;
+let activeElasticRequests = 0;
+
+class ElasticResponseLimitError extends Error {}
 
 // HTTP JSON request with timeout + keep-alive + streaming decompression
 async function httpJsonRequest(
@@ -567,7 +773,13 @@ async function httpJsonRequest(
   allowInsecureTLS?: boolean,
   timeoutMs?: number,
 ): Promise<{ status: number; text: string; json: unknown }> {
-  return new Promise((resolve, reject) => {
+  if (activeElasticRequests >= MAX_ELASTIC_REQUESTS) {
+    throw new ElasticResponseLimitError(
+      "Elasticsearch request capacity exceeded; retry after pending requests",
+    );
+  }
+  activeElasticRequests++;
+  return new Promise<HttpResponse>((resolve, reject) => {
     try {
       const u = new URL(urlStr);
       const isHttps = u.protocol === "https:";
@@ -611,7 +823,20 @@ async function httpJsonRequest(
         // ("incorrect header check") and potential data loss when the piped stream
         // errored (e.g. proxy already decompressed but left content-encoding header).
         const chunks: Buffer[] = [];
-        res.on("data", (c: Buffer) => chunks.push(c));
+        let responseBytes = 0;
+        res.on("data", (c: Buffer) => {
+          responseBytes += c.byteLength;
+          if (responseBytes > MAX_ELASTIC_RESPONSE_BYTES) {
+            chunks.length = 0;
+            req.destroy(
+              new ElasticResponseLimitError(
+                "Elasticsearch response exceeds 16 MiB; reduce page size",
+              ),
+            );
+            return;
+          }
+          chunks.push(c);
+        });
         res.on("end", () => {
           if (timer) clearTimeout(timer);
           const encoding = (
@@ -621,22 +846,43 @@ async function httpJsonRequest(
           let buf: Buffer = raw;
           try {
             if (encoding === "gzip" || encoding === "x-gzip") {
-              buf = zlib.gunzipSync(raw);
+              buf = zlib.gunzipSync(raw, {
+                maxOutputLength: MAX_ELASTIC_RESPONSE_BYTES,
+              });
             } else if (encoding === "deflate") {
               // Some servers send raw deflate instead of zlib-wrapped;
               // try zlib-wrapped first, fall back to raw deflate
               try {
-                buf = zlib.inflateSync(raw);
-              } catch {
-                buf = zlib.inflateRawSync(raw);
+                buf = zlib.inflateSync(raw, {
+                  maxOutputLength: MAX_ELASTIC_RESPONSE_BYTES,
+                });
+              } catch (error) {
+                if (
+                  (error as NodeJS.ErrnoException).code ===
+                  "ERR_BUFFER_TOO_LARGE"
+                )
+                  throw error;
+                buf = zlib.inflateRawSync(raw, {
+                  maxOutputLength: MAX_ELASTIC_RESPONSE_BYTES,
+                });
               }
             } else if (
               encoding === "br" &&
               typeof zlib.brotliDecompressSync === "function"
             ) {
-              buf = zlib.brotliDecompressSync(raw);
+              buf = zlib.brotliDecompressSync(raw, {
+                maxOutputLength: MAX_ELASTIC_RESPONSE_BYTES,
+              });
             }
           } catch (e) {
+            if ((e as NodeJS.ErrnoException).code === "ERR_BUFFER_TOO_LARGE") {
+              reject(
+                new ElasticResponseLimitError(
+                  "Decompressed Elasticsearch response exceeds 16 MiB; reduce page size",
+                ),
+              );
+              return;
+            }
             // Decompression failed – server may have sent uncompressed data
             // despite content-encoding header (e.g. reverse proxy already
             // decompressed). Fall back to raw data which is likely valid JSON.
@@ -670,6 +916,8 @@ async function httpJsonRequest(
     } catch (err) {
       reject(err instanceof Error ? err : new Error(String(err)));
     }
+  }).finally(() => {
+    activeElasticRequests--;
   });
 }
 
@@ -689,6 +937,7 @@ async function requestWithRetry(
         return res;
       }
     } catch (e) {
+      if (e instanceof ElasticResponseLimitError) throw e;
       if (attempt >= opts.maxRetries) throw e;
     }
     const delay = Math.round(opts.backoffBaseMs * Math.pow(2, attempt));
@@ -1744,11 +1993,15 @@ export async function closeElasticPitSession(sessionId: string): Promise<void> {
 }
 
 export {
+  DEFAULT_STREAM_PARSE_CHUNK_SIZE,
+  DEFAULT_STREAM_PARSE_THRESHOLD_BYTES,
+  getStreamParseStrategy,
   parsePaths,
   parsePathsAsync,
   parsePathAsync,
   parseTextLines,
   parseJsonFile,
   parseZipFile,
+  streamParseFile,
   toEntry,
 };

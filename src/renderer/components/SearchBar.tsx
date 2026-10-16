@@ -10,6 +10,12 @@ import { useEffect, useRef, useState } from "preact/hooks";
 import type { RefObject } from "preact";
 import type { JSX } from "preact/jsx-runtime";
 import { useI18n } from "../../utils/i18n";
+import type { ReadonlySequence } from "../../utils/metadataSnapshot";
+import {
+  searchMatchIndex,
+  shouldNavigateCommittedSearch,
+} from "../progressiveSearch";
+import { WorkspaceIcon } from "./WorkspaceToolbar";
 
 export interface SearchBarProps {
   search: string;
@@ -40,12 +46,9 @@ export interface SearchBarProps {
   // Search match navigation
   searchMatchIdx: number[];
   selectedOneIdx: number | null;
-  filteredIdx: number[];
+  filteredIdx: ReadonlySequence<number>;
+  positionOfId?: (id: number) => number;
   gotoSearchMatch: (dir: number) => void;
-  // Called when the user submits the search (Enter) to apply it immediately
-  // (skips the type-to-search debounce delay). An optional value can be passed
-  // to apply a specific value right away (e.g. when picking a history entry).
-  onSubmitSearch?: (value?: string) => void;
   // i18n
   t: (key: string, params?: Record<string, string>) => string;
 }
@@ -73,15 +76,15 @@ export function SearchBar({
   searchMatchIdx,
   selectedOneIdx,
   filteredIdx,
+  positionOfId,
   gotoSearchMatch,
-  onSubmitSearch,
   t,
 }: SearchBarProps): JSX.Element {
   const [showSyntaxHelp, setShowSyntaxHelp] = useState(false);
   const syntaxHelpBtnRef = useRef<HTMLButtonElement | null>(null);
 
   // Local (uncommitted) search text. Typing only updates this; the search is
-  // applied (via setSearch/onSubmitSearch) when the user presses Enter. This
+  // applied via setSearch when the user presses Enter. This
   // avoids "search while typing" – the search only triggers on Enter.
   const [searchVal, setSearchVal] = useState(search);
   // Keep local value in sync when `search` changes from outside (history pick,
@@ -89,18 +92,22 @@ export function SearchBar({
   useEffect(() => setSearchVal(search), [search]);
 
   return (
-    <div className="section">
+    <div className="section workspace-search">
       <div className="search-wrapper" style={{ position: "relative" }}>
         <input
           id="searchText"
           ref={searchInputRef as any}
           type="search"
           value={searchVal}
-          onInput={(e) => setSearchVal(e.currentTarget.value)}
+          onInput={(e) => {
+            setSearchVal(e.currentTarget.value);
+            if (!e.currentTarget.value) setSearch("");
+          }}
           onKeyDown={(e) => {
             const key = (e as any).key;
             // Handle Enter: select highlighted item or go to next match
             if (key === "Enter") {
+              e.preventDefault();
               if (
                 showSearchHist &&
                 searchHistHighlightIdx >= 0 &&
@@ -113,14 +120,14 @@ export function SearchBar({
                   addFilterHistory("search", selectedItem);
                   setShowSearchHist(false);
                   setSearchHistHighlightIdx(-1);
-                  onSubmitSearch?.(selectedItem);
                 }
               } else {
                 const val = (e.currentTarget as any).value as string;
                 setSearch(val);
                 addFilterHistory("search", val);
-                onSubmitSearch?.(val);
-                gotoSearchMatch(1);
+                if (shouldNavigateCommittedSearch(val, search)) {
+                  gotoSearchMatch(1);
+                }
               }
               return;
             }
@@ -354,7 +361,6 @@ export function SearchBar({
                   addFilterHistory("search", v);
                   setShowSearchHist(false);
                   setSearchHistHighlightIdx(-1);
-                  onSubmitSearch?.(v);
                 }}
                 onMouseDown={(e) => e.preventDefault()}
                 onMouseEnter={() => setSearchHistHighlightIdx(i)}
@@ -387,7 +393,7 @@ export function SearchBar({
         disabled={!search.trim() || searchMatchIdx.length === 0}
         onClick={() => gotoSearchMatch(-1)}
       >
-        ▲
+        <WorkspaceIcon name="up" />
       </button>
       <span
         style={{
@@ -401,10 +407,11 @@ export function SearchBar({
           ? (() => {
               const curVi =
                 selectedOneIdx != null
-                  ? filteredIdx.indexOf(selectedOneIdx)
+                  ? (positionOfId?.(selectedOneIdx) ??
+                    filteredIdx.indexOf(selectedOneIdx))
                   : -1;
               const currentMatchPos =
-                curVi >= 0 ? searchMatchIdx.indexOf(curVi) : -1;
+                curVi >= 0 ? searchMatchIndex(searchMatchIdx, curVi) : -1;
               if (currentMatchPos >= 0) {
                 return `${currentMatchPos + 1}/${searchMatchIdx.length}`;
               }
@@ -418,7 +425,7 @@ export function SearchBar({
         disabled={!search.trim() || searchMatchIdx.length === 0}
         onClick={() => gotoSearchMatch(1)}
       >
-        ▼
+        <WorkspaceIcon name="down" />
       </button>
     </div>
   );

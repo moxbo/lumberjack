@@ -9,53 +9,52 @@ import {
 } from "preact/hooks";
 import { highlightAll } from "../utils/highlight";
 import logger from "../utils/logger";
+import { LiveIngestionLimitError } from "../utils/liveIngestionLimit";
 import { rendererPerf } from "../utils/rendererPerf";
 import { useI18n } from "../utils/i18n";
 import { LoggingStore } from "../store/loggingStore";
+import type { CanonicalLogEntry } from "../store/paged";
 import { canonicalDcKey, DiagnosticContextFilter } from "../store/dcFilter";
 import { DragAndDropManager } from "../utils/dnd";
 import { TimeFilter } from "../store/timeFilter";
 import { lazy, Suspense } from "preact/compat";
-import type { Settings } from "../types/ipc";
 import {
   getSettings,
   patchSettings,
   patchSettingsQuiet,
-  windowPermsGet,
   openFiles as typedOpenFiles,
-  parsePaths as typedParsePaths,
   parseRawDrops as typedParseRawDrops,
+  streamAck as typedStreamAck,
+  streamCancel as typedStreamCancel,
+  streamParsePaths as typedStreamParsePaths,
+  streamReady as typedStreamReady,
   tcpStart as typedTcpStart,
   tcpStop as typedTcpStop,
   httpLoadOnce as typedHttpLoadOnce,
   httpStartPoll as typedHttpStartPoll,
   httpStopPoll as typedHttpStopPoll,
-  chooseExportPath as typedChooseExportPath,
-  saveExportFile as typedSaveExportFile,
-  autoUpdaterSetAllowPrerelease as typedAutoUpdaterSetAllowPrerelease,
-  appRelaunch as typedAppRelaunch,
+  liveSetPaused as typedLiveSetPaused,
   onAppend as typedOnAppend,
   onMenu as typedOnMenu,
+  onStreamChunk as typedOnStreamChunk,
+  onStreamComplete as typedOnStreamComplete,
+  onStreamError as typedOnStreamError,
   onTcpStatus as typedOnTcpStatus,
   onWindowFocus as typedOnWindowFocus,
 } from "../utils/typedApi";
 import type {
   ElasticFormState,
   HttpPollFormState,
-  ThemeMode,
-  SettingsTab,
-  SettingsFormState,
   FilterStats,
 } from "../types/renderer";
+import type { StreamParseChunk, StreamParsePathsResult } from "../types/ipc";
 import { MDCListener } from "../store/mdcListener";
 import { clearHighlightCache } from "./LogRow";
 import { clearTimestampCache, fmtTimestamp } from "../utils/format";
-import { heavyFieldStore } from "../store/heavyFieldStore";
-import {
-  exportToCsv,
-  exportToMarkdown,
-  exportToNdjson,
-} from "../utils/exportFormats";
+import { exportCurrentView as streamCurrentView } from "../utils/exportCurrentView";
+import type { ReadonlySequence } from "../utils/metadataSnapshot";
+import { useIdPositions } from "../hooks/useIdPositions";
+import { useSettings } from "../hooks";
 import {
   setupDebugFunctions,
   setDebugEntriesRef,
@@ -63,17 +62,15 @@ import {
 } from "../utils/debugFunctions";
 
 // Import refactored utilities
-import { entrySignature } from "../utils/entryUtils";
-import {
-  buildMarkedPositionIndex,
-  resolveMarkedPositions,
-} from "../utils/markedPositions";
+import { compactEntrySignature, entrySignature } from "../utils/entryUtils";
+import { compareByTimestampId } from "../utils/sort";
+import { resolveMarkedPositionsById } from "../utils/markedPositions";
 import { nativeConfirm } from "../utils/nativeDialog";
+import { useHttpPollErrors } from "../hooks/useHttpPolling";
 
 // Import refactored hooks
 import {
-  useDebouncedValueWithFlush,
-  useDebounce,
+  useThrottledValue,
   useFilterState,
   useHistoryPopovers,
   useAlerts,
@@ -94,6 +91,7 @@ import {
   useTimeFilterDialog,
 } from "../hooks";
 import { useStableCallback } from "../hooks/useStableCallback";
+import type { ProjectionBridge } from "../workers/projectionBridge";
 
 // Import refactored components - core components loaded eagerly
 import {
@@ -114,6 +112,10 @@ import {
 import type { VirtualizedLogListHandle } from "./components";
 import { SkeletonLoader } from "./components/SkeletonLoader";
 import { ElasticStatusBar } from "./components/ElasticStatusBar";
+import { FilterProgressStatus } from "./components/FilterProgressStatus";
+import { LiveIntakeStatus } from "./components/LiveIntakeStatus";
+import { WorkspaceToolbar, WorkspaceIcon } from "./components/WorkspaceToolbar";
+import { adjacentSearchMatch, searchMatchPositions } from "./progressiveSearch";
 import { JSX } from "preact/jsx-runtime";
 import { buildDemoEntries, LOGBACK_TCP_SNIPPET } from "./onboardingData";
 
@@ -169,6 +171,7 @@ const TraceTimeline = lazy(() =>
 
 // Initialize debug functions on module load
 setupDebugFunctions();
+const EMPTY_FILTER_IDS: number[] = [];
 
 export default function App(): JSX.Element {
   // Track component initialization (only once via ref to avoid re-marking on every render)
@@ -187,11 +190,9 @@ export default function App(): JSX.Element {
     tRef.current = t;
   }, [t]);
 
-  // Track when initial settings are loaded for skeleton UI
-  const [settingsLoaded, setSettingsLoaded] = useState<boolean>(false);
-
   // Persistenz: Markierungen (signature -> color)
   const [marksMap, setMarksMap] = useState<Record<string, string>>({});
+  const marksMapRef = useRef<Record<string, string>>(marksMap);
 
   // Use alerts hook
   const { alertState, showAlert, closeAlert, handleFeatureError } = useAlerts();
@@ -281,34 +282,8 @@ export default function App(): JSX.Element {
     }
   }, [httpTail.tails.length]);
 
-  // Entry management hook (entries, IPC batching, deduplication)
-  const {
-    entries,
-    setEntries,
-    setNextId,
-    appendEntries,
-    fileSigCacheRef,
-    httpSigCacheRef,
-  } = useEntryManagement({
-    marksMap,
-  });
-
   const [selected, setSelected] = useState<Set<number>>(new Set());
   const lastClicked = useRef<number | null>(null);
-
-  // Follow-Modus
-  const [follow, setFollow] = useState<boolean>(false);
-
-  // Theme Mode
-  const [themeMode, setThemeMode] = useState<ThemeMode>("system");
-  function applyThemeMode(mode: string | null | undefined): void {
-    const root = document.documentElement;
-    if (!mode || mode === "system") {
-      root.removeAttribute("data-theme");
-      return;
-    }
-    root.setAttribute("data-theme", mode);
-  }
 
   // Use the refactored filter state hook
   const filterState = useFilterState();
@@ -333,28 +308,6 @@ export default function App(): JSX.Element {
     filtersExpanded,
     setFiltersExpanded,
   } = filterState;
-
-  // Debounced Filter-Werte für bessere Performance beim Tippen.
-  // Etwas höhere Verzögerung (350ms) als komfortabler "type-to-filter"-Fallback;
-  // Enter (flush) wendet die Eingabe sofort an, ohne auf den Timer zu warten.
-  const [debouncedSearch, flushSearch] = useDebouncedValueWithFlush(
-    search,
-    350,
-  );
-  const [debouncedFilter, flushFilter] = useDebouncedValueWithFlush(
-    filter,
-    350,
-  );
-
-  // Koalesziertes `entries`-Snapshot als Filter-Trigger.
-  // Beim Streaming wird `entries` bis zu ~60×/Sekunde aktualisiert. Ohne
-  // Koaleszenz würde jeder Append (a) einen Worker-Filterlauf UND (b) die
-  // O(n)-Neuberechnung von `markedIdx`/`searchMatchIdx` auf dem Main-Thread
-  // auslösen → bei 100k–300k Einträgen friert die Oberfläche beim gleichzeitigen
-  // Tippen/Einstellen ein. Ein kurzes Debounce (120ms) bündelt Append-Bursts
-  // zu wenigen Filterläufen. Für statische Datensätze (reines Tippen im Filter)
-  // ist `entries` stabil, daher entsteht KEINE zusätzliche Latenz.
-  const debouncedEntries = useDebounce(entries, 120);
 
   // History popovers - using extracted hook
   const {
@@ -435,45 +388,116 @@ export default function App(): JSX.Element {
     t,
     getLastEsForm: () => lastEsFormRef.current,
   });
+  const {
+    settingsLoaded,
+    tcpPort,
+    canTcpControlWindow,
+    setCanTcpControlWindow,
+    httpUrl,
+    setHttpUrl,
+    httpInterval,
+    setHttpInterval,
+    httpTailEmitInitial,
+    setHttpTailEmitInitial,
+    httpTailAllowInsecureSSL,
+    setHttpTailAllowInsecureSSL,
+    elasticUrl,
+    elasticSize,
+    elasticHasPass,
+    liveEntryLimit,
+    follow,
+    setFollow,
+    themeMode,
+    setThemeMode,
+    detailLayout,
+    setDetailLayout,
+    applyThemeMode,
+    showSettings,
+    settingsTab,
+    setSettingsTab,
+    form,
+    setForm,
+    openSettingsModal,
+    saveSettingsModal,
+    closeSettingsModal,
+  } = useSettings({
+    t,
+    showAlert,
+    onLoaded: (settings) => {
+      if (Array.isArray(settings.histAppName))
+        setHistAppName(settings.histAppName);
+      if (Array.isArray(settings.histEnvironment))
+        setHistEnvironment(settings.histEnvironment);
+      if (Array.isArray(settings.histIndex)) setHistIndex(settings.histIndex);
+      setTimeForm((previous) => ({
+        ...previous,
+        environmentCase: settings.lastEnvironmentCase || "original",
+      }));
+      if (settings.marksMap && typeof settings.marksMap === "object") {
+        setMarksMap(settings.marksMap);
+      }
+      if (Array.isArray(settings.customMarkColors))
+        setCustomColors(settings.customMarkColors);
+      if (typeof settings.onlyMarked === "boolean")
+        setOnlyMarked(settings.onlyMarked);
+    },
+  });
+
+  const projectionBridgeRef = useRef<ProjectionBridge | null>(null);
+  const {
+    entries,
+    entryGeneration,
+    getDataGeneration,
+    appendEntriesAsync,
+    clearEntries,
+    isClearing,
+    clearPhase,
+    storageError,
+    liveEntryCount,
+    liveLimitReached,
+    usesPagedStorage,
+    repository,
+    getMetadata,
+    getIdsBySignature,
+  } = useEntryManagement({
+    marksMap,
+    projectionBridgeRef,
+    liveEntryLimit,
+  });
+
+  useEffect(() => {
+    if (storageError) showAlert(storageError.message);
+  }, [storageError, showAlert]);
+
+  // Gedrosseltes `entries`-Snapshot als Filter-Trigger.
+  // Beim Streaming wird `entries` bis zu ~60×/Sekunde aktualisiert. Ohne
+  // Koaleszenz würde jeder Append (a) einen Worker-Filterlauf UND (b) die
+  // O(n)-Neuberechnung von `markedIdx`/`searchMatchIdx` auf dem Main-Thread
+  // auslösen → bei 100k–300k Einträgen friert die Oberfläche beim gleichzeitigen
+  // Tippen/Einstellen ein. Das Throttling veröffentlicht den ersten Block
+  // sofort und bündelt danach Bursts auf höchstens einen Filterlauf je 120 ms.
+  const filterInput = useMemo(
+    () => ({ entries, generation: entryGeneration }),
+    [entries, entryGeneration],
+  );
+  const throttledFilterInput = useThrottledValue(filterInput, 120);
+  // Never submit an older snapshot under the generation of a cleared dataset.
+  const visibleEntries =
+    throttledFilterInput.generation === entryGeneration
+      ? throttledFilterInput.entries
+      : entries;
+
   const [tcpStatus, setTcpStatus] = useState<string>(t("status.tcpStopped"));
   const [httpStatus, setHttpStatus] = useState<string>(
     t("status.httpPollStopped"),
   );
   const [httpPollId, setHttpPollId] = useState<number | null>(null);
-  const [tcpPort, setTcpPort] = useState<number>(5000);
-  const [canTcpControlWindow, setCanTcpControlWindow] = useState<boolean>(true);
-
-  const [httpUrl, setHttpUrl] = useState<string>("");
-  const [httpInterval, setHttpInterval] = useState<number>(5000);
-  // HTTP-Tail-Dialog: zuletzt verwendete Optionen (werden persistiert und beim
-  // Öffnen des Dialogs vorbelegt, damit nach einem Neustart nichts verloren geht).
-  const [httpTailEmitInitial, setHttpTailEmitInitial] =
-    useState<boolean>(false);
-  const [httpTailAllowInsecureSSL, setHttpTailAllowInsecureSSL] =
-    useState<boolean>(false);
+  const lastFailedPollId = useHttpPollErrors(
+    setHttpPollId,
+    setHttpStatus,
+    showAlert,
+  );
   const [httpTailAuthHeader, setHttpTailAuthHeader] = useState<string>("");
-  const [showSettings, setShowSettings] = useState<boolean>(false);
-  const [settingsTab, setSettingsTab] = useState<SettingsTab>("tcp");
-  const [form, setForm] = useState<SettingsFormState>({
-    tcpPort: 5000,
-    httpUrl: "",
-    httpInterval: 5000,
-    logToFile: false,
-    logFilePath: "",
-    logMaxMB: 5,
-    logMaxBackups: 3,
-    themeMode: "system",
-    elasticUrl: "",
-    elasticSize: 1000,
-    elasticUser: "",
-    elasticPassNew: "",
-    elasticPassClear: false,
-    elasticMaxParallel: 1,
-    allowPrerelease: false,
-    heapSizeMB: 4096,
-  });
-  // Store original heap size to detect changes requiring restart
-  const [originalHeapSizeMB, setOriginalHeapSizeMB] = useState<number>(4096);
   // NEU: hält das tatsächlich beim Start verwendete Poll-Intervall (für stabilen Countdown)
   const [currentPollInterval, setCurrentPollInterval] = useState<number | null>(
     null,
@@ -487,7 +511,7 @@ export default function App(): JSX.Element {
     interval: 5000,
   });
 
-  async function openHttpLoadDialog() {
+  const openHttpLoadDialog = useStableCallback(async () => {
     let url = httpUrl;
     try {
       // Load fresh settings to ensure we have current httpUrl
@@ -501,8 +525,8 @@ export default function App(): JSX.Element {
     }
     setHttpLoadUrl(String(url || ""));
     setShowHttpLoadDlg(true);
-  }
-  async function openHttpPollDialog() {
+  });
+  const openHttpPollDialog = useStableCallback(async () => {
     let url = httpUrl;
     let interval = httpInterval;
     try {
@@ -527,13 +551,13 @@ export default function App(): JSX.Element {
       interval: Number(interval || 5),
     });
     setShowHttpPollDlg(true);
-  }
+  });
 
   // Öffnet den HTTP-Tail-Dialog und belegt ihn mit den zuletzt verwendeten
   // Werten vor (URL, Intervall, Optionen und – falls hinterlegt – dem
   // verschlüsselt gespeicherten Auth-Header). So geht nach einem Neustart
   // die zuletzt genutzte Tail-Konfiguration nicht verloren.
-  async function openHttpTailDialog() {
+  const openHttpTailDialog = useStableCallback(async () => {
     try {
       const r = await getSettings();
       if (r) {
@@ -563,20 +587,7 @@ export default function App(): JSX.Element {
       logger.warn("Failed to load settings for HTTP tail dialog:", e);
     }
     setShowHttpTailDialog(true);
-  }
-
-  // Logging-Settings
-  const [logToFile, setLogToFile] = useState<boolean>(false);
-  const [logFilePath, setLogFilePath] = useState<string>("");
-  const [logMaxBytes, setLogMaxBytes] = useState<number>(5 * 1024 * 1024);
-  const [logMaxBackups, setLogMaxBackups] = useState<number>(3);
-
-  // Elasticsearch
-  const [elasticUrl, setElasticUrl] = useState<string>("");
-  const [elasticSize, setElasticSize] = useState<number>(1000);
-  const [elasticUser, setElasticUser] = useState<string>("");
-  const [elasticHasPass, setElasticHasPass] = useState<boolean>(false);
-  const [elasticMaxParallel, setElasticMaxParallel] = useState<number>(1);
+  });
 
   /**
    * Hydratisiert `marksMap` aus frisch importierten Einträgen, die bereits
@@ -591,31 +602,50 @@ export default function App(): JSX.Element {
   const hydrateMarksFromEntries = useCallback(
     (importedEntries: any[] | undefined | null) => {
       if (!importedEntries || importedEntries.length === 0) return;
-      let next: Record<string, string> | null = null;
-      for (let i = 0; i < importedEntries.length; i++) {
-        const e = importedEntries[i];
-        const m = e?._mark;
-        if (typeof m !== "string" || !m) continue;
-        const sig = entrySignature(e);
-        if (!sig) continue;
-        if ((next ?? marksMap)[sig] === m) continue;
-        if (!next) next = { ...marksMap };
-        next[sig] = m;
-      }
-      if (next) {
-        setMarksMap(next);
-        try {
-          patchSettingsQuiet({ marksMap: next });
-        } catch {
-          /* ignore */
+      setMarksMap((current) => {
+        let next: Record<string, string> | null = null;
+        for (let i = 0; i < importedEntries.length; i++) {
+          const e = importedEntries[i];
+          const m = e?._mark;
+          if (typeof m !== "string" || !m) continue;
+          const sig = compactEntrySignature(e);
+          if (!sig || (next ?? current)[sig] === m) continue;
+          if (!next) next = { ...current };
+          next[sig] = m;
         }
-      }
+        return next ?? current;
+      });
     },
-    [marksMap],
+    [],
   );
 
   // Busy helper
   const [busy, setBusy] = useState<boolean>(false);
+  const [clearRequested, setClearing] = useState(false);
+  const clearing = clearRequested || isClearing;
+  const clearingRef = useRef(false);
+  const [detailsHidden, setDetailsHidden] = useState(false);
+  const [compactWorkspace, setCompactWorkspace] = useState(
+    () => window.matchMedia("(max-width: 900px)").matches,
+  );
+  useEffect(() => {
+    const query = window.matchMedia("(max-width: 900px)");
+    const update = () => setCompactWorkspace(query.matches);
+    query.addEventListener("change", update);
+    return () => query.removeEventListener("change", update);
+  }, []);
+  const effectiveDetailLayout = compactWorkspace ? "bottom" : detailLayout;
+  const [importProgress, setImportProgress] = useState<{
+    processedEntries: number;
+    totalEntries?: number;
+    bytesRead?: number;
+    totalBytes?: number;
+    filePath?: string;
+    fileIndex?: number;
+    totalFiles?: number;
+  } | null>(null);
+  const activeStreamSessionRef = useRef<string | null>(null);
+  const activeStreamCleanupRef = useRef<(() => void) | null>(null);
   const withBusy = async (fn: () => Promise<void>) => {
     setBusy(true);
     try {
@@ -624,6 +654,131 @@ export default function App(): JSX.Element {
       setBusy(false);
     }
   };
+
+  const persistImportedEntries = useCallback(
+    async (importedEntries: any[] | undefined | null): Promise<void> => {
+      if (!importedEntries || importedEntries.length === 0) return;
+      setImportProgress({
+        processedEntries: 0,
+        totalEntries: importedEntries.length,
+      });
+      try {
+        await appendEntriesAsync(importedEntries, {
+          onProgress: (processed, total) =>
+            setImportProgress({
+              processedEntries: processed,
+              totalEntries: total,
+            }),
+        });
+        hydrateMarksFromEntries(importedEntries);
+      } finally {
+        setImportProgress(null);
+      }
+    },
+    [appendEntriesAsync, hydrateMarksFromEntries],
+  );
+
+  const persistStreamedEntries = useCallback(
+    async (sessionId: string): Promise<void> => {
+      activeStreamSessionRef.current = sessionId;
+      setImportProgress({ processedEntries: 0, bytesRead: 0, totalBytes: 0 });
+      let persistedEntries = 0;
+
+      await new Promise<void>((resolve, reject) => {
+        const cleanup = (): void => {
+          offChunk();
+          offComplete();
+          offError();
+          if (activeStreamSessionRef.current === sessionId) {
+            activeStreamSessionRef.current = null;
+          }
+          if (activeStreamCleanupRef.current === cancel) {
+            activeStreamCleanupRef.current = null;
+          }
+        };
+        const cancel = (): void => {
+          typedStreamCancel(sessionId);
+          cleanup();
+          reject(new DOMException("Stream import cancelled", "AbortError"));
+        };
+
+        const handleChunk = (chunk: StreamParseChunk): void => {
+          if (chunk.sessionId !== sessionId) return;
+          void (async () => {
+            try {
+              if (chunk.entries.length > 0) {
+                await appendEntriesAsync(chunk.entries as any[], {
+                  onProgress: (processed) =>
+                    setImportProgress({
+                      processedEntries: persistedEntries + processed,
+                      bytesRead: chunk.bytesRead,
+                      totalBytes: chunk.totalBytes,
+                      filePath: chunk.filePath,
+                      fileIndex: chunk.fileIndex,
+                      totalFiles: chunk.totalFiles,
+                    }),
+                });
+                persistedEntries += chunk.entries.length;
+                hydrateMarksFromEntries(chunk.entries as any[]);
+              }
+              setImportProgress({
+                processedEntries: persistedEntries,
+                bytesRead: chunk.bytesRead,
+                totalBytes: chunk.totalBytes,
+                filePath: chunk.filePath,
+                fileIndex: chunk.fileIndex,
+                totalFiles: chunk.totalFiles,
+              });
+              typedStreamAck(sessionId, chunk.chunkIndex);
+            } catch (error) {
+              typedStreamCancel(sessionId);
+              cleanup();
+              reject(error instanceof Error ? error : new Error(String(error)));
+            }
+          })();
+        };
+
+        const offChunk = typedOnStreamChunk(handleChunk);
+        const offComplete = typedOnStreamComplete((result) => {
+          if (result.sessionId !== sessionId) return;
+          cleanup();
+          if (result.errors.length > 0) {
+            reject(new Error(result.errors.join("\n")));
+          } else {
+            resolve();
+          }
+        });
+        const offError = typedOnStreamError((error) => {
+          if (error.sessionId !== sessionId) return;
+          cleanup();
+          reject(new Error(error.error));
+        });
+        activeStreamCleanupRef.current = cancel;
+        typedStreamReady(sessionId);
+      }).finally(() => {
+        if (activeStreamSessionRef.current === sessionId) {
+          activeStreamSessionRef.current = null;
+        }
+        setImportProgress(null);
+      });
+    },
+    [appendEntriesAsync, hydrateMarksFromEntries],
+  );
+
+  const importPaths = useCallback(
+    async (paths: string[]): Promise<void> => {
+      const result: StreamParsePathsResult = await typedStreamParsePaths(paths);
+      if ("streamed" in result) {
+        await persistStreamedEntries(result.sessionId);
+        return;
+      }
+      if (!result.ok) {
+        throw new Error(result.error || tRef.current("status.errorUnknown"));
+      }
+      await persistImportedEntries(result.entries as any[]);
+    },
+    [persistImportedEntries, persistStreamedEntries],
+  );
 
   // Elasticsearch search state + flow (search, pagination, "load more").
   const {
@@ -642,7 +797,7 @@ export default function App(): JSX.Element {
     closePitQuiet,
   } = useElasticSearch({
     entries,
-    appendEntries,
+    appendEntries: appendEntriesAsync,
     elasticUrl,
     elasticSize,
     withBusy,
@@ -651,15 +806,10 @@ export default function App(): JSX.Element {
     t,
     addToHistory,
     closeTimeDialog: () => setShowTimeDialog(false),
-    onReplaceReset: () => {
+    onReplaceReset: async () => {
       // Vollständiges Zurücksetzen: alle vorhandenen Einträge entfernen
-      setEntries([]);
+      await clearEntries();
       setSelected(new Set());
-      setNextId(1);
-      // Datei-Dedupe-Cache leeren, damit Files erneut geladen werden können
-      fileSigCacheRef.current = new Map();
-      // HTTP-Dedupe-Cache leeren
-      httpSigCacheRef.current = new Map();
       // LoggingStore zurücksetzen (MDC etc.)
       try {
         LoggingStore.reset();
@@ -677,6 +827,31 @@ export default function App(): JSX.Element {
     httpPollId,
     currentPollInterval,
   });
+
+  const liveControlTail = useRef(Promise.resolve());
+  useEffect(() => {
+    if (!settingsLoaded) return;
+    liveControlTail.current = liveControlTail.current
+      .then(async () => {
+        const result = await typedLiveSetPaused(liveLimitReached);
+        if (!result.ok)
+          throw new Error(result.error || tRef.current("status.errorUnknown"));
+        if (liveLimitReached) {
+          setHttpPollId(null);
+          setCurrentPollInterval(null);
+          setNextPollDueAt(null);
+          setHttpStatus(tRef.current("status.httpPollStopped"));
+        }
+      })
+      .catch((error) => {
+        logger.error("Updating live source pause state failed:", error);
+        showAlert(
+          tRef.current("liveIntake.controlError", {
+            message: error instanceof Error ? error.message : String(error),
+          }),
+        );
+      });
+  }, [liveLimitReached, settingsLoaded, setNextPollDueAt, showAlert]);
 
   // Filter statistics for debugging why entries are filtered out
   const [lastFilterStats, setLastFilterStats] = useState<FilterStats | null>(
@@ -709,6 +884,8 @@ export default function App(): JSX.Element {
     parentRef,
     showAlert,
     t,
+    repository,
+    getMetadata,
   });
 
   const layoutRef = useRef<HTMLDivElement | null>(null);
@@ -716,18 +893,108 @@ export default function App(): JSX.Element {
   // Use resize handlers hook for divider and column resize
   const { dividerElRef, resizeHeight, onColMouseDown } = useResizeHandlers({
     layoutRef,
+    detailLayout: effectiveDetailLayout,
   });
 
   // Use Filter Worker for large datasets (>10,000 entries)
   const {
     filteredIndices: workerFilteredIdx,
-    searchMatchIndices: workerSearchMatchIdx,
+    searchMatchIds: workerSearchMatchIds,
+    isFiltering,
+    progress: filterProgress,
     stats: workerFilterStats,
+    error: filterWorkerError,
     filterEntries,
+    cancelFiltering,
+    projectionBridge,
   } = useFilterWorker();
 
-  // Track if we have ever triggered filtering (to show loading state on initial large load)
-  const hasTriggeredFilterRef = useRef(false);
+  // Wire projection bridge so useEntryManagement can publish directly.
+  projectionBridgeRef.current = projectionBridge;
+
+  const standardFilterActive =
+    stdFiltersEnabled &&
+    [filter.level, filter.logger, filter.thread, filter.message].some(
+      (value) => String(value ?? "").trim().length > 0,
+    );
+  const dcFilterActive =
+    DiagnosticContextFilter.isEnabled() &&
+    DiagnosticContextFilter.getState().entries.some((entry) => entry.active);
+  const filterIsActive =
+    standardFilterActive ||
+    onlyMarked ||
+    dcFilterActive ||
+    TimeFilter.isEnabled();
+  const queryActive = filterIsActive || !!search.trim();
+  const baseViewKey = useMemo(
+    () =>
+      JSON.stringify({
+        stdFiltersEnabled,
+        filter,
+        dcVersion,
+        timeVersion,
+        onlyMarked,
+        markedSignatures: onlyMarked ? Object.keys(marksMap).sort() : [],
+        entryGeneration,
+        databaseName: repository.databaseName,
+      }),
+    [
+      stdFiltersEnabled,
+      filter,
+      dcVersion,
+      timeVersion,
+      onlyMarked,
+      onlyMarked ? marksMap : null,
+      entryGeneration,
+      repository,
+      repository.databaseName,
+    ],
+  );
+  const queryKey = useMemo(
+    () => JSON.stringify([baseViewKey, search, searchMode]),
+    [baseViewKey, search, searchMode],
+  );
+  const [submittedQueryKey, setSubmittedQueryKey] = useState<string | null>(
+    null,
+  );
+  const [submittedBaseViewKey, setSubmittedBaseViewKey] = useState<
+    string | null
+  >(null);
+  const filterResultsCurrent = baseViewKey === submittedBaseViewKey;
+  const resultsCurrent = queryKey === submittedQueryKey;
+  const searchRunning = queryActive && (!resultsCurrent || isFiltering);
+  const pendingFirstSearchRef = useRef<string | null>(null);
+  const pendingSelectedAfterFilterRef = useRef<number | null>(null);
+  const cancelAutomaticNavigation = useCallback(() => {
+    pendingFirstSearchRef.current = null;
+    pendingSelectedAfterFilterRef.current = null;
+  }, []);
+  const commitSearch = useCallback(
+    (value: string) => {
+      if (value === search) return;
+      cancelFiltering(true);
+      setSubmittedQueryKey(null);
+      pendingFirstSearchRef.current = value.trim() ? value : null;
+      pendingSelectedAfterFilterRef.current = null;
+      setSearch(value);
+    },
+    [search, setSearch, cancelFiltering],
+  );
+  const commitSearchMode = useCallback(
+    (mode: typeof searchMode) => {
+      if (mode === searchMode) return;
+      cancelFiltering(true);
+      setSubmittedQueryKey(null);
+      pendingFirstSearchRef.current = search.trim() ? search : null;
+      pendingSelectedAfterFilterRef.current = null;
+      setSearchMode(mode);
+    },
+    [search, searchMode, setSearchMode, cancelFiltering],
+  );
+
+  useEffect(() => {
+    if (filterWorkerError) showAlert(filterWorkerError.message);
+  }, [filterWorkerError, showAlert]);
 
   // Trigger filtering when dependencies change
   useEffect(() => {
@@ -748,16 +1015,41 @@ export default function App(): JSX.Element {
     const timeFilterFrom = timeState.from || undefined;
     const timeFilterTo = timeState.to || undefined;
 
-    hasTriggeredFilterRef.current = true;
+    if (
+      (!filterIsActive && !String(search || "").trim()) ||
+      !visibleEntries.length
+    ) {
+      cancelFiltering();
+      setSubmittedQueryKey(queryKey);
+      setSubmittedBaseViewKey(baseViewKey);
+      if (!visibleEntries.length) cancelAutomaticNavigation();
+      return;
+    }
+
+    setSubmittedQueryKey(queryKey);
+    setSubmittedBaseViewKey(baseViewKey);
+    const filterGeneration = JSON.stringify({
+      stdFiltersEnabled,
+      filter,
+      onlyMarked,
+      dcFilterEnabled,
+      dcFilterEntries,
+      timeFilterEnabled,
+      timeFilterFrom,
+      timeFilterTo,
+      markedSignatures: onlyMarked ? Object.keys(marksMap).sort() : [],
+      navigationSearch: search,
+      navigationSearchMode: searchMode,
+    });
     filterEntries(
-      debouncedEntries,
+      visibleEntries,
       {
         stdFiltersEnabled,
         filter: {
-          level: debouncedFilter.level || "",
-          logger: debouncedFilter.logger || "",
-          thread: debouncedFilter.thread || "",
-          message: debouncedFilter.message || "",
+          level: filter.level || "",
+          logger: filter.logger || "",
+          thread: filter.thread || "",
+          message: filter.message || "",
         },
         onlyMarked,
         dcFilterEnabled,
@@ -765,50 +1057,60 @@ export default function App(): JSX.Element {
         timeFilterEnabled,
         timeFilterFrom,
         timeFilterTo,
-        navigationSearch: debouncedSearch,
+        navigationSearch: search,
         navigationSearchMode: searchMode,
       },
       // marksMap nur für `onlyMarked` relevant – sonst wird es im Worker
       // ohnehin ignoriert. Übergabe ist zustandslos und billig.
       onlyMarked ? marksMap : undefined,
+      usesPagedStorage
+        ? {
+            paged: true,
+            generation: filterGeneration,
+            baseGeneration: baseViewKey,
+            dataGeneration: entryGeneration,
+            entryCount: visibleEntries.length,
+            databaseName: repository.databaseName,
+          }
+        : undefined,
     );
   }, [
-    debouncedEntries,
+    visibleEntries,
     stdFiltersEnabled,
-    debouncedFilter,
+    filter,
     dcVersion,
     timeVersion,
     onlyMarked,
-    debouncedSearch,
+    search,
     searchMode,
     filterEntries,
     // marksMap wirkt sich nur auf das Ergebnis aus, wenn `onlyMarked` aktiv
     // ist. Anderfalls wäre eine Aufnahme in die Deps eine unnötige
     // Re-Filter-Quelle bei jedem Mark/Unmark-Klick.
     onlyMarked ? marksMap : null,
+    usesPagedStorage,
+    entryGeneration,
+    filterIsActive,
+    repository,
+    queryKey,
+    baseViewKey,
+    cancelFiltering,
+    cancelAutomaticNavigation,
   ]);
 
-  // Use worker results for filtered indices
-  const filteredIdx = workerFilteredIdx;
+  const unfilteredIds = entries.ids;
+  const filteredIdx = filterIsActive
+    ? filterResultsCurrent
+      ? workerFilteredIdx
+      : EMPTY_FILTER_IDS
+    : unfilteredIds;
 
-  // `filteredIdx` ist aufsteigend sortiert (alle Filterpfade laufen in
-  // Entry-Reihenfolge). Eine binäre Suche vermeidet die große Reverse-Map mit
-  // bis zu 500k Einträgen und deren O(n)-Neuaufbau bei jedem Filterergebnis.
+  const visualPositionById = useIdPositions(filteredIdx);
   const viOfGlobal = useCallback(
     (g: number | null | undefined): number => {
-      if (g == null) return -1;
-      let lo = 0;
-      let hi = filteredIdx.length - 1;
-      while (lo <= hi) {
-        const mid = (lo + hi) >>> 1;
-        const value = filteredIdx[mid]!;
-        if (value === g) return mid;
-        if (value < g) lo = mid + 1;
-        else hi = mid - 1;
-      }
-      return -1;
+      return g == null ? -1 : visualPositionById.get(g);
     },
-    [filteredIdx],
+    [visualPositionById],
   );
 
   // Update filter stats from worker
@@ -830,40 +1132,72 @@ export default function App(): JSX.Element {
             total: workerFilterStats.total,
             onlyMarked,
             stdFiltersEnabled,
-            debouncedFilter,
+            filter,
             dcFilterEnabled: DiagnosticContextFilter.isEnabled(),
           });
         }
       }
     }
-  }, [workerFilterStats, onlyMarked, stdFiltersEnabled, debouncedFilter]);
+  }, [workerFilterStats, onlyMarked, stdFiltersEnabled, filter]);
 
   // Refs to track current values for menu handlers (avoid stale closures)
-  const filteredIdxRef = useRef<number[]>(filteredIdx);
-  const entriesRef = useRef<any[]>(entries);
+  const filteredIdxRef = useRef<ReadonlySequence<number>>(filteredIdx);
+  const entriesRef = useRef(entries);
+  filteredIdxRef.current = filteredIdx;
+  entriesRef.current = entries;
+  marksMapRef.current = marksMap;
   // marksMapRef ist nötig, weil der Application-Menu-Handler (typedOnMenu)
   // einmalig in einem useEffect mit []-Deps registriert wird. Ohne diesen Ref
   // würde `exportCurrentView` über den Menu-Pfad auf eine stale `marksMap`-
   // Closure zugreifen → exportierte Einträge hätten `markColor: null`,
   // obwohl sie sichtbar markiert sind.
-  const marksMapRef = useRef<Record<string, string>>(marksMap);
   useEffect(() => {
-    filteredIdxRef.current = filteredIdx;
     // Update debug reference
     setDebugFilteredIdxRef(filteredIdxRef);
   }, [filteredIdx]);
   useEffect(() => {
-    entriesRef.current = entries;
     // Update debug reference
     setDebugEntriesRef(entriesRef);
   }, [entries]);
   useEffect(() => {
-    marksMapRef.current = marksMap;
-  }, [marksMap]);
+    if (!settingsLoaded) return;
+    try {
+      patchSettingsQuiet({ marksMap });
+    } catch {
+      // Session marks remain available in component state.
+    }
+  }, [marksMap, settingsLoaded]);
 
   const countTotal = entries.length;
   const countFiltered = filteredIdx.length;
   const countSelected = selected.size;
+
+  const clearAllFilters = useCallback(() => {
+    cancelFiltering();
+    cancelAutomaticNavigation();
+    setSearch("");
+    setFilter({
+      level: "",
+      logger: "",
+      thread: "",
+      service: "",
+      message: "",
+    });
+    setOnlyMarked(false);
+    try {
+      patchSettingsQuiet({ onlyMarked: false });
+    } catch (error) {
+      logger.error("Persisting cleared filter settings failed:", error);
+    }
+    TimeFilter.reset();
+    DiagnosticContextFilter.reset();
+  }, [
+    setFilter,
+    setOnlyMarked,
+    setSearch,
+    cancelFiltering,
+    cancelAutomaticNavigation,
+  ]);
 
   const handleDisableFollow = useCallback(() => {
     setFollow(false);
@@ -873,18 +1207,18 @@ export default function App(): JSX.Element {
       logger.warn("Persisting follow flag failed:", err);
     }
   }, []);
+  const handleManualNavigation = useCallback(() => {
+    cancelAutomaticNavigation();
+    if (queryActive && follow) handleDisableFollow();
+  }, [cancelAutomaticNavigation, queryActive, follow, handleDisableFollow]);
 
   // Bei Filteränderung: ausgewählten Eintrag sichtbar halten, wenn er noch in der Liste ist
-  const prevFilteredIdxRef = useRef<number[]>(filteredIdx);
+  const prevFilteredIdxRef = useRef<ReadonlySequence<number>>(filteredIdx);
   const selectedRef = useRef<Set<number>>(selected);
   // Track previous filter criteria to distinguish filter changes from new entries
   const prevFilterCriteriaRef = useRef({
-    stdFiltersEnabled,
-    debouncedFilter,
-    dcVersion,
-    timeVersion,
-    onlyMarked,
-    searchMode,
+    baseViewKey,
+    entryGeneration,
   });
 
   // Halte selectedRef aktuell
@@ -893,55 +1227,52 @@ export default function App(): JSX.Element {
   }, [selected]);
 
   useEffect(() => {
-    // Prüfe ob sich die gefilterte Liste geändert hat
-    if (prevFilteredIdxRef.current === filteredIdx) return;
+    const filteredListChanged = prevFilteredIdxRef.current !== filteredIdx;
 
     // Prüfe ob sich die Filter-Kriterien geändert haben (nicht nur neue Einträge)
     const prevCriteria = prevFilterCriteriaRef.current;
-    const filterCriteriaChanged =
-      prevCriteria.stdFiltersEnabled !== stdFiltersEnabled ||
-      prevCriteria.debouncedFilter !== debouncedFilter ||
-      prevCriteria.dcVersion !== dcVersion ||
-      prevCriteria.timeVersion !== timeVersion ||
-      prevCriteria.onlyMarked !== onlyMarked ||
-      prevCriteria.searchMode !== searchMode;
+    const filterCriteriaChanged = prevCriteria.baseViewKey !== baseViewKey;
 
-    // Update refs
+    if (prevCriteria.entryGeneration !== entryGeneration) {
+      cancelAutomaticNavigation();
+    } else if (filterCriteriaChanged) {
+      pendingSelectedAfterFilterRef.current = search.trim()
+        ? null
+        : (lastClicked.current ??
+          Array.from(selectedRef.current).pop() ??
+          null);
+    }
+
     prevFilteredIdxRef.current = filteredIdx;
     prevFilterCriteriaRef.current = {
-      stdFiltersEnabled,
-      debouncedFilter,
-      dcVersion,
-      timeVersion,
-      onlyMarked,
-      searchMode,
+      baseViewKey,
+      entryGeneration,
     };
 
-    // Nur bei Filter-Änderungen zum ausgewählten Eintrag scrollen, nicht bei neuen Einträgen
-    if (!filterCriteriaChanged) return;
+    if (!filteredListChanged || !filterResultsCurrent) return;
 
-    // Wenn kein Eintrag ausgewählt ist, nichts tun
-    if (selectedRef.current.size === 0) return;
-
-    // Finde den zuletzt ausgewählten Eintrag (lastClicked oder letzten aus selected)
-    const currentSelected =
-      lastClicked.current ?? Array.from(selectedRef.current).pop();
+    // Teilergebnisse enthalten den ausgewählten Eintrag möglicherweise noch
+    // nicht. Das Ziel bleibt daher bis zu einem späteren Worker-Ergebnis aktiv.
+    const currentSelected = pendingSelectedAfterFilterRef.current;
     if (currentSelected == null) return;
 
     // Prüfe ob der ausgewählte Eintrag noch in der gefilterten Liste ist
     const viIndex = viOfGlobal(currentSelected);
     if (viIndex >= 0) {
-      const targetIndex = Math.max(0, viIndex - 3);
-      virtualListRef.current?.scrollAfterFilterChange(targetIndex);
+      pendingSelectedAfterFilterRef.current = null;
+      virtualListRef.current?.scrollAfterFilterChange(viIndex);
+    } else if (!searchRunning) {
+      pendingSelectedAfterFilterRef.current = null;
     }
   }, [
     filteredIdx,
-    stdFiltersEnabled,
-    debouncedFilter,
-    dcVersion,
-    timeVersion,
-    onlyMarked,
-    searchMode,
+    baseViewKey,
+    search,
+    entryGeneration,
+    filterResultsCurrent,
+    searchRunning,
+    viOfGlobal,
+    cancelAutomaticNavigation,
   ]);
 
   // Diagnostic logging removed - was causing render loops and performance issues on Windows
@@ -950,6 +1281,8 @@ export default function App(): JSX.Element {
   // Stabile Callbacks für LogRow, um unnötige Re-Renders zu vermeiden
   const handleRowSelect = useCallback(
     (idx: number, shift: boolean, meta: boolean) => {
+      setDetailsHidden(false);
+      handleManualNavigation();
       try {
         toggleSelectIndex(idx, shift, meta);
         try {
@@ -959,18 +1292,19 @@ export default function App(): JSX.Element {
         logger.error("onClick handler error:", err);
       }
     },
-    [toggleSelectIndex],
+    [toggleSelectIndex, handleManualNavigation],
   );
 
   const handleRowContextMenu = useCallback(
     (ev: MouseEvent, idx: number) => {
+      handleManualNavigation();
       try {
         openContextMenu(ev, idx);
       } catch (err) {
         logger.error("onContextMenu handler error:", err);
       }
     },
-    [openContextMenu],
+    [openContextMenu, handleManualNavigation],
   );
 
   // Stabilisierter Highlight-Callback
@@ -980,9 +1314,10 @@ export default function App(): JSX.Element {
   );
 
   function gotoListStart(): void {
+    handleManualNavigation();
     if (!filteredIdx.length) return;
     const targetVi = 0;
-    const globalIdx = filteredIdx[targetVi]!;
+    const globalIdx = filteredIdx.at(targetVi)!;
     setSelected(new Set([globalIdx]));
     lastClicked.current = globalIdx;
     // In den sichtbaren Bereich scrollen
@@ -992,9 +1327,10 @@ export default function App(): JSX.Element {
     } catch {}
   }
   function gotoListEnd(): void {
+    handleManualNavigation();
     if (!filteredIdx.length) return;
     const targetVi = filteredIdx.length - 1;
-    const globalIdx = filteredIdx[targetVi]!;
+    const globalIdx = filteredIdx.at(targetVi)!;
     setSelected(new Set([globalIdx]));
     lastClicked.current = globalIdx;
     // In den sichtbaren Bereich scrollen
@@ -1022,7 +1358,7 @@ export default function App(): JSX.Element {
               const [lo, hi] = a < b ? [a, b] : [b, a];
               next = new Set<number>();
               for (let vi = lo; vi <= hi; vi++) {
-                next.add(filteredIdx[vi]!);
+                next.add(filteredIdx.at(vi)!);
               }
             } else next = new Set([idx]);
           } else if (meta) {
@@ -1051,10 +1387,34 @@ export default function App(): JSX.Element {
       );
     return null;
   }, [selected]);
-  const selectedEntry = useMemo(
-    () => (selectedOneIdx != null ? entries[selectedOneIdx] || null : null),
-    [selectedOneIdx, entries],
+  const [selectedEntry, setSelectedEntry] = useState<CanonicalLogEntry | null>(
+    null,
   );
+  useEffect(() => {
+    let cancelled = false;
+    if (selectedOneIdx == null) {
+      setSelectedEntry(null);
+      return;
+    }
+    setDetailsHidden(false);
+    // Keep the previous entry visible while the new payload loads; resetting
+    // to null here makes the inspector flash "no selection" on fast clicks.
+    void repository
+      .getPayload(selectedOneIdx)
+      .then((entry) => {
+        if (!cancelled) setSelectedEntry(entry ?? null);
+      })
+      .catch((error) => {
+        if (!cancelled) {
+          setSelectedEntry(null);
+          logger.error("Loading selected log entry failed:", error);
+          showAlert(error instanceof Error ? error.message : String(error));
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [repository, selectedOneIdx, showAlert]);
 
   const mdcPairs = useMemo(() => {
     const e = selectedEntry;
@@ -1084,23 +1444,42 @@ export default function App(): JSX.Element {
     return pairs;
   }, [selectedEntry]);
 
-  const hasMarks = Object.keys(marksMap).length > 0;
-  const markedPositionIndex = useMemo(
-    () =>
-      hasMarks ? buildMarkedPositionIndex(debouncedEntries, filteredIdx) : null,
-    [filteredIdx, debouncedEntries, hasMarks],
-  );
   const markedIdx = useMemo(
-    () => resolveMarkedPositions(markedPositionIndex, marksMap),
-    [markedPositionIndex, marksMap],
+    () =>
+      resolveMarkedPositionsById(
+        marksMap,
+        getIdsBySignature,
+        visualPositionById,
+      ),
+    [getIdsBySignature, marksMap, visualPositionById],
   );
 
-  // Der Filter-Worker ermittelt dieselben, auf 50k begrenzten visuellen
-  // Trefferindizes im selben Durchlauf wie `filteredIdx`. Dadurch entfällt der
-  // zusätzliche O(n)-Scan mit `msgMatches` im Renderer-Hauptthread.
-  const searchMatchIdx = workerSearchMatchIdx;
+  const searchMatchIdx = useMemo(
+    () =>
+      resultsCurrent && search.trim()
+        ? searchMatchPositions(workerSearchMatchIds, viOfGlobal)
+        : EMPTY_FILTER_IDS,
+    [resultsCurrent, search, workerSearchMatchIds, viOfGlobal],
+  );
+  useEffect(() => {
+    if (
+      !resultsCurrent ||
+      pendingFirstSearchRef.current !== search ||
+      !searchMatchIdx.length
+    )
+      return;
+    pendingFirstSearchRef.current = null;
+    pendingSelectedAfterFilterRef.current = null;
+    const vi = searchMatchIdx[0]!;
+    const id = filteredIdx.at(vi);
+    if (id === undefined) return;
+    setSelected(new Set([id]));
+    lastClicked.current = id;
+    scrollToIndexCenter(vi);
+  }, [resultsCurrent, search, searchMatchIdx, filteredIdx]);
 
   function gotoMarked(dir: number) {
+    handleManualNavigation();
     if (!markedIdx.length) return;
     const curVi = selectedOneIdx != null ? viOfGlobal(selectedOneIdx) : -1;
     const first = markedIdx[0]!;
@@ -1122,7 +1501,7 @@ export default function App(): JSX.Element {
         targetVi = prev >= 0 ? prev : first; // kein vorheriger → am ersten stehen bleiben
       }
     }
-    const globalIdx: number = filteredIdx[targetVi]!;
+    const globalIdx: number = filteredIdx.at(targetVi)!;
     setSelected(new Set([globalIdx]));
     lastClicked.current = globalIdx;
     scrollToIndexCenter(targetVi);
@@ -1133,57 +1512,66 @@ export default function App(): JSX.Element {
    * vi = virtual index (position in filteredIdx).
    */
   function gotoBookmark(vi: number) {
-    const globalIdx = filteredIdx[vi];
+    const globalIdx = filteredIdx.at(vi);
     if (globalIdx == null) return;
     setSelected(new Set([globalIdx]));
     lastClicked.current = globalIdx;
     scrollToIndexCenter(vi);
   }
 
-  // Bookmark items derived from markedIdx for the popover.
-  const bookmarkItems = useMemo(() => {
-    const MAX_PREVIEW = 200; // performance cap for popover
-    const slice = markedIdx.slice(0, MAX_PREVIEW);
-    return slice.map((vi) => {
-      const e = entries[filteredIdx[vi]!];
-      const msg = String(e?.message || "");
-      // #2: Farbe aus marksMap statt aus e._mark.
-      const color =
-        (e ? marksMap[entrySignature(e)] : undefined) ||
-        (e?._mark as string | undefined) ||
-        "#3b82f6";
-      return {
-        vi,
-        color,
-        timestamp: fmtTimestamp(e?.timestamp),
-        message: msg.length > 200 ? msg.slice(0, 200) + "…" : msg,
-      };
-    });
-  }, [markedIdx, filteredIdx, entries, marksMap]);
+  const [bookmarkItems, setBookmarkItems] = useState<
+    Array<{ vi: number; color: string; timestamp: string; message: string }>
+  >([]);
+  useEffect(() => {
+    let cancelled = false;
+    const positions = markedIdx.slice(0, 200);
+    const ids = positions
+      .map((visualIndex) => filteredIdx.at(visualIndex))
+      .filter((id): id is number => id !== undefined);
+    if (ids.length === 0) {
+      setBookmarkItems([]);
+      return;
+    }
+    void repository
+      .getPayloads(ids)
+      .then((payloads) => {
+        if (cancelled) return;
+        setBookmarkItems(
+          positions.flatMap((vi) => {
+            const id = filteredIdx.at(vi);
+            const entry = id === undefined ? undefined : payloads.get(id);
+            if (!entry) return [];
+            const message = String(entry.message || "");
+            return [
+              {
+                vi,
+                color:
+                  marksMap[entrySignature(entry)] ||
+                  (typeof entry._mark === "string" ? entry._mark : undefined) ||
+                  "#3b82f6",
+                timestamp: fmtTimestamp(entry.timestamp as any),
+                message:
+                  message.length > 200 ? message.slice(0, 200) + "…" : message,
+              },
+            ];
+          }),
+        );
+      })
+      .catch((error) => {
+        if (!cancelled)
+          logger.error("Loading bookmark previews failed:", error);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [markedIdx, filteredIdx, marksMap, repository]);
 
   function gotoSearchMatch(dir: number) {
+    handleManualNavigation();
     if (!searchMatchIdx.length) return;
     const curVi = selectedOneIdx != null ? viOfGlobal(selectedOneIdx) : -1;
-    const first = searchMatchIdx[0]!;
-    const last = searchMatchIdx[searchMatchIdx.length - 1]!;
-    let targetVi: number | undefined;
-    if (dir > 0) {
-      if (curVi < 0)
-        targetVi = first; // keine Auswahl → zum ersten Treffer
-      else {
-        const next = searchMatchIdx.find((vi) => vi > curVi);
-        targetVi = next != null ? next : last; // kein nächster → am letzten stehen bleiben
-      }
-    } else {
-      if (curVi < 0)
-        targetVi = last; // keine Auswahl → zum letzten Treffer
-      else {
-        let prev = -1;
-        for (const vi of searchMatchIdx) if (vi < curVi) prev = vi;
-        targetVi = prev >= 0 ? prev : first; // kein vorheriger → am ersten stehen bleiben
-      }
-    }
-    const globalIdx: number = filteredIdx[targetVi]!;
+    const targetVi = adjacentSearchMatch(searchMatchIdx, curVi, dir)!;
+    const globalIdx: number = filteredIdx.at(targetVi)!;
     setSelected(new Set([globalIdx]));
     lastClicked.current = globalIdx;
     scrollToIndexCenter(targetVi);
@@ -1205,7 +1593,7 @@ export default function App(): JSX.Element {
     if (targetVi < 0) targetVi = 0;
     if (targetVi > filteredIdx.length - 1) targetVi = filteredIdx.length - 1;
 
-    const targetGlobal = filteredIdx[targetVi]!;
+    const targetGlobal = filteredIdx.at(targetVi)!;
     if (!extend) {
       setSelected(new Set([targetGlobal]));
       lastClicked.current = targetGlobal;
@@ -1283,23 +1671,40 @@ export default function App(): JSX.Element {
       logger.warn("Error in onListKeyDown:", err);
     }
   };
+  const onListKeyDownRef = useRef(onListKeyDown);
+  onListKeyDownRef.current = onListKeyDown;
+  const stableOnListKeyDown = useCallback(
+    (event: KeyboardEvent) => onListKeyDownRef.current(event),
+    [],
+  );
 
   // Follow mode auto-select
+  const lastFollowedEntryCountRef = useRef(entries.length);
   useEffect(() => {
-    if (!follow) return;
+    if (!follow) {
+      lastFollowedEntryCountRef.current = entries.length;
+      return;
+    }
+    if (searchRunning) return;
+    const entriesAppended = entries.length > lastFollowedEntryCountRef.current;
+    lastFollowedEntryCountRef.current = entries.length;
+    // Refining a query is not a tail append. Keep both manual selection and
+    // its viewport on completion, but resume following subsequent live input.
+    if (queryActive && !entriesAppended) return;
     if (!filteredIdx.length) return;
-    const lastGlobalIdx = filteredIdx[filteredIdx.length - 1] as number;
+    const lastGlobalIdx = filteredIdx.at(-1)!;
     setSelected(new Set([lastGlobalIdx]));
     // Sicherstellen, dass der letzte Eintrag korrekt sichtbar ist (oberhalb des Detail-Overlays)
-    setTimeout(() => {
+    const timer = setTimeout(() => {
       scrollToIndexCenter(filteredIdx.length - 1);
     }, 0);
+    return () => clearTimeout(timer);
     // Abhängigkeit nur auf das tatsächliche Filterergebnis `filteredIdx`:
     // dieses spiegelt bereits neue Einträge UND jede Filteränderung wider.
     // Vorher hing der Effekt am rohen `filter`-Objekt und lief so bei JEDEM
     // Tastendruck im Filterfeld (setSelected + Scroll) – auch während das
     // eigentliche Filtern noch debounced war.
-  }, [filteredIdx, follow]);
+  }, [filteredIdx, follow, queryActive, searchRunning, entries.length]);
 
   function addMdcToFilter(k: string, v: string) {
     try {
@@ -1341,325 +1746,6 @@ export default function App(): JSX.Element {
     handleFeatureErrorRef.current = handleFeatureError;
   }, [handleFeatureError]);
 
-  // Settings laden - OPTIMIZED: Settings are pre-cached in preload script,
-  // so settingsGet() returns immediately from cache without IPC round-trip
-  useEffect(() => {
-    const loadSettings = async () => {
-      rendererPerf.mark("settings-load-start");
-      try {
-        const r = await getSettings();
-        if (!r) {
-          logger.warn("Failed to load settings: no settings returned");
-          setSettingsLoaded(true);
-          return;
-        }
-        if (r.tcpPort != null) setTcpPort(Number(r.tcpPort) || 5000);
-        if (typeof r.httpUrl === "string") setHttpUrl(r.httpUrl);
-        // Support both httpPollInterval (persisted) and httpInterval (legacy)
-        const interval = r.httpPollInterval;
-        if (interval != null) setHttpInterval(Number(interval) || 5);
-        // HTTP-Tail-Optionen für die Dialog-Vorbelegung übernehmen
-        if (typeof r.httpTailEmitInitial === "boolean")
-          setHttpTailEmitInitial(r.httpTailEmitInitial);
-        if (typeof r.httpTailAllowInsecureSSL === "boolean")
-          setHttpTailAllowInsecureSSL(r.httpTailAllowInsecureSSL);
-        // Entfernt: Laden einer persistierten Logger-Historie, damit Verlauf nur temporär ist
-        // if (Array.isArray(r.histLogger)) setHistLogger(r.histLogger);
-        if (Array.isArray(r.histAppName)) setHistAppName(r.histAppName);
-        if (Array.isArray(r.histEnvironment))
-          setHistEnvironment(r.histEnvironment);
-        // NEW: load histIndex
-        if (Array.isArray(r.histIndex)) setHistIndex(r.histIndex);
-        // Merke zuletzt verwendeten Environment-Case für Fallback im Dialog
-        const lastEnvCase = r.lastEnvironmentCase || "original";
-        setTimeForm((prev) => ({
-          ...prev,
-          environmentCase: String(lastEnvCase || "original"),
-        }));
-        if (typeof r.themeMode === "string") {
-          const mode = ["light", "dark", "system"].includes(r.themeMode)
-            ? r.themeMode
-            : "system";
-          setThemeMode(mode);
-          applyThemeMode(mode);
-        }
-        if (typeof r.follow === "boolean") setFollow(r.follow);
-        // followSmooth ist immer true, wird nicht aus Settings geladen
-        const root = document.documentElement;
-        const detail = Number(r.detailHeight || 0);
-        if (detail)
-          root.style.setProperty("--detail-height", `${Math.round(detail)}px`);
-        const map: Array<[string, unknown]> = [
-          ["--col-ts", r.colTs],
-          ["--col-lvl", r.colLvl],
-          ["--col-logger", r.colLogger],
-        ];
-        for (const [k, v] of map)
-          if (v != null)
-            root.style.setProperty(k, `${Math.round(Number(v) || 0)}px`);
-        setLogToFile(!!r.logToFile);
-        setLogFilePath(String(r.logFilePath || ""));
-        setLogMaxBytes(Number(r.logMaxBytes || 5 * 1024 * 1024));
-        setLogMaxBackups(Number(r.logMaxBackups || 3));
-        setElasticUrl(String(r.elasticUrl || ""));
-        setElasticSize(Number(r.elasticSize || 1000));
-        setElasticUser(String(r.elasticUser || ""));
-        setElasticHasPass(!!String(r.elasticPassEnc || "").trim());
-        setElasticMaxParallel(Math.max(1, Number(r.elasticMaxParallel || 1)));
-        if (r.marksMap && typeof r.marksMap === "object")
-          setMarksMap(r.marksMap as Record<string, string>);
-        if (Array.isArray(r.customMarkColors))
-          setCustomColors(r.customMarkColors as string[]);
-        if (typeof r.onlyMarked === "boolean") setOnlyMarked(r.onlyMarked);
-        rendererPerf.mark("settings-loaded");
-      } catch (e) {
-        logger.error("Error loading settings:", e);
-      } finally {
-        setSettingsLoaded(true);
-        // Hide the splash screen now that app is ready
-        const splash = document.getElementById("splash-screen");
-        if (splash) {
-          splash.classList.add("hidden");
-          // Remove from DOM after transition completes
-          setTimeout(() => splash.remove(), 300);
-        }
-      }
-      // Per-Window Berechtigungen laden
-      try {
-        const perms = await windowPermsGet();
-        if (perms?.ok) setCanTcpControlWindow(perms.canTcpControl !== false);
-      } catch (e) {
-        logger.warn("windowPermsGet failed:", e);
-      }
-    };
-
-    // Call directly - no need for requestIdleCallback since settings are pre-cached
-    void loadSettings();
-  }, []);
-  // ...existing code...
-  async function openSettingsModal(
-    initialTab?: "tcp" | "http" | "elastic" | "logging" | "appearance",
-  ) {
-    // Load fresh settings from main process to ensure we have current values
-    let curMode = themeMode;
-    let curTcpPort = tcpPort;
-    let curHttpUrl = httpUrl;
-    let curHttpInterval = httpInterval;
-    let curLogToFile = logToFile;
-    let curLogFilePath = logFilePath;
-    let curLogMaxBytes = logMaxBytes;
-    let curLogMaxBackups = logMaxBackups;
-    let curElasticUrl = elasticUrl;
-    let curElasticSize = elasticSize;
-    let curElasticUser = elasticUser;
-    let curElasticMaxParallel = elasticMaxParallel;
-    let curAllowPrerelease = false;
-    let curHeapSizeMB = 4096;
-
-    try {
-      const r = await getSettings();
-      if (r) {
-        // Update local state AND form values from fresh settings
-        if (typeof r.themeMode === "string") {
-          const mode = ["light", "dark", "system"].includes(r.themeMode)
-            ? r.themeMode
-            : "system";
-          curMode = mode;
-          setThemeMode(mode);
-          applyThemeMode(mode);
-        }
-        if (typeof r.follow === "boolean") setFollow(r.follow);
-        // followSmooth ist immer true, wird nicht aus Settings geladen
-
-        // Load all form values from settings
-        if (r.tcpPort != null) {
-          curTcpPort = Number(r.tcpPort) || 5000;
-          setTcpPort(curTcpPort);
-        }
-        if (typeof r.httpUrl === "string") {
-          curHttpUrl = r.httpUrl;
-          setHttpUrl(curHttpUrl);
-        }
-        const interval = r.httpPollInterval;
-        if (interval != null) {
-          curHttpInterval = Number(interval) || 5;
-          setHttpInterval(curHttpInterval);
-        }
-        if (typeof r.logToFile === "boolean") {
-          curLogToFile = r.logToFile;
-          setLogToFile(curLogToFile);
-        }
-        if (typeof r.logFilePath === "string") {
-          curLogFilePath = r.logFilePath;
-          setLogFilePath(curLogFilePath);
-        }
-        if (r.logMaxBytes != null) {
-          curLogMaxBytes = Number(r.logMaxBytes) || 5 * 1024 * 1024;
-          setLogMaxBytes(curLogMaxBytes);
-        }
-        if (r.logMaxBackups != null) {
-          curLogMaxBackups = Number(r.logMaxBackups) || 3;
-          setLogMaxBackups(curLogMaxBackups);
-        }
-        if (typeof r.elasticUrl === "string") {
-          curElasticUrl = r.elasticUrl;
-          setElasticUrl(curElasticUrl);
-        }
-        if (r.elasticSize != null) {
-          curElasticSize = Number(r.elasticSize) || 1000;
-          setElasticSize(curElasticSize);
-        }
-        if (typeof r.elasticUser === "string") {
-          curElasticUser = r.elasticUser;
-          setElasticUser(curElasticUser);
-        }
-        if (r.elasticMaxParallel != null) {
-          curElasticMaxParallel = Math.max(
-            1,
-            Number(r.elasticMaxParallel) || 1,
-          );
-          setElasticMaxParallel(curElasticMaxParallel);
-        }
-        if (typeof r.elasticPassEnc === "string") {
-          setElasticHasPass(!!r.elasticPassEnc.trim());
-        }
-        if (typeof r.allowPrerelease === "boolean") {
-          curAllowPrerelease = r.allowPrerelease;
-        }
-        if (typeof r.heapSizeMB === "number") {
-          curHeapSizeMB = r.heapSizeMB;
-        }
-      }
-    } catch (e) {
-      logger.warn("Failed to load settings for modal:", e);
-    }
-    setForm({
-      tcpPort: curTcpPort,
-      httpUrl: curHttpUrl,
-      httpInterval: curHttpInterval,
-      logToFile: curLogToFile,
-      logFilePath: curLogFilePath,
-      logMaxMB: Math.max(
-        1,
-        Math.round((curLogMaxBytes || 5 * 1024 * 1024) / (1024 * 1024)),
-      ),
-      logMaxBackups: curLogMaxBackups,
-      themeMode: curMode,
-      elasticUrl: curElasticUrl,
-      elasticSize: curElasticSize,
-      elasticUser: curElasticUser,
-      elasticPassNew: "",
-      elasticPassClear: false,
-      elasticMaxParallel: curElasticMaxParallel || 1,
-      allowPrerelease: curAllowPrerelease,
-      heapSizeMB: curHeapSizeMB,
-    });
-    setOriginalHeapSizeMB(curHeapSizeMB);
-    setSettingsTab(initialTab || "tcp");
-    setShowSettings(true);
-  }
-  async function saveSettingsModal() {
-    const port = Number(form.tcpPort || 0);
-    if (!(port >= 1 && port <= 65535)) {
-      showAlert(t("errors.invalidTcpPort"));
-      return;
-    }
-    const interval = Math.max(1, Number(form.httpInterval || 5));
-    const toFile = form.logToFile;
-    const path = String(form.logFilePath || "").trim();
-    const maxMB = Math.max(1, Number(form.logMaxMB || 5));
-    const maxBytes = Math.round(maxMB * 1024 * 1024);
-    const backups = Math.max(0, Number(form.logMaxBackups || 0));
-    const mode: ThemeMode = ["light", "dark", "system"].includes(form.themeMode)
-      ? (form.themeMode as ThemeMode)
-      : "system";
-    const patch: Partial<Settings> = {
-      tcpPort: port,
-      httpUrl: String(form.httpUrl || "").trim(),
-      httpPollInterval: interval,
-      logToFile: toFile,
-      logFilePath: path,
-      logMaxBytes: maxBytes,
-      logMaxBackups: backups,
-      themeMode: mode,
-      elasticUrl: String(form.elasticUrl || "").trim(),
-      elasticSize: Math.max(1, Number(form.elasticSize || 1000)),
-      elasticUser: String(form.elasticUser || "").trim(),
-      elasticMaxParallel: Math.max(
-        1,
-        Number(form.elasticMaxParallel || elasticMaxParallel || 1),
-      ),
-      allowPrerelease: form.allowPrerelease,
-      heapSizeMB: Math.max(
-        512,
-        Math.min(8192, Number(form.heapSizeMB || 4096)),
-      ),
-    };
-    const newPass = String(form.elasticPassNew || "").trim();
-    if (form.elasticPassClear) patch["elasticPassClear"] = true;
-    else if (newPass) patch["elasticPassPlain"] = newPass;
-    try {
-      const res = await patchSettings(patch);
-      if (!res || !res.ok) {
-        showAlert(
-          t("errors.saveFailed", {
-            message: res?.error || t("status.errorUnknown"),
-          }),
-        );
-        return;
-      }
-      setTcpPort(port);
-      setHttpUrl(String(form.httpUrl || "").trim());
-      setHttpInterval(interval);
-      setLogToFile(toFile);
-      setLogFilePath(path);
-      setLogMaxBytes(maxBytes);
-      setLogMaxBackups(backups);
-      setThemeMode(mode);
-      applyThemeMode(mode);
-      setElasticUrl(String(form.elasticUrl || "").trim());
-      setElasticSize(Math.max(1, Number(form.elasticSize || 1000)));
-      setElasticUser(String(form.elasticUser || "").trim());
-      if (form.elasticPassClear) setElasticHasPass(false);
-      else if (newPass) setElasticHasPass(true);
-
-      // Update auto-updater with new allowPrerelease setting
-      try {
-        await typedAutoUpdaterSetAllowPrerelease(form.allowPrerelease);
-      } catch (e) {
-        logger.warn("Failed to update auto-updater allowPrerelease:", e);
-      }
-
-      setShowSettings(false);
-
-      // Check if heap size changed and ask for restart
-      const newHeapSize = Math.max(
-        512,
-        Math.min(8192, Number(form.heapSizeMB || 4096)),
-      );
-      if (newHeapSize !== originalHeapSizeMB) {
-        // Use setTimeout to allow the modal to close first
-        setTimeout(() => {
-          void (async () => {
-            const shouldRestart = await nativeConfirm(
-              t("settings.performance.restartRequired"),
-            );
-            if (shouldRestart) {
-              void typedAppRelaunch();
-            }
-          })();
-        }, 100);
-      }
-    } catch (e) {
-      logger.error("Failed to save settings:", e);
-      showAlert(
-        t("errors.saveFailed", {
-          message: e instanceof Error ? e.message : String(e),
-        }),
-      );
-    }
-  }
-
   // Refs to access current values without triggering useEffect re-runs
   const httpPollIdRef = useRef<number | null>(httpPollId);
   const tcpPortRef = useRef<number>(tcpPort);
@@ -1669,6 +1755,14 @@ export default function App(): JSX.Element {
   useEffect(() => {
     tcpPortRef.current = tcpPort;
   }, [tcpPort]);
+  useEffect(
+    () => () => {
+      if (activeStreamSessionRef.current) {
+        activeStreamCleanupRef.current?.();
+      }
+    },
+    [],
+  );
 
   // IPC listeners setup (deferred to not block rendering)
   // IMPORTANT: This effect should only run ONCE on mount to avoid duplicate listeners
@@ -1689,8 +1783,22 @@ export default function App(): JSX.Element {
               `[renderer-diag] Received IPC logs:append with ${newEntries?.length || 0} entries`,
             );
           }
-          appendEntries(newEntries as any[]);
-          announceAppend(newEntries as any[]);
+          const persistence = appendEntriesAsync(newEntries as any[], {
+            live: newEntries[0]?._ingestionKind !== "import",
+          })
+            .then(() => {
+              hydrateMarksFromEntries(newEntries);
+              announceAppend(newEntries as any[]);
+            })
+            .catch((error) => {
+              if (error instanceof LiveIngestionLimitError)
+                logger.warn(
+                  "Live intake paused at the configured limit:",
+                  error,
+                );
+              else logger.error("Persisting appended IPC logs failed:", error);
+              throw error;
+            });
           // Sprint 5: feed alert evaluator with new entries.
           try {
             if (Array.isArray(newEntries) && newEntries.length > 0) {
@@ -1699,6 +1807,7 @@ export default function App(): JSX.Element {
           } catch (e) {
             logger.warn("[alerts] evaluation failed:", e);
           }
+          return persistence;
         });
         offs.push(off);
       }
@@ -1712,18 +1821,16 @@ export default function App(): JSX.Element {
             const { type, tab } = (cmd as any) || ({} as any);
             switch (type) {
               case "open-files": {
-                const paths = await typedOpenFiles();
-                if (paths && paths.length) {
-                  const res = await typedParsePaths(paths);
-                  if (res?.ok) {
-                    appendEntries(res.entries as any);
-                    hydrateMarksFromEntries(res.entries as any[]);
+                await withBusy(async () => {
+                  const paths = await typedOpenFiles();
+                  if (paths && paths.length) {
+                    await importPaths(paths);
                   }
-                }
+                });
                 break;
               }
               case "open-settings": {
-                await openSettingsModal(tab || "tcp");
+                await openSettingsModal(tab);
                 break;
               }
               case "tcp-start": {
@@ -1916,16 +2023,18 @@ export default function App(): JSX.Element {
     const mgr = new DragAndDropManager({
       onFiles: async (paths) => {
         await withBusy(async () => {
-          const res = await typedParsePaths(paths);
-          if (res?.ok) {
-            appendEntries(res.entries as any);
-            hydrateMarksFromEntries(res.entries as any[]);
-          } else
+          try {
+            await importPaths(paths);
+          } catch (error) {
             showAlertRef.current(
               tRef.current("errors.dropLoadError", {
-                message: res?.error || tRef.current("status.errorUnknown"),
+                message:
+                  error instanceof Error
+                    ? error.message
+                    : tRef.current("status.errorUnknown"),
               }),
             );
+          }
         });
       },
       onActiveChange: (active) => setDragActive(active),
@@ -1934,8 +2043,7 @@ export default function App(): JSX.Element {
           try {
             const res = await typedParseRawDrops(files);
             if (res?.ok) {
-              appendEntries(res.entries as any);
-              hydrateMarksFromEntries(res.entries as any[]);
+              await persistImportedEntries(res.entries as any[]);
             } else
               showAlertRef.current(
                 tRef.current("errors.dropLoadError", {
@@ -1991,46 +2099,111 @@ export default function App(): JSX.Element {
     return { firstTs: minRaw, lastTs: maxRaw };
   }, [entries, showTimeDialog]);
 
-  const filteredDialogEntries = useMemo(() => {
-    if (!showStatsDialog && !showTraceTimeline) return [] as any[];
-    const projected: any[] = [];
-    for (let i = 0; i < filteredIdx.length; i++) {
-      const entry = entries[filteredIdx[i]!];
-      if (entry) projected.push(entry);
+  const filteredStatsEntries = useMemo(() => {
+    if (!showStatsDialog) return [];
+    const visibleIds = new Set(filteredIdx);
+    return entries.flatMap((entry) => {
+      if (!visibleIds.has(entry._id)) return [];
+      const timestamp =
+        entry.timestamp instanceof Date
+          ? entry.timestamp.getTime()
+          : entry.timestamp;
+      return [{ level: entry.level, logger: entry.logger, timestamp }];
+    });
+  }, [entries, filteredIdx, showStatsDialog]);
+
+  const [traceTimelineEntries, setTraceTimelineEntries] = useState<any[]>([]);
+  useEffect(() => {
+    let cancelled = false;
+    if (!showTraceTimeline || !traceTimelineId) {
+      setTraceTimelineEntries([]);
+      return;
     }
-    return projected;
-  }, [entries, filteredIdx, showStatsDialog, showTraceTimeline]);
+
+    const visibleIds = new Set(filteredIdx);
+    const traceKeys = [
+      "TraceID",
+      "traceId",
+      "trace_id",
+      "trace.id",
+      "trace-id",
+      "x-trace-id",
+      "x_trace_id",
+      "x.trace.id",
+      "trace",
+    ];
+    void (async () => {
+      const matchingIds: number[] = [];
+      await repository.scanProjections((page) => {
+        if (cancelled) return false;
+        for (const projection of page) {
+          if (!visibleIds.has(projection.id)) continue;
+          const directMatch = projection.traceId === traceTimelineId;
+          const mdcMatch = traceKeys.some(
+            (key) => String(projection.mdc?.[key] ?? "") === traceTimelineId,
+          );
+          if (directMatch || mdcMatch) matchingIds.push(projection.id);
+        }
+        return true;
+      });
+      if (cancelled) return;
+
+      const payloads: any[] = [];
+      for (let start = 0; start < matchingIds.length; start += 256) {
+        const page = await repository.getPayloads(
+          matchingIds.slice(start, start + 256),
+        );
+        if (cancelled) return;
+        payloads.push(...page.values());
+      }
+      payloads.sort(compareByTimestampId as any);
+      if (!cancelled) setTraceTimelineEntries(payloads);
+    })().catch((error) => {
+      if (!cancelled) {
+        logger.error("Loading trace timeline failed:", error);
+        showAlert(error instanceof Error ? error.message : String(error));
+      }
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [filteredIdx, repository, showAlert, showTraceTimeline, traceTimelineId]);
 
   function clearLogs() {
+    if (clearingRef.current || isClearing) return;
     // Sicherheitsabfrage über In-App-Dialog (keine native Dialog-Fokus-Bugs).
     if (entries && entries.length > 0) {
       void (async () => {
         const confirmed = await nativeConfirm(t("list.clearConfirmation"));
         if (!confirmed) return;
-        doClearLogs();
+        await doClearLogs();
       })();
       return;
     }
-    doClearLogs();
+    void doClearLogs();
   }
 
-  function doClearLogs() {
-    setEntries([]);
+  async function doClearLogs() {
+    if (clearingRef.current || isClearing) return;
+    clearingRef.current = true;
+    setClearing(true);
+    try {
+      activeStreamCleanupRef.current?.();
+      await clearEntries();
+    } catch (error) {
+      logger.error("Clearing logs failed:", error);
+      return;
+    } finally {
+      clearingRef.current = false;
+      setClearing(false);
+    }
     setSelected(new Set());
-    setNextId(1);
     resetElasticSearchState();
     // Clear marksMap (session-only, not persisted)
     setMarksMap({});
-    // Datei-Dedupe-Cache leeren
-    fileSigCacheRef.current = new Map();
-    // HTTP-Dedupe-Cache leeren
-    httpSigCacheRef.current = new Map();
     // Caches leeren für bessere Speicherfreigabe
     clearHighlightCache();
     clearTimestampCache();
-    // Phase 2: ausgelagerte Detail-Felder (stackTrace/_fullMessage) verwerfen.
-    // Muss hier passieren, weil setNextId(1) die _id-Vergabe zurücksetzt.
-    void heavyFieldStore.clear();
     // PIT-Session schließen (best effort)
     void closePitQuiet();
     try {
@@ -2042,257 +2215,51 @@ export default function App(): JSX.Element {
     // HTTP/TCP Status wird NICHT zurückgesetzt, da Verbindungen noch aktiv sein können
   }
 
-  /**
-   * Export the current filtered view as HTML with colors
-   */
-  async function exportCurrentView() {
-    // Use refs to get current values (avoid stale closures from menu handlers)
-    const currentFilteredIdx = filteredIdxRef.current;
-    const currentEntries = entriesRef.current;
-    // Auch marksMap muss über Ref gelesen werden – der App-Menu-Handler
-    // (typedOnMenu) wird einmalig mit []-Deps registriert und würde sonst
-    // permanent das initiale `{}` sehen → markColor wäre beim Export `null`.
-    const currentMarksMap = marksMapRef.current;
+  async function openLogs() {
+    if (busy || clearingRef.current || isClearing) return;
+    try {
+      await withBusy(async () => {
+        const paths = await typedOpenFiles();
+        if (paths?.length) await importPaths(paths);
+      });
+    } catch (error) {
+      logger.error("Open file failed:", error);
+      showAlert(error instanceof Error ? error.message : String(error));
+    }
+  }
 
-    if (currentFilteredIdx.length === 0) {
+  const exportCurrentView = useStableCallback(async () => {
+    if (filteredIdxRef.current.length === 0) {
       showAlert(t("errors.exportNoEntries"));
       return;
     }
 
     try {
-      // First, show save dialog to let user choose format and path
-      const pathResult = await typedChooseExportPath();
-      if (!pathResult.ok || !pathResult.filePath) {
-        // User canceled or error
-        if (pathResult.error && pathResult.error !== "canceled") {
-          showAlert(t("errors.exportFailed", { message: pathResult.error }));
-        }
-        return;
-      }
-
-      const format = pathResult.format || "ndjson";
-      const exportEntries = currentFilteredIdx.map(
-        (idx) => currentEntries[idx],
+      const result = await streamCurrentView({
+        ids: filteredIdxRef.current,
+        marks: marksMapRef.current,
+        total: entriesRef.current.length,
+        repository,
+        getDataGeneration,
+        fmtTimestamp: (value) =>
+          fmtTimestamp(
+            typeof value === "string" ||
+              typeof value === "number" ||
+              value instanceof Date
+              ? value
+              : undefined,
+          ),
+        locale,
+        t,
+      });
+      if (result.canceled) return;
+      const fileName = result.filePath.split(/[\\/]/).pop() || result.filePath;
+      toaster.success(
+        t("export.success", {
+          count: String(result.count),
+          file: fileName,
+        }) || `Export erfolgreich: ${result.count} Einträge → ${fileName}`,
       );
-
-      // Phase 2: ausgelagerte Detail-Felder (stackTrace/_fullMessage) für den
-      // Export nachladen. Nur JSON/NDJSON serialisieren stackTrace – für alle
-      // anderen Formate sparen wir uns den IndexedDB-Roundtrip.
-      let exportEntriesHydrated = exportEntries;
-      if (format === "json" || format === "ndjson") {
-        const offloadedIds: number[] = [];
-        for (const e of exportEntries) {
-          if (e && e._offloaded && typeof e._id === "number") {
-            offloadedIds.push(e._id);
-          }
-        }
-        if (offloadedIds.length > 0) {
-          const heavy = await heavyFieldStore.getMany(offloadedIds);
-          exportEntriesHydrated = exportEntries.map((e) => {
-            if (!e || !e._offloaded || typeof e._id !== "number") return e;
-            const rec = heavy.get(e._id);
-            if (!rec) return e;
-            return {
-              ...e,
-              stackTrace: rec.stackTrace ?? e.stackTrace ?? null,
-              _fullMessage: rec._fullMessage ?? e._fullMessage,
-            };
-          });
-        }
-      }
-
-      let content: string;
-
-      if (format === "json") {
-        // JSON export - include mark color explicitly
-        const jsonEntries = exportEntriesHydrated.map((e) => ({
-          timestamp: e?.timestamp,
-          level: e?.level,
-          logger: e?.logger,
-          thread: e?.thread,
-          message: e?.message,
-          source: e?.source,
-          traceId: e?.traceId,
-          spanId: e?.spanId,
-          stackTrace: e?.stackTrace,
-          mdc: e?.mdc,
-          // #2: Mark-Farbe primär aus marksMap (Single-Source-of-Truth).
-          markColor:
-            (e ? currentMarksMap[entrySignature(e)] : undefined) ||
-            e?._mark ||
-            null,
-        }));
-        content = JSON.stringify(jsonEntries, null, 2);
-      } else if (format === "txt") {
-        // Plain text export
-        const lines = exportEntries.map((e) => {
-          const ts = fmtTimestamp(e?.timestamp);
-          const lvl = String(e?.level || "").padEnd(5);
-          const loggerVal = String(e?.logger || "");
-          const msg = String(e?.message || "");
-          return `${ts} [${lvl}] ${loggerVal} - ${msg}`;
-        });
-        content = lines.join("\n");
-      } else if (format === "ndjson" || format === "csv" || format === "md") {
-        // Strukturierte Formate über exportFormats-Utilities. Mark-Farbe muss
-        // dafür auf jedem Eintrag als `_mark` anliegen – wir injizieren sie
-        // aus marksMap (Single-Source-of-Truth), damit auch in der aktuellen
-        // Session manuell gesetzte Marks (die nicht mehr direkt in `e._mark`
-        // landen) korrekt exportiert werden.
-        const enriched = exportEntriesHydrated.map((e) => {
-          const mark = e
-            ? currentMarksMap[entrySignature(e)] ||
-              (e._mark as string | undefined)
-            : undefined;
-          return mark ? { ...e, _mark: mark } : e;
-        });
-        if (format === "ndjson") {
-          content = exportToNdjson(enriched);
-        } else if (format === "csv") {
-          content = exportToCsv(enriched);
-        } else {
-          content = exportToMarkdown(enriched, {
-            exportedAt: new Date().toISOString(),
-            total: currentEntries.length,
-          });
-        }
-      } else {
-        // HTML export with styling
-        const cssVars = getComputedStyle(document.documentElement);
-        const bgColor =
-          cssVars.getPropertyValue("--color-bg-default").trim() || "#f5f5f7";
-        const textColor =
-          cssVars.getPropertyValue("--color-text-primary").trim() || "#1d1d1f";
-        const bgPaper =
-          cssVars.getPropertyValue("--color-bg-paper").trim() || "#ffffff";
-
-        const levelColors: Record<string, string> = {
-          TRACE:
-            cssVars.getPropertyValue("--color-level-trace").trim() || "#8b5cf6",
-          DEBUG:
-            cssVars.getPropertyValue("--color-level-debug").trim() || "#06b6d4",
-          INFO:
-            cssVars.getPropertyValue("--color-level-info").trim() || "#10b981",
-          WARN:
-            cssVars.getPropertyValue("--color-level-warn").trim() || "#f59e0b",
-          WARNING:
-            cssVars.getPropertyValue("--color-level-warn").trim() || "#f59e0b",
-          ERROR:
-            cssVars.getPropertyValue("--color-level-error").trim() || "#ef4444",
-          FATAL:
-            cssVars.getPropertyValue("--color-level-fatal").trim() || "#dc2626",
-        };
-
-        const rows = exportEntries.map((e) => {
-          const ts = fmtTimestamp(e?.timestamp);
-          const lvl = String(e?.level || "").toUpperCase();
-          const loggerName = String(e?.logger || "");
-          const msg = String(e?.message || "")
-            .replace(/&/g, "&amp;")
-            .replace(/</g, "&lt;")
-            .replace(/>/g, "&gt;");
-          const markColor =
-            (e ? currentMarksMap[entrySignature(e)] : undefined) ||
-            (e?._mark as string | undefined);
-          const levelColor = levelColors[lvl] || textColor;
-
-          const rowStyle = markColor
-            ? `border-left: 4px solid ${markColor}; background: ${markColor}22;`
-            : "border-left: 4px solid transparent;";
-
-          return `<tr style="${rowStyle}">
-            <td style="white-space: nowrap; padding: 4px 8px;">${ts}</td>
-            <td style="padding: 4px 8px; text-align: center;"><span style="color: ${levelColor}; font-weight: 600;">${lvl}</span></td>
-            <td style="padding: 4px 8px; color: #666;">${loggerName}</td>
-            <td style="padding: 4px 8px; font-family: monospace; white-space: pre-wrap; word-break: break-word;">${msg}</td>
-          </tr>`;
-        });
-
-        content = `<!DOCTYPE html>
-<html lang="${locale}">
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Lumberjack Export - ${new Date().toLocaleString()}</title>
-  <style>
-    * { box-sizing: border-box; }
-    body {
-      font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", Roboto, sans-serif;
-      background: ${bgColor};
-      color: ${textColor};
-      margin: 0;
-      padding: 20px;
-    }
-    h1 { margin-bottom: 10px; }
-    .meta { color: #666; margin-bottom: 20px; font-size: 14px; }
-    table {
-      width: 100%;
-      border-collapse: collapse;
-      background: ${bgPaper};
-      border-radius: 8px;
-      overflow: hidden;
-      box-shadow: 0 1px 4px rgba(0,0,0,0.06);
-    }
-    th {
-      background: ${bgColor};
-      padding: 12px 8px;
-      text-align: left;
-      font-weight: 600;
-      border-bottom: 1px solid #ddd;
-    }
-    tr:hover { background: rgba(0,0,0,0.02); }
-    td { border-bottom: 1px solid #eee; vertical-align: top; }
-    .level-trace { color: ${levelColors.TRACE}; }
-    .level-debug { color: ${levelColors.DEBUG}; }
-    .level-info { color: ${levelColors.INFO}; }
-    .level-warn { color: ${levelColors.WARN}; }
-    .level-error { color: ${levelColors.ERROR}; }
-    .level-fatal { color: ${levelColors.FATAL}; }
-    @media print {
-      body { background: white; padding: 10px; }
-      table { box-shadow: none; }
-    }
-  </style>
-</head>
-<body>
-  <h1> Lumberjack Log Export</h1>
-  <div class="meta">
-    ${t("export.exported")}: ${new Date().toLocaleString()}<br>
-    ${t("export.entries")}: ${exportEntries.length} (${t("export.filteredOf", { total: String(currentEntries.length) })})
-  </div>
-  <table>
-    <thead>
-      <tr>
-        <th style="width: 180px;">${t("list.header.timestamp")}</th>
-        <th style="width: 80px; text-align: center;">${t("list.header.level")}</th>
-        <th style="width: 200px;">${t("list.header.logger")}</th>
-        <th>${t("list.header.message")}</th>
-      </tr>
-    </thead>
-    <tbody>
-      ${rows.join("\n")}
-    </tbody>
-  </table>
-</body>
-</html>`;
-      }
-
-      // Save the file
-      const result = await typedSaveExportFile(pathResult.filePath, content);
-      if (!result.ok) {
-        showAlert(t("errors.exportFailed", { message: result.error || "" }));
-      } else {
-        // Non-blocking success feedback
-        const fileName =
-          pathResult.filePath.split(/[\\/]/).pop() || pathResult.filePath;
-        toaster.success(
-          t("export.success", {
-            count: String(exportEntries.length),
-            file: fileName,
-          }) ||
-            `Export erfolgreich: ${exportEntries.length} Einträge → ${fileName}`,
-        );
-      }
     } catch (err) {
       logger.error("Export failed:", err);
       showAlert(
@@ -2301,7 +2268,7 @@ export default function App(): JSX.Element {
         }),
       );
     }
-  }
+  });
 
   async function httpMenuStopPoll() {
     // Use ref value instead of state value to avoid stale closures
@@ -2440,7 +2407,7 @@ export default function App(): JSX.Element {
     },
 
     // Dialogs
-    onOpenSettings: () => setShowSettings(true),
+    onOpenSettings: () => void openSettingsModal(),
     onOpenElastic: () => openTimeFilterDialog(),
     onOpenHelp: () => setShowHelpDlg(true),
     onOpenAlerts: () => setShowAlertsDialog(true),
@@ -2494,20 +2461,7 @@ export default function App(): JSX.Element {
     hasActiveHttpTails: httpTail.tails.length > 0,
 
     // File
-    onOpenFile: async () => {
-      try {
-        const result = await typedOpenFiles();
-        if (result && result.length > 0) {
-          const parsed = await typedParsePaths(result);
-          if (parsed?.ok && parsed.entries && parsed.entries.length > 0) {
-            appendEntries(parsed.entries);
-            hydrateMarksFromEntries(parsed.entries as any[]);
-          }
-        }
-      } catch (err) {
-        logger.error("Open file failed:", err);
-      }
-    },
+    onOpenFile: openLogs,
     onClearLogs: clearLogs,
     onExportLogs: async () => {
       try {
@@ -2579,7 +2533,7 @@ export default function App(): JSX.Element {
         await patchSettings({ httpUrl: url });
         const res = await typedHttpLoadOnce(url);
         if (res.ok) {
-          appendEntries((res.entries || []) as any[]);
+          await appendEntriesAsync((res.entries || []) as any[]);
           setHttpStatus(""); // Clear error status on success
         } else {
           // Check if this is a feature-disabled error
@@ -2615,6 +2569,7 @@ export default function App(): JSX.Element {
         intervalSec: sec,
       });
       if (r.ok) {
+        if (r.id === lastFailedPollId.current) return;
         setHttpPollId(r.id!);
         setHttpStatus(t("status.httpPolling", { id: String(r.id) }));
         // Convert to ms for internal timer tracking
@@ -2687,7 +2642,10 @@ export default function App(): JSX.Element {
   };
 
   return (
-    <div style="height:100%; display:flex; flex-direction:column;">
+    <div
+      className="workspace-app"
+      style="height:100%; display:flex; flex-direction:column;"
+    >
       {/* Skeleton loader während Settings geladen werden */}
       {!settingsLoaded && <SkeletonLoader />}
 
@@ -2796,77 +2754,66 @@ export default function App(): JSX.Element {
           onCanTcpControlWindowChange={setCanTcpControlWindow}
           onLocaleChange={setLocale}
           onSave={saveSettingsModal}
-          onClose={() => setShowSettings(false)}
+          onClose={closeSettingsModal}
           applyThemeMode={applyThemeMode}
         />
       </Suspense>
 
       {/* Toolbar */}
       <header className="toolbar">
-        <ToolbarCounts
-          countTotal={countTotal}
-          countFiltered={countFiltered}
-          countSelected={countSelected}
-          lastFilterStats={lastFilterStats}
-          entriesLength={entries.length}
-          onClearLogs={onClearLogs}
+        <WorkspaceToolbar
+          detailLayout={detailLayout}
+          onLayoutChange={(layout) => {
+            void setDetailLayout(layout);
+            setDetailsHidden(false);
+          }}
+          onOpen={() => void openLogs()}
+          onExport={() => void exportCurrentView()}
+          onSettings={() => void openSettingsModal("appearance")}
+          onMore={() => setShowCommandPalette(true)}
+          busy={busy || clearing}
+          canExport={countFiltered > 0}
           t={t}
-        />
-        <MarksNavigation
-          countFiltered={countFiltered}
-          markedCount={markedIdx.length}
-          bookmarkItems={bookmarkItems}
-          showBookmarks={showBookmarks}
-          onGotoStart={onGotoListStart}
-          onGotoEnd={onGotoListEnd}
-          onGotoMarked={onGotoMarked}
-          onToggleBookmarks={onToggleBookmarks}
-          onSelectBookmark={onSelectBookmark}
-          t={t}
-        />
-        <SearchBar
-          search={search}
-          setSearch={setSearch}
-          searchMode={searchMode}
-          setSearchMode={setSearchMode}
-          showSearchOptions={showSearchOptions}
-          setShowSearchOptions={setShowSearchOptions}
-          fltHistSearch={fltHistSearch}
-          showSearchHist={showSearchHist}
-          setShowSearchHist={setShowSearchHist}
-          searchHistHighlightIdx={searchHistHighlightIdx}
-          setSearchHistHighlightIdx={setSearchHistHighlightIdx}
-          searchPos={searchPos}
-          searchHistRef={searchHistRef}
-          searchPopRef={searchPopRef}
-          searchInputRef={searchInputRef}
-          setShowLoggerHist={setShowLoggerHist}
-          setShowThreadHist={setShowThreadHist}
-          setShowMessageHist={setShowMessageHist}
-          addFilterHistory={addFilterHistory}
-          searchMatchIdx={searchMatchIdx}
-          selectedOneIdx={selectedOneIdx}
-          filteredIdx={filteredIdx}
-          gotoSearchMatch={gotoSearchMatch}
-          onSubmitSearch={flushSearch}
-          t={t}
-        />
-        <StatusSection
-          busy={busy}
-          tcpStatus={tcpStatus}
-          httpStatus={httpStatus}
-          httpTailCount={httpTail.tails.length}
-          nextPollIn={nextPollIn}
-          t={t}
-        />
-        <div className="section" style={{ flex: 1, flexWrap: "wrap" }}>
+        >
+          <SearchBar
+            search={search}
+            setSearch={commitSearch}
+            searchMode={searchMode}
+            setSearchMode={commitSearchMode}
+            showSearchOptions={showSearchOptions}
+            setShowSearchOptions={setShowSearchOptions}
+            fltHistSearch={fltHistSearch}
+            showSearchHist={showSearchHist}
+            setShowSearchHist={setShowSearchHist}
+            searchHistHighlightIdx={searchHistHighlightIdx}
+            setSearchHistHighlightIdx={setSearchHistHighlightIdx}
+            searchPos={searchPos}
+            searchHistRef={searchHistRef}
+            searchPopRef={searchPopRef}
+            searchInputRef={searchInputRef}
+            setShowLoggerHist={setShowLoggerHist}
+            setShowThreadHist={setShowThreadHist}
+            setShowMessageHist={setShowMessageHist}
+            addFilterHistory={addFilterHistory}
+            searchMatchIdx={searchMatchIdx}
+            selectedOneIdx={selectedOneIdx}
+            filteredIdx={filteredIdx}
+            positionOfId={viOfGlobal}
+            gotoSearchMatch={gotoSearchMatch}
+            t={t}
+          />
+        </WorkspaceToolbar>
+        <div className="workspace-filterbar">
           {/* Filter Toggle Button */}
           <button
             className={`filter-toggle-btn ${filtersExpanded ? "expanded" : ""}`}
             onClick={() => setFiltersExpanded(!filtersExpanded)}
             title={t("toolbar.filterToggle")}
+            aria-expanded={filtersExpanded}
+            aria-controls="workspace-filters"
           >
-            <span>️ {t("toolbar.filterLabel")}</span>
+            <WorkspaceIcon name="filter" />
+            <span>{t("toolbar.filterLabel")}</span>
             <span className="chevron">▼</span>
           </button>
           {/* Aktive Filter-Chips inline */}
@@ -2876,10 +2823,11 @@ export default function App(): JSX.Element {
             onlyMarked={onlyMarked}
             setFilter={setFilter}
             setOnlyMarked={setOnlyMarked}
-            setSearch={setSearch}
             setTraceTimelineId={setTraceTimelineId}
             setShowTraceTimeline={setShowTraceTimeline}
+            onClearAllFilters={clearAllFilters}
             dcVersion={dcVersion}
+            timeVersion={timeVersion}
             t={t}
           />
         </div>
@@ -2907,7 +2855,6 @@ export default function App(): JSX.Element {
           messagePopRef={messagePopRef}
           onStdFiltersEnabledChange={setStdFiltersEnabled}
           onFilterChange={setFilter}
-          onSubmitFilter={flushFilter}
           onOnlyMarkedChange={(nv) => {
             setOnlyMarked(nv);
             try {
@@ -2931,25 +2878,7 @@ export default function App(): JSX.Element {
           addFilterHistory={addFilterHistory}
           onShowDcDialog={() => setShowDcDialog(true)}
           onShowTimeDialog={openTimeFilterDialog}
-          onClearAllFilters={() => {
-            setSearch("");
-            setFilter({
-              level: "",
-              logger: "",
-              thread: "",
-              service: "",
-              message: "",
-            });
-            setOnlyMarked(false);
-            try {
-              patchSettingsQuiet({ onlyMarked: false });
-            } catch {}
-            try {
-              TimeFilter.reset();
-            } catch (e) {
-              logger.error("Resetting TimeFilter failed:", e);
-            }
-          }}
+          onClearAllFilters={clearAllFilters}
           search={search}
           searchMode={searchMode}
           onApplyProfile={(profile) => {
@@ -3016,31 +2945,106 @@ export default function App(): JSX.Element {
           onLoadMore={esLoadMore}
           t={t}
         />
+        <div className="workspace-infobar">
+          <ToolbarCounts
+            countTotal={countTotal}
+            countFiltered={countFiltered}
+            countSelected={countSelected}
+            lastFilterStats={lastFilterStats}
+            entriesLength={entries.length}
+            clearing={clearing}
+            onClearLogs={onClearLogs}
+            t={t}
+          />
+          <LiveIntakeStatus
+            count={liveEntryCount}
+            limit={liveEntryLimit}
+            locale={locale}
+            onOpenSettings={() => void openSettingsModal("features")}
+            t={t}
+          />
+          <div className="workspace-progress-slot">
+            {queryActive && !filterWorkerError && (
+              <FilterProgressStatus
+                key={queryKey}
+                running={searchRunning}
+                progress={
+                  resultsCurrent
+                    ? filterProgress
+                    : { processed: 0, total: entries.length, matches: 0 }
+                }
+                locale={locale}
+                t={t}
+              />
+            )}
+          </div>
+          <label className="workspace-follow">
+            <input
+              type="checkbox"
+              role="switch"
+              checked={follow}
+              onChange={(event) => {
+                const value = event.currentTarget.checked;
+                setFollow(value);
+                patchSettingsQuiet({ follow: value });
+              }}
+            />
+            {t("workspace.follow")}
+          </label>
+          <MarksNavigation
+            countFiltered={countFiltered}
+            markedCount={markedIdx.length}
+            bookmarkItems={bookmarkItems}
+            showBookmarks={showBookmarks}
+            onGotoStart={onGotoListStart}
+            onGotoEnd={onGotoListEnd}
+            onGotoMarked={onGotoMarked}
+            onToggleBookmarks={onToggleBookmarks}
+            onSelectBookmark={onSelectBookmark}
+            t={t}
+          />
+        </div>
       </header>
 
       {/* Resize-Indikator für Detail-Panel */}
       {resizeHeight !== null && (
         <div
           className="resize-indicator"
-          style={{ bottom: resizeHeight + 20 + "px" }}
+          style={
+            effectiveDetailLayout === "right"
+              ? { right: resizeHeight + 20 + "px", bottom: "40px" }
+              : { bottom: resizeHeight + 20 + "px" }
+          }
         >
           {resizeHeight}px
         </div>
       )}
 
       {/* Hauptlayout: Liste + Overlay-Details */}
-      <div className="layout" ref={layoutRef}>
+      <div
+        className="layout"
+        ref={layoutRef}
+        data-detail-layout={effectiveDetailLayout}
+        data-details-hidden={
+          detailsHidden || entries.length === 0 ? "true" : "false"
+        }
+        aria-busy={clearing}
+      >
         <VirtualizedLogList
           ref={virtualListRef}
           listRef={parentRef}
           entries={entries}
+          repository={repository}
           filteredIdx={filteredIdx}
           selected={selected}
           marksMap={marksMap}
-          search={debouncedSearch}
+          search={search}
           follow={follow}
+          queryKey={baseViewKey}
+          positionOfId={viOfGlobal}
+          onUserInteraction={handleManualNavigation}
           onDisableFollow={handleDisableFollow}
-          onKeyDown={onListKeyDown}
+          onKeyDown={stableOnListKeyDown}
           onRowSelect={handleRowSelect}
           onRowContextMenu={handleRowContextMenu}
           onColMouseDown={onColMouseDown}
@@ -3103,20 +3107,7 @@ export default function App(): JSX.Element {
                   <button
                     type="button"
                     className="btn-primary"
-                    onClick={async () => {
-                      try {
-                        const paths = await typedOpenFiles();
-                        if (paths && paths.length) {
-                          const res = await typedParsePaths(paths);
-                          if (res?.ok) {
-                            appendEntries(res.entries as any);
-                            hydrateMarksFromEntries(res.entries as any[]);
-                          }
-                        }
-                      } catch (e) {
-                        logger.error("Open file failed:", e);
-                      }
-                    }}
+                    onClick={() => void openLogs()}
                   >
                     📂 {t("list.actionOpenFile")}
                   </button>
@@ -3132,17 +3123,21 @@ export default function App(): JSX.Element {
                   >
                     ⏵ {t("list.actionStartTcp")}
                   </button>
-                  <button type="button" onClick={() => setShowTimeDialog(true)}>
+                  <button type="button" onClick={openTimeFilterDialog}>
                     🔍 {t("list.actionElastic")}
                   </button>
                   <button
                     type="button"
-                    onClick={() => {
+                    onClick={async () => {
                       const demo = buildDemoEntries();
-                      appendEntries(demo as any);
-                      toaster.success(
-                        t("list.demoLoaded", { count: String(demo.length) }),
-                      );
+                      try {
+                        await appendEntriesAsync(demo as any);
+                        toaster.success(
+                          t("list.demoLoaded", { count: String(demo.length) }),
+                        );
+                      } catch (error) {
+                        logger.error("Loading demo entries failed:", error);
+                      }
                     }}
                   >
                     🎬 {t("list.actionLoadDemo")}
@@ -3166,50 +3161,40 @@ export default function App(): JSX.Element {
                 </div>
               </div>
             ))}
-          {countFiltered === 0 && entries.length > 0 && (
-            <div className="list-empty">
-              <div className="list-empty-icon">🔎</div>
-              <div className="list-empty-title">{t("list.noMatchTitle")}</div>
-              <div className="list-empty-hint">{t("list.noMatchHint")}</div>
-              <div className="list-empty-actions">
-                <button
-                  type="button"
-                  className="btn-primary"
-                  onClick={() => {
-                    setSearch("");
-                    setFilter({
-                      level: "",
-                      logger: "",
-                      thread: "",
-                      service: "",
-                      message: "",
-                    });
-                    setOnlyMarked(false);
-                    try {
-                      patchSettingsQuiet({ onlyMarked: false });
-                    } catch {}
-                    try {
-                      TimeFilter.reset();
-                    } catch (e) {
-                      logger.error("Resetting TimeFilter failed:", e);
-                    }
-                    try {
-                      DiagnosticContextFilter.setEnabled(false);
-                    } catch {}
-                  }}
-                >
-                  ✕ {t("list.actionResetFilters")}
-                </button>
+          {countFiltered === 0 &&
+            entries.length > 0 &&
+            !searchRunning &&
+            !filterWorkerError && (
+              <div className="list-empty">
+                <div className="list-empty-icon">🔎</div>
+                <div className="list-empty-title">{t("list.noMatchTitle")}</div>
+                <div className="list-empty-hint">{t("list.noMatchHint")}</div>
+                <div className="list-empty-actions">
+                  <button
+                    type="button"
+                    className="btn-primary"
+                    onClick={clearAllFilters}
+                  >
+                    ✕ {t("list.actionResetFilters")}
+                  </button>
+                </div>
               </div>
-            </div>
-          )}
+            )}
         </VirtualizedLogList>
 
         {/* Overlay: Divider + Detailbereich */}
         <div className="overlay">
           <div
             className="divider"
-            ref={(el) => (dividerElRef.current = el as any)}
+            ref={(el) => {
+              dividerElRef.current = el;
+            }}
+            role="separator"
+            tabIndex={0}
+            aria-label={t("workspace.resizeDetails")}
+            aria-orientation={
+              effectiveDetailLayout === "right" ? "vertical" : "horizontal"
+            }
           />
           <DetailPanel
             selectedEntry={selectedEntry}
@@ -3218,12 +3203,55 @@ export default function App(): JSX.Element {
             onAddMdcToFilter={addMdcToFilter}
             onFilterByLogger={filterByLogger}
             onFilterByThread={filterByThread}
+            onClose={() => {
+              setDetailsHidden(true);
+              parentRef.current?.focus({ preventScroll: true });
+            }}
+            onError={showAlert}
             markColor={
               selectedEntry ? marksMap[entrySignature(selectedEntry)] : null
             }
           />
         </div>
       </div>
+      <footer className="workspace-statusbar">
+        {clearing ? (
+          <span className="workspace-storage-state" role="status">
+            <span className="spinner" aria-hidden="true" />
+            {t(
+              clearPhase === "waiting"
+                ? "workspace.waitingToClear"
+                : "workspace.clearing",
+            )}
+          </span>
+        ) : storageError ? (
+          <button
+            className="workspace-storage-error"
+            onClick={() => showAlert(storageError.message)}
+          >
+            {t("workspace.storageError")}
+          </button>
+        ) : (
+          <span className="workspace-storage-state">
+            {t("workspace.localSession")}
+          </span>
+        )}
+        <StatusSection
+          busy={busy}
+          importProgress={importProgress}
+          tcpStatus={tcpStatus}
+          httpStatus={httpStatus}
+          httpTailCount={httpTail.tails.length}
+          httpTailPausedCount={httpTail.pausedCount}
+          httpTailNextPollSeconds={httpTail.nextPollSeconds}
+          httpTailPausedIntervalSeconds={httpTail.pausedIntervalSeconds}
+          nextPollIn={nextPollIn}
+          t={t}
+        />
+        <span className="workspace-shortcuts">
+          <kbd>N</kbd> {t("toolbar.nextMatch")}
+        </span>
+      </footer>
 
       {/* Kontextmenü */}
       <ContextMenu
@@ -3335,7 +3363,7 @@ export default function App(): JSX.Element {
         <Suspense fallback={null}>
           <StatsDialog
             open={showStatsDialog}
-            entries={filteredDialogEntries}
+            entries={filteredStatsEntries}
             totalEntries={entries.length}
             onClose={() => setShowStatsDialog(false)}
             t={t}
@@ -3348,7 +3376,7 @@ export default function App(): JSX.Element {
       {showTraceTimeline && traceTimelineId && (
         <Suspense fallback={null}>
           <TraceTimeline
-            entries={filteredDialogEntries}
+            entries={traceTimelineEntries}
             traceId={traceTimelineId}
             onClose={() => setShowTraceTimeline(false)}
             onEntryClick={(entry) => {

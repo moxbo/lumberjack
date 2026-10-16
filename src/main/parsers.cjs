@@ -30,14 +30,18 @@ var __toCommonJS = (mod) => __copyProps(__defProp({}, "__esModule", { value: tru
 // src/main/parsers.ts
 var parsers_exports = {};
 __export(parsers_exports, {
+  DEFAULT_STREAM_PARSE_CHUNK_SIZE: () => DEFAULT_STREAM_PARSE_CHUNK_SIZE,
+  DEFAULT_STREAM_PARSE_THRESHOLD_BYTES: () => DEFAULT_STREAM_PARSE_THRESHOLD_BYTES,
   closeElasticPitSession: () => closeElasticPitSession,
   fetchElasticPitPage: () => fetchElasticPitPage,
+  getStreamParseStrategy: () => getStreamParseStrategy,
   parseJsonFile: () => parseJsonFile,
   parsePathAsync: () => parsePathAsync,
   parsePaths: () => parsePaths,
   parsePathsAsync: () => parsePathsAsync,
   parseTextLines: () => parseTextLines,
   parseZipFile: () => parseZipFile,
+  streamParseFile: () => streamParseFile,
   toEntry: () => toEntry
 });
 module.exports = __toCommonJS(parsers_exports);
@@ -245,6 +249,250 @@ function buildElasticMessageQuery(expr, field = "message") {
   return parseOr();
 }
 
+// src/utils/estimatePayloadBytes.ts
+function estimatePayloadBytes(value, maxBytes = Number.MAX_SAFE_INTEGER) {
+  let bytes = 0;
+  const seen = /* @__PURE__ */ new WeakSet();
+  function* children(object) {
+    if (object instanceof Map) {
+      for (const [key, item] of object) {
+        bytes += 32;
+        yield key;
+        yield item;
+      }
+    } else if (object instanceof Set) {
+      for (const item of object) {
+        bytes += 16;
+        yield item;
+      }
+    } else if (ArrayBuffer.isView(object)) {
+      yield object.buffer;
+      return;
+    } else if (object instanceof ArrayBuffer || typeof SharedArrayBuffer !== "undefined" && object instanceof SharedArrayBuffer) {
+      bytes += object.byteLength;
+    } else if (object instanceof Date) {
+      bytes += 8;
+    } else if (object instanceof RegExp) {
+      yield object.source;
+    } else if (typeof Blob !== "undefined" && object instanceof Blob) {
+      bytes += object.size;
+    } else if (Array.isArray(object)) {
+      bytes += object.length * 8;
+    } else if (Object.getPrototypeOf(object) !== Object.prototype && Object.getPrototypeOf(object) !== null) {
+      bytes = Infinity;
+      return;
+    }
+    for (const key in object) {
+      const descriptor = Object.getOwnPropertyDescriptor(object, key);
+      if (!descriptor) continue;
+      bytes += 24 + key.length * 2;
+      if (!("value" in descriptor)) {
+        bytes = Infinity;
+        return;
+      }
+      yield descriptor.value;
+    }
+  }
+  const stack = [[value][Symbol.iterator]()];
+  try {
+    while (stack.length > 0 && bytes <= maxBytes) {
+      const next = stack[stack.length - 1].next();
+      if (next.done) {
+        stack.pop();
+        continue;
+      }
+      const item = next.value;
+      if (typeof item === "string") bytes += 24 + item.length * 2;
+      else if (typeof item === "bigint") {
+        return Infinity;
+      } else if (typeof item === "function" || typeof item === "symbol") {
+        return Infinity;
+      } else if (item === null || typeof item !== "object") bytes += 8;
+      else if (!seen.has(item)) {
+        seen.add(item);
+        bytes += 64;
+        stack.push(children(item));
+      }
+    }
+  } catch {
+    return Infinity;
+  }
+  return bytes <= maxBytes ? bytes : Infinity;
+}
+
+// src/utils/entryLimits.ts
+var MESSAGE_TRUNCATE_THRESHOLD = 100 * 1024;
+var MESSAGE_PREVIEW_LENGTH = 50 * 1024;
+var MAX_ENTRY_PAYLOAD_BYTES = 32 * 1024 * 1024;
+var LogLineSplitter = class {
+  parts = [];
+  partialBytes = 0;
+  get hasPartial() {
+    return this.parts.length > 0;
+  }
+  push(chunk) {
+    const lines = [];
+    let start = 0;
+    while (start < chunk.length) {
+      const nl = chunk.indexOf("\n", start);
+      const segment = nl < 0 ? chunk.slice(start) : chunk.slice(start, nl);
+      this.append(segment);
+      if (nl < 0) break;
+      const line = this.complete();
+      if (line) lines.push(line);
+      start = nl + 1;
+    }
+    return lines;
+  }
+  /** Emits the trailing line without a newline terminator, if any. */
+  flush() {
+    return this.complete();
+  }
+  append(segment) {
+    if (!segment) return;
+    this.parts.push(segment);
+    this.partialBytes += Buffer.byteLength(segment, "utf8");
+  }
+  complete() {
+    if (!this.hasPartial) return null;
+    const line = {
+      text: this.parts.length === 1 ? this.parts[0] : this.parts.join(""),
+      originalBytes: this.partialBytes
+    };
+    this.parts = [];
+    this.partialBytes = 0;
+    return line;
+  }
+};
+
+// src/utils/dcMatch.ts
+var TRACE_KEY_VARIANTS = /* @__PURE__ */ new Set([
+  "traceid",
+  "trace_id",
+  "trace.id",
+  "trace-id",
+  "x-trace-id",
+  "x_trace_id",
+  "x.trace.id",
+  "trace"
+]);
+function normalizeTraceKeyName(k) {
+  const lk = String(k || "").trim().toLowerCase();
+  return TRACE_KEY_VARIANTS.has(lk) ? "TraceID" : null;
+}
+function canonicalDcKey(k) {
+  const raw = String(k || "").trim();
+  if (!raw) return "";
+  return normalizeTraceKeyName(raw) || raw;
+}
+function toSafeString(val) {
+  if (val == null) return "";
+  if (typeof val === "string") return val;
+  if (typeof val === "number" || typeof val === "boolean" || typeof val === "bigint") {
+    return String(val);
+  }
+  if (typeof val === "object" || typeof val === "function") {
+    try {
+      return JSON.stringify(val);
+    } catch {
+      return "";
+    }
+  }
+  return "";
+}
+
+// src/utils/mdc.ts
+var RESERVED_STD_FIELDS = /* @__PURE__ */ new Set([
+  "remarks",
+  "color",
+  "stack_trace",
+  "stackTrace",
+  "stacktrace",
+  "error",
+  "err",
+  "exception",
+  "cause",
+  "throwable",
+  "exception.stacktrace",
+  "error.stacktrace",
+  "level",
+  "thread_name",
+  "logger_name",
+  "message",
+  "@timestamp",
+  "@version",
+  "timestamp",
+  "time",
+  "logger",
+  "thread",
+  "_fullMessage",
+  "_truncated",
+  "_messageSize",
+  "_payloadRef",
+  "_payloadMdcTruncated",
+  "_hasStack",
+  "source",
+  "signature",
+  "_id",
+  "_mark",
+  "raw"
+]);
+var CONTEXT_FIELDS = /* @__PURE__ */ new Set(["mdc", "context", "properties", "labels"]);
+function findTraceId(raw) {
+  for (const [key, value] of Object.entries(raw)) {
+    if (canonicalDcKey(key) === "TraceID" && typeof value === "string" && value.trim()) {
+      return value.trim();
+    }
+  }
+  return null;
+}
+function findExternalId(raw) {
+  for (const key of [
+    "externalId",
+    "external_id",
+    "external.id",
+    "extId",
+    "traceparent",
+    "id"
+  ]) {
+    const value = raw[key];
+    if (typeof value === "string" && value.trim()) return value.trim();
+  }
+  return null;
+}
+function computeMdcFromRaw(raw) {
+  const mdc = {};
+  if (!raw || typeof raw !== "object") return mdc;
+  const add = (key, value) => {
+    const canonical = canonicalDcKey(key);
+    if (!canonical || value == null) return;
+    Object.defineProperty(mdc, canonical, {
+      value: toSafeString(value),
+      enumerable: true,
+      configurable: true,
+      writable: true
+    });
+  };
+  for (const [key, value] of Object.entries(raw)) {
+    if (RESERVED_STD_FIELDS.has(key) || CONTEXT_FIELDS.has(key)) continue;
+    if (typeof value === "string" || typeof value === "number" || typeof value === "boolean") {
+      add(key, value);
+    }
+  }
+  const record = raw;
+  const externalId = findExternalId(record);
+  if (externalId && !mdc.externalId) add("externalId", externalId);
+  const traceId = findTraceId(record);
+  if (traceId) add("TraceID", traceId);
+  for (const field of ["labels", "properties", "context", "mdc"]) {
+    const context = record[field];
+    if (context && typeof context === "object" && !Array.isArray(context)) {
+      for (const [key, value] of Object.entries(context)) add(key, value);
+    }
+  }
+  return mdc;
+}
+
 // src/main/parsers.ts
 var HTTP_KEEPALIVE_AGENT = new import_http.default.Agent({ keepAlive: true, maxSockets: 8 });
 var HTTPS_KEEPALIVE_AGENT = new import_https.default.Agent({ keepAlive: true });
@@ -252,9 +500,16 @@ var HTTPS_INSECURE_KEEPALIVE_AGENT = new import_https.default.Agent({
   keepAlive: true,
   rejectUnauthorized: false
 });
-var MESSAGE_TRUNCATE_THRESHOLD = 100 * 1024;
-var MESSAGE_PREVIEW_LENGTH = 50 * 1024;
 var LARGE_MESSAGE_WARNING_THRESHOLD = 1024 * 1024;
+var DEFAULT_STREAM_PARSE_THRESHOLD_BYTES = 1024 * 1024;
+var DEFAULT_STREAM_PARSE_CHUNK_SIZE = 1e3;
+var STREAMABLE_LINE_EXTENSIONS = /* @__PURE__ */ new Set([
+  "",
+  ".log",
+  ".txt",
+  ".jsonl",
+  ".ndjson"
+]);
 var AdmZip = null;
 function getAdmZip() {
   if (!AdmZip) {
@@ -345,7 +600,7 @@ function toEntry(obj = {}, fallbackMessage = "", source = "") {
   const msgVal = obj.message ?? obj.msg ?? obj.log ?? fallbackMessage ?? "";
   const traceVal = obj.traceId ?? obj.trace_id ?? obj.trace ?? obj["trace.id"] ?? obj.TraceID;
   const fullMessage = toStringOr(msgVal, "");
-  const messageSize = fullMessage.length;
+  const messageSize = Buffer.byteLength(fullMessage, "utf8");
   let displayMessage = fullMessage;
   let truncated = false;
   let originalMessage;
@@ -370,7 +625,8 @@ function toEntry(obj = {}, fallbackMessage = "", source = "") {
     traceId: toOptionalString(traceVal),
     stackTrace: stackTrace || null,
     raw: obj,
-    source
+    source,
+    mdc: computeMdcFromRaw(obj)
   };
   if (truncated) {
     entry._truncated = true;
@@ -442,32 +698,167 @@ function tryParseJsonLoose(line) {
     return null;
   }
 }
+function parseTextLine(filename, line) {
+  if (!line || !line.trim()) return null;
+  let obj = tryParseJson(line.trim());
+  if (!obj) {
+    const match = line.match(/{[\s\S]*}$/);
+    if (match) obj = tryParseJson(match[0]);
+  }
+  if (!obj) {
+    obj = tryParseJsonLoose(line.trim()) || null;
+  }
+  if (obj) {
+    return toEntry(obj, "", filename);
+  }
+  let ts = null;
+  const isoMatch = line.match(
+    /\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.[\d]+)?(?:Z|[+-]\d{2}:?\d{2})?/
+  );
+  if (isoMatch) ts = isoMatch[0];
+  const entry = toEntry({}, line, filename);
+  if (ts) entry.timestamp = ts;
+  return entry;
+}
 function parseTextLines(filename, text) {
   const entries = [];
   const lines = text.split(/\r?\n/);
   for (const line of lines) {
-    if (!line || !line.trim()) continue;
-    let obj = tryParseJson(line.trim());
-    if (!obj) {
-      const match = line.match(/{[\s\S]*}$/);
-      if (match) obj = tryParseJson(match[0]);
-    }
-    if (!obj) {
-      obj = tryParseJsonLoose(line.trim()) || null;
-    }
-    if (obj) {
-      entries.push(toEntry(obj, "", filename));
-    } else {
-      let ts = null;
-      const isoMatch = line.match(
-        /\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.[\d]+)?(?:Z|[+-]\d{2}:?\d{2})?/
-      );
-      if (isoMatch) ts = isoMatch[0];
-      entries.push(toEntry({}, line, filename));
-      if (ts) entries[entries.length - 1].timestamp = ts;
-    }
+    const entry = parseTextLine(filename, line);
+    if (entry) entries.push(entry);
   }
   return entries;
+}
+function createAbortError() {
+  const error = new Error("Stream parsing aborted");
+  error.name = "AbortError";
+  return error;
+}
+async function readFirstNonWhitespaceChar(filePath, maxProbeBytes = 4096) {
+  const handle = await import_fs.default.promises.open(filePath, "r");
+  try {
+    const buffer = Buffer.alloc(maxProbeBytes);
+    const { bytesRead } = await handle.read(buffer, 0, maxProbeBytes, 0);
+    if (bytesRead <= 0) return null;
+    const text = buffer.subarray(0, bytesRead).toString("utf8");
+    const match = text.match(/\S/);
+    return match ? match[0] ?? null : null;
+  } finally {
+    await handle.close();
+  }
+}
+async function getStreamParseStrategy(filePath, thresholdBytes = DEFAULT_STREAM_PARSE_THRESHOLD_BYTES) {
+  const stat = await import_fs.default.promises.stat(filePath);
+  if (stat.isDirectory()) {
+    return { streamable: false, totalBytes: 0, reason: "directory" };
+  }
+  const totalBytes = stat.size;
+  if (totalBytes < thresholdBytes) {
+    return { streamable: false, totalBytes, reason: "small-file" };
+  }
+  const ext = import_path.default.extname(filePath).toLowerCase();
+  if (ext === ".zip") {
+    return { streamable: false, totalBytes, reason: "unsupported-format" };
+  }
+  if (ext === ".json") {
+    const firstToken = await readFirstNonWhitespaceChar(filePath);
+    if (firstToken === "[") {
+      return { streamable: false, totalBytes, reason: "json-array" };
+    }
+    return { streamable: true, totalBytes, reason: "stream" };
+  }
+  if (STREAMABLE_LINE_EXTENSIONS.has(ext)) {
+    return { streamable: true, totalBytes, reason: "stream" };
+  }
+  return { streamable: false, totalBytes, reason: "unsupported-extension" };
+}
+async function* streamParseFile(filePath, options = {}) {
+  const stat = await import_fs.default.promises.stat(filePath);
+  if (stat.isDirectory()) return;
+  const chunkSize = Math.min(
+    1e3,
+    Math.max(1, options.chunkSize ?? DEFAULT_STREAM_PARSE_CHUNK_SIZE)
+  );
+  const totalBytes = stat.size;
+  const stream = import_fs.default.createReadStream(filePath, {
+    encoding: "utf8",
+    highWaterMark: Math.min(64 * 1024, options.highWaterMark ?? 64 * 1024)
+  });
+  const onAbort = () => {
+    stream.destroy(createAbortError());
+  };
+  options.signal?.addEventListener("abort", onAbort, { once: true });
+  let pending = [];
+  let pendingBytes = 0;
+  async function* completeLines() {
+    const splitter = new LogLineSplitter();
+    for await (const chunk of stream) {
+      for (const line of splitter.push(String(chunk))) {
+        if (line.text.endsWith("\r")) {
+          line.text = line.text.slice(0, -1);
+        }
+        yield line;
+      }
+    }
+    const tail = splitter.flush();
+    if (tail) yield tail;
+  }
+  try {
+    for await (const line of completeLines()) {
+      if (options.signal?.aborted) throw createAbortError();
+      const parsed = parseTextLine(filePath, line.text);
+      if (parsed) {
+        const entry = parsed;
+        const bytes = estimatePayloadBytes(entry);
+        if (pending.length && pendingBytes + bytes > 2 * 1024 * 1024) {
+          yield {
+            entries: pending,
+            bytesRead: Math.min(stream.bytesRead, totalBytes),
+            totalBytes,
+            done: false,
+            filePath
+          };
+          pending = [];
+          pendingBytes = 0;
+        }
+        pending.push(entry);
+        pendingBytes += bytes;
+      }
+      if (pending.length >= chunkSize || pendingBytes >= 2 * 1024 * 1024) {
+        const current = pending;
+        pending = [];
+        pendingBytes = 0;
+        yield {
+          entries: current,
+          bytesRead: Math.min(stream.bytesRead, totalBytes),
+          totalBytes,
+          done: false,
+          filePath
+        };
+      }
+    }
+    if (options.signal?.aborted) throw createAbortError();
+    if (pending.length > 0) {
+      yield {
+        entries: pending,
+        bytesRead: totalBytes,
+        totalBytes,
+        done: true,
+        filePath
+      };
+    } else {
+      yield {
+        entries: [],
+        bytesRead: totalBytes,
+        totalBytes,
+        done: true,
+        filePath
+      };
+    }
+  } finally {
+    options.signal?.removeEventListener("abort", onAbort);
+    if (!stream.destroyed) stream.destroy();
+  }
 }
 function parseJsonFile(filename, text) {
   const trimmed = text.trim();
@@ -502,8 +893,10 @@ function parseZipFile(zipPath) {
     if (!zEntry.isDirectory && (ext === ".log" || ext === ".json" || ext === ".jsonl" || ext === ".ndjson" || ext === ".txt")) {
       const text = zEntry.getData().toString("utf8");
       const parsed = ext === ".json" ? parseJsonFile(name, text) : parseTextLines(name, text);
-      parsed.forEach((e) => e.source = `${zipPath}::${name}`);
-      entries.push(...parsed);
+      for (const entry of parsed) {
+        entry.source = `${zipPath}::${name}`;
+        entries.push(entry);
+      }
     }
   });
   return entries;
@@ -524,7 +917,7 @@ function parsePaths(paths) {
   const all = [];
   for (const p of paths) {
     try {
-      all.push(...parsePath(p));
+      for (const entry of parsePath(p)) all.push(entry);
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       all.push(
@@ -578,13 +971,28 @@ async function parsePathsAsync(paths) {
   for (let i = 0; i < CONCURRENCY; i++) workers.push(worker());
   await Promise.all(workers);
   const all = [];
-  for (const list of results) if (list) all.push(...list);
+  for (const list of results) {
+    if (list) {
+      for (const entry of list) all.push(entry);
+    }
+  }
   return all;
 }
 var pitSessions = /* @__PURE__ */ new Map();
 var dialectCache = /* @__PURE__ */ new Map();
 var DIALECT_CACHE_TTL_MS = 60 * 60 * 1e3;
+var MAX_ELASTIC_RESPONSE_BYTES = 16 * 1024 * 1024;
+var MAX_ELASTIC_REQUESTS = 8;
+var activeElasticRequests = 0;
+var ElasticResponseLimitError = class extends Error {
+};
 async function httpJsonRequest(method, urlStr, body, headers, allowInsecureTLS, timeoutMs) {
+  if (activeElasticRequests >= MAX_ELASTIC_REQUESTS) {
+    throw new ElasticResponseLimitError(
+      "Elasticsearch request capacity exceeded; retry after pending requests"
+    );
+  }
+  activeElasticRequests++;
   return new Promise((resolve, reject) => {
     try {
       const u = new URL(urlStr);
@@ -614,7 +1022,20 @@ async function httpJsonRequest(method, urlStr, body, headers, allowInsecureTLS, 
       }, timeoutMs) : null;
       const req = mod.request(opts, (res) => {
         const chunks = [];
-        res.on("data", (c) => chunks.push(c));
+        let responseBytes = 0;
+        res.on("data", (c) => {
+          responseBytes += c.byteLength;
+          if (responseBytes > MAX_ELASTIC_RESPONSE_BYTES) {
+            chunks.length = 0;
+            req.destroy(
+              new ElasticResponseLimitError(
+                "Elasticsearch response exceeds 16 MiB; reduce page size"
+              )
+            );
+            return;
+          }
+          chunks.push(c);
+        });
         res.on("end", () => {
           if (timer) clearTimeout(timer);
           const encoding = (res.headers["content-encoding"] || "").toLowerCase();
@@ -622,17 +1043,35 @@ async function httpJsonRequest(method, urlStr, body, headers, allowInsecureTLS, 
           let buf = raw;
           try {
             if (encoding === "gzip" || encoding === "x-gzip") {
-              buf = import_zlib.default.gunzipSync(raw);
+              buf = import_zlib.default.gunzipSync(raw, {
+                maxOutputLength: MAX_ELASTIC_RESPONSE_BYTES
+              });
             } else if (encoding === "deflate") {
               try {
-                buf = import_zlib.default.inflateSync(raw);
-              } catch {
-                buf = import_zlib.default.inflateRawSync(raw);
+                buf = import_zlib.default.inflateSync(raw, {
+                  maxOutputLength: MAX_ELASTIC_RESPONSE_BYTES
+                });
+              } catch (error) {
+                if (error.code === "ERR_BUFFER_TOO_LARGE")
+                  throw error;
+                buf = import_zlib.default.inflateRawSync(raw, {
+                  maxOutputLength: MAX_ELASTIC_RESPONSE_BYTES
+                });
               }
             } else if (encoding === "br" && typeof import_zlib.default.brotliDecompressSync === "function") {
-              buf = import_zlib.default.brotliDecompressSync(raw);
+              buf = import_zlib.default.brotliDecompressSync(raw, {
+                maxOutputLength: MAX_ELASTIC_RESPONSE_BYTES
+              });
             }
           } catch (e) {
+            if (e.code === "ERR_BUFFER_TOO_LARGE") {
+              reject(
+                new ElasticResponseLimitError(
+                  "Decompressed Elasticsearch response exceeds 16 MiB; reduce page size"
+                )
+              );
+              return;
+            }
             import_main.default.warn(
               "httpJsonRequest: Dekomprimierung fehlgeschlagen, verwende Rohdaten:",
               e instanceof Error ? e.message : String(e)
@@ -663,6 +1102,8 @@ async function httpJsonRequest(method, urlStr, body, headers, allowInsecureTLS, 
     } catch (err) {
       reject(err instanceof Error ? err : new Error(String(err)));
     }
+  }).finally(() => {
+    activeElasticRequests--;
   });
 }
 async function requestWithRetry(exec, opts) {
@@ -678,6 +1119,7 @@ async function requestWithRetry(exec, opts) {
         return res;
       }
     } catch (e) {
+      if (e instanceof ElasticResponseLimitError) throw e;
       if (attempt >= opts.maxRetries) throw e;
     }
     const delay = Math.round(opts.backoffBaseMs * Math.pow(2, attempt));
@@ -1483,13 +1925,17 @@ async function closeElasticPitSession(sessionId) {
 }
 // Annotate the CommonJS export names for ESM import in node:
 0 && (module.exports = {
+  DEFAULT_STREAM_PARSE_CHUNK_SIZE,
+  DEFAULT_STREAM_PARSE_THRESHOLD_BYTES,
   closeElasticPitSession,
   fetchElasticPitPage,
+  getStreamParseStrategy,
   parseJsonFile,
   parsePathAsync,
   parsePaths,
   parsePathsAsync,
   parseTextLines,
   parseZipFile,
+  streamParseFile,
   toEntry
 });

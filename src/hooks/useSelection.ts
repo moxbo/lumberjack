@@ -2,10 +2,14 @@
  * Hook for managing log entry selection state
  */
 import { useState, useRef, useCallback, useMemo } from "preact/hooks";
+import {
+  MetadataSnapshot,
+  type ReadonlySequence,
+} from "../utils/metadataSnapshot";
 
 interface UseSelectionOptions {
-  filteredIdx: number[];
-  entries: any[];
+  filteredIdx: ReadonlySequence<number>;
+  entries: ReadonlySequence<any>;
   scrollToIndexCenter: (viIndex: number) => void;
 }
 
@@ -56,7 +60,7 @@ export function useSelection({
       if (targetVi < 0) targetVi = 0;
       if (targetVi > filteredIdx.length - 1) targetVi = filteredIdx.length - 1;
 
-      const targetGlobal = filteredIdx[targetVi]!;
+      const targetGlobal = filteredIdx.at(targetVi)!;
       if (!extend) {
         setSelected(new Set([targetGlobal]));
         lastClicked.current = targetGlobal;
@@ -82,7 +86,7 @@ export function useSelection({
   const gotoListStart = useCallback(() => {
     if (!filteredIdx.length) return;
     const targetVi = 0;
-    const globalIdx = filteredIdx[targetVi]!;
+    const globalIdx = filteredIdx.at(targetVi)!;
     setSelected(new Set([globalIdx]));
     lastClicked.current = globalIdx;
     scrollToIndexCenter(targetVi);
@@ -91,7 +95,7 @@ export function useSelection({
   const gotoListEnd = useCallback(() => {
     if (!filteredIdx.length) return;
     const targetVi = filteredIdx.length - 1;
-    const globalIdx = filteredIdx[targetVi]!;
+    const globalIdx = filteredIdx.at(targetVi)!;
     setSelected(new Set([globalIdx]));
     lastClicked.current = globalIdx;
     scrollToIndexCenter(targetVi);
@@ -110,10 +114,14 @@ export function useSelection({
     return null;
   }, [selected]);
 
-  const selectedEntry = useMemo(
-    () => (selectedOneIdx != null ? entries[selectedOneIdx] || null : null),
-    [selectedOneIdx, entries],
-  );
+  const selectedEntry = useMemo(() => {
+    if (selectedOneIdx == null) return null;
+    const offset =
+      entries instanceof MetadataSnapshot
+        ? entries.ids.positionOf(selectedOneIdx)
+        : selectedOneIdx;
+    return offset < 0 ? null : entries.at(offset) || null;
+  }, [selectedOneIdx, entries]);
 
   return {
     selected,

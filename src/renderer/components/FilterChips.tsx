@@ -39,7 +39,7 @@ export function FilterChips({
     if (filter.level && stdFiltersEnabled) {
       filters.push({
         type: "level",
-        label: "",
+        label: t("toolbar.levelMinimum"),
         value: filter.level,
         colorClass: `level-${filter.level.toLowerCase()}`,
         onRemove: () => onFilterChange({ level: "" }),

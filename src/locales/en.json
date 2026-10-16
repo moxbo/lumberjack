@@ -2,6 +2,53 @@
   "app": {
     "title": "Lumberjack"
   },
+  "liveIntake": {
+    "usage": "Live entries: {{count}} / {{limit}}",
+    "label": "Live intake utilization",
+    "settings": "Change limit",
+    "paused": "Live intake paused.",
+    "pausedHint": "Existing entries are preserved. New messages may be lost while paused. Raise the limit or clear logs, then manually restart sources. Imports remain available.",
+    "controlError": "Could not change the live sources' intake state: {{message}}"
+  },
+  "inspector": {
+    "title": "Entry details",
+    "message": "Message",
+    "stacktrace": "Stacktrace",
+    "context": "Context",
+    "advanced": "Advanced",
+    "raw": "Raw data",
+    "entryContext": "Entry context",
+    "close": "Close details",
+    "copy": "Copy",
+    "copyMessage": "Copy message",
+    "copied": "Message copied",
+    "copyFailed": "Could not copy message.",
+    "unavailable": "Full details are unavailable.",
+    "noStacktrace": "No stacktrace for this entry.",
+    "noContext": "No diagnostic context.",
+    "rawHint": "Stored source data, or available entry fields.",
+    "rawTruncated": "Preview shortened for performance; use export for complete data."
+  },
+  "workspace": {
+    "open": "Open",
+    "export": "Export",
+    "layout": "Details position",
+    "bottom": "Details below",
+    "right": "Details on the right",
+    "settings": "Appearance and settings",
+    "more": "More actions",
+    "follow": "Follow live",
+    "resizeDetails": "Resize details",
+    "clearing": "Clearing logs …",
+    "waitingToClear": "Clearing: waiting for the current write to finish …",
+    "storageError": "Ingestion/storage error",
+    "localSession": "Local session"
+  },
+  "searchProgress": {
+    "label": "Search progress",
+    "starting": "Starting search …",
+    "running": "{{processed}} / {{total}} searched"
+  },
   "status": {
     "tcpActive": "TCP: Port {{port}} active",
     "tcpStopped": "TCP stopped",
@@ -10,6 +57,9 @@
     "httpPollStopped": "Poll stopped",
     "httpTailing": "HTTP tail active",
     "httpTailingMulti": "HTTP tail active ({{count}})",
+    "httpTailPaused": "HTTP tail paused – processing backlog ({{count}})",
+    "httpTailNextIn": "Next tail request in {{seconds}} s",
+    "httpTailNextAfterResume": "Next request after processing + {{seconds}} s",
     "error": "Error: {{message}}",
     "errorUnknown": "unknown",
     "elasticError": "Elastic error: {{message}}"
@@ -64,6 +114,8 @@
     "nextMatch": "Next match",
     "filterActive": "Standard filters active",
     "level": "Level",
+    "levelMinimum": "Min. level",
+    "levelTooltip": "Show the selected level and all higher severities (e.g. WARN also shows ERROR and FATAL).",
     "levelAll": "All",
     "logger": "Logger",
     "loggerPlaceholder": "Logger contains…",
@@ -86,6 +138,9 @@
     "elasticLoadedTooltip": "Loaded ES results: {{loaded}} of {{total}}",
     "elasticMoreAvailable": " - More available",
     "busy": "Loading…",
+    "importFileProgress": "File {{current}}/{{total}} read",
+    "importEntryProgress": "{{current}}/{{total}} entries read",
+    "importEntriesRead": "{{count}} entries read",
     "nextPollIn": "Next poll in",
     "exportView": "Export View…",
     "exportViewTooltip": "Export current view as HTML/Text",
@@ -182,6 +237,9 @@
   "settings": {
     "title": "Settings",
     "tabs": {
+      "general": "General",
+      "connections": "Connections",
+      "advanced": "Advanced",
       "tcp": "TCP",
       "http": "HTTP",
       "elastic": "Elasticsearch",
@@ -245,6 +303,9 @@
     "performance": {
       "heapSize": "Memory Limit",
       "heapSizeHint": "Maximum memory for the application. Higher values allow more log entries but require a restart.",
+      "liveEntryLimit": "Live Entry Limit",
+      "liveEntryLimitHint": "Default: 500,000. Caps accumulated live TCP, HTTP polling, HTTP tail and file-watching entries in the current log session. File, manual HTTP and Elasticsearch imports are exempt. Reaching the limit pauses live intake without deleting saved logs. Entries may be missed while paused. Raise the limit or clear logs, then manually restart the source. This is not a hard memory guarantee.",
+      "liveEntryLimitInvalid": "Live entry limit must be a whole number between 1 and 9007199254740991.",
       "default": "Default",
       "restartRequired": "The memory limit has been changed. The change will take effect after a restart.\n\nDo you want to restart the application now?"
     },
@@ -253,6 +314,8 @@
     "close": "Close",
     "navAriaLabel": "Settings Navigation",
     "descriptions": {
+      "general": "Application language and updates.",
+      "advanced": "Live-entry and memory limits, and optional application features.",
       "tcp": "Configure the TCP server for incoming log messages.",
       "tcpPortHint": "Port on which the TCP server listens (1-65535)",
       "tcpWindowControlHint": "Allow TCP clients to control this window",
@@ -659,7 +722,7 @@
     },
     "filters": {
       "heading": "Filters",
-      "level": "TRACE, DEBUG, INFO, WARN, ERROR, FATAL",
+      "level": "Minimum level and all higher severities: TRACE < DEBUG < INFO < WARN < ERROR < FATAL. WARN also shows ERROR and FATAL; All shows every entry.",
       "logger": "Substring search in logger name",
       "thread": "Filter by thread name",
       "dc": "Mapped Diagnostic Context (MDC) — TraceID, SpanID and custom keys",
@@ -841,7 +904,10 @@
     "removeFilter": "Remove filter",
     "clearAll": "Clear all",
     "clearAllTooltip": "Clear all filters",
-    "marked": "Marked"
+    "marked": "Marked",
+    "time": "Time",
+    "timeRelative": "Relative range",
+    "timeAbsolute": "Absolute range"
   },
   "filterStats": {
     "filtered": "Filtered: {{count}} entries",

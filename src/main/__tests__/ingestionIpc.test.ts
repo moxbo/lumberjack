@@ -1,0 +1,693 @@
+import { afterAll, afterEach, describe, expect, it, vi } from "vitest";
+import { EventEmitter } from "node:events";
+import AdmZip from "adm-zip";
+import { parseJsonFile, parseTextLines } from "../parsers";
+import type {
+  ElasticSearchOptions,
+  LogEntry,
+  ParseResult,
+} from "../../types/ipc";
+import { SettingsService } from "../../services/SettingsService";
+import { NetworkService } from "../../services/NetworkService";
+import { registerIpcHandlers } from "../ipcHandlers";
+import { entryPayloadStore } from "../EntryPayloadStore";
+import { IPC_BATCH_SIZE } from "../../constants/logViewer";
+import { MESSAGE_PREVIEW_LENGTH } from "../../utils/entryLimits";
+import {
+  DEFAULT_INGESTION_LIMITS,
+  IngestionBudget,
+} from "../../hooks/ingestionBudget";
+
+const ipc = vi.hoisted(() => ({ handle: vi.fn(), on: vi.fn() }));
+vi.mock("electron", () => ({
+  app: { on: vi.fn() },
+  BrowserWindow: {
+    fromWebContents: vi.fn(() => null),
+    getAllWindows: vi.fn(() => []),
+  },
+  dialog: {},
+  Notification: {},
+  safeStorage: {},
+  ipcMain: ipc,
+}));
+vi.mock("electron-log/main", () => ({
+  default: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
+}));
+
+afterEach(() => vi.useRealTimers());
+afterAll(() => entryPayloadStore.close());
+
+type Parsers = ReturnType<Parameters<typeof registerIpcHandlers>[2]>;
+function register(
+  parsers: Partial<Parsers>,
+  network = new NetworkService(),
+  enqueue?: Parameters<typeof registerIpcHandlers>[5],
+) {
+  ipc.handle.mockClear();
+  ipc.on.mockClear();
+  registerIpcHandlers(
+    new SettingsService(),
+    network,
+    () => parsers as Parsers,
+    () => AdmZip,
+    undefined,
+    enqueue,
+  );
+}
+
+describe("original payload IPC", () => {
+  it.each([
+    "logs:parsePaths",
+    "logs:parseRaw",
+    "http:loadOnce",
+    "elastic:search",
+  ] as const)(
+    "retains complete originals behind window-owned references for %s",
+    async (channel) => {
+      const message = "<xml>" + "\u00fc\u{1f600}".repeat(50_000) + "</xml>";
+      const raw = {
+        timestamp: "2026-09-14T10:34:25.128Z",
+        level: "INFO",
+        logger: "large.payload",
+        thread: "worker-44",
+        message,
+      };
+      const entries = parseTextLines("original.ndjson", JSON.stringify(raw));
+      const network = new NetworkService();
+      vi.spyOn(network, "httpLoadOnce").mockResolvedValue({
+        ok: true,
+        entries,
+      });
+      register(
+        {
+          parsePaths: () => entries,
+          parseJsonFile,
+          parseTextLines,
+          fetchElasticPitPage: async () => ({
+            entries,
+            total: 1,
+            hasMore: false,
+            nextSearchAfter: null,
+            pitSessionId: "test",
+          }),
+        },
+        network,
+      );
+      const sender = Object.assign(new EventEmitter(), {
+        id: 42,
+        isDestroyed: () => false,
+        send: vi.fn(),
+      });
+      const other = Object.assign(new EventEmitter(), {
+        id: 43,
+        isDestroyed: () => false,
+        send: vi.fn(),
+      });
+      const handler = ipc.handle.mock.calls.find(
+        ([name]) => name === channel,
+      )![1];
+      const load = ipc.handle.mock.calls.find(
+        ([name]) => name === "logs:payloadLoad",
+      )![1];
+      const release = ipc.handle.mock.calls.find(
+        ([name]) => name === "logs:payloadRelease",
+      )![1];
+      const request =
+        channel === "logs:parsePaths"
+          ? ["original.ndjson"]
+          : channel === "logs:parseRaw"
+            ? [
+                {
+                  name: "original.ndjson",
+                  encoding: "utf8",
+                  data: JSON.stringify(raw),
+                },
+              ]
+            : channel === "elastic:search"
+              ? { url: "http://example.test" }
+              : "http://example.test/log";
+      const result: ParseResult = await handler({ sender }, request);
+      expect(result.ok).toBe(true);
+      expect(result.entries).toHaveLength(1);
+      const preview = result.entries![0]!;
+      expect(preview.message).not.toBe(message);
+      expect(preview.message.length).toBeLessThanOrEqual(
+        MESSAGE_PREVIEW_LENGTH + 256,
+      );
+      expect(
+        preview.message.startsWith(message.slice(0, MESSAGE_PREVIEW_LENGTH)),
+      ).toBe(true);
+      expect(preview).not.toHaveProperty("_fullMessage");
+      expect(preview).toMatchObject({
+        logger: raw.logger,
+        thread: raw.thread,
+        _messageSize: Buffer.byteLength(message),
+      });
+      const reference = preview._payloadRef;
+      if (!reference) throw new Error("Missing original payload reference");
+      try {
+        await expect(load({ sender }, reference)).resolves.toMatchObject({
+          ok: true,
+          data: { message, raw },
+        });
+        await expect(load({ sender: other }, reference)).resolves.toMatchObject(
+          {
+            ok: false,
+            error: expect.stringContaining("another window"),
+          },
+        );
+        await expect(
+          release({ sender: other }, [reference]),
+        ).resolves.toMatchObject({
+          ok: false,
+          error: expect.stringContaining("another window"),
+        });
+        await expect(
+          release({ sender }, [reference, 42]),
+        ).resolves.toMatchObject({
+          ok: false,
+          error: expect.stringContaining("Invalid"),
+        });
+        await expect(
+          release({ sender }, Array(257).fill(reference)),
+        ).resolves.toMatchObject({
+          ok: false,
+          error: expect.stringContaining("Invalid"),
+        });
+        await expect(load({ sender }, reference)).resolves.toMatchObject({
+          ok: true,
+          data: { message },
+        });
+        await expect(release({ sender }, [reference])).resolves.toEqual({
+          ok: true,
+        });
+        await expect(load({ sender }, reference)).resolves.toMatchObject({
+          ok: false,
+          error: expect.stringContaining("unavailable"),
+        });
+      } finally {
+        await entryPayloadStore.release(sender, [reference]);
+      }
+    },
+  );
+
+  it("reports HTTP original-storage failures instead of returning a preview", async () => {
+    const network = new NetworkService();
+    vi.spyOn(network, "httpLoadOnce").mockResolvedValue({
+      ok: true,
+      entries: [{ timestamp: null, source: "test", message: "large" }],
+    });
+    register({}, network);
+    const preparation = vi
+      .spyOn(entryPayloadStore, "prepare")
+      .mockRejectedValueOnce(new Error("ENOSPC"));
+    const handler = ipc.handle.mock.calls.find(
+      ([channel]) => channel === "http:loadOnce",
+    )![1];
+    try {
+      await expect(
+        handler({ sender: {} }, "http://example.test/log"),
+      ).resolves.toEqual({
+        ok: false,
+        error: "ENOSPC",
+      });
+    } finally {
+      preparation.mockRestore();
+    }
+  });
+
+  it.each(["cancel", "send-failure"])(
+    "reclaims staged stream originals that were not delivered after %s",
+    async (failure) => {
+      const entries = parseTextLines(
+        "original.ndjson",
+        JSON.stringify({ message: "x".repeat(200_000) }),
+      );
+      register({
+        getStreamParseStrategy: async () => ({
+          streamable: true,
+          reason: "stream",
+          totalBytes: 200_000,
+        }),
+        streamParseFile: async function* () {
+          yield {
+            entries,
+            bytesRead: 200_000,
+            totalBytes: 200_000,
+            filePath: "original.ndjson",
+            done: true,
+          };
+        },
+      });
+      const sender = Object.assign(new EventEmitter(), {
+        id: 42,
+        isDestroyed: () => false,
+        send: vi.fn((channel: string) => {
+          if (channel === "logs:streamChunk" && failure === "send-failure")
+            throw new Error("send failed");
+        }),
+      });
+      const start = ipc.handle.mock.calls.find(
+        ([channel]) => channel === "logs:streamParsePaths",
+      )![1];
+      const ready = ipc.on.mock.calls.find(
+        ([channel]) => channel === "logs:streamReady",
+      )![1];
+      const cancel = ipc.on.mock.calls.find(
+        ([channel]) => channel === "logs:streamCancel",
+      )![1];
+      let finishStaging!: () => void;
+      const staged = new Promise<void>((resolve) => {
+        finishStaging = resolve;
+      });
+      const prepare = entryPayloadStore.prepare.bind(entryPayloadStore);
+      let reference: string | undefined;
+      const preparation = vi
+        .spyOn(entryPayloadStore, "prepare")
+        .mockImplementationOnce(async (owner, entries) => {
+          const prepared = await prepare(owner, entries);
+          reference = prepared[0]?._payloadRef;
+          await staged;
+          return prepared;
+        });
+      const { sessionId } = await start({ sender }, ["original.ndjson"]);
+      try {
+        ready({ sender }, { sessionId });
+        await vi.waitFor(() => expect(reference).toBeTypeOf("string"));
+        const retainedReference = reference!;
+        if (failure === "cancel") cancel({ sender }, { sessionId });
+        finishStaging();
+        await vi.waitFor(async () => {
+          await expect(
+            entryPayloadStore.load(sender, retainedReference),
+          ).rejects.toThrow("unavailable");
+        });
+        expect(
+          sender.send.mock.calls.filter(
+            ([channel]) => channel === "logs:streamChunk",
+          ),
+        ).toHaveLength(failure === "cancel" ? 0 : 1);
+        expect(sender.send).not.toHaveBeenCalledWith(
+          "logs:streamComplete",
+          expect.anything(),
+        );
+      } finally {
+        finishStaging();
+        cancel({ sender }, { sessionId });
+        preparation.mockRestore();
+        if (reference) await entryPayloadStore.release(sender, [reference]);
+      }
+    },
+  );
+});
+
+describe("raw drop ingestion", () => {
+  it("bounds decoded drop payload bytes even when the entry count is small", async () => {
+    const budget = new IngestionBudget(DEFAULT_INGESTION_LIMITS);
+    const entries = parseJsonFile(
+      "large.json",
+      JSON.stringify(
+        Array.from({ length: 80 }, () => ({ message: "x".repeat(256 * 1024) })),
+      ),
+    );
+    expect(() => budget.reserve(entries)).toThrow("capacity exceeded");
+    let received = 0;
+    const consume = vi.fn(async (batch: LogEntry[]) => {
+      const release = budget.reserve(batch);
+      received += batch.length;
+      release();
+    });
+    register({ parseJsonFile: () => entries }, new NetworkService(), consume);
+    const handler = ipc.handle.mock.calls.find(
+      ([channel]) => channel === "logs:parseRaw",
+    )![1];
+    await expect(
+      handler({ sender: { id: 42 } }, [
+        { name: "large.json", encoding: "utf8", data: "[]" },
+      ]),
+    ).resolves.toEqual({ ok: true, entries: [] });
+    expect(received).toBe(80);
+    expect(consume.mock.calls.length).toBeGreaterThan(1);
+  });
+
+  it.each(["json", "ndjson", "txt", "zip"])(
+    "persists large %s drops in bounded batches before returning success",
+    async (extension) => {
+      const count = DEFAULT_INGESTION_LIMITS.maxEntries + 5;
+      const objects = Array.from({ length: count }, (_, index) => ({
+        message: `entry-${index}`,
+        mdc: { tenant: "orders" },
+        ...(index === 0 ? { markColor: "#ff0000" } : {}),
+      }));
+      const json = JSON.stringify(objects);
+      let data =
+        extension === "json" || extension === "zip"
+          ? json
+          : extension === "txt"
+            ? objects.map((entry) => entry.message).join("\n")
+            : objects.map((entry) => JSON.stringify(entry)).join("\n");
+      if (extension === "zip") {
+        const zip = new AdmZip();
+        zip.addFile("logs.json", Buffer.from(json));
+        data = zip.toBuffer().toString("base64");
+      }
+      const budget = new IngestionBudget(DEFAULT_INGESTION_LIMITS);
+      let release!: () => void;
+      const gate = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      let received = 0;
+      const consume = vi.fn(async (entries: LogEntry[], senderId: number) => {
+        const free = budget.reserve(entries);
+        try {
+          expect(senderId).toBe(42);
+          expect(entries.length).toBeLessThanOrEqual(1000);
+          expect(entries[0]?.message).toBe(`entry-${received}`);
+          if (received === 0 && extension !== "txt") {
+            expect(entries[0]?._mark).toBe("#ff0000");
+            expect(entries[0]?.mdc).toMatchObject({ tenant: "orders" });
+          }
+          received += entries.length;
+          await gate;
+        } finally {
+          free();
+        }
+      });
+      register(
+        { parseJsonFile, parseTextLines },
+        new NetworkService(),
+        consume,
+      );
+      const handler = ipc.handle.mock.calls.find(
+        ([channel]) => channel === "logs:parseRaw",
+      )![1];
+      const loading = handler({ sender: { id: 42 } }, [
+        {
+          name: `drop.${extension}`,
+          encoding: extension === "zip" ? "base64" : "utf8",
+          data,
+        },
+      ]);
+      try {
+        await vi.waitFor(() => expect(consume).toHaveBeenCalledTimes(1));
+        expect(received).toBe(1000);
+      } finally {
+        release();
+      }
+      await expect(loading).resolves.toEqual({ ok: true, entries: [] });
+      expect(received).toBe(count);
+      expect(consume).toHaveBeenCalledTimes(Math.ceil(count / 1000));
+    },
+  );
+
+  it("stops parsing later raw files after a negative persistence ACK", async () => {
+    const parse = vi.fn(parseTextLines);
+    const consume = vi.fn(async () => {
+      throw new Error("storage quota exceeded");
+    });
+    register(
+      { parseJsonFile, parseTextLines: parse },
+      new NetworkService(),
+      consume,
+    );
+    const handler = ipc.handle.mock.calls.find(
+      ([channel]) => channel === "logs:parseRaw",
+    )![1];
+    await expect(
+      handler({ sender: { id: 42 } }, [
+        { name: "first.log", encoding: "utf8", data: "first\nlast" },
+        { name: "next.log", encoding: "utf8", data: "next" },
+      ]),
+    ).resolves.toEqual({ ok: false, error: "storage quota exceeded" });
+    expect(parse).toHaveBeenCalledExactlyOnceWith("first.log", "first\nlast");
+    expect(consume).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("terminal ingestion error notifications", () => {
+  it.each(["json-array", "unsupported-format", "small-file"])(
+    "streams %s fallback imports beyond renderer admission with ACK backpressure",
+    async (reason) => {
+      const count = DEFAULT_INGESTION_LIMITS.maxEntries + 5;
+      const parse = vi.fn(async () =>
+        Array.from({ length: count }, (_, index) => ({
+          timestamp: null,
+          message: `entry-${index}`,
+          source: "fallback.json",
+        })),
+      );
+      register({
+        getStreamParseStrategy: async () => ({
+          streamable: false,
+          reason,
+          totalBytes: 10,
+        }),
+        parsePathsAsync: parse,
+      });
+      const start = ipc.handle.mock.calls.find(
+        ([channel]) => channel === "logs:streamParsePaths",
+      )![1];
+      const ready = ipc.on.mock.calls.find(
+        ([channel]) => channel === "logs:streamReady",
+      )![1];
+      const ack = ipc.on.mock.calls.find(
+        ([channel]) => channel === "logs:streamAck",
+      )![1];
+      const cancel = ipc.on.mock.calls.find(
+        ([channel]) => channel === "logs:streamCancel",
+      )![1];
+      const budget = new IngestionBudget(DEFAULT_INGESTION_LIMITS);
+      let received = 0;
+      let blocked = true;
+      const sender = Object.assign(new EventEmitter(), {
+        id: 42,
+        isDestroyed: () => false,
+        send: vi.fn((channel: string, chunk) => {
+          if (channel !== "logs:streamChunk") return;
+          const release = budget.reserve(chunk.entries);
+          expect(chunk.entries[0]?.message).toBe(`entry-${received}`);
+          received += chunk.entries.length;
+          release();
+          if (!blocked) {
+            queueMicrotask(() =>
+              ack(
+                { sender },
+                {
+                  sessionId: chunk.sessionId,
+                  chunkIndex: chunk.chunkIndex,
+                },
+              ),
+            );
+          }
+        }),
+      });
+      const result = await start({ sender }, ["fallback.json"]);
+      expect(result).toMatchObject({ streamed: true });
+      try {
+        expect(parse).not.toHaveBeenCalled();
+        ready({ sender }, { sessionId: result.sessionId });
+        await vi.waitFor(() => expect(received).toBe(1000));
+        expect(sender.send).toHaveBeenCalledTimes(1);
+        blocked = false;
+        ack({ sender }, { sessionId: result.sessionId, chunkIndex: 0 });
+        await vi.waitFor(() =>
+          expect(sender.send).toHaveBeenCalledWith(
+            "logs:streamComplete",
+            expect.objectContaining({ totalEntries: count, errors: [] }),
+          ),
+        );
+        expect(received).toBe(count);
+        expect(parse).toHaveBeenCalledExactlyOnceWith(["fallback.json"]);
+      } finally {
+        cancel({ sender }, { sessionId: result.sessionId });
+      }
+    },
+  );
+
+  it("routes one-shot HTTP batches to the requesting window and waits for persistence", async () => {
+    const network = new NetworkService();
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const enqueue = vi.fn(() => gate);
+    vi.spyOn(network, "httpLoadOnce").mockImplementation(
+      async (_url, consume) => {
+        await consume!([
+          { timestamp: null, message: "HTTP entry", source: _url },
+        ]);
+        return { ok: true, entries: [] };
+      },
+    );
+    register({}, network, enqueue);
+    const handler = ipc.handle.mock.calls.find(
+      ([channel]) => channel === "http:loadOnce",
+    )![1];
+    let completed = false;
+    const loading = handler({ sender: { id: 42 } }, "http://example.test/log");
+    void loading.then(() => {
+      completed = true;
+    });
+    await Promise.resolve();
+    expect(completed).toBe(false);
+    expect(enqueue).toHaveBeenCalledExactlyOnceWith(
+      [
+        {
+          timestamp: null,
+          message: "HTTP entry",
+          source: "http://example.test/log",
+        },
+      ],
+      42,
+      "import",
+    );
+    release();
+    await expect(loading).resolves.toEqual({ ok: true, entries: [] });
+  });
+
+  it("routes terminal polling errors to the requesting renderer", async () => {
+    const network = new NetworkService();
+    vi.spyOn(network, "httpStartPoll").mockImplementation(
+      async (_url, _interval, onError) => {
+        onError?.(7, new Error("ENOSPC"));
+        return { ok: true, id: 7 };
+      },
+    );
+    register({}, network);
+    const sender = Object.assign(new EventEmitter(), {
+      id: 42,
+      isDestroyed: () => false,
+      send: vi.fn(),
+    });
+    const handler = ipc.handle.mock.calls.find(
+      ([channel]) => channel === "http:startPoll",
+    )![1];
+    await handler(
+      { sender },
+      { url: "http://example.test/log", intervalSec: 1 },
+    );
+    expect(sender.send).toHaveBeenCalledExactlyOnceWith("http:pollError", {
+      id: 7,
+      url: "http://example.test/log",
+      error: "ENOSPC",
+    });
+  });
+
+  it.each(["ack-timeout", "ready-timeout", "send-failure", "cancel"] as const)(
+    "ends a stream with correct notification and releases admission: %s",
+    async (failure) => {
+      vi.useFakeTimers();
+      let parsed = 0;
+      register({
+        getStreamParseStrategy: async () => ({
+          streamable: true,
+          reason: "stream",
+          totalBytes: 2 * 1024 * 1024,
+        }),
+        streamParseFile: async function* () {
+          parsed++;
+          yield {
+            entries: [],
+            bytesRead: 1,
+            totalBytes: 2,
+            filePath: "large.ndjson",
+            done: false,
+          };
+          parsed++;
+          yield {
+            entries: [],
+            bytesRead: 2,
+            totalBytes: 2,
+            filePath: "large.ndjson",
+            done: true,
+          };
+        },
+      });
+      const sender = Object.assign(new EventEmitter(), {
+        id: 1,
+        isDestroyed: () => false,
+        send: vi.fn((channel: string) => {
+          if (channel === "logs:streamChunk" && failure === "send-failure")
+            throw new Error("send failed");
+        }),
+      });
+      const event = { sender };
+      const start = ipc.handle.mock.calls.find(
+        ([channel]) => channel === "logs:streamParsePaths",
+      )![1];
+      const ready = ipc.on.mock.calls.find(
+        ([channel]) => channel === "logs:streamReady",
+      )![1];
+      const cancel = ipc.on.mock.calls.find(
+        ([channel]) => channel === "logs:streamCancel",
+      )![1];
+      const { sessionId } = await start(event, ["large.ndjson"]);
+      if (failure !== "ready-timeout") ready(event, { sessionId });
+      await vi.advanceTimersByTimeAsync(0);
+      if (failure === "cancel") cancel(event, { sessionId });
+      await vi.advanceTimersByTimeAsync(30_000);
+      const errors = sender.send.mock.calls.filter(
+        ([channel]) => channel === "logs:streamError",
+      );
+      expect(errors).toHaveLength(failure === "cancel" ? 0 : 1);
+      if (failure !== "cancel") {
+        expect(errors[0]).toEqual([
+          "logs:streamError",
+          expect.objectContaining({
+            sessionId,
+            error: expect.stringMatching(
+              failure === "send-failure" ? /send failed/ : /timed out/,
+            ),
+          }),
+        ]);
+      }
+      expect(
+        sender.send.mock.calls.some(
+          ([channel]) => channel === "logs:streamComplete",
+        ),
+      ).toBe(false);
+      expect(parsed).toBe(failure === "ready-timeout" ? 0 : 1);
+      const next = await start(event, ["large.ndjson"]);
+      expect(next.streamed).toBe(true);
+      cancel(event, { sessionId: next.sessionId });
+      await vi.advanceTimersByTimeAsync(0);
+    },
+  );
+});
+
+describe("Elastic producer admission", () => {
+  it.each([1, 1000, 10_000])(
+    "caps requested page size %i to one renderer admission batch",
+    async (size) => {
+      ipc.handle.mockClear();
+      const fetchPage = vi.fn(async () => ({
+        entries: [],
+        total: 0,
+        hasMore: false,
+        nextSearchAfter: null,
+        pitSessionId: "test",
+      }));
+      type Parsers = ReturnType<Parameters<typeof registerIpcHandlers>[2]>;
+      registerIpcHandlers(
+        new SettingsService(),
+        new NetworkService(),
+        () => ({ fetchElasticPitPage: fetchPage }) as unknown as Parsers,
+        () => {
+          throw new Error("ZIP parser unused");
+        },
+      );
+      const handler = ipc.handle.mock.calls.find(
+        ([channel]) => channel === "elastic:search",
+      )![1] as (
+        event: unknown,
+        options: ElasticSearchOptions,
+      ) => Promise<ParseResult>;
+      await expect(
+        handler({}, { url: "http://example.test", size }),
+      ).resolves.toMatchObject({ ok: true, entries: [] });
+      expect(fetchPage).toHaveBeenCalledWith(
+        expect.objectContaining({ size: Math.min(size, IPC_BATCH_SIZE) }),
+      );
+    },
+  );
+});

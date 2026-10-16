@@ -16,6 +16,8 @@ var __copyProps = (to, from, except, desc) => {
   return to;
 };
 var __toCommonJS = (mod) => __copyProps(__defProp({}, "__esModule", { value: true }), mod);
+
+// src/utils/settings.ts
 var settings_exports = {};
 __export(settings_exports, {
   SETTINGS_SCHEMA: () => SETTINGS_SCHEMA,
@@ -29,10 +31,18 @@ __export(settings_exports, {
   validateSettings: () => validateSettings
 });
 module.exports = __toCommonJS(settings_exports);
-const MIN_USER_PORT = 1024;
-const MAX_PORT = 65535;
-const MAX_LOG_SIZE_BYTES = 1024 * 1024 * 1024;
-const SETTINGS_SCHEMA = {
+
+// src/utils/liveIngestionLimit.ts
+var DEFAULT_LIVE_ENTRY_LIMIT = 5e5;
+function isValidLiveEntryLimit(value) {
+  return typeof value === "number" && Number.isSafeInteger(value) && value > 0;
+}
+
+// src/utils/settings.ts
+var MIN_USER_PORT = 1024;
+var MAX_PORT = 65535;
+var MAX_LOG_SIZE_BYTES = 1024 * 1024 * 1024;
+var SETTINGS_SCHEMA = {
   // Window settings
   windowBounds: {
     type: "object",
@@ -64,6 +74,16 @@ const SETTINGS_SCHEMA = {
     type: "number",
     default: 300,
     validate: (val) => val >= 150 && val <= 2e3
+  },
+  detailWidth: {
+    type: "number",
+    default: 420,
+    validate: (val) => Number.isFinite(val) && val >= 280 && val <= 1600
+  },
+  detailLayout: {
+    type: "string",
+    default: "bottom",
+    validate: (val) => val === "bottom" || val === "right"
   },
   colTs: {
     type: "number",
@@ -141,6 +161,11 @@ const SETTINGS_SCHEMA = {
     default: 3,
     validate: (val) => Number.isInteger(val) && val >= 0 && val <= 99
   },
+  liveEntryLimit: {
+    type: "number",
+    default: DEFAULT_LIVE_ENTRY_LIMIT,
+    validate: isValidLiveEntryLimit
+  },
   // Elasticsearch settings
   elasticUrl: {
     type: "string",
@@ -163,7 +188,7 @@ const SETTINGS_SCHEMA = {
     validate: (val) => val.length <= 8192
   }
 };
-const SETTINGS_VERSION = 1;
+var SETTINGS_VERSION = 1;
 function validateSetting(key, value) {
   const schema = SETTINGS_SCHEMA[key];
   if (!schema) {

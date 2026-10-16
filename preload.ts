@@ -3,7 +3,12 @@
  * Exposes a secure, typed API to the renderer process
  */
 
-import { contextBridge, ipcRenderer, type IpcRendererEvent } from "electron";
+import {
+  contextBridge,
+  ipcRenderer,
+  webUtils,
+  type IpcRendererEvent,
+} from "electron";
 import type {
   AutoUpdaterStatus,
   DroppedFile,
@@ -13,15 +18,24 @@ import type {
   ExportResult,
   ExportViewOptions,
   HttpPollResult,
+  HttpPollError,
   LogEntry,
   MenuCommand,
   ParseResult,
   Result,
   Settings,
   SettingsResult,
+  StreamParseChunk,
+  StreamParseComplete,
+  StreamParseError,
+  StreamParsePathsResult,
   TcpStatus,
   WindowTitleResult,
 } from "./src/types/ipc";
+import { isLiveAppendRejection } from "./src/utils/appendRejection";
+
+// Must stay well below the main-process renderer ack deadline (30 s).
+const APPEND_PROGRESS_INTERVAL_MS = 10_000;
 
 // OPTIMIZATION: Eagerly fetch settings during preload to avoid IPC round-trip on first render
 // Settings are already loaded synchronously in main process, so this is fast
@@ -80,6 +94,7 @@ const api: ElectronAPI = {
 
   // Dialog operations
   openFiles: (): Promise<string[]> => ipcRenderer.invoke("dialog:openFiles"),
+  getPathForFile: (file: File): string => webUtils.getPathForFile(file),
 
   chooseLogFile: (): Promise<string> =>
     ipcRenderer.invoke("dialog:chooseLogFile"),
@@ -91,6 +106,11 @@ const api: ElectronAPI = {
   saveExportFile: (filePath: string, content: string): Promise<ExportResult> =>
     ipcRenderer.invoke("dialog:saveExportFile", filePath, content),
 
+  exportBegin: (request) => ipcRenderer.invoke("export:begin", request),
+  exportWrite: (request) => ipcRenderer.invoke("export:write", request),
+  exportFinish: (request) => ipcRenderer.invoke("export:finish", request),
+  exportCancel: (request) => ipcRenderer.invoke("export:cancel", request),
+
   exportView: (
     content: string,
     options: ExportViewOptions,
@@ -101,8 +121,32 @@ const api: ElectronAPI = {
   parsePaths: (paths: string[]): Promise<ParseResult> =>
     ipcRenderer.invoke("logs:parsePaths", paths),
 
+  streamParsePaths: (paths: string[]): Promise<StreamParsePathsResult> =>
+    ipcRenderer.invoke("logs:streamParsePaths", paths),
+
+  streamReady: (sessionId: string): void => {
+    ipcRenderer.send("logs:streamReady", { sessionId });
+  },
+
   parseRawDrops: (files: DroppedFile[]): Promise<ParseResult> =>
     ipcRenderer.invoke("logs:parseRaw", files),
+
+  entryPayloadLoad: (reference: string) =>
+    ipcRenderer.invoke("logs:payloadLoad", reference),
+
+  entryPayloadRelease: (references: string[]) =>
+    ipcRenderer.invoke("logs:payloadRelease", references),
+
+  streamAck: (sessionId: string, chunkIndex: number): void => {
+    ipcRenderer.send("logs:streamAck", { sessionId, chunkIndex });
+  },
+
+  streamCancel: (sessionId: string): void => {
+    ipcRenderer.send("logs:streamCancel", { sessionId });
+  },
+
+  liveSetPaused: (paused: boolean): Promise<Result<void>> =>
+    ipcRenderer.invoke("live:setPaused", paused),
 
   // TCP operations
   tcpStart: (port: number): void => {
@@ -125,6 +169,13 @@ const api: ElectronAPI = {
   httpStopPoll: (id: number): Promise<Result<void>> =>
     ipcRenderer.invoke("http:stopPoll", id),
 
+  onHttpPollError: (callback: (error: HttpPollError) => void): (() => void) => {
+    const listener = (_event: IpcRendererEvent, error: HttpPollError) =>
+      callback(error);
+    ipcRenderer.on("http:pollError", listener);
+    return () => ipcRenderer.removeListener("http:pollError", listener);
+  },
+
   // HTTP insecure SSL options
   httpSetAllowInsecureSSL: (allow: boolean): Promise<{ ok: boolean }> =>
     ipcRenderer.invoke("http:setAllowInsecureSSL", allow),
@@ -140,14 +191,104 @@ const api: ElectronAPI = {
     ipcRenderer.invoke("elastic:closePit", sessionId),
 
   // Event listeners with proper cleanup
-  onAppend: (callback: (entries: LogEntry[]) => void): (() => void) => {
-    const listener = (_event: IpcRendererEvent, entries: LogEntry[]): void => {
-      callback(entries);
+  onAppend: (
+    callback: (entries: LogEntry[]) => void | Promise<void>,
+  ): (() => void) => {
+    const listener = (
+      _event: IpcRendererEvent,
+      payload:
+        | LogEntry[]
+        | {
+            batchId: string;
+            entries: LogEntry[];
+          },
+    ): void => {
+      const entries = Array.isArray(payload) ? payload : payload.entries;
+      const batchId = Array.isArray(payload) ? undefined : payload.batchId;
+      // Persistence can legitimately outlast the main-process ack deadline
+      // (large stores, queued imports); prove liveness while still pending.
+      const heartbeat = batchId
+        ? setInterval(() => {
+            ipcRenderer.send("logs:appendProgress", { batchId });
+          }, APPEND_PROGRESS_INTERVAL_MS)
+        : null;
+      void Promise.resolve()
+        .then(() => callback(entries))
+        .finally(() => {
+          if (heartbeat) clearInterval(heartbeat);
+        })
+        .then(
+          () => {
+            if (batchId) ipcRenderer.send("logs:appendAck", { batchId });
+          },
+          (error) => {
+            if (batchId) {
+              const liveLimit =
+                entries.length > 0 &&
+                entries.every((entry) => entry._ingestionKind !== "import") &&
+                isLiveAppendRejection(error);
+              ipcRenderer.send("logs:appendAck", {
+                batchId,
+                error: liveLimit
+                  ? error.message
+                  : error instanceof Error
+                    ? error.message
+                    : String(error),
+                ...(liveLimit ? { failureKind: error.kind } : {}),
+              });
+            }
+          },
+        );
     };
     ipcRenderer.on("logs:append", listener);
     // Return cleanup function
     return (): void => {
       ipcRenderer.removeListener("logs:append", listener);
+    };
+  },
+
+  onStreamChunk: (
+    callback: (chunk: StreamParseChunk) => void,
+  ): (() => void) => {
+    const listener = (
+      _event: IpcRendererEvent,
+      chunk: StreamParseChunk,
+    ): void => {
+      callback(chunk);
+    };
+    ipcRenderer.on("logs:streamChunk", listener);
+    return (): void => {
+      ipcRenderer.removeListener("logs:streamChunk", listener);
+    };
+  },
+
+  onStreamComplete: (
+    callback: (result: StreamParseComplete) => void,
+  ): (() => void) => {
+    const listener = (
+      _event: IpcRendererEvent,
+      result: StreamParseComplete,
+    ): void => {
+      callback(result);
+    };
+    ipcRenderer.on("logs:streamComplete", listener);
+    return (): void => {
+      ipcRenderer.removeListener("logs:streamComplete", listener);
+    };
+  },
+
+  onStreamError: (
+    callback: (error: StreamParseError) => void,
+  ): (() => void) => {
+    const listener = (
+      _event: IpcRendererEvent,
+      error: StreamParseError,
+    ): void => {
+      callback(error);
+    };
+    ipcRenderer.on("logs:streamError", listener);
+    return (): void => {
+      ipcRenderer.removeListener("logs:streamError", listener);
     };
   },
 
@@ -453,7 +594,14 @@ const api: ElectronAPI = {
 
   httpTailList: (): Promise<{
     ok: boolean;
-    tails: Array<{ id: number; url: string; offset: number }>;
+    tails: Array<{
+      id: number;
+      url: string;
+      offset: number;
+      paused: boolean;
+      nextPollAt: number | null;
+      intervalMs: number;
+    }>;
   }> => ipcRenderer.invoke("httpTail:list"),
 
   httpTailGetAuthHeader: (): Promise<{
@@ -464,26 +612,49 @@ const api: ElectronAPI = {
 
   onHttpTailStatus: (
     callback: (payload: {
-      type: "started" | "stopped" | "rotated" | "error" | "lines" | "progress";
+      type:
+        | "started"
+        | "stopped"
+        | "rotated"
+        | "error"
+        | "lines"
+        | "progress"
+        | "paused"
+        | "resumed"
+        | "scheduled";
       id: number;
       url: string;
       lineCount?: number;
       offset?: number;
       total?: number;
       message?: string;
+      paused?: boolean;
+      nextPollAt?: number;
+      intervalMs?: number;
     }) => void,
   ): (() => void) => {
     const listener = (
       _e: IpcRendererEvent,
       payload: {
         type:
-          "started" | "stopped" | "rotated" | "error" | "lines" | "progress";
+          | "started"
+          | "stopped"
+          | "rotated"
+          | "error"
+          | "lines"
+          | "progress"
+          | "paused"
+          | "resumed"
+          | "scheduled";
         id: number;
         url: string;
         lineCount?: number;
         offset?: number;
         total?: number;
         message?: string;
+        paused?: boolean;
+        nextPollAt?: number;
+        intervalMs?: number;
       },
     ): void => {
       callback(payload);

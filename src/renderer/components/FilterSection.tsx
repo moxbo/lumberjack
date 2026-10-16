@@ -8,6 +8,7 @@ import { useI18n } from "../../utils/i18n";
 import type { FilterState } from "../../hooks";
 import { FilterProfilesDropdown } from "./FilterProfilesDropdown";
 import type { FilterProfile } from "../../store/filterProfiles";
+import { LOG_LEVELS } from "../../constants/logViewer";
 
 interface FilterSectionProps {
   expanded: boolean;
@@ -42,10 +43,6 @@ interface FilterSectionProps {
   // Callbacks
   onStdFiltersEnabledChange: (enabled: boolean) => void;
   onFilterChange: (filter: FilterState) => void;
-  // Called when a filter input is submitted (Enter) to apply it immediately,
-  // skipping the type-to-filter debounce delay. An optional value can be
-  // passed to apply a specific filter state right away.
-  onSubmitFilter?: (filter?: FilterState) => void;
   onOnlyMarkedChange: (onlyMarked: boolean) => void;
   onShowLoggerHistChange: (show: boolean) => void;
   onShowThreadHistChange: (show: boolean) => void;
@@ -91,7 +88,6 @@ export function FilterSection({
   messagePopRef,
   onStdFiltersEnabledChange,
   onFilterChange,
-  onSubmitFilter,
   onOnlyMarkedChange,
   onShowLoggerHistChange,
   onShowThreadHistChange,
@@ -127,7 +123,10 @@ export function FilterSection({
   useEffect(() => setMessageVal(filter.message), [filter.message]);
 
   return (
-    <div className={`filter-section ${expanded ? "expanded" : "collapsed"}`}>
+    <div
+      id="workspace-filters"
+      className={`filter-section ${expanded ? "expanded" : "collapsed"}`}
+    >
       <div className="section" style={{ paddingTop: 0 }}>
         <label>
           <input
@@ -139,17 +138,18 @@ export function FilterSection({
           {t("toolbar.filterActive")}
         </label>
 
-        <label>{t("toolbar.level")}</label>
+        <label htmlFor="filterLevel">{t("toolbar.levelMinimum")}</label>
         <select
           id="filterLevel"
           value={filter.level}
+          title={t("toolbar.levelTooltip")}
           onChange={(e) =>
             onFilterChange({ ...filter, level: e.currentTarget.value })
           }
           disabled={!stdFiltersEnabled}
         >
           <option value="">{t("toolbar.levelAll")}</option>
-          {["TRACE", "DEBUG", "INFO", "WARN", "ERROR", "FATAL"].map((l) => (
+          {LOG_LEVELS.map((l) => (
             <option key={l} value={l}>
               {l}
             </option>
@@ -175,7 +175,6 @@ export function FilterSection({
               if (e.key === "Enter") {
                 addFilterHistory("logger", e.currentTarget.value);
                 onFilterChange({ ...filter, logger: e.currentTarget.value });
-                onSubmitFilter?.({ ...filter, logger: e.currentTarget.value });
               }
               if (e.key === "ArrowDown") onShowLoggerHistChange(true);
               if (e.key === "a" && (e.ctrlKey || e.metaKey)) {
@@ -207,7 +206,6 @@ export function FilterSection({
                 onFilterChange({ ...filter, logger: v });
                 addFilterHistory("logger", v);
                 onShowLoggerHistChange(false);
-                onSubmitFilter?.({ ...filter, logger: v });
               }}
               onClose={() => onShowLoggerHistChange(false)}
               inputRef={loggerInputRef}
@@ -234,7 +232,6 @@ export function FilterSection({
               if (e.key === "Enter") {
                 addFilterHistory("thread", e.currentTarget.value);
                 onFilterChange({ ...filter, thread: e.currentTarget.value });
-                onSubmitFilter?.({ ...filter, thread: e.currentTarget.value });
               }
               if (e.key === "ArrowDown") onShowThreadHistChange(true);
               if (e.key === "a" && (e.ctrlKey || e.metaKey)) {
@@ -266,7 +263,6 @@ export function FilterSection({
                 onFilterChange({ ...filter, thread: v });
                 addFilterHistory("thread", v);
                 onShowThreadHistChange(false);
-                onSubmitFilter?.({ ...filter, thread: v });
               }}
               onClose={() => onShowThreadHistChange(false)}
               inputRef={threadInputRef}
@@ -293,7 +289,6 @@ export function FilterSection({
               if (e.key === "Enter") {
                 addFilterHistory("message", e.currentTarget.value);
                 onFilterChange({ ...filter, message: e.currentTarget.value });
-                onSubmitFilter?.({ ...filter, message: e.currentTarget.value });
               }
               if (e.key === "ArrowDown") onShowMessageHistChange(true);
               if (e.key === "a" && (e.ctrlKey || e.metaKey)) {
@@ -325,7 +320,6 @@ export function FilterSection({
                 onFilterChange({ ...filter, message: v });
                 addFilterHistory("message", v);
                 onShowMessageHistChange(false);
-                onSubmitFilter?.({ ...filter, message: v });
               }}
               onClose={() => onShowMessageHistChange(false)}
               inputRef={messageInputRef}

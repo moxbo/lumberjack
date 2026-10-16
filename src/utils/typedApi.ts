@@ -11,20 +11,59 @@ import type {
   ElasticSearchOptions,
   ExportPathResult,
   ExportResult,
+  ExportBeginRequest,
+  ExportBeginResult,
+  ExportWriteRequest,
+  ExportWriteResult,
+  ExportFinishRequest,
+  ExportFinishResult,
+  ExportSessionRequest,
+  ExportStreamResult,
   FeatureFlagsResult,
   FilterOptions,
   FilterResult,
   HttpPollResult,
+  HttpPollError,
   LogEntry,
   MenuCommand,
   ParseResult,
   Result,
   Settings,
   SettingsResult,
+  StreamParseChunk,
+  StreamParseComplete,
+  StreamParseError,
+  StreamParsePathsResult,
   TcpStatus,
   WindowPermsResult,
   WindowTitleResult,
 } from "../types/ipc";
+import { LiveIngestionLimitError } from "./liveIngestionLimit";
+import type { LiveAppendRejection } from "./appendRejection";
+
+export async function entryPayloadLoad(reference: string): Promise<LogEntry> {
+  if (!window.api?.entryPayloadLoad)
+    throw new Error("Original log payload loading is unavailable");
+  const result = await window.api.entryPayloadLoad(reference);
+  if (!result.ok || !result.data)
+    throw new Error(result.error || "Original log payload is unavailable");
+  return result.data;
+}
+
+export async function entryPayloadRelease(
+  references: readonly string[],
+): Promise<void> {
+  if (!references.length) return;
+  if (!window.api?.entryPayloadRelease)
+    throw new Error("Original log payload cleanup is unavailable");
+  for (let start = 0; start < references.length; start += 256) {
+    const result = await window.api.entryPayloadRelease(
+      references.slice(start, start + 256),
+    );
+    if (!result.ok)
+      throw new Error(result.error || "Original log payload cleanup failed");
+  }
+}
 
 // ─────────────────────────── Settings ───────────────────────────
 
@@ -204,6 +243,10 @@ export async function openFiles(): Promise<string[]> {
   }
 }
 
+export function getPathForFile(file: File): string {
+  return window.api?.getPathForFile?.(file) ?? "";
+}
+
 /**
  * Open a native file picker for choosing a single log file path.
  */
@@ -247,6 +290,36 @@ export async function saveExportFile(
 
 // ─────────────────────────── Log Parsing ───────────────────────────
 
+// Streaming operations deliberately reject transport/unavailable errors.
+// Callers must cancel their session and show an error, never report success.
+export async function exportBegin(
+  request: ExportBeginRequest,
+): Promise<ExportBeginResult> {
+  if (!window.api?.exportBegin) throw new Error("exportBegin unavailable");
+  return window.api.exportBegin(request);
+}
+
+export async function exportWrite(
+  request: ExportWriteRequest,
+): Promise<ExportWriteResult> {
+  if (!window.api?.exportWrite) throw new Error("exportWrite unavailable");
+  return window.api.exportWrite(request);
+}
+
+export async function exportFinish(
+  request: ExportFinishRequest,
+): Promise<ExportFinishResult> {
+  if (!window.api?.exportFinish) throw new Error("exportFinish unavailable");
+  return window.api.exportFinish(request);
+}
+
+export async function exportCancel(
+  request: ExportSessionRequest,
+): Promise<ExportStreamResult> {
+  if (!window.api?.exportCancel) throw new Error("exportCancel unavailable");
+  return window.api.exportCancel(request);
+}
+
 /**
  * Parse log files by path.
  */
@@ -257,6 +330,21 @@ export async function parsePaths(paths: string[]): Promise<ParseResult> {
     return await window.api.parsePaths(paths);
   } catch (e) {
     return { ok: false, error: e instanceof Error ? e.message : String(e) };
+  }
+}
+
+export async function streamParsePaths(
+  paths: string[],
+): Promise<StreamParsePathsResult> {
+  if (!window.api?.streamParsePaths)
+    return { ok: false, error: "streamParsePaths unavailable" };
+  try {
+    return await window.api.streamParsePaths(paths);
+  } catch (e) {
+    return {
+      ok: false,
+      error: e instanceof Error ? e.message : String(e),
+    };
   }
 }
 
@@ -275,7 +363,39 @@ export async function parseRawDrops(
   }
 }
 
+export function streamAck(sessionId: string, chunkIndex: number): void {
+  if (window.api?.streamAck) {
+    window.api.streamAck(sessionId, chunkIndex);
+  }
+}
+
+export function streamReady(sessionId: string): void {
+  if (window.api?.streamReady) {
+    window.api.streamReady(sessionId);
+  }
+}
+
+export function streamCancel(sessionId: string): void {
+  if (window.api?.streamCancel) {
+    window.api.streamCancel(sessionId);
+  }
+}
+
 // ─────────────────────────── TCP ───────────────────────────
+
+/** Stops this window's live sources, or reopens admission without restarting. */
+export async function liveSetPaused(paused: boolean): Promise<Result<void>> {
+  if (!window.api?.liveSetPaused)
+    return { ok: false, error: "liveSetPaused unavailable" };
+  try {
+    const result = await window.api.liveSetPaused(paused);
+    return result && typeof result.ok === "boolean"
+      ? result
+      : { ok: false, error: "Invalid liveSetPaused response" };
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : String(e) };
+  }
+}
 
 /**
  * Start TCP log server on given port.
@@ -543,12 +663,66 @@ const noop = (): void => {};
 
 /**
  * Subscribe to log append events.
+ * Preserve explicit cap rejections so main can isolate live receipts from imports.
  * Returns a cleanup function.
  */
-export function onAppend(callback: (entries: LogEntry[]) => void): () => void {
+export function onAppend(
+  callback: (entries: LogEntry[]) => void | Promise<void>,
+): () => void {
   if (!window.api?.onAppend) return noop;
   try {
-    return window.api.onAppend(callback);
+    return window.api.onAppend(async (entries) => {
+      try {
+        await callback(entries);
+      } catch (error) {
+        if (
+          entries.length > 0 &&
+          entries[0]?._ingestionKind !== "import" &&
+          error instanceof LiveIngestionLimitError
+        ) {
+          const rejection: LiveAppendRejection = {
+            kind: "live-entry-limit",
+            message: error.message,
+          };
+          // eslint-disable-next-line @typescript-eslint/prefer-promise-reject-errors -- contextBridge drops Error metadata; preserve an explicit rejection.
+          return Promise.reject(rejection);
+        }
+        throw error;
+      }
+    });
+  } catch {
+    return noop;
+  }
+}
+
+export function onStreamChunk(
+  callback: (chunk: StreamParseChunk) => void,
+): () => void {
+  if (!window.api?.onStreamChunk) return noop;
+  try {
+    return window.api.onStreamChunk(callback);
+  } catch {
+    return noop;
+  }
+}
+
+export function onStreamComplete(
+  callback: (result: StreamParseComplete) => void,
+): () => void {
+  if (!window.api?.onStreamComplete) return noop;
+  try {
+    return window.api.onStreamComplete(callback);
+  } catch {
+    return noop;
+  }
+}
+
+export function onStreamError(
+  callback: (error: StreamParseError) => void,
+): () => void {
+  if (!window.api?.onStreamError) return noop;
+  try {
+    return window.api.onStreamError(callback);
   } catch {
     return noop;
   }
@@ -564,6 +738,12 @@ export function onTcpStatus(callback: (status: TcpStatus) => void): () => void {
   } catch {
     return noop;
   }
+}
+
+export function onHttpPollError(
+  callback: (error: HttpPollError) => void,
+): () => void {
+  return window.api?.onHttpPollError?.(callback) ?? noop;
 }
 
 /**

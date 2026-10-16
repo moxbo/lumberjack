@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import * as http from "http";
 import type { AddressInfo } from "net";
 import { HttpTailManager, splitTailLines } from "../HttpTailManager";
@@ -188,6 +188,176 @@ describe("HttpTailManager", () => {
     // onLines is awaited, so the manager never invokes it concurrently.
     expect(maxConcurrent).toBe(1);
     expect(received).toContain("a");
+  });
+
+  it("reports persistence backpressure and schedules only after it clears", async () => {
+    server.body = "queued\n";
+    const mgr = new HttpTailManager();
+    const states: string[] = [];
+    mgr.start(
+      url,
+      {
+        onLines: async () => {
+          await delay(180);
+        },
+        onBackpressure: ({ paused }) => {
+          states.push(paused ? "paused" : "resumed");
+        },
+        onScheduled: () => {
+          states.push("scheduled");
+        },
+      },
+      { intervalMs: 250, emitInitial: true },
+    );
+
+    await delay(260);
+    const tail = mgr.list()[0]!;
+    mgr.stopAll();
+
+    expect(states.slice(0, 3)).toEqual(["paused", "resumed", "scheduled"]);
+    expect(tail.paused).toBe(false);
+    expect(tail.nextPollAt).toBeTypeOf("number");
+    expect(tail.intervalMs).toBe(250);
+  });
+
+  it("reports and stops on downstream failure without replaying an ambiguous prefix", async () => {
+    server.body = "first\npartial";
+    const mgr = new HttpTailManager();
+    const received: string[][] = [];
+    let attempts = 0;
+    const errors: string[] = [];
+    mgr.start(
+      url,
+      {
+        onLines: async (lines) => {
+          attempts++;
+          if (attempts === 1) {
+            server.body += "-rest\n";
+            throw new Error("temporary persistence failure");
+          }
+          received.push(lines);
+        },
+        onError: (error) => errors.push(error.message),
+      },
+      { intervalMs: 250, emitInitial: true },
+    );
+
+    await delay(700);
+    mgr.stopAll();
+
+    expect(received).toEqual([]);
+    expect(attempts).toBe(1);
+    expect(errors).toEqual(["temporary persistence failure"]);
+    expect(mgr.list()).toEqual([]);
+  });
+
+  it("keeps bounded JSON array documents intact across response chunks", async () => {
+    const chunks = ['[\n{"message":"first"},\n', '{"message":"second"}\n]'];
+    const body = new ReadableStream<Uint8Array>({
+      pull(controller) {
+        const chunk = chunks.shift();
+        if (chunk == null) controller.close();
+        else controller.enqueue(new TextEncoder().encode(chunk));
+      },
+    });
+    const mgr = new HttpTailManager();
+    const received: string[][] = [];
+    mgr.start(
+      url,
+      {
+        onLines: (lines) => {
+          received.push(lines);
+        },
+      },
+      {
+        emitInitial: true,
+        intervalMs: 10_000,
+        fetchImpl: async () => new Response(body),
+      },
+    );
+    await delay(100);
+    mgr.stopAll();
+    expect(received).toEqual([
+      ["[", '{"message":"first"},', '{"message":"second"}', "]"],
+    ]);
+  });
+
+  it("does not read the next response chunk while persistence is blocked", async () => {
+    let release!: () => void;
+    const blocked = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let pulls = 0;
+    const body = new ReadableStream<Uint8Array>(
+      {
+        pull(controller) {
+          pulls++;
+          if (pulls > 3) controller.close();
+          else controller.enqueue(new TextEncoder().encode(`${pulls}\n`));
+        },
+      },
+      { highWaterMark: 0 },
+    );
+    const mgr = new HttpTailManager();
+    const received: string[] = [];
+    mgr.start(
+      url,
+      {
+        onLines: async (lines) => {
+          received.push(...lines);
+          await blocked;
+        },
+      },
+      {
+        emitInitial: true,
+        intervalMs: 10_000,
+        fetchImpl: async () => new Response(body),
+      },
+    );
+    try {
+      await delay(100);
+      expect(received).toEqual(["1"]);
+      expect(pulls).toBe(1);
+      release();
+      await delay(100);
+      expect(received).toEqual(["1", "2", "3"]);
+    } finally {
+      release();
+      mgr.stopAll();
+    }
+  });
+
+  it("retains a large partial line until its complete JSON envelope arrives", async () => {
+    const record = { message: "x".repeat(5 * 1024 * 1024), level: "INFO" };
+    server.body = JSON.stringify(record);
+    const errors: string[] = [];
+    const received: string[] = [];
+    const mgr = new HttpTailManager();
+    mgr.start(
+      url,
+      {
+        onLines: (lines) => {
+          received.push(...lines);
+        },
+        onError: (error) => errors.push(error.message),
+      },
+      { emitInitial: true, intervalMs: 250 },
+    );
+    try {
+      await delay(200);
+      expect(received).toEqual([]);
+      expect(errors).toEqual([]);
+      expect(mgr.list()).toHaveLength(1);
+      server.body += "\nnext\n";
+      await vi.waitFor(() => expect(received).toHaveLength(2), {
+        timeout: 5000,
+      });
+      expect(JSON.parse(received[0]!)).toEqual(record);
+      expect(received[1]).toBe("next");
+      expect(errors).toEqual([]);
+    } finally {
+      mgr.stopAll();
+    }
   });
 
   it("buffers partial last line across ticks", async () => {

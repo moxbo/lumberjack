@@ -67,7 +67,13 @@ export type ThemeMode = "system" | "light" | "dark";
  * Settings tab options
  */
 export type SettingsTab =
-  "tcp" | "http" | "elastic" | "logging" | "appearance" | "features";
+  | "general"
+  | "tcp"
+  | "http"
+  | "elastic"
+  | "logging"
+  | "appearance"
+  | "features";
 
 /**
  * Context menu state
@@ -93,6 +99,7 @@ export interface ColumnResizeState {
   active: string | null;
   startX: number;
   startW: number;
+  maxW?: number;
 }
 
 /**
@@ -124,6 +131,7 @@ export interface SettingsFormState {
   elasticMaxParallel: number;
   allowPrerelease: boolean;
   heapSizeMB: number;
+  liveEntryLimit: number;
 }
 
 /**

@@ -13,7 +13,8 @@
  * dedupe caches and LoggingStore) stay in App via the `onReplaceReset`
  * callback, so this hook does not need to own entry-management internals.
  */
-import { useState, useMemo } from "preact/hooks";
+import { useState, useRef } from "preact/hooks";
+import type { MetadataSnapshot } from "../utils/metadataSnapshot";
 import logger from "../utils/logger";
 import type { ElasticSearchOptions } from "../types/ipc";
 import type { ElasticFormState } from "../types/renderer";
@@ -23,14 +24,18 @@ import {
   patchSettings,
 } from "../utils/typedApi";
 import { TimeFilter } from "../store/timeFilter";
-import { executeElasticSearch } from "../utils/elasticSearchEngine";
+import {
+  assertElasticPaginationProgress,
+  ElasticPaginationStalledError,
+  executeElasticSearch,
+} from "../utils/elasticSearchEngine";
 
 export interface UseElasticSearchOptions {
-  entries: any[];
+  entries: MetadataSnapshot;
   appendEntries: (
     entries: any[],
     options?: { ignoreExistingForElastic?: boolean },
-  ) => void;
+  ) => Promise<number>;
   elasticUrl: string;
   elasticSize: number;
   withBusy: (fn: () => Promise<void>) => Promise<void>;
@@ -39,7 +44,7 @@ export interface UseElasticSearchOptions {
   t: (key: string, params?: Record<string, string | number>) => string;
   addToHistory: (kind: "app" | "env" | "index", val: string) => void;
   closeTimeDialog: () => void;
-  onReplaceReset: () => void;
+  onReplaceReset: () => void | Promise<void>;
 }
 
 export function useElasticSearch({
@@ -68,15 +73,9 @@ export function useElasticSearch({
   const [esLoadedCount, setEsLoadedCount] = useState<number>(0);
   const [esPitSessionId, setEsPitSessionId] = useState<string | null>(null);
   const [esBusy, setEsBusy] = useState<boolean>(false);
+  const esLoadMoreRunningRef = useRef(false);
 
-  const esElasticCountAll = useMemo(() => {
-    let cnt = 0;
-    for (const e of entries) {
-      const src = e?.source;
-      if (typeof src === "string" && src.startsWith("elastic://")) cnt++;
-    }
-    return cnt;
-  }, [entries]);
+  const esElasticCountAll = entries.elasticCount;
 
   const esLoaded = esLoadedCount;
   const esTarget = Math.max(1, Number(elasticSize || 0));
@@ -93,27 +92,31 @@ export function useElasticSearch({
   // Ein bereits vorhandener (deduplizierter) Eintrag gilt als erfolgreich geladen –
   // er ist ja bereits in der Ansicht. Dadurch stimmen "geladen" und "gefunden"
   // überein und es wird nicht über das Ziel (elasticSize) hinaus nachgeladen.
-  function appendElasticCapped(
+  async function appendElasticCapped(
     batch: any[],
     available: number,
     options?: { ignoreExistingForElastic?: boolean; messageFilter?: string },
-  ): number {
+  ): Promise<number> {
     const list = Array.isArray(batch) ? batch : [];
     const take = Math.max(0, Math.min(available, list.length));
     if (take <= 0) return 0;
-    appendEntries(take === list.length ? list : list.slice(0, take), options);
+    await appendEntries(
+      take === list.length ? list : list.slice(0, take),
+      options,
+    );
     return take;
   }
 
   /** Load next page of Elasticsearch results (invoked by ElasticStatusBar "load more" button) */
   async function esLoadMore(): Promise<void> {
-    if (!esHasMore || !lastEsForm) return;
+    if (!esHasMore || !lastEsForm || esLoadMoreRunningRef.current) return;
     // Fortsetzung benötigt entweder einen search_after-Token (PIT) ODER eine
     // aktive Session-ID (Scroll-Dialekt liefert KEIN nextSearchAfter und wird
     // ausschließlich über die pitSessionId fortgesetzt).
     const hasToken =
       Array.isArray(esNextSearchAfter) && esNextSearchAfter.length > 0;
     if (!esPitSessionId && !hasToken) return;
+    esLoadMoreRunningRef.current = true;
     setEsBusy(true);
     try {
       // "Weitere laden" lädt den verbleibenden Rest der Treffermenge in EINEM
@@ -152,7 +155,10 @@ export function useElasticSearch({
         } as any;
 
         const r = await typedElasticSearch(opts);
-        if (!r?.ok) break;
+        if (!r?.ok) {
+          throw new Error(r?.error || t("status.errorUnknown"));
+        }
+        assertElasticPaginationProgress(nextToken, r);
         hasMore = !!r.hasMore;
         nextToken = (r.nextSearchAfter as any) || null;
         carriedPit = r.pitSessionId || carriedPit;
@@ -161,9 +167,13 @@ export function useElasticSearch({
         setEsPitSessionId(carriedPit);
 
         if (Array.isArray(r.entries) && r.entries.length) {
-          const used = appendElasticCapped(r.entries as any[], available, {
-            messageFilter: lastEsForm.message || "",
-          });
+          const used = await appendElasticCapped(
+            r.entries as any[],
+            available,
+            {
+              messageFilter: lastEsForm.message || "",
+            },
+          );
           available = Math.max(0, available - used);
           setEsLoadedCount((c) => c + used);
         }
@@ -174,11 +184,24 @@ export function useElasticSearch({
       }
     } catch (e) {
       logger.error("[Elastic] Load more failed:", e);
+      if (e instanceof ElasticPaginationStalledError) {
+        setEsHasMore(false);
+        if (esPitSessionId) {
+          await typedElasticClosePit(esPitSessionId).catch((closeError) => {
+            logger.warn(
+              "Closing stalled Elasticsearch pagination failed:",
+              closeError,
+            );
+          });
+        }
+        setEsPitSessionId(null);
+      }
       const errorMsg = e instanceof Error ? e.message : String(e);
       if (!handleFeatureError(errorMsg)) {
         showAlert(t("status.elasticError", { message: errorMsg }));
       }
     } finally {
+      esLoadMoreRunningRef.current = false;
       setEsBusy(false);
     }
   }
@@ -226,8 +249,12 @@ export function useElasticSearch({
           } else if (formVals.mode === "absolute") {
             const from = formVals.from || undefined;
             const to = formVals.to || undefined;
-            TimeFilter.setAbsolute(from, to);
-            TimeFilter.setEnabled(true);
+            if (from || to) {
+              TimeFilter.setAbsolute(from, to);
+              TimeFilter.setEnabled(true);
+            } else {
+              TimeFilter.reset();
+            }
           }
         } else {
           const state = TimeFilter.getState();

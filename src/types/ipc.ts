@@ -8,6 +8,8 @@
  */
 export interface LogEntry {
   _id?: number;
+  /** Main-process transport metadata; remove before canonical persistence. */
+  _ingestionKind?: "live" | "import";
   timestamp: string | number | Date | null;
   level?: string | null;
   logger?: string | null;
@@ -15,6 +17,10 @@ export interface LogEntry {
   message: string;
   /** Original full message before truncation (only set if truncated) */
   _fullMessage?: string;
+  /** Window-owned reference to the complete original retained on disk. */
+  _payloadRef?: string;
+  _payloadMdcTruncated?: boolean;
+  _messageSize?: number;
   /** Flag indicating this entry was truncated for display */
   _truncated?: boolean;
   traceId?: string | null;
@@ -86,6 +92,8 @@ export interface Settings {
   follow?: boolean;
   followSmooth?: boolean;
   detailHeight?: number;
+  detailWidth?: number;
+  detailLayout?: "bottom" | "right";
   colTs?: number;
   colLvl?: number;
   colLogger?: number;
@@ -120,6 +128,8 @@ export interface Settings {
   // Performance / Memory
   /** V8 heap size in MB (default: 4096, min: 512, max: 8192). Requires restart. */
   heapSizeMB?: number;
+  /** Maximum accumulated live entries per log session; imports are exempt. */
+  liveEntryLimit?: number;
 }
 
 /**
@@ -167,6 +177,38 @@ export interface ParseResult {
   total?: number;
   // PIT session id for deep pagination lifecycle
   pitSessionId?: string | null;
+}
+
+export interface StreamParseStartResult {
+  sessionId: string;
+  streamed: true;
+}
+
+export type StreamParsePathsResult = ParseResult | StreamParseStartResult;
+
+export interface StreamParseChunk {
+  sessionId: string;
+  chunkIndex: number;
+  entries: LogEntry[];
+  bytesRead: number;
+  totalBytes: number;
+  filePath: string;
+  done: boolean;
+  fileIndex: number;
+  totalFiles: number;
+}
+
+export interface StreamParseComplete {
+  sessionId: string;
+  totalEntries: number;
+  totalFiles: number;
+  errors: string[];
+}
+
+export interface StreamParseError {
+  sessionId: string;
+  error: string;
+  filePath?: string;
 }
 
 /**
@@ -242,6 +284,12 @@ export interface HttpPollResult {
   error?: string;
 }
 
+export interface HttpPollError {
+  id: number;
+  url: string;
+  error: string;
+}
+
 /**
  * Menu command types
  */
@@ -269,6 +317,26 @@ export type MenuCommand =
  * - md:    GitHub-flavoured Markdown table
  */
 export type ExportFormat = "html" | "txt" | "json" | "ndjson" | "csv" | "md";
+
+export const EXPORT_CHUNK_BYTES = 64 * 1024;
+export type ExportStreamResult<T = Record<never, never>> =
+  ({ ok: true } & T) | { ok: false; error: string };
+export interface ExportBeginRequest {
+  filePath: string;
+}
+export interface ExportSessionRequest {
+  sessionId: string;
+}
+export interface ExportWriteRequest extends ExportSessionRequest {
+  chunkIndex: number;
+  chunk: Uint8Array;
+}
+export interface ExportFinishRequest extends ExportSessionRequest {
+  chunkCount: number;
+}
+export type ExportBeginResult = ExportStreamResult<{ sessionId: string }>;
+export type ExportWriteResult = ExportStreamResult<{ chunkIndex: number }>;
+export type ExportFinishResult = ExportStreamResult<{ filePath: string }>;
 
 /**
  * Export options for saving the current view
@@ -366,15 +434,28 @@ export type ElectronAPI = {
   windowPermsGet: () => Promise<WindowPermsResult>;
   windowPermsSet: (patch: { canTcpControl?: boolean }) => Promise<Result<void>>;
   openFiles: () => Promise<string[]>;
+  getPathForFile: (file: File) => string;
   chooseLogFile: () => Promise<string>;
   chooseExportPath: () => Promise<ExportPathResult>;
   saveExportFile: (filePath: string, content: string) => Promise<ExportResult>;
+  exportBegin: (request: ExportBeginRequest) => Promise<ExportBeginResult>;
+  exportWrite: (request: ExportWriteRequest) => Promise<ExportWriteResult>;
+  exportFinish: (request: ExportFinishRequest) => Promise<ExportFinishResult>;
+  exportCancel: (request: ExportSessionRequest) => Promise<ExportStreamResult>;
   exportView: (
     content: string,
     options: ExportViewOptions,
   ) => Promise<ExportResult>;
   parsePaths: (paths: string[]) => Promise<ParseResult>;
+  streamParsePaths: (paths: string[]) => Promise<StreamParsePathsResult>;
   parseRawDrops: (files: DroppedFile[]) => Promise<ParseResult>;
+  entryPayloadLoad: (reference: string) => Promise<Result<LogEntry>>;
+  entryPayloadRelease: (references: string[]) => Promise<Result<void>>;
+  streamReady: (sessionId: string) => void;
+  streamAck: (sessionId: string, chunkIndex: number) => void;
+  streamCancel: (sessionId: string) => void;
+  /** Pauses only this window's live sources; unpausing does not restart them. */
+  liveSetPaused: (paused: boolean) => Promise<Result<void>>;
   tcpStart: (port: number) => void;
   tcpStop: () => void;
   httpLoadOnce: (url: string) => Promise<ParseResult>;
@@ -388,8 +469,16 @@ export type ElectronAPI = {
   httpGetAllowInsecureSSL: () => Promise<boolean>;
   elasticSearch: (options: ElasticSearchOptions) => Promise<ParseResult>;
   elasticClosePit: (sessionId: string) => Promise<Result<void>>;
-  onAppend: (callback: (entries: LogEntry[]) => void) => () => void;
+  onAppend: (
+    callback: (entries: LogEntry[]) => void | Promise<void>,
+  ) => () => void;
+  onStreamChunk: (callback: (chunk: StreamParseChunk) => void) => () => void;
+  onStreamComplete: (
+    callback: (result: StreamParseComplete) => void,
+  ) => () => void;
+  onStreamError: (callback: (error: StreamParseError) => void) => () => void;
   onTcpStatus: (callback: (status: TcpStatus) => void) => () => void;
+  onHttpPollError: (callback: (error: HttpPollError) => void) => () => void;
   onMenu: (callback: (command: MenuCommand) => void) => () => void;
   logError: (errorData: unknown) => Promise<Result<void>>;
   // FeatureFlags
@@ -505,7 +594,14 @@ export type ElectronAPI = {
   httpTailNotifyActiveCount: (count: number) => void;
   httpTailList: () => Promise<{
     ok: boolean;
-    tails: Array<{ id: number; url: string; offset: number }>;
+    tails: Array<{
+      id: number;
+      url: string;
+      offset: number;
+      paused: boolean;
+      nextPollAt: number | null;
+      intervalMs: number;
+    }>;
   }>;
   /**
    * Return the decrypted HTTP auth header stored in settings so the tail
@@ -518,13 +614,25 @@ export type ElectronAPI = {
   }>;
   onHttpTailStatus: (
     callback: (payload: {
-      type: "started" | "stopped" | "rotated" | "error" | "lines" | "progress";
+      type:
+        | "started"
+        | "stopped"
+        | "rotated"
+        | "error"
+        | "lines"
+        | "progress"
+        | "paused"
+        | "resumed"
+        | "scheduled";
       id: number;
       url: string;
       lineCount?: number;
       offset?: number;
       total?: number;
       message?: string;
+      paused?: boolean;
+      nextPollAt?: number;
+      intervalMs?: number;
     }) => void,
   ) => () => void;
 };

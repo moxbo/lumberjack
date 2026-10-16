@@ -19,6 +19,39 @@ export interface ElasticSearchResponse {
   error?: string;
 }
 
+export class ElasticPaginationStalledError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "ElasticPaginationStalledError";
+  }
+}
+
+export function assertElasticPaginationProgress(
+  previousToken: Array<string | number> | null,
+  response: ElasticSearchResponse,
+): void {
+  if (!response.hasMore) return;
+  const entries = Array.isArray(response.entries) ? response.entries : [];
+  if (entries.length === 0) {
+    throw new ElasticPaginationStalledError(
+      "Elasticsearch meldet weitere Treffer, liefert aber keine Einträge.",
+    );
+  }
+
+  const nextToken = Array.isArray(response.nextSearchAfter)
+    ? response.nextSearchAfter
+    : null;
+  if (
+    previousToken &&
+    nextToken &&
+    JSON.stringify(previousToken) === JSON.stringify(nextToken)
+  ) {
+    throw new ElasticPaginationStalledError(
+      "Elasticsearch hat denselben Pagination-Cursor erneut geliefert.",
+    );
+  }
+}
+
 export interface ExecuteElasticSearchDeps {
   elasticUrl: string;
   elasticSize: number;
@@ -32,9 +65,9 @@ export interface ExecuteElasticSearchDeps {
     batch: any[],
     available: number,
     options?: { ignoreExistingForElastic?: boolean; messageFilter?: string },
-  ) => number;
+  ) => Promise<number>;
   /** Reset entry store on a "replace" search (clear entries, caches, LoggingStore). */
-  onReplaceReset: () => void;
+  onReplaceReset: () => void | Promise<void>;
   setHasMore: (v: boolean) => void;
   setNextSearchAfter: (v: Array<string | number> | null) => void;
   setPitSessionId: (v: string | null) => void;
@@ -134,13 +167,13 @@ export async function executeElasticSearch(
       // Vollständiges Zurücksetzen: alle vorhandenen Einträge entfernen,
       // Dedupe-Caches und LoggingStore leeren (App-seitig, damit dieser
       // Hook keine Entry-Management-Interna besitzen muss).
-      onReplaceReset();
+      await onReplaceReset();
     }
 
     // Anhängen mit Kappung
     const messageFilter = formVals.message || "";
     if (Array.isArray(res.entries) && res.entries.length) {
-      const used = appendCapped(res.entries as any[], available, {
+      const used = await appendCapped(res.entries as any[], available, {
         ignoreExistingForElastic: loadMode === "replace",
         messageFilter,
       });
@@ -164,7 +197,10 @@ export async function executeElasticSearch(
         pitSessionId: carriedPit || undefined,
       } as any;
       const r2 = await search(moreOpts);
-      if (!r2?.ok) break;
+      if (!r2?.ok) {
+        throw new Error(r2?.error || errorUnknownText);
+      }
+      assertElasticPaginationProgress(nextToken, r2);
       hasMore = !!r2.hasMore;
       nextToken = (r2.nextSearchAfter as any) || null;
       carriedPit = r2.pitSessionId || carriedPit;
@@ -172,7 +208,7 @@ export async function executeElasticSearch(
       setNextSearchAfter(nextToken);
       setPitSessionId(carriedPit);
       if (Array.isArray(r2.entries) && r2.entries.length) {
-        const used2 = appendCapped(r2.entries as any[], available, {
+        const used2 = await appendCapped(r2.entries as any[], available, {
           messageFilter,
         });
         available = Math.max(0, available - used2);
