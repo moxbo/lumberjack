@@ -17,16 +17,24 @@ async function expectReadableChip(chip: Locator): Promise<void> {
     };
     const composite = (color: number[], background: number[], opacity = 1) => {
       const alpha = (color[3] ?? 1) * opacity;
-      return background.map(
-        (channel, index) => color[index] * alpha + channel * (1 - alpha),
-      );
+      return background.map((channel, index) => {
+        const foreground = color[index];
+        if (foreground === undefined) {
+          throw new Error(`Missing color channel at index ${index}`);
+        }
+        return foreground * alpha + channel * (1 - alpha);
+      });
     };
     const luminance = (color: number[]) =>
       color.reduce((total, channel, index) => {
         const value = channel / 255;
         const linear =
           value <= 0.04045 ? value / 12.92 : ((value + 0.055) / 1.055) ** 2.4;
-        return total + linear * [0.2126, 0.7152, 0.0722][index];
+        const weight = [0.2126, 0.7152, 0.0722][index];
+        if (weight === undefined) {
+          throw new Error(`Unexpected color channel at index ${index}`);
+        }
+        return total + linear * weight;
       }, 0);
     const chipStyle = getComputedStyle(element);
     if (chipStyle.backgroundImage !== "none") {
