@@ -5,7 +5,7 @@ Alle nennenswerten Änderungen an diesem Projekt werden in dieser Datei dokument
 Das Format orientiert sich an [Keep a Changelog](https://keepachangelog.com/de/1.1.0/),
 und dieses Projekt folgt [Semantic Versioning](https://semver.org/lang/de/).
 
-## [1.2.0-beta.10] - 2026-10-15 _(Pre-Release)_
+## [1.2.0-beta.10] - 2026-10-16 _(Pre-Release)_
 
 
 ### Added
@@ -22,6 +22,10 @@ und dieses Projekt folgt [Semantic Versioning](https://semver.org/lang/de/).
 - Bundle standalone settings schema dependencies
 - Preserve inspector tab styling for marked entries (#43)
 - Retain complete large log payloads (#44)
+
+
+### Tests
+- Align level filter expectations with minimum severity
 
 ## [1.2.0-beta.9] - 2026-10-12 _(Pre-Release)_
 
