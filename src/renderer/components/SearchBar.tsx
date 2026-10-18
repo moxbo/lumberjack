@@ -5,9 +5,8 @@
  * search mode toggle (case-insensitive, case-sensitive, regex),
  * and prev/next match navigation buttons.
  */
-import { createPortal } from "preact/compat";
+import { createPortal, type RefObject } from "preact";
 import { useEffect, useRef, useState } from "preact/hooks";
-import type { RefObject } from "preact";
 import type { JSX } from "preact/jsx-runtime";
 import { useI18n } from "../../utils/i18n";
 import type { ReadonlySequence } from "../../utils/metadataSnapshot";
@@ -31,9 +30,9 @@ export interface SearchBarProps {
   searchHistHighlightIdx: number;
   setSearchHistHighlightIdx: (v: number) => void;
   searchPos: { left: number; top: number; width: number } | null;
-  searchHistRef: RefObject<HTMLDivElement>;
-  searchPopRef: RefObject<HTMLDivElement>;
-  searchInputRef: RefObject<HTMLInputElement>;
+  searchHistRef: RefObject<HTMLDivElement | null>;
+  searchPopRef: RefObject<HTMLDivElement | null>;
+  searchInputRef: RefObject<HTMLInputElement | null>;
   // Close other history popovers
   setShowLoggerHist: (v: boolean) => void;
   setShowThreadHist: (v: boolean) => void;
@@ -96,7 +95,7 @@ export function SearchBar({
       <div className="search-wrapper" style={{ position: "relative" }}>
         <input
           id="searchText"
-          ref={searchInputRef as any}
+          ref={searchInputRef}
           type="search"
           value={searchVal}
           onInput={(e) => {
@@ -195,7 +194,7 @@ export function SearchBar({
         />
         <button
           type="button"
-          ref={syntaxHelpBtnRef as any}
+          ref={syntaxHelpBtnRef}
           className="search-syntax-help-btn"
           aria-label={t("searchHelp.buttonTooltip")}
           title={t("searchHelp.buttonTooltip")}
@@ -257,7 +256,7 @@ export function SearchBar({
                 }}
                 onMouseDown={(e) => e.preventDefault()}
               >
-                <div style={{ fontWeight: 600, marginBottom: 6 }}>
+                <div style={{ fontWeight: 600, marginBottom: "6px" }}>
                   {t("searchHelp.title")}
                 </div>
                 <div>
@@ -280,8 +279,8 @@ export function SearchBar({
                 </div>
                 <div
                   style={{
-                    marginTop: 6,
-                    paddingTop: 6,
+                    marginTop: "6px",
+                    paddingTop: "6px",
                     borderTop: "1px solid var(--color-divider)",
                     color: "var(--color-text-secondary)",
                   }}
@@ -330,7 +329,7 @@ export function SearchBar({
       </div>
       {/* Hidden ref element for positioning */}
       <div
-        ref={searchHistRef as any}
+        ref={searchHistRef}
         style={{
           display: "none",
           position: "relative",
@@ -342,7 +341,7 @@ export function SearchBar({
         searchPos &&
         createPortal(
           <div
-            ref={searchPopRef as any}
+            ref={searchPopRef}
             role="listbox"
             className="autocomplete-dropdown"
             style={{

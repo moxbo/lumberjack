@@ -280,7 +280,7 @@ QcStatus&!CB23       → "QcStatus", but NOT "CB23"
 ## 🚀 Quick Start
 
 ### Prerequisites
-- Node.js 22.12+ (LTS)
+- Node.js >=22.22.1 for development (see `package.json`)
 - npm
 
 ### Installation

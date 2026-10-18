@@ -49,7 +49,7 @@ export interface UseContextMenuActionsOptions {
 export interface UseContextMenuActionsReturn {
   // Context menu state
   ctxMenu: ContextMenuState;
-  ctxRef: RefObject<HTMLDivElement>;
+  ctxRef: RefObject<HTMLDivElement | null>;
   openContextMenu: (ev: MouseEvent, id: number) => void;
   closeContextMenu: () => void;
 

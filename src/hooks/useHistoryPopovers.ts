@@ -2,6 +2,7 @@
  * Hook for managing popover state and positions
  */
 import { useCallback, useEffect, useRef, useState } from "preact/hooks";
+import type { RefObject } from "preact";
 
 interface PopoverPosition {
   left: number;
@@ -16,35 +17,35 @@ interface UseHistoryPopoversReturn {
   searchHistHighlightIdx: number;
   setSearchHistHighlightIdx: (idx: number) => void;
   searchPos: PopoverPosition | null;
-  searchHistRef: React.RefObject<HTMLDivElement>;
-  searchPopRef: React.RefObject<HTMLDivElement>;
+  searchHistRef: RefObject<HTMLDivElement | null>;
+  searchPopRef: RefObject<HTMLDivElement | null>;
 
   // Logger history
   showLoggerHist: boolean;
   setShowLoggerHist: (show: boolean) => void;
   loggerPos: PopoverPosition | null;
-  loggerHistRef: React.RefObject<HTMLDivElement>;
-  loggerPopRef: React.RefObject<HTMLDivElement>;
+  loggerHistRef: RefObject<HTMLDivElement | null>;
+  loggerPopRef: RefObject<HTMLDivElement | null>;
 
   // Thread history
   showThreadHist: boolean;
   setShowThreadHist: (show: boolean) => void;
   threadPos: PopoverPosition | null;
-  threadHistRef: React.RefObject<HTMLDivElement>;
-  threadPopRef: React.RefObject<HTMLDivElement>;
+  threadHistRef: RefObject<HTMLDivElement | null>;
+  threadPopRef: RefObject<HTMLDivElement | null>;
 
   // Message history
   showMessageHist: boolean;
   setShowMessageHist: (show: boolean) => void;
   messagePos: PopoverPosition | null;
-  messageHistRef: React.RefObject<HTMLDivElement>;
-  messagePopRef: React.RefObject<HTMLDivElement>;
+  messageHistRef: RefObject<HTMLDivElement | null>;
+  messagePopRef: RefObject<HTMLDivElement | null>;
 
   // Actions
   closeAllHistoryPopovers: () => void;
 
   // Search input ref
-  searchInputRef: React.RefObject<HTMLInputElement>;
+  searchInputRef: RefObject<HTMLInputElement | null>;
 }
 
 function computePosFor(el: HTMLElement | null): PopoverPosition | null {
@@ -185,28 +186,28 @@ export function useHistoryPopovers(): UseHistoryPopoversReturn {
     searchHistHighlightIdx,
     setSearchHistHighlightIdx,
     searchPos,
-    searchHistRef: searchHistRef as React.RefObject<HTMLDivElement>,
-    searchPopRef: searchPopRef as React.RefObject<HTMLDivElement>,
+    searchHistRef,
+    searchPopRef,
 
     showLoggerHist,
     setShowLoggerHist,
     loggerPos,
-    loggerHistRef: loggerHistRef as React.RefObject<HTMLDivElement>,
-    loggerPopRef: loggerPopRef as React.RefObject<HTMLDivElement>,
+    loggerHistRef,
+    loggerPopRef,
 
     showThreadHist,
     setShowThreadHist,
     threadPos,
-    threadHistRef: threadHistRef as React.RefObject<HTMLDivElement>,
-    threadPopRef: threadPopRef as React.RefObject<HTMLDivElement>,
+    threadHistRef,
+    threadPopRef,
 
     showMessageHist,
     setShowMessageHist,
     messagePos,
-    messageHistRef: messageHistRef as React.RefObject<HTMLDivElement>,
-    messagePopRef: messagePopRef as React.RefObject<HTMLDivElement>,
+    messageHistRef,
+    messagePopRef,
 
     closeAllHistoryPopovers,
-    searchInputRef: searchInputRef as React.RefObject<HTMLInputElement>,
+    searchInputRef,
   };
 }

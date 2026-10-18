@@ -51,7 +51,7 @@ const VirtualizedStackTraceComponent = ({
       ref={parentRef}
       className="stack-trace stack-trace-virtual"
       style={{
-        height: Math.min(maxHeight, totalHeight + 16),
+        height: `${Math.min(maxHeight, totalHeight + 16)}px`,
         overflow: "auto",
         overscrollBehavior: "contain",
         fontFamily: "var(--font-family-mono), monospace",
@@ -66,7 +66,7 @@ const VirtualizedStackTraceComponent = ({
     >
       <div
         style={{
-          height: totalHeight,
+          height: `${totalHeight}px`,
           position: "relative",
         }}
       >
@@ -82,7 +82,7 @@ const VirtualizedStackTraceComponent = ({
                 left: 0,
                 right: 0,
                 transform: `translateY(${virtualItem.start}px)`,
-                height: LINE_HEIGHT,
+                height: `${LINE_HEIGHT}px`,
                 overflow: "hidden",
                 textOverflow: "ellipsis",
               }}

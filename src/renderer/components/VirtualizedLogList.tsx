@@ -1,5 +1,5 @@
-import type { ComponentChildren } from "preact";
-import { forwardRef, memo } from "preact/compat";
+import type { ComponentChildren, Ref } from "preact";
+import { memo } from "preact/compat";
 import {
   useCallback,
   useImperativeHandle,
@@ -28,6 +28,7 @@ export interface VirtualizedLogListHandle {
 }
 
 export interface VirtualizedLogListProps {
+  ref?: Ref<VirtualizedLogListHandle>;
   entries?: ReadonlySequence<object>;
   repository?: LogPayloadRepository;
   filteredIdx: ReadonlySequence<number>;
@@ -49,33 +50,28 @@ export interface VirtualizedLogListProps {
   children?: ComponentChildren;
 }
 
-const VirtualizedLogListWithRef = forwardRef<
-  VirtualizedLogListHandle,
-  VirtualizedLogListProps
->(function VirtualizedLogList(
-  {
-    entries = [],
-    repository,
-    filteredIdx,
-    selected,
-    marksMap,
-    search,
-    follow,
-    queryKey,
-    positionOfId,
-    onUserInteraction,
-    listRef,
-    onDisableFollow,
-    onKeyDown,
-    onRowSelect,
-    onRowContextMenu,
-    onColMouseDown,
-    highlightFn,
-    t,
-    children,
-  },
-  ref,
-) {
+export const VirtualizedLogList = memo(function VirtualizedLogList({
+  ref = null,
+  entries = [],
+  repository,
+  filteredIdx,
+  selected,
+  marksMap,
+  search,
+  follow,
+  queryKey,
+  positionOfId,
+  onUserInteraction,
+  listRef,
+  onDisableFollow,
+  onKeyDown,
+  onRowSelect,
+  onRowContextMenu,
+  onColMouseDown,
+  highlightFn,
+  t,
+  children,
+}: VirtualizedLogListProps) {
   const [scrollElement, setScrollElement] = useState<HTMLDivElement | null>(
     null,
   );
@@ -355,5 +351,3 @@ const VirtualizedLogListWithRef = forwardRef<
     </div>
   );
 });
-
-export const VirtualizedLogList = memo(VirtualizedLogListWithRef);

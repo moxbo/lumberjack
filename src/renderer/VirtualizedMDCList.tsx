@@ -4,6 +4,7 @@
  */
 import { memo, useRef } from "preact/compat";
 import { useVirtualizer } from "@tanstack/react-virtual";
+import type { CSSProperties } from "preact";
 import type { JSX } from "preact/jsx-runtime";
 import { useI18n } from "../utils/i18n";
 
@@ -30,7 +31,7 @@ const MDCRowComponent = ({
 }: {
   pair: MDCPair;
   onAddToFilter: (key: string, value: string) => void;
-  style: JSX.CSSProperties;
+  style: CSSProperties;
   t: (key: string) => string;
 }): JSX.Element => {
   return (
@@ -114,14 +115,14 @@ const VirtualizedMDCListComponent = ({
       ref={parentRef}
       className="mdc-virtual-container"
       style={{
-        height: Math.min(maxHeight, totalHeight),
+        height: `${Math.min(maxHeight, totalHeight)}px`,
         overflow: "auto",
         overscrollBehavior: "contain",
       }}
     >
       <div
         style={{
-          height: totalHeight,
+          height: `${totalHeight}px`,
           position: "relative",
         }}
       >
@@ -141,7 +142,7 @@ const VirtualizedMDCListComponent = ({
                 left: 0,
                 right: 0,
                 transform: `translateY(${virtualItem.start}px)`,
-                height: ROW_HEIGHT,
+                height: `${ROW_HEIGHT}px`,
                 display: "grid",
                 gridTemplateColumns: "140px 1fr auto",
                 gap: "6px 12px",

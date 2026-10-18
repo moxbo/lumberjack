@@ -2,8 +2,7 @@
  * Filter Profiles Dropdown Component
  * Allows saving, loading, and managing filter configurations
  */
-import type { JSX } from "preact";
-import { createPortal } from "preact/compat";
+import { createPortal, type JSX } from "preact";
 import { useState, useRef, useEffect, useCallback } from "preact/hooks";
 import { useI18n } from "../../utils/i18n";
 import { useFilterProfiles } from "../../hooks";
@@ -445,9 +444,9 @@ export function FilterProfilesDropdown({
             className="filter-profiles-dropdown"
             style={{
               position: "fixed",
-              top: position.top,
-              left: position.left,
-              width: position.width,
+              top: `${position.top}px`,
+              left: `${position.left}px`,
+              width: `${position.width}px`,
               minWidth: "320px",
               zIndex: 10000,
             }}

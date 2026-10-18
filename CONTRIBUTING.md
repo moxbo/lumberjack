@@ -18,11 +18,15 @@ npm install
 npm run dev
 ```
 
-Use the Node.js version range declared in `package.json`. When updating
-dependencies with `npx npm-check-updates --upgrade`, retain TypeScript 6.x
-until the stable `@typescript-eslint/parser` supports TypeScript 7. Do not
-bypass this peer dependency constraint with `--force` or `--legacy-peer-deps`.
-Commit both `package.json` and `package-lock.json` together.
+  Use the Node.js version range declared in `package.json`. Update dependencies
+with `npx npm-check-updates --upgrade --reject typescript`, then run
+`npm update` to refresh the lockfile, including transitive dependencies.
+Check `overrides` as well. Retain TypeScript 6.0.x until the stable
+`@typescript-eslint/parser` supports TypeScript 7; its current peer range is
+`>=4.8.4 <6.1.0`. Do not bypass this constraint with `--force` or
+`--legacy-peer-deps`. Commit both `package.json` and `package-lock.json`
+together. `npm run prepack:app` regenerates the release manifest from the
+root manifest; do not edit `release/app/package.json` manually.
 
 ---
 
@@ -221,6 +225,16 @@ tsx ./scripts/test-msg-filter.ts
 - **Preact** for UI components
 - **ESLint + Prettier** for formatting
 
+With Preact 11, import `createPortal`, event types and `CSSProperties` from
+`preact`; only JSX-specific types such as `JSX.Element` remain in `JSX`.
+DOM refs must include `null`, for example `RefObject<HTMLInputElement | null>`.
+Function components can accept `ref` as a prop without `forwardRef`.
+Use explicit units for CSS lengths (`height: "32px"`); do not rely on
+`preact/compat` to add `px`. Unitless values such as `opacity` and `zIndex`
+remain numeric.
+Use `onFocusIn` / `onFocusOut` for delegated focus handling; native `focus`
+and `blur` events do not bubble without the compat event mapping.
+
 ### Automatic Formatting
 
 ```bash
@@ -257,7 +271,7 @@ lumberjack/
 
 ### Prerequisites
 
-- Node.js 20+ (LTS recommended)
+- Node.js >=22.22.1 (see `package.json`)
 - npm 9+
 - Git
 

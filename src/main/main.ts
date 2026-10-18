@@ -2847,6 +2847,7 @@ try {
               type: details.type,
               reason: details.reason,
               exitCode: details.exitCode,
+              systemErrorCode: details.systemErrorCode,
               hint: "If Node.js installer is running, close Lumberjack and wait for installation to complete.",
             },
           );
@@ -2856,6 +2857,7 @@ try {
           type: details.type,
           reason: details.reason,
           exitCode: details.exitCode,
+          systemErrorCode: details.systemErrorCode,
           serviceName: details.serviceName,
           name: details.name,
         });

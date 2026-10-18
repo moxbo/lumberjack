@@ -1,7 +1,7 @@
 /**
  * Search Mode Dropdown Component
  */
-import { createPortal } from "preact/compat";
+import { createPortal } from "preact";
 import type { SearchMode } from "../../utils/msgFilter";
 import { useI18n } from "../../utils/i18n";
 

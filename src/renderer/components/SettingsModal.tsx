@@ -10,7 +10,7 @@ import type {
 } from "../../types/renderer";
 import { useFeatureFlags } from "../../hooks";
 import { FeatureFlagsPanel } from "./FeatureFlagsPanel";
-import type { JSX } from "preact";
+import type { JSX, TargetedKeyboardEvent } from "preact";
 import {
   getDefaultLogPath as typedGetDefaultLogPath,
   windowPermsSet,
@@ -388,7 +388,7 @@ export function SettingsModal({
         : tab;
 
   const handleDialogKeyDown = (
-    event: JSX.TargetedKeyboardEvent<HTMLDivElement>,
+    event: TargetedKeyboardEvent<HTMLDivElement>,
   ) => {
     event.stopPropagation();
     if (event.key === "Escape") {

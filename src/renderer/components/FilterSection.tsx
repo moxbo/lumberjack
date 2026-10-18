@@ -1,8 +1,7 @@
 /**
  * Filter Section Component - Ausklappbarer Filter-Bereich
  */
-import { createPortal } from "preact/compat";
-import type { RefObject } from "preact";
+import { createPortal, type RefObject } from "preact";
 import { useEffect, useRef, useState } from "preact/hooks";
 import { useI18n } from "../../utils/i18n";
 import type { FilterState } from "../../hooks";
@@ -33,12 +32,12 @@ interface FilterSectionProps {
   messagePos: { left: number; top: number; width: number } | null;
 
   // Refs
-  loggerHistRef: RefObject<HTMLDivElement>;
-  threadHistRef: RefObject<HTMLDivElement>;
-  messageHistRef: RefObject<HTMLDivElement>;
-  loggerPopRef: RefObject<HTMLDivElement>;
-  threadPopRef: RefObject<HTMLDivElement>;
-  messagePopRef: RefObject<HTMLDivElement>;
+  loggerHistRef: RefObject<HTMLDivElement | null>;
+  threadHistRef: RefObject<HTMLDivElement | null>;
+  messageHistRef: RefObject<HTMLDivElement | null>;
+  loggerPopRef: RefObject<HTMLDivElement | null>;
+  threadPopRef: RefObject<HTMLDivElement | null>;
+  messagePopRef: RefObject<HTMLDivElement | null>;
 
   // Callbacks
   onStdFiltersEnabledChange: (enabled: boolean) => void;
@@ -158,7 +157,7 @@ export function FilterSection({
 
         <label>{t("toolbar.logger")}</label>
         <div
-          ref={loggerHistRef as any}
+          ref={loggerHistRef}
           style={{
             display: "inline-flex",
             alignItems: "center",
@@ -167,7 +166,7 @@ export function FilterSection({
         >
           <input
             id="filterLogger"
-            ref={loggerInputRef as any}
+            ref={loggerInputRef}
             type="text"
             value={loggerVal}
             onInput={(e) => setLoggerVal(e.currentTarget.value)}
@@ -215,7 +214,7 @@ export function FilterSection({
 
         <label>{t("toolbar.thread")}</label>
         <div
-          ref={threadHistRef as any}
+          ref={threadHistRef}
           style={{
             display: "inline-flex",
             alignItems: "center",
@@ -224,7 +223,7 @@ export function FilterSection({
         >
           <input
             id="filterThread"
-            ref={threadInputRef as any}
+            ref={threadInputRef}
             type="text"
             value={threadVal}
             onInput={(e) => setThreadVal(e.currentTarget.value)}
@@ -272,7 +271,7 @@ export function FilterSection({
 
         <label>{t("toolbar.message")}</label>
         <div
-          ref={messageHistRef as any}
+          ref={messageHistRef}
           style={{
             display: "inline-flex",
             alignItems: "center",
@@ -281,7 +280,7 @@ export function FilterSection({
         >
           <input
             id="filterMessage"
-            ref={messageInputRef as any}
+            ref={messageInputRef}
             type="text"
             value={messageVal}
             onInput={(e) => setMessageVal(e.currentTarget.value)}
@@ -396,10 +395,10 @@ export function FilterSection({
 interface HistoryDropdownProps {
   items: string[];
   position: { left: number; top: number; width: number };
-  popRef: RefObject<HTMLDivElement>;
+  popRef: RefObject<HTMLDivElement | null>;
   onSelect: (value: string) => void;
   onClose: () => void;
-  inputRef?: RefObject<HTMLInputElement>;
+  inputRef?: RefObject<HTMLInputElement | null>;
 }
 
 function HistoryDropdown({
@@ -471,7 +470,7 @@ function HistoryDropdown({
 
   return (
     <div
-      ref={popRef as any}
+      ref={popRef}
       role="listbox"
       className="autocomplete-dropdown"
       style={{

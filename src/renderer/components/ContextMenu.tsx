@@ -8,7 +8,7 @@ interface ContextMenuProps {
   open: boolean;
   x: number;
   y: number;
-  ctxRef: RefObject<HTMLDivElement>;
+  ctxRef: RefObject<HTMLDivElement | null>;
   palette: string[];
   pickerColor: string;
   onPickerColorChange: (color: string) => void;
