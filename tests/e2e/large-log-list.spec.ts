@@ -155,4 +155,17 @@ test("reaches the final row beyond Chromium's scroll-height limit", async ({
       () => globalThis.window.largeLogListTest.largestPayloadRequest,
     ),
   ).toBeLessThan(100);
+
+  expect(
+    await window.evaluate(() =>
+      globalThis.window.largeLogListTest.replaceHandle(),
+    ),
+  ).toEqual({ previousCleared: true, attached: true });
+  await window.evaluate(() => globalThis.window.largeLogListTest.navigate(0));
+  await expect(list.locator('[data-vi="0"]')).toBeInViewport();
+
+  expect(
+    await window.evaluate(() => globalThis.window.largeLogListTest.unmount()),
+  ).toEqual({ handleCleared: true, listCleared: true });
+  await expect(window.locator("#large-log-list-fixture")).toHaveCount(0);
 });

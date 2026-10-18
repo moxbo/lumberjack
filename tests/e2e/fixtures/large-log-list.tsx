@@ -5,7 +5,7 @@ import {
 } from "../../../src/renderer/components/VirtualizedLogList";
 import type { LogPayloadRepository } from "../../../src/hooks/usePagedLogHydration";
 
-const handle = createRef<VirtualizedLogListHandle>();
+let handle = createRef<VirtualizedLogListHandle>();
 const listRef = { current: null as HTMLDivElement | null };
 let ids: number[] = [];
 let firstId = 0;
@@ -100,8 +100,28 @@ export function resize(height: number) {
   root.style.height = `${height}px`;
 }
 
+export function replaceHandle() {
+  const previous = handle;
+  handle = createRef<VirtualizedLogListHandle>();
+  draw();
+  return {
+    previousCleared: previous.current === null,
+    attached: handle.current !== null,
+  };
+}
+
+export function unmount() {
+  render(null, root);
+  root.remove();
+  return {
+    handleCleared: handle.current === null,
+    listCleared: listRef.current === null,
+  };
+}
+
 export function mount() {
   root = document.createElement("div");
+  root.id = "large-log-list-fixture";
   root.style.cssText =
     "position:fixed;inset:0;z-index:99999;display:flex;background:white";
   document.body.append(root);
