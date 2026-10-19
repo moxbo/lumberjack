@@ -38,8 +38,6 @@ concurrency:
 env:
   # Code-Signing global deaktivieren (keine Zertifikate vorhanden)
   CSC_IDENTITY_AUTO_DISCOVERY: "false"
-  # JS-Actions auf Node.js 24 zwingen (Node 20 wird ab 2026-09-16 entfernt)
-  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
 
 jobs:
   prepare-release:
@@ -113,7 +111,7 @@ jobs:
 
       - name: Checkout for release creation
         if: ${{ steps.meta.outputs.should_release == 'true' && steps.meta.outputs.promote_only != 'true' }}
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           ref: main
           fetch-depth: 0
@@ -194,13 +192,13 @@ jobs:
             arch: arm64
             platform: mac
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           ref: ${{ needs.prepare-release.outputs.checkout_ref }}
           fetch-depth: 0
           fetch-tags: true
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: 22
           cache: npm
@@ -388,7 +386,7 @@ jobs:
 
       - name: Upload Windows artifacts
         if: ${{ matrix.platform == 'win' }}
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: windows-release-${{ matrix.arch }}
           path: |
@@ -400,7 +398,7 @@ jobs:
 
       - name: Upload macOS artifacts
         if: ${{ matrix.platform == 'mac' }}
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: macos-release-${{ matrix.arch }}
           path: |
@@ -446,7 +444,7 @@ jobs:
     if: always() && needs.prepare-release.outputs.should_release == 'true' && (needs.release.result == 'success' || needs.prepare-release.outputs.promote_only == 'true')
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           ref: ${{ needs.prepare-release.outputs.checkout_ref }}
           fetch-depth: 0
