@@ -325,18 +325,29 @@ Get-AuthenticodeSignature "path\to\Lumberjack.exe"
 
 | Workflow | Trigger | Aktionen |
 |----------|---------|----------|
-| `ci.yml` | Push/PR auf main/develop | Lint, Tests (Ubuntu/Windows/macOS), Coverage |
-| `build.yml` | Alle Pushes + Tags | CI-Tests + Release-Builds bei Tags |
-| `release.yml` | Tag-Push (`v*`) | Multi-Platform Build + GitHub Release |
+| `ci.yml` | Push/PR auf main/develop, wiederverwendbarer Aufruf | Lint, Tests (Ubuntu/Windows/macOS), Coverage, Smoke-Build |
+| `integration.yml` | Push/PR auf main/develop, manuell, wiederverwendbarer Aufruf | Container-Integrationstests |
+| `build.yml` | Tag-Push (`v*`), manuell | Verbindliche CI- und Integrationstests, danach Release-Builds und GitHub Release |
+
+### Release-Freigabe
+
+Der Release-Workflow ruft `ci.yml` und `integration.yml` selbst auf und wartet auf
+deren Erfolg. Alle Prüfungen und Release-Builds verwenden denselben unveränderlichen
+Commit-SHA des Release-Tags. Bereits vorhandene Tags werden unverändert verwendet.
+Fehlgeschlagene, abgebrochene oder übersprungene Pflichtprüfungen verhindern sowohl
+den Release-Build als auch die Veröffentlichung; ein vorbereiteter Draft bleibt
+unveröffentlicht.
+
+Diese Freigabe gilt auch für manuelle Releases und Pre-Release-Promotions. Bei einer
+Promotion wird der bestehende Tag erneut geprüft, bevor die bereits vorhandenen
+Artefakte ohne erneuten Release-Build veröffentlicht werden.
 
 ### Test-Coverage
 
 Coverage-Reports werden automatisch als Artifacts hochgeladen:
-- **CI-Workflow**: `coverage-report` (Ubuntu)
-- **Build-Workflow**: `coverage-report-ci`
+- **CI-Workflow und Release-CI**: `coverage-report` (Ubuntu), jeweils im zugehörigen Workflow-Run
 
 ---
 
 **Status**: ✅ Ready for Deployment  
 **Last Updated**: April 3, 2026
-

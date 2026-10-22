@@ -183,6 +183,19 @@ git push origin v1.0.16
 `npm run release:notes` emits a Markdown snippet suitable for the GitHub Release
 body (no header, just the latest version's entries).
 
+### Required Release Checks
+
+Every tag-triggered or manual release runs the reusable CI and integration
+workflows before building release artifacts. Lint/format checks, unit tests with
+coverage on Ubuntu/Windows/macOS, the smoke build, and container integration tests
+must all succeed. Failed, cancelled, or skipped required checks block both the
+release build and publication; a prepared draft is not published.
+
+The release tag is resolved to an immutable commit SHA, shared by all checks,
+release builds, and finalization. Existing tags are released unchanged. Manual
+pre-release promotions validate that same tagged commit again before publication,
+even though they reuse existing artifacts and skip the release build.
+
 ### Quick Reference
 
 | Script                            | Purpose                                                  |

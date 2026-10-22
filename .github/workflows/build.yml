@@ -3,7 +3,7 @@ name: Build/release
 # Läuft NICHT bei normalen Commits auf main – nur:
 #   1. Push eines Versions-Tags (v*)
 #   2. Manueller Start über die GitHub-UI (workflow_dispatch)
-# Lint/Tests für main/PRs übernimmt ci.yml.
+# CI und Integrationstests werden vor jedem Release wiederverwendet.
 on:
   push:
     tags:
@@ -46,7 +46,7 @@ jobs:
       should_release: ${{ steps.meta.outputs.should_release }}
       release_tag: ${{ steps.meta.outputs.release_tag }}
       prerelease: ${{ steps.meta.outputs.prerelease }}
-      checkout_ref: ${{ steps.meta.outputs.checkout_ref }}
+      checkout_sha: ${{ steps.commit.outputs.sha }}
       promote_only: ${{ steps.meta.outputs.promote_only }}
     steps:
       - name: Parameter auswerten
@@ -101,6 +101,7 @@ jobs:
             release_tag="$input_tag"
             prerelease="false"  # Force to non-prerelease
             promote_only="true"  # Skip build, only update release
+            checkout_ref="refs/tags/$input_tag"
           fi
 
           echo "should_release=$should_release" >> "$GITHUB_OUTPUT"
@@ -110,10 +111,10 @@ jobs:
           echo "promote_only=$promote_only" >> "$GITHUB_OUTPUT"
 
       - name: Checkout for release creation
-        if: ${{ steps.meta.outputs.should_release == 'true' && steps.meta.outputs.promote_only != 'true' }}
+        if: ${{ steps.meta.outputs.should_release == 'true' }}
         uses: actions/checkout@v7
         with:
-          ref: main
+          ref: ${{ steps.meta.outputs.checkout_ref }}
           fetch-depth: 0
           fetch-tags: true
 
@@ -130,6 +131,11 @@ jobs:
           tag="${{ steps.meta.outputs.release_tag }}"
           version="${tag#v}"  # Entferne v-Präfix (v1.0.7 -> 1.0.7)
 
+          if git show-ref --verify --quiet "refs/tags/$tag"; then
+            echo "Tag $tag already exists; its commit will be validated and released unchanged"
+            exit 0
+          fi
+
           # Prüfe ob Version bereits aktuell ist
           current_version=$(node -p "require('./package.json').version")
           if [[ "$current_version" == "$version" ]]; then
@@ -141,13 +147,17 @@ jobs:
           npm version "$version" --no-git-tag-version --allow-same-version
           echo "Updated package.json to version $version"
 
-          # Commit und Push zu main
+          # Preserve the selected source branch; detached refs are published via the tag.
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add package.json package-lock.json
           git commit -m "chore: bump version to $version [skip ci]"
-          git push origin main
-          echo "Committed and pushed version $version to main"
+          if branch=$(git symbolic-ref --quiet --short HEAD); then
+            git push origin "HEAD:refs/heads/$branch"
+            echo "Committed and pushed version $version to $branch"
+          else
+            echo "Committed version $version on a detached ref; the release tag will publish it"
+          fi
 
       - name: Create tag and draft GitHub Release (once)
         if: ${{ steps.meta.outputs.should_release == 'true' && steps.meta.outputs.promote_only != 'true' }}
@@ -163,7 +173,7 @@ jobs:
           fi
 
           # Create tag if it doesn't exist (for workflow_dispatch)
-          if ! git rev-parse "$tag" >/dev/null 2>&1; then
+          if ! git show-ref --verify --quiet "refs/tags/$tag"; then
             echo "Creating tag $tag..."
             git tag -a "$tag" -m "Release $tag"
             git push origin "$tag"
@@ -174,12 +184,46 @@ jobs:
             gh release create "$tag" --draft --title "$tag" --notes "Release $tag"
           fi
 
-  # Schneller CI-Job: in ci.yml ausgelagert (Lint, Tests, Coverage).
-  # Hier nur noch der Release-Pfad bei Tags / workflow_dispatch.
+      - name: Resolve release commit
+        id: commit
+        if: ${{ steps.meta.outputs.should_release == 'true' }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_TAG: ${{ steps.meta.outputs.release_tag }}
+          PROMOTE_ONLY: ${{ steps.meta.outputs.promote_only }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          sha=$(git rev-parse --verify "refs/tags/${RELEASE_TAG}^{commit}")
+          if [[ "$PROMOTE_ONLY" == "true" ]]; then
+            gh release view "$RELEASE_TAG" >/dev/null
+          fi
+          echo "Release $RELEASE_TAG resolves to $sha"
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+
+  ci:
+    name: Release CI
+    needs: prepare-release
+    if: ${{ needs.prepare-release.outputs.should_release == 'true' }}
+    uses: ./.github/workflows/ci.yml
+    with:
+      ref: ${{ needs.prepare-release.outputs.checkout_sha }}
+    permissions:
+      contents: read
+
+  integration:
+    name: Release integration tests
+    needs: prepare-release
+    if: ${{ needs.prepare-release.outputs.should_release == 'true' }}
+    uses: ./.github/workflows/integration.yml
+    with:
+      ref: ${{ needs.prepare-release.outputs.checkout_sha }}
+    permissions:
+      contents: read
 
   # Voller Build & Release: Nur bei Tags oder manuellem Release
   release:
-    needs: prepare-release
+    needs: [prepare-release, ci, integration]
     if: ${{ needs.prepare-release.outputs.should_release == 'true' && needs.prepare-release.outputs.promote_only != 'true' }}
     runs-on: ${{ matrix.os }}
     strategy:
@@ -194,7 +238,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
         with:
-          ref: ${{ needs.prepare-release.outputs.checkout_ref }}
+          ref: ${{ needs.prepare-release.outputs.checkout_sha }}
           fetch-depth: 0
           fetch-tags: true
 
@@ -214,9 +258,6 @@ jobs:
             npm cache clean --force
           done
         timeout-minutes: 15
-
-      - name: Run tests
-        run: npm test
 
       - name: Build application
         shell: bash
@@ -440,13 +481,24 @@ jobs:
           fi
 
   finalize-release:
-    needs: [prepare-release, release]
-    if: always() && needs.prepare-release.outputs.should_release == 'true' && (needs.release.result == 'success' || needs.prepare-release.outputs.promote_only == 'true')
+    needs: [prepare-release, ci, integration, release]
+    if: >-
+      ${{
+        !cancelled() &&
+        needs.prepare-release.result == 'success' &&
+        needs.ci.result == 'success' &&
+        needs.integration.result == 'success' &&
+        needs.prepare-release.outputs.should_release == 'true' &&
+        (
+          needs.release.result == 'success' ||
+          (needs.prepare-release.outputs.promote_only == 'true' && needs.release.result == 'skipped')
+        )
+      }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
         with:
-          ref: ${{ needs.prepare-release.outputs.checkout_ref }}
+          ref: ${{ needs.prepare-release.outputs.checkout_sha }}
           fetch-depth: 0
           fetch-tags: true # Fetch all tags for changelog generation
 
