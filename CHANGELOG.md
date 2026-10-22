@@ -5,6 +5,12 @@ Alle nennenswerten Änderungen an diesem Projekt werden in dieser Datei dokument
 Das Format orientiert sich an [Keep a Changelog](https://keepachangelog.com/de/1.1.0/),
 und dieses Projekt folgt [Semantic Versioning](https://semver.org/lang/de/).
 
+## [1.2.1] - 2026-10-22
+
+
+### Tests
+- **renderer**: Cover core portals and native ref lifecycle
+
 ## [1.2.0] - 2026-10-16
 
 
@@ -110,6 +116,7 @@ und dieses Projekt folgt [Semantic Versioning](https://semver.org/lang/de/).
 
 ### Fixed
 - Update query construction to use query_string for single tokens in Elasticsearch
+- Update query construction to use query_string for single tokens in Elasticsearch
 - Add metadata exclusion for message truncation in diagnostic context
 - **renderer**: Display offloaded stacktraces
 - **parser**: Enhance logger field handling for improved query matching
@@ -179,7 +186,6 @@ und dieses Projekt folgt [Semantic Versioning](https://semver.org/lang/de/).
 - Improve byte offset tracking for multi-byte UTF-8 content in HttpTailManager
 - Remove unnecessary libc entries from package-lock.json
 - Implement boolean query syntax for message filtering in Elasticsearch
-- Update query construction to use query_string for single tokens in Elasticsearch
 - Enhance elastic entry loading logic and improve loaded count tracking
 
 
@@ -316,6 +322,10 @@ und dieses Projekt folgt [Semantic Versioning](https://semver.org/lang/de/).
 - Implement slim entry projection to prevent DataCloneError during IPC transfers
 - Implement error boundary with memory error handling and user recommendations
 
+
+### Changed
+- Improve socket error logging by removing UI log entry for internal errors
+
 ## [1.0.12] - 2026-01-30
 
 
@@ -326,7 +336,6 @@ und dieses Projekt folgt [Semantic Versioning](https://semver.org/lang/de/).
 
 ### Changed
 - Rename msgMatches import for clarity and improve error handling in filter logic
-- Improve socket error logging by removing UI log entry for internal errors
 
 
 ### Fixed
@@ -340,6 +349,7 @@ und dieses Projekt folgt [Semantic Versioning](https://semver.org/lang/de/).
 
 
 ### Added
+- Add support for allowing insecure SSL certificates in HTTP requests
 - Implement advanced message filtering with logical operators and escape support
 
 
@@ -387,7 +397,6 @@ und dieses Projekt folgt [Semantic Versioning](https://semver.org/lang/de/).
 ### Added
 - Add skeleton loader styles for improved UI loading experience
 - Optimize Windows portable build for faster startup and improved user experience
-- Add support for allowing insecure SSL certificates in HTTP requests
 
 
 ### Changed
