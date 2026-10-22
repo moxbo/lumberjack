@@ -185,16 +185,25 @@ body (no header, just the latest version's entries).
 
 ### Required Release Checks
 
-Every tag-triggered or manual release runs the reusable CI and integration
-workflows before building release artifacts. Lint/format checks, unit tests with
+Every tag-triggered or manual release requires successful CI and integration
+checks before building release artifacts. Lint/format checks, unit tests with
 coverage on Ubuntu/Windows/macOS, the smoke build, and container integration tests
 must all succeed. Failed, cancelled, or skipped required checks block both the
 release build and publication; a prepared draft is not published.
 
 The release tag is resolved to an immutable commit SHA, shared by all checks,
-release builds, and finalization. Existing tags are released unchanged. Manual
-pre-release promotions validate that same tagged commit again before publication,
-even though they reuse existing artifacts and skip the release build.
+release builds, and finalization. Existing tags are released unchanged. Successful
+push/manual workflow runs from this repository are reused only for that exact SHA,
+after verifying every required job. The latest matching run is authoritative:
+pending runs are awaited for up to 40 minutes; failed, cancelled, or skipped checks
+block the release rather than falling back to an older success. PR runs are not
+reused because they may have tested a merge commit instead.
+
+To handle simultaneous branch/tag pushes, discovery allows 30 seconds for runs to
+appear. If no matching run exists, only the missing reusable workflow is executed.
+API errors block the release. Manual pre-release promotions use the same gate
+before publication, even though they reuse existing artifacts and skip the release
+build.
 
 ### Quick Reference
 

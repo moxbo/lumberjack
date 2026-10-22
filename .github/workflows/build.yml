@@ -3,7 +3,7 @@ name: Build/release
 # Läuft NICHT bei normalen Commits auf main – nur:
 #   1. Push eines Versions-Tags (v*)
 #   2. Manueller Start über die GitHub-UI (workflow_dispatch)
-# CI und Integrationstests werden vor jedem Release wiederverwendet.
+# Erfolgreiche Prüfungen desselben Commits werden vor dem Release wiederverwendet.
 on:
   push:
     tags:
@@ -201,10 +201,37 @@ jobs:
           echo "Release $RELEASE_TAG resolves to $sha"
           echo "sha=$sha" >> "$GITHUB_OUTPUT"
 
-  ci:
-    name: Release CI
+  existing-checks:
+    name: Reuse existing checks
     needs: prepare-release
     if: ${{ needs.prepare-release.outputs.should_release == 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    permissions:
+      contents: read
+      actions: read
+    outputs:
+      ci_reused: ${{ steps.checks.outputs.ci_reused }}
+      integration_reused: ${{ steps.checks.outputs.integration_reused }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          # Older release tags may not contain the current validation helper.
+          ref: ${{ github.sha }}
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+      - name: Discover and wait for exact-commit checks
+        id: checks
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_SHA: ${{ needs.prepare-release.outputs.checkout_sha }}
+        run: node scripts/release-checks.mjs
+
+  ci:
+    name: Release CI
+    needs: [prepare-release, existing-checks]
+    if: ${{ needs.existing-checks.outputs.ci_reused == 'false' }}
     uses: ./.github/workflows/ci.yml
     with:
       ref: ${{ needs.prepare-release.outputs.checkout_sha }}
@@ -213,18 +240,59 @@ jobs:
 
   integration:
     name: Release integration tests
-    needs: prepare-release
-    if: ${{ needs.prepare-release.outputs.should_release == 'true' }}
+    needs: [prepare-release, existing-checks]
+    if: ${{ needs.existing-checks.outputs.integration_reused == 'false' }}
     uses: ./.github/workflows/integration.yml
     with:
       ref: ${{ needs.prepare-release.outputs.checkout_sha }}
     permissions:
       contents: read
 
+  validation:
+    name: Required release checks
+    needs: [prepare-release, existing-checks, ci, integration]
+    if: >-
+      ${{
+        !cancelled() &&
+        needs.prepare-release.result == 'success' &&
+        needs.prepare-release.outputs.should_release == 'true'
+      }}
+    runs-on: ubuntu-latest
+    permissions: {}
+    steps:
+      - name: Require reused or fresh successful checks
+        env:
+          EXISTING_RESULT: ${{ needs.existing-checks.result }}
+          CI_REUSED: ${{ needs.existing-checks.outputs.ci_reused }}
+          CI_RESULT: ${{ needs.ci.result }}
+          INTEGRATION_REUSED: ${{ needs.existing-checks.outputs.integration_reused }}
+          INTEGRATION_RESULT: ${{ needs.integration.result }}
+        run: |
+          set -euo pipefail
+          if [[ "$EXISTING_RESULT" != "success" ]]; then
+            echo "::error::Existing-check discovery did not succeed"
+            exit 1
+          fi
+          require_check() {
+            case "$2:$3" in
+              true:skipped|false:success) echo "$1 checks passed" ;;
+              *) echo "::error::$1 checks did not succeed (reused=$2, result=$3)"; exit 1 ;;
+            esac
+          }
+          require_check CI "$CI_REUSED" "$CI_RESULT"
+          require_check Integration "$INTEGRATION_REUSED" "$INTEGRATION_RESULT"
+
   # Voller Build & Release: Nur bei Tags oder manuellem Release
   release:
-    needs: [prepare-release, ci, integration]
-    if: ${{ needs.prepare-release.outputs.should_release == 'true' && needs.prepare-release.outputs.promote_only != 'true' }}
+    needs: [prepare-release, validation]
+    if: >-
+      ${{
+        !cancelled() &&
+        needs.validation.result == 'success' &&
+        needs.prepare-release.result == 'success' &&
+        needs.prepare-release.outputs.should_release == 'true' &&
+        needs.prepare-release.outputs.promote_only != 'true'
+      }}
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
@@ -481,13 +549,12 @@ jobs:
           fi
 
   finalize-release:
-    needs: [prepare-release, ci, integration, release]
+    needs: [prepare-release, validation, release]
     if: >-
       ${{
         !cancelled() &&
         needs.prepare-release.result == 'success' &&
-        needs.ci.result == 'success' &&
-        needs.integration.result == 'success' &&
+        needs.validation.result == 'success' &&
         needs.prepare-release.outputs.should_release == 'true' &&
         (
           needs.release.result == 'success' ||

@@ -331,16 +331,26 @@ Get-AuthenticodeSignature "path\to\Lumberjack.exe"
 
 ### Release-Freigabe
 
-Der Release-Workflow ruft `ci.yml` und `integration.yml` selbst auf und wartet auf
-deren Erfolg. Alle Prüfungen und Release-Builds verwenden denselben unveränderlichen
-Commit-SHA des Release-Tags. Bereits vorhandene Tags werden unverändert verwendet.
+Der Release-Workflow verwendet erfolgreiche Push-/manuelle Läufe von `ci.yml` und
+`integration.yml` aus demselben Repository für exakt den Commit-SHA des Release-Tags
+wieder. Dabei müssen alle Pflicht-Jobs erfolgreich sein. Der jeweils neueste
+passende Lauf ist maßgeblich; laufende Prüfungen werden bis zu 40 Minuten
+abgewartet. PR-Läufe werden nicht übernommen, da sie einen Merge-Commit statt des
+Release-Commits geprüft haben können.
+
+Bei gleichzeitigem Branch-/Tag-Push wartet die Erkennung bis zu 30 Sekunden auf
+das Erscheinen der Läufe. Nur wenn kein passender Lauf existiert, wird der fehlende
+Workflow im Release erneut ausgeführt. API-Fehler blockieren die Freigabe.
+Alle Prüfungen und Release-Builds verwenden denselben unveränderlichen Commit-SHA.
+Bereits vorhandene Tags werden unverändert verwendet.
 Fehlgeschlagene, abgebrochene oder übersprungene Pflichtprüfungen verhindern sowohl
 den Release-Build als auch die Veröffentlichung; ein vorbereiteter Draft bleibt
 unveröffentlicht.
 
 Diese Freigabe gilt auch für manuelle Releases und Pre-Release-Promotions. Bei einer
-Promotion wird der bestehende Tag erneut geprüft, bevor die bereits vorhandenen
-Artefakte ohne erneuten Release-Build veröffentlicht werden.
+Promotion müssen die Prüfungen für den bestehenden Tag erfolgreich vorliegen,
+bevor die bereits vorhandenen Artefakte ohne erneuten Release-Build veröffentlicht
+werden.
 
 ### Test-Coverage
 
