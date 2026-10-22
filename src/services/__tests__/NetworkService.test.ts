@@ -340,6 +340,10 @@ describe("source backpressure", () => {
       const count = 320;
       let pulls = 0;
       let cancelled = false;
+      let markCancelled!: () => void;
+      const responseCancelled = new Promise<void>((resolve) => {
+        markCancelled = resolve;
+      });
       const body = new ReadableStream<Uint8Array>(
         {
           pull(controller) {
@@ -361,6 +365,7 @@ describe("source backpressure", () => {
           },
           cancel() {
             cancelled = true;
+            markCancelled();
           },
         },
         { highWaterMark: 0 },
@@ -382,27 +387,43 @@ describe("source backpressure", () => {
       const gate = new Promise<void>((resolve) => {
         release = resolve;
       });
+      let markStarted!: () => void;
+      const firstBatch = new Promise<void>((resolve) => {
+        markStarted = resolve;
+      });
+      let markDelivered!: () => void;
+      const allDelivered = new Promise<void>((resolve) => {
+        markDelivered = resolve;
+      });
       let received = 0;
       const consume = vi.fn(async (entries: Array<{ message: string }>) => {
         received += entries.length;
-        if (received === count) service.httpStopPoll(poll.id!);
+        markStarted();
+        if (received === count) {
+          service.httpStopPoll(poll.id!);
+          markDelivered();
+        }
         await gate;
       });
       service.setLogCallback(consume);
       const poll = await service.httpStartPoll("http://example.test/log", 1);
       try {
-        await vi.waitFor(() => expect(consume).toHaveBeenCalledTimes(1));
+        await firstBatch;
+        expect(consume).toHaveBeenCalledTimes(1);
         const blockedPulls = pulls;
         await new Promise((resolve) => setTimeout(resolve, 20));
         expect(pulls).toBe(blockedPulls);
         expect(pulls).toBeLessThan(count);
         release();
-        await vi.waitFor(() => expect(received).toBe(count));
-        await vi.waitFor(() => expect(cancelled).toBe(true));
+        await allDelivered;
+        expect(received).toBe(count);
+        await responseCancelled;
+        expect(cancelled).toBe(true);
         expect(service.getDiagnostics().http.activePollers).toBe(0);
       } finally {
         release();
         service.stopAllHttpPollers();
+        await service.waitForPendingLogs();
       }
     },
   );
