@@ -5,6 +5,12 @@ Alle nennenswerten Änderungen an diesem Projekt werden in dieser Datei dokument
 Das Format orientiert sich an [Keep a Changelog](https://keepachangelog.com/de/1.1.0/),
 und dieses Projekt folgt [Semantic Versioning](https://semver.org/lang/de/).
 
+## [1.2.2] - 2026-10-22
+
+
+### Tests
+- **NetworkService**: Improve polling tests with cancellation and delivery tracking
+
 ## [1.2.1] - 2026-10-22
 
 
