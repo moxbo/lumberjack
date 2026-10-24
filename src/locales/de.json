@@ -41,8 +41,7 @@
     "resizeDetails": "Größe der Details ändern",
     "clearing": "Logs werden geleert …",
     "waitingToClear": "Leeren: laufender Schreibvorgang wird abgeschlossen …",
-    "storageError": "Aufnahme-/Speicherfehler",
-    "localSession": "Lokale Sitzung"
+    "storageError": "Aufnahme-/Speicherfehler"
   },
   "searchProgress": {
     "label": "Suchfortschritt",

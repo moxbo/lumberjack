@@ -41,8 +41,7 @@
     "resizeDetails": "Resize details",
     "clearing": "Clearing logs …",
     "waitingToClear": "Clearing: waiting for the current write to finish …",
-    "storageError": "Ingestion/storage error",
-    "localSession": "Local session"
+    "storageError": "Ingestion/storage error"
   },
   "searchProgress": {
     "label": "Search progress",

@@ -3231,11 +3231,7 @@ export default function App(): JSX.Element {
           >
             {t("workspace.storageError")}
           </button>
-        ) : (
-          <span className="workspace-storage-state">
-            {t("workspace.localSession")}
-          </span>
-        )}
+        ) : null}
         <StatusSection
           busy={busy}
           importProgress={importProgress}
