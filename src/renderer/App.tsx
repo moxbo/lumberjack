@@ -1961,44 +1961,13 @@ export default function App(): JSX.Element {
     } catch (e) {
       logger.error("onTcpStatus setup failed:", e);
     }
-    // Handle window focus events to fix input issues when switching between windows
     try {
       {
         const off = typedOnWindowFocus(() => {
-          // When window receives focus, force the browser to re-establish input interactivity.
-          // This fixes the Electron issue where webContents has focus but the DOM doesn't
-          // properly accept keyboard input until the user Alt-Tabs away and back.
-          try {
-            const active = document.activeElement;
-            if (
-              active &&
-              active !== document.body &&
-              active instanceof HTMLElement
-            ) {
-              // An element (e.g. an input) was focused – blur and re-focus it
-              // to force the browser to re-establish keyboard input
-              active.blur();
-              requestAnimationFrame(() => {
-                try {
-                  active.focus();
-                } catch {
-                  /* ignore */
-                }
-              });
-            } else {
-              // No specific element focused – trigger a focus cycle on body
-              // to ensure the document is ready to accept input
-              document.body.blur();
-              requestAnimationFrame(() => {
-                try {
-                  document.body.focus();
-                } catch {
-                  /* ignore */
-                }
-              });
-            }
-          } catch {
-            // Ignore focus errors
+          // Main restores webContents focus. Cycling DOM focus resets native
+          // date/time segments and text selections in the active control.
+          if (document.hasFocus() && document.activeElement === document.body) {
+            document.body.focus();
           }
         });
         offs.push(off);
