@@ -98,12 +98,50 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  hooks.cleanup?.();
+  vi.unstubAllGlobals();
   vi.clearAllTimers();
   vi.useRealTimers();
   vi.clearAllMocks();
 });
 
 describe("getMetadataPublishDelay", () => {
+  it("drops pending hidden metadata publication when the dataset is cleared", async () => {
+    const document = Object.assign(new EventTarget(), { hidden: true });
+    vi.stubGlobal("document", document);
+    const hook = render();
+    await hook.appendEntriesAsync([input(1)], { live: true });
+    await hook.clearEntries();
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(render().entries.length).toBe(0);
+    await hook.appendEntriesAsync([input(2)], { live: true });
+    document.hidden = false;
+    document.dispatchEvent(new Event("visibilitychange"));
+    expect(render().entries.length).toBe(1);
+    expect(render().entries.at(0)?.timestamp).toBe(2);
+  });
+  it("persists and acknowledges hidden intake without waiting for UI publication, including the live cap", async () => {
+    const document = Object.assign(new EventTarget(), { hidden: true });
+    vi.stubGlobal("document", document);
+    const hook = render(undefined, 4);
+    await expect(
+      hook.appendEntriesAsync([input(2), input(3)], { live: true }),
+    ).resolves.toBe(2);
+    await expect(
+      hook.appendEntriesAsync([input(1)], { live: true }),
+    ).resolves.toBe(1);
+    expect(render(undefined, 4).entries.length).toBe(0);
+    expect((await hook.repository.getPayloads([1, 2, 3])).size).toBe(3);
+    document.hidden = false;
+    document.dispatchEvent(new Event("visibilitychange"));
+    expect([...render(undefined, 4).entries.ids]).toEqual([3, 1, 2]);
+    document.hidden = true;
+    await expect(
+      hook.appendEntriesAsync([input(4)], { live: true }),
+    ).resolves.toBe(1);
+    expect(render(undefined, 4).liveLimitReached).toBe(true);
+    expect(render(undefined, 4).entries.length).toBe(4);
+  });
   it("reduces render frequency as the dataset grows", () => {
     expect(getMetadataPublishDelay(99_999)).toBe(50);
     expect(getMetadataPublishDelay(100_000)).toBe(100);

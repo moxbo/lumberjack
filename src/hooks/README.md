@@ -92,6 +92,29 @@ For an opt-in Electron/IndexedDB measurement with short synthetic messages, run
 after building the application. It compares base reuse with forced refiltering
 and reports timing and transferred base IDs, not a real 1–5 GB workload guarantee.
 
+## Background windows and live sources
+
+`VisibilityScheduler` coalesces metadata publication to
+once per second while the document is hidden/minimized, and flushes the latest
+view when it becomes visible. Cancellation and clearing discard pending views.
+The native `window:visibility` bridge handles hide/show and minimize/restore:
+Electron otherwise reports a visible document when background throttling is off.
+Ingestion, IndexedDB persistence, producer acknowledgements and backpressure
+never wait for this scheduler. Reaching the live-entry limit publishes control
+state immediately, including while hidden. Electron background throttling stays
+disabled to preserve ingestion and acknowledgement timers.
+
+TCP and HTTP-tail continue to share the window's live-entry allowance; the cap
+stops owned live sources rather than evicting older entries. Other instances have
+their own allowances and resource usage.
+
+HTTP-tail reports the observed transfer mode through its list/status API.
+A `200` response to an actual Range request indicates full-download fallback;
+the initial offset-zero download alone does not. The status area retains a
+warning while any active tail uses full downloads, with a notification on entry
+into that mode. A later partial response clears it. Prefix skipping still avoids
+re-parsing old bytes, but cannot avoid the repeated network transfer.
+
 ## Storage failures
 
 IndexedDB failures must not migrate the existing dataset into renderer memory.

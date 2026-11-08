@@ -569,6 +569,18 @@ const api: ElectronAPI = {
     };
   },
 
+  onWindowVisibilityChange: (
+    callback: (visible: boolean) => void,
+  ): (() => void) => {
+    const listener = (_event: IpcRendererEvent, visible: boolean): void =>
+      callback(visible);
+    ipcRenderer.on("window:visibility", listener);
+    ipcRenderer.send("window:visibility:request");
+    return () => {
+      ipcRenderer.removeListener("window:visibility", listener);
+    };
+  },
+
   // ---- HTTP Tail (incremental Range-based polling) -----------------------
   httpTailStart: (args: {
     url: string;

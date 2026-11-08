@@ -27,6 +27,7 @@ import logger from "../utils/logger";
 import { IPC_BATCH_SIZE } from "../constants";
 import type { ProjectionBridge } from "../workers/projectionBridge";
 import { MetadataStore } from "../utils/metadataSnapshot";
+import { VisibilityScheduler } from "../utils/visibilityScheduler";
 import {
   DEFAULT_INGESTION_LIMITS,
   IngestionBudget,
@@ -102,9 +103,7 @@ export function useEntryManagement({
   const projectionBridgeRef = externalBridgeRef ?? { current: null };
   const metadataByIdRef = useRef<Array<PagedEntryMetadata | undefined>>([]);
   const publishedMetadataCountRef = useRef(0);
-  const metadataPublishTimerRef = useRef<ReturnType<typeof setTimeout> | null>(
-    null,
-  );
+  const metadataPublisherRef = useRef<VisibilityScheduler | null>(null);
   const idsBySignatureRef = useRef<Map<string, number | number[]>>(new Map());
   const repositoryRef = useRef(pagedLogRepository);
   const pausedErrorRef = useRef<Error | null>(null);
@@ -165,29 +164,23 @@ export function useEntryManagement({
   );
 
   const publishMetadata = useCallback((): void => {
-    if (metadataPublishTimerRef.current !== null) {
-      clearTimeout(metadataPublishTimerRef.current);
-      metadataPublishTimerRef.current = null;
-    }
+    metadataPublisherRef.current?.cancel();
     const snapshot = metadataStoreRef.current.publish();
     publishedMetadataCountRef.current = snapshot.length;
     setMetadataEntries(snapshot);
     setLiveEntryCount(liveEntryCountRef.current);
   }, []);
+  metadataPublisherRef.current ??= new VisibilityScheduler(
+    publishMetadata,
+    () => getMetadataPublishDelay(metadataStoreRef.current.length),
+  );
 
   const scheduleMetadataPublish = useCallback((): void => {
     const unpublishedCount =
       metadataStoreRef.current.length - publishedMetadataCountRef.current;
-    if (publishedMetadataCountRef.current === 0 || unpublishedCount >= 20_000) {
-      publishMetadata();
-      return;
-    }
-    if (metadataPublishTimerRef.current === null) {
-      metadataPublishTimerRef.current = setTimeout(
-        publishMetadata,
-        getMetadataPublishDelay(metadataStoreRef.current.length),
-      );
-    }
+    metadataPublisherRef.current!.schedule(
+      publishedMetadataCountRef.current === 0 || unpublishedCount >= 20_000,
+    );
   }, [publishMetadata]);
 
   if (operationTailRef.current === null) {
@@ -217,9 +210,7 @@ export function useEntryManagement({
       cancelPending(
         new Error("Log append cancelled because the view was closed"),
       );
-      if (metadataPublishTimerRef.current !== null) {
-        clearTimeout(metadataPublishTimerRef.current);
-      }
+      metadataPublisherRef.current?.dispose();
       stopLifecycle();
       void operationTailRef.current
         ?.then(() => pagedLogRepository.destroy())
@@ -548,10 +539,7 @@ export function useEntryManagement({
     cancelPending(
       new Error("Log append cancelled because entries were cleared"),
     );
-    if (metadataPublishTimerRef.current !== null) {
-      clearTimeout(metadataPublishTimerRef.current);
-      metadataPublishTimerRef.current = null;
-    }
+    metadataPublisherRef.current?.cancel();
     const previous = operationTailRef.current ?? Promise.resolve();
     const repository = repositoryRef.current;
     const operation = previous

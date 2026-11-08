@@ -369,6 +369,29 @@ export function registerIpcHandlers(
   ) => void | Promise<void>,
 ): void {
   const sharedApi = getSharedMainApi();
+  const visibilityWindows = new WeakSet<BrowserWindow>();
+  ipcMain.on("window:visibility:request", (event) => {
+    const win = BrowserWindow.fromWebContents(event.sender);
+    if (!win) {
+      log.warn("Window visibility requested without an owning window");
+      return;
+    }
+    const publishVisibility = (): void => {
+      if (win.isDestroyed() || win.webContents.isDestroyed()) return;
+      win.webContents.send(
+        "window:visibility",
+        win.isVisible() && !win.isMinimized(),
+      );
+    };
+    if (!visibilityWindows.has(win)) {
+      visibilityWindows.add(win);
+      win.on("show", publishVisibility);
+      win.on("hide", publishVisibility);
+      win.on("minimize", publishVisibility);
+      win.on("restore", publishVisibility);
+    }
+    publishVisibility();
+  });
   ipcMain.handle(
     "logs:payloadLoad",
     async (event, reference: unknown): Promise<Result<LogEntry>> => {

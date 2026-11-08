@@ -606,6 +606,10 @@ export type ElectronAPI = {
     }) => void,
   ) => () => void;
 
+  onWindowVisibilityChange: (
+    callback: (visible: boolean) => void,
+  ) => () => void;
+
   // HTTP Tail (incremental Range-based polling, e.g. Spring Boot Actuator)
   httpTailStart: (args: {
     url: string;

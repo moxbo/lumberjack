@@ -26,10 +26,14 @@ const fixture = vi.hoisted(() => ({
   ipc: { handle: vi.fn(), on: vi.fn() },
   windows: new Map<
     number,
-    {
+    EventEmitter & {
       id: number;
       webContents: Sender;
       isDestroyed: () => boolean;
+      visible: boolean;
+      minimized: boolean;
+      isVisible: () => boolean;
+      isMinimized: () => boolean;
     }
   >(),
   watchers: new Map<
@@ -122,11 +126,20 @@ function deferred<T>() {
 
 function createWindow(id: number) {
   const sender = new Sender(id);
-  fixture.windows.set(id, {
+  const win = Object.assign(new EventEmitter(), {
     id: 100 + id,
     webContents: sender,
     isDestroyed: sender.isDestroyed,
+    visible: true,
+    minimized: false,
   });
+  fixture.windows.set(
+    id,
+    Object.assign(win, {
+      isVisible: () => win.visible,
+      isMinimized: () => win.minimized,
+    }),
+  );
   return sender;
 }
 
@@ -218,6 +231,27 @@ it("routes HTTP tail transfer-mode warnings only to the owning live window", asy
   expect(first.send).not.toHaveBeenCalled();
 });
 
+it("reports native visibility per window without duplicate listeners after renderer reloads", () => {
+  register();
+  send("window:visibility:request", first);
+  expect(first.send).toHaveBeenLastCalledWith("window:visibility", true);
+  const win = fixture.windows.get(first.id)!;
+  win.minimized = true;
+  win.emit("minimize");
+  expect(first.send).toHaveBeenLastCalledWith("window:visibility", false);
+  win.minimized = false;
+  win.emit("restore");
+  expect(first.send).toHaveBeenLastCalledWith("window:visibility", true);
+  win.visible = false;
+  win.emit("hide");
+  expect(first.send).toHaveBeenLastCalledWith("window:visibility", false);
+  win.visible = true;
+  win.emit("show");
+  expect(first.send).toHaveBeenLastCalledWith("window:visibility", true);
+  send("window:visibility:request", first);
+  expect(win.listenerCount("hide")).toBe(1);
+  expect(second.send).not.toHaveBeenCalled();
+});
 beforeEach(() => {
   vi.clearAllMocks();
   fixture.windows.clear();
