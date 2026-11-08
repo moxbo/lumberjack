@@ -57,6 +57,14 @@ text/mode, filters, relevant marks, database and data generation. New queries an
 the current scan so continuous input cannot starve results.
 
 Completed worker base results are cached independently of navigation text/mode.
+Streaming requests opt into `baseDelta` responses with `reset`, `fromLength`
+and only newly passing references. The hook validates the expected prefix length
+and inserts deltas into sorted snapshots, including out-of-order timestamps.
+Progress does not recount historical matches on each append. Non-opt-in worker
+clients retain the cumulative-array protocol.
+Streaming scans flush reference batches at a bounded page/8,000-reference
+threshold as well as the progress cadence. The hook coalesces intermediate
+visible publications at 100 ms; first and final results remain immediate.
 Navigation-only requests send sorted match deltas instead of retransmitting the
 base ID sequence; the hook merges them into its cumulative result snapshots.
 `cancelFiltering(true)` cancels obsolete matches while retaining the base view.
@@ -82,7 +90,8 @@ A new navigation term or case/regex mode must not blank a completed filtered
 list or replace its ID sequence on every match update. Genuine filter, relevant
 mark, database or data-generation changes still invalidate the base view.
 Match counters and previous/next navigation use binary lookup in sorted visual
-match positions rather than walking potentially millions of matches.
+match positions. Sorted match snapshots project positions lazily instead of
+materializing potentially millions of positions on each append.
 
 New search terms still scan relevant message pages. IndexedDB reads use bounded
 `getAll()` ranges and skip pages without base-filter candidates. Boolean and regex
@@ -94,7 +103,7 @@ and reports timing and transferred base IDs, not a real 1–5 GB workload guaran
 
 ## Background windows and live sources
 
-`VisibilityScheduler` coalesces metadata publication to
+`VisibilityScheduler` coalesces metadata and worker-result UI publication to
 once per second while the document is hidden/minimized, and flushes the latest
 view when it becomes visible. Cancellation and clearing discard pending views.
 The native `window:visibility` bridge handles hide/show and minimize/restore:

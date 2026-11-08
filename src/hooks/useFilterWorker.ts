@@ -31,7 +31,12 @@ import type { FilterProgress } from "../types/filterProgress";
 import type {
   FilterResponse,
   FilterErrorResponse,
+  PassingReference,
 } from "../workers/filterWorker";
+import { SortedStore } from "../utils/sortedSequence";
+import { MappedSequence } from "../utils/readonlySequence";
+import { compareByTimestampId } from "../utils/sort";
+import { VisibilityScheduler } from "../utils/visibilityScheduler";
 
 export interface FilterOptions {
   stdFiltersEnabled: boolean;
@@ -75,9 +80,9 @@ export interface PagedFilterConfig {
 }
 
 export interface UseFilterWorkerResult {
-  filteredIndices: number[];
-  searchMatchIndices: number[];
-  searchMatchIds: number[];
+  filteredIndices: ReadonlySequence<number>;
+  searchMatchIndices: ReadonlySequence<number>;
+  searchMatchIds: ReadonlySequence<number>;
   isFiltering: boolean;
   progress: FilterProgress | null;
   stats: FilterStats | null;
@@ -251,16 +256,36 @@ function mergeSearchMatches(
 
 /** Worker-first filtering with progressive, cancellable fallback pages. */
 export function useFilterWorker(): UseFilterWorkerResult {
-  const [filteredIndices, setFilteredIndices] = useState<number[]>([]);
-  const [searchMatchIndices, setSearchMatchIndices] = useState<number[]>([]);
+  const [filteredIndices, setFilteredIndices] = useState<
+    ReadonlySequence<number>
+  >([]);
+  const [searchMatchIndices, setSearchMatchIndices] = useState<
+    ReadonlySequence<number>
+  >([]);
   const [isFiltering, setIsFiltering] = useState(false);
   const [stats, setStats] = useState<FilterStats | null>(null);
   const [error, setError] = useState<Error | null>(null);
   const [useUtilityProcess, setUseUtilityProcess] = useState(false);
-  const [searchMatchIds, setSearchMatchIds] = useState<number[]>([]);
+  const [searchMatchIds, setSearchMatchIds] = useState<
+    ReadonlySequence<number>
+  >([]);
   const [progress, setProgress] = useState<FilterProgress | null>(null);
 
   const workerRef = useRef<Worker | null>(null);
+  const resultStoreRef = useRef<SortedStore<PassingReference> | null>(null);
+  const matchStoreRef = useRef(new SortedStore<PassingReference>());
+  const matchRequestRef = useRef<number | undefined>(undefined);
+  const resultEpochRef = useRef(0);
+  const pendingPublicationRef = useRef<(() => void) | null>(null);
+  const resultPublisherRef = useRef<VisibilityScheduler | null>(null);
+  resultPublisherRef.current ??= new VisibilityScheduler(
+    () => {
+      const publish = pendingPublicationRef.current;
+      pendingPublicationRef.current = null;
+      publish?.();
+    },
+    () => 100,
+  );
   const pendingRequestRef = useRef<number>(0);
   const pendingGenerationRef = useRef<string | number | undefined>(undefined);
   const pendingBaseGenerationRef = useRef<string | undefined>(undefined);
@@ -304,11 +329,15 @@ export function useFilterWorker(): UseFilterWorkerResult {
   } | null>(null);
 
   const cancelFiltering = useCallback((preserveBase = false) => {
+    resultPublisherRef.current?.cancel();
+    pendingPublicationRef.current = null;
     const requestId = ++requestSeqRef.current;
     pendingRequestRef.current = requestId;
     cancelledThroughRef.current = requestId;
     pendingGenerationRef.current = undefined;
     if (!preserveBase) {
+      resultEpochRef.current++;
+      resultStoreRef.current = null;
       localBaseRef.current = null;
       pendingBaseGenerationRef.current = undefined;
       renderedBaseCountRef.current = undefined;
@@ -316,6 +345,8 @@ export function useFilterWorker(): UseFilterWorkerResult {
       setStats(null);
     }
     deltaMatchesRef.current = null;
+    matchStoreRef.current = new SortedStore();
+    matchRequestRef.current = undefined;
     queuedFallbackRef.current = null;
     setSearchMatchIndices([]);
     setSearchMatchIds([]);
@@ -388,61 +419,137 @@ export function useFilterWorker(): UseFilterWorkerResult {
         }
         if (data.type === "error") {
           if (requestId === pendingRequestRef.current) {
+            resultPublisherRef.current?.cancel();
+            pendingPublicationRef.current = null;
             setError(new Error(data.message));
             setIsFiltering(false);
           }
           return;
         }
         if (data.type !== "result") return;
+        const firstResult = requestId > lastAppliedRequestRef.current;
         lastAppliedRequestRef.current = requestId;
-        setError(null);
-        if (!data.reuseFilteredIndices) {
-          setFilteredIndices(data.filteredIndices);
-          renderedBaseCountRef.current = data.progress?.processed;
-        }
-        if (data.searchMatchesDelta) {
-          const previous = deltaMatchesRef.current;
-          const merged = mergeSearchMatches(
-            previous?.requestId === requestId
-              ? previous
-              : { indices: [], ids: [] },
-            {
-              indices: data.searchMatchIndices,
-              ids: data.searchMatchIds ?? [],
-            },
-          );
-          deltaMatchesRef.current = { requestId, ...merged };
-          setSearchMatchIndices(merged.indices);
-          setSearchMatchIds(merged.ids);
+        let nextFiltered: ReadonlySequence<number> | undefined;
+        let nextMatches: ReadonlySequence<number> = [];
+        let nextMatchIndices: ReadonlySequence<number> = [];
+        if (
+          data.baseDelta ||
+          (data.searchMatchesDelta && resultStoreRef.current)
+        ) {
+          try {
+            if (data.baseDelta) {
+              const delta = data.baseDelta;
+              const store = delta.reset
+                ? new SortedStore<PassingReference>()
+                : resultStoreRef.current;
+              if (!store || store.length !== delta.fromLength)
+                throw new Error(
+                  "Filter result delta does not match the current base view",
+                );
+              store.appendSorted(delta.entries);
+              resultStoreRef.current = store;
+              if (delta.reset) matchStoreRef.current = new SortedStore();
+              matchStoreRef.current.appendSorted(
+                delta.entries.filter((ref) => ref.searchMatch),
+              );
+              nextFiltered = store.publish().ids;
+              renderedBaseCountRef.current = data.progress?.processed;
+              matchRequestRef.current = undefined;
+            } else {
+              if (matchRequestRef.current !== requestId) {
+                matchStoreRef.current = new SortedStore();
+                matchRequestRef.current = requestId;
+              }
+              const base = resultStoreRef.current!.publish();
+              const matches = (data.searchMatchIds ?? []).map((id) => {
+                const ref = base.get(id);
+                if (!ref)
+                  throw new Error(
+                    `Search match ${id} is missing from the base view`,
+                  );
+                return ref;
+              });
+              matches.sort(compareByTimestampId);
+              matchStoreRef.current.appendSorted(matches);
+            }
+            const ids = matchStoreRef.current.publish().ids;
+            const baseIds = resultStoreRef.current!.publish().ids;
+            nextMatches = ids;
+            nextMatchIndices = new MappedSequence(ids, (id) =>
+              baseIds.positionOf(id),
+            );
+          } catch (cause) {
+            resultPublisherRef.current?.cancel();
+            pendingPublicationRef.current = null;
+            setError(cause instanceof Error ? cause : new Error(String(cause)));
+            setIsFiltering(false);
+            return;
+          }
         } else {
-          deltaMatchesRef.current = null;
-          setSearchMatchIndices(data.searchMatchIndices);
-          setSearchMatchIds(
-            data.searchMatchIds ??
+          if (!data.reuseFilteredIndices) {
+            resultStoreRef.current = null;
+            nextFiltered = data.filteredIndices;
+            renderedBaseCountRef.current = data.progress?.processed;
+          }
+          if (data.searchMatchesDelta) {
+            const previous = deltaMatchesRef.current;
+            const merged = mergeSearchMatches(
+              previous?.requestId === requestId
+                ? previous
+                : { indices: [], ids: [] },
+              {
+                indices: data.searchMatchIndices,
+                ids: data.searchMatchIds ?? [],
+              },
+            );
+            deltaMatchesRef.current = { requestId, ...merged };
+            nextMatchIndices = merged.indices;
+            nextMatches = merged.ids;
+          } else {
+            deltaMatchesRef.current = null;
+            nextMatchIndices = data.searchMatchIndices;
+            nextMatches =
+              data.searchMatchIds ??
               data.searchMatchIndices.map(
                 (index) => data.filteredIndices[index]!,
-              ),
-          );
+              );
+          }
         }
-        if (data.progress) {
-          setProgress({
-            ...data.progress,
-            total: Math.max(data.progress.total, targetCountRef.current),
-          });
-        }
-        setStats(data.stats);
-        if (!data.partial && requestId >= pendingRequestRef.current) {
-          setIsFiltering(false);
-        }
+        // A navigation delta may follow an unpublished base update while hidden.
+        const baseToPublish =
+          nextFiltered ?? resultStoreRef.current?.publish().ids;
+        pendingPublicationRef.current = () => {
+          setError(null);
+          if (baseToPublish) setFilteredIndices(baseToPublish);
+          setSearchMatchIndices(nextMatchIndices);
+          setSearchMatchIds(nextMatches);
+          if (data.progress) {
+            setProgress({
+              ...data.progress,
+              total: Math.max(data.progress.total, targetCountRef.current),
+            });
+          }
+          setStats(data.stats);
+          if (!data.partial && requestId >= pendingRequestRef.current) {
+            setIsFiltering(false);
+          }
+        };
+        resultPublisherRef.current!.schedule(
+          firstResult || !data.partial || !resultStoreRef.current,
+        );
       };
 
       workerRef.current.onerror = (error: ErrorEvent) => {
+        resultPublisherRef.current?.cancel();
+        pendingPublicationRef.current = null;
         console.error("[FilterWorker] Error:", error);
         setError(new Error(error.message || "Filter worker failed"));
         setIsFiltering(false);
       };
 
       return () => {
+        resultPublisherRef.current?.dispose();
+        pendingPublicationRef.current = null;
         cancelledThroughRef.current = ++requestSeqRef.current;
         pendingGenerationRef.current = undefined;
         queuedFallbackRef.current = null;
@@ -463,7 +570,8 @@ export function useFilterWorker(): UseFilterWorkerResult {
     } catch (error) {
       console.warn("[FilterWorker] Failed to initialize worker:", error);
       return () => {
-        // Cleanup function
+        resultPublisherRef.current?.dispose();
+        pendingPublicationRef.current = null;
       };
     }
   }, []);
@@ -728,6 +836,7 @@ export function useFilterWorker(): UseFilterWorkerResult {
       }
       previousSourceRef.current = entries;
       const generation = JSON.stringify({
+        resultEpoch: resultEpochRef.current,
         options,
         markedSignatures: options.onlyMarked
           ? Object.keys(marksMap ?? {}).sort()
@@ -746,6 +855,7 @@ export function useFilterWorker(): UseFilterWorkerResult {
         ...baseOptions
       } = options;
       const baseGeneration = JSON.stringify({
+        resultEpoch: resultEpochRef.current,
         options: baseOptions,
         markedSignatures: options.onlyMarked
           ? Object.keys(marksMap ?? {}).sort()
@@ -773,14 +883,19 @@ export function useFilterWorker(): UseFilterWorkerResult {
       targetCountRef.current = config?.entryCount ?? entries.length;
       setError(null);
       if (queryChanged) {
+        resultPublisherRef.current?.cancel();
+        pendingPublicationRef.current = null;
         cancelledThroughRef.current = requestId - 1;
         queuedFallbackRef.current = null;
         if (baseChanged) {
+          resultStoreRef.current = null;
           renderedBaseCountRef.current = undefined;
           setFilteredIndices([]);
           setStats(null);
         }
         deltaMatchesRef.current = null;
+        matchStoreRef.current = new SortedStore();
+        matchRequestRef.current = undefined;
         setSearchMatchIndices([]);
         setSearchMatchIds([]);
         setProgress({
@@ -862,6 +977,7 @@ export function useFilterWorker(): UseFilterWorkerResult {
             generation,
             baseGeneration,
             knownBaseCount: renderedBaseCountRef.current,
+            incrementalResults: true,
             dataGeneration: config.dataGeneration,
             entryCount: config.entryCount,
             pageSize: config.pageSize,
@@ -953,6 +1069,7 @@ export function useFilterWorker(): UseFilterWorkerResult {
               generation,
               baseGeneration,
               knownBaseCount: renderedBaseCountRef.current,
+              incrementalResults: true,
               dataGeneration: sourceRevisionRef.current,
             });
             return;

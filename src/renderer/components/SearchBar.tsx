@@ -43,7 +43,7 @@ export interface SearchBarProps {
     value: string,
   ) => void;
   // Search match navigation
-  searchMatchIdx: number[];
+  searchMatchIdx: ReadonlySequence<number>;
   selectedOneIdx: number | null;
   filteredIdx: ReadonlySequence<number>;
   positionOfId?: (id: number) => number;

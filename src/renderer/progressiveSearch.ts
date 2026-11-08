@@ -2,9 +2,9 @@ import type { ReadonlySequence } from "../utils/metadataSnapshot";
 
 /** Worker positions belong to its partial projection, not necessarily the UI. */
 export function searchMatchPositions(
-  ids: readonly number[],
+  ids: ReadonlySequence<number>,
   positionOf: (id: number) => number,
-): number[] {
+): ReadonlySequence<number> {
   const positions: number[] = [];
   let ordered = true;
   for (const id of ids) {
@@ -19,41 +19,43 @@ export function searchMatchPositions(
 }
 
 function firstMatchAtOrAfter(
-  positions: readonly number[],
+  positions: ReadonlySequence<number>,
   position: number,
 ): number {
   let low = 0;
   let high = positions.length;
   while (low < high) {
     const middle = low + Math.floor((high - low) / 2);
-    if (positions[middle]! < position) low = middle + 1;
+    if (positions.at(middle)! < position) low = middle + 1;
     else high = middle;
   }
   return low;
 }
 
 export function searchMatchIndex(
-  positions: readonly number[],
+  positions: ReadonlySequence<number>,
   position: number,
 ): number {
   const index = firstMatchAtOrAfter(positions, position);
-  return index < positions.length && positions[index] === position ? index : -1;
+  return index < positions.length && positions.at(index) === position
+    ? index
+    : -1;
 }
 
 export function adjacentSearchMatch(
-  positions: readonly number[],
+  positions: ReadonlySequence<number>,
   currentPosition: number,
   direction: number,
 ): number | undefined {
   if (!positions.length) return undefined;
   if (currentPosition < 0)
-    return direction > 0 ? positions[0] : positions[positions.length - 1];
+    return direction > 0 ? positions.at(0) : positions.at(-1);
   const index = firstMatchAtOrAfter(positions, currentPosition);
   const next =
     direction > 0
-      ? index + (positions[index] === currentPosition ? 1 : 0)
+      ? index + (positions.at(index) === currentPosition ? 1 : 0)
       : index - 1;
-  return positions[Math.max(0, Math.min(positions.length - 1, next))];
+  return positions.at(Math.max(0, Math.min(positions.length - 1, next)));
 }
 
 export function anchoredScrollOffset(

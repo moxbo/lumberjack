@@ -200,6 +200,74 @@ describe("worker progressive message protocol", () => {
     expect(close).toHaveBeenCalledOnce();
   });
 
+  it("sends only inserted references for interleaved streaming updates, including queued appends", async () => {
+    send(request({ entryCount: 2, incrementalResults: true }));
+    await until(() => loads.length === 1);
+    // Submitted before the first result: its knownBaseCount is deliberately absent.
+    send(request({ requestId: 2, entryCount: 4, incrementalResults: true }));
+    loads[0]!.release([
+      { ...projection(1), timestamp: 10 },
+      { ...projection(2, "other"), timestamp: 30 },
+    ]);
+    await until(() => !!final(1) && loads.length === 2);
+    loads[1]!.release([
+      { ...projection(3), timestamp: 5 },
+      { ...projection(4), timestamp: 20 },
+    ]);
+    await until(() => !!final(2));
+    const first = results().filter((r) => r.requestId === 1);
+    const second = results().filter((r) => r.requestId === 2);
+    expect(first[0]!.baseDelta).toMatchObject({ reset: true, fromLength: 0 });
+    expect(
+      first.flatMap((r) => r.baseDelta?.entries.map((e) => e.id) ?? []),
+    ).toEqual([1, 2]);
+    expect(second[0]!.baseDelta).toMatchObject({ reset: false, fromLength: 2 });
+    expect(
+      second.flatMap((r) => r.baseDelta?.entries.map((e) => e.id) ?? []),
+    ).toEqual([3, 4]);
+    expect(results().every((r) => r.filteredIndices.length === 0)).toBe(true);
+    expect(final(2)!.progress).toEqual({ processed: 4, total: 4, matches: 3 });
+  });
+
+  it("bounds delta transfers at 1.5 million rows and never resends the historical prefix on append", async () => {
+    autoPage = ({ first, last }) =>
+      Array.from({ length: last - first + 1 }, (_, index) => ({
+        ...projection(first + index),
+        timestamp: first + index,
+      }));
+    send(
+      request({
+        entryCount: 1_500_000,
+        pageSize: 2000,
+        incrementalResults: true,
+      }),
+    );
+    await until(() => !!final(1));
+    const initial = results();
+    expect(
+      initial.reduce((sum, r) => sum + (r.baseDelta?.entries.length ?? 0), 0),
+    ).toBe(1_500_000);
+    expect(
+      Math.max(...initial.map((r) => r.baseDelta?.entries.length ?? 0)),
+    ).toBeLessThanOrEqual(10_000);
+    expect(initial.every((r) => r.filteredIndices.length === 0)).toBe(true);
+    send(
+      request({
+        requestId: 2,
+        entryCount: 1_502_000,
+        pageSize: 2000,
+        knownBaseCount: 1_500_000,
+        incrementalResults: true,
+      }),
+    );
+    await until(() => !!final(2));
+    const appended = results().filter((r) => r.requestId === 2);
+    expect(appended.flatMap((r) => r.baseDelta?.entries ?? [])).toHaveLength(
+      2000,
+    );
+    expect(appended[0]!.baseDelta?.fromLength).toBe(1_500_000);
+    expect(final(2)!.progress?.matches).toBe(1_502_000);
+  });
   it("continues through empty/nonmatching pages with monotonic zero-match progress", async () => {
     send(
       request({
@@ -257,6 +325,53 @@ describe("worker progressive message protocol", () => {
     await until(() => !!final(3));
     expect(messages.every((message) => message.requestId === 3)).toBe(true);
     expect(loads).toHaveLength(2);
+  });
+
+  it("does not commit speculative inserts from a cancelled append job", async () => {
+    send(
+      request({
+        entryCount: 2,
+        baseGeneration: "base",
+        incrementalResults: true,
+      }),
+    );
+    await until(() => loads.length === 1);
+    loads[0]!.release([projection(1), projection(2)]);
+    await until(() => !!final(1));
+    send(
+      request({
+        requestId: 2,
+        entryCount: 6,
+        baseGeneration: "base",
+        incrementalResults: true,
+      }),
+    );
+    await until(() => loads.length === 2);
+    loads[1]!.release([projection(3), projection(4)]);
+    await until(() => loads.length === 3);
+    send({ type: "cancel", requestId: 2 });
+    loads[2]!.release([projection(5), projection(6)]);
+    await until(() => close.mock.calls.length === 2);
+    send(
+      request({
+        requestId: 3,
+        entryCount: 4,
+        baseGeneration: "base",
+        generation: "query-2",
+        knownBaseCount: 4,
+        incrementalResults: true,
+      }),
+    );
+    await until(() => loads.length === 4);
+    expect(loads[3]!.first).toBe(3);
+    loads[3]!.release([projection(3), projection(4)]);
+    await until(() => !!final(3));
+    const retry = results().filter((r) => r.requestId === 3);
+    expect(retry[0]!.baseDelta).toMatchObject({ reset: true, fromLength: 0 });
+    expect(
+      retry.flatMap((r) => r.baseDelta?.entries.map((ref) => ref.id) ?? []),
+    ).toEqual([1, 2, 3, 4]);
+    expect(final(1)!.progress?.processed).toBe(2);
   });
 
   it("skips IndexedDB pages without candidates during navigation-only search", async () => {

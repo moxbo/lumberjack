@@ -116,6 +116,8 @@ import { FilterProgressStatus } from "./components/FilterProgressStatus";
 import { LiveIntakeStatus } from "./components/LiveIntakeStatus";
 import { WorkspaceToolbar, WorkspaceIcon } from "./components/WorkspaceToolbar";
 import { adjacentSearchMatch, searchMatchPositions } from "./progressiveSearch";
+import { EntryIdSnapshot } from "../utils/metadataSnapshot";
+import { MappedSequence } from "../utils/readonlySequence";
 import { JSX } from "preact/jsx-runtime";
 import { buildDemoEntries, LOGBACK_TCP_SNIPPET } from "./onboardingData";
 
@@ -1461,13 +1463,13 @@ export default function App(): JSX.Element {
     [getIdsBySignature, marksMap, visualPositionById],
   );
 
-  const searchMatchIdx = useMemo(
-    () =>
-      resultsCurrent && search.trim()
-        ? searchMatchPositions(workerSearchMatchIds, viOfGlobal)
-        : EMPTY_FILTER_IDS,
-    [resultsCurrent, search, workerSearchMatchIds, viOfGlobal],
-  );
+  const searchMatchIdx = useMemo(() => {
+    if (!resultsCurrent || !search.trim()) return EMPTY_FILTER_IDS;
+    // Current worker snapshots are a chronologically sorted subset of this view.
+    return workerSearchMatchIds instanceof EntryIdSnapshot
+      ? new MappedSequence(workerSearchMatchIds, viOfGlobal)
+      : searchMatchPositions(workerSearchMatchIds, viOfGlobal);
+  }, [resultsCurrent, search, workerSearchMatchIds, viOfGlobal]);
   useEffect(() => {
     if (
       !resultsCurrent ||
@@ -1477,7 +1479,7 @@ export default function App(): JSX.Element {
       return;
     pendingFirstSearchRef.current = null;
     pendingSelectedAfterFilterRef.current = null;
-    const vi = searchMatchIdx[0]!;
+    const vi = searchMatchIdx.at(0)!;
     const id = filteredIdx.at(vi);
     if (id === undefined) return;
     setSelected(new Set([id]));

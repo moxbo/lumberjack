@@ -7,6 +7,8 @@ import { compileDcFilter, matchesCompiledDcFilter } from "../utils/dcMatch";
 import { compileLevelFilter } from "../utils/levelFilter";
 import { tokenizeQuery, type SearchMode } from "../utils/msgFilter";
 import { compareByTimestampId } from "../utils/sort";
+import { SortedStore, type SortedSnapshot } from "../utils/sortedSequence";
+import type { ReadonlySequence } from "../utils/readonlySequence";
 import type { FilterProgress } from "../types/filterProgress";
 export type { FilterProgress } from "../types/filterProgress";
 
@@ -60,6 +62,7 @@ export interface FilterRequest {
   generation?: string | number;
   baseGeneration?: string | number;
   knownBaseCount?: number;
+  incrementalResults?: boolean;
   dataGeneration?: string | number;
 }
 
@@ -72,6 +75,7 @@ export interface PagedFilterRequest {
   generation?: string | number;
   baseGeneration?: string | number;
   knownBaseCount?: number;
+  incrementalResults?: boolean;
   dataGeneration?: string | number;
   entryCount: number;
   databaseName?: string;
@@ -93,6 +97,12 @@ export interface FilterResponse {
   reuseFilteredIndices?: boolean;
   /** Match arrays contain only new matches, sorted by visual index. */
   searchMatchesDelta?: boolean;
+  /** Ordered insertion delta; fromLength detects missed or stale base updates. */
+  baseDelta?: {
+    reset: boolean;
+    fromLength: number;
+    entries: PassingReference[];
+  };
 }
 
 export interface FilterErrorResponse {
@@ -160,6 +170,7 @@ interface PreparedFilter {
 
 const PAGED_SCAN_SIZE = 2_000;
 const PROGRESS_INTERVAL_MS = 100;
+const MAX_PENDING_REFERENCES = 8_000;
 const TRANSFER_CACHE_MAX_CHARS = 64 * 1024 * 1024;
 const TRANSFER_CACHE_MAX_RECORDS = 350_000;
 
@@ -171,7 +182,9 @@ interface PagedFilterCache {
   generation?: string | number;
   dataGeneration?: string | number;
   scannedEntryCount: number;
-  references: PassingReference[];
+  references: SortedSnapshot<PassingReference>;
+  store: SortedStore<PassingReference>;
+  matchCount: number;
   stats: FilterStats;
   positions?: Int32Array | Map<number, number>;
 }
@@ -481,38 +494,9 @@ function mergeSortedReferences(
   return merged;
 }
 
-// Binary-sized sorted runs avoid merging or sorting the whole history per page.
-class ReferenceRuns {
-  private runs: Array<PassingReference[] | undefined> = [];
-
-  add(page: PassingReference[]): void {
-    if (!page.length) return;
-    page.sort(compareByTimestampId);
-    let tier = Math.floor(Math.log2(page.length));
-    while (this.runs[tier]) {
-      page = mergeSortedReferences(this.runs[tier]!, page);
-      this.runs[tier] = undefined;
-      tier = Math.max(tier + 1, Math.floor(Math.log2(page.length)));
-    }
-    this.runs[tier] = page;
-  }
-
-  snapshot(): PassingReference[] {
-    let result: PassingReference[] = [];
-    for (const run of this.runs) {
-      if (run) {
-        result = result.length
-          ? mergeSortedReferences(result, run)
-          : run.slice();
-      }
-    }
-    return result;
-  }
-}
-
 function buildResponse(
   request: FilterRequest | PagedFilterRequest,
-  references: PassingReference[],
+  references: ReadonlySequence<PassingReference>,
   stats: FilterStats,
   total: number,
   partial = false,
@@ -877,15 +861,24 @@ async function runNavigationSearch(
   const search = request.options.navigationSearch?.trim() ?? "";
   if (!basePublished && request.knownBaseCount !== cached.scannedEntryCount) {
     // Cancellation can clear the renderer while the worker still owns a base.
-    publish(
-      buildResponse(
-        { ...request, options: { ...request.options, navigationSearch: "" } },
-        cached.references,
-        cached.stats,
-        job.total,
-        true,
-      ),
+    const baseResponse = buildResponse(
+      { ...request, options: { ...request.options, navigationSearch: "" } },
+      request.incrementalResults ? [] : cached.references,
+      cached.stats,
+      job.total,
+      true,
     );
+    if (request.incrementalResults) {
+      baseResponse.baseDelta = {
+        reset: true,
+        fromLength: 0,
+        entries: cached.references.map((ref) => ({
+          ...ref,
+          searchMatch: false,
+        })),
+      };
+    }
+    publish(baseResponse);
   }
   const matcher = createMessageMatcher(
     search,
@@ -921,7 +914,7 @@ async function runNavigationSearch(
       reuseFilteredIndices: true,
       searchMatchesDelta: true,
       searchMatchIndices: indices,
-      searchMatchIds: indices.map((index) => cached.references[index]!.id),
+      searchMatchIds: indices.map((index) => cached.references.at(index)!.id),
       stats: { ...cached.stats },
       progress: {
         processed,
@@ -950,6 +943,7 @@ async function runNavigationSearch(
     processed = end;
     if (
       !published ||
+      pending.length >= MAX_PENDING_REFERENCES ||
       performance.now() - lastPublished >= PROGRESS_INTERVAL_MS
     ) {
       publish(response(true));
@@ -990,6 +984,8 @@ async function runNavigationSearch(
     ref.searchMatch = flags[index] === 1;
   });
   cached.searchKey = searchKey(request);
+  cached.matchCount = matches;
+  cached.generation = request.generation;
   return response(false);
 }
 
@@ -1023,16 +1019,42 @@ async function runFilter(
     request.options.navigationSearchMode,
   );
   const marked = paged ? new Set(request.markedSignatures) : undefined;
-  const runs = new ReferenceRuns();
+  const store = cached?.store.fork() ?? new SortedStore<PassingReference>();
   let processed = cached?.scannedEntryCount ?? 0;
   let published = false;
   let lastPublished = 0;
-  let references = cached?.references ?? [];
-
-  const snapshot = (): PassingReference[] => {
-    // Cached references are immutable until completion, even if this job is
-    // cancelled while handling an append.
-    return mergeSortedReferences(references.slice(), runs.snapshot());
+  let matchCount = needsSearchScan ? 0 : (cached?.matchCount ?? 0);
+  let reset =
+    !cached ||
+    (cached.generation !== request.generation &&
+      request.knownBaseCount !== cached.scannedEntryCount);
+  let fromLength = reset ? 0 : store.length;
+  let pending: PassingReference[] =
+    reset && cached && request.incrementalResults
+      ? cached.references.map((ref) => ({
+          ...ref,
+          searchMatch: needsSearchScan ? false : ref.searchMatch,
+        }))
+      : [];
+  const response = (partial = false): FilterResponse => {
+    if (!request.incrementalResults)
+      return buildResponse(
+        baseRequest,
+        store.publish(),
+        stats,
+        job.total,
+        partial,
+      );
+    pending.sort(compareByTimestampId);
+    const result = buildResponse(baseRequest, [], stats, job.total, partial);
+    result.baseDelta = { reset, fromLength, entries: pending };
+    result.progress!.matches = prepared.navigationSearch
+      ? matchCount
+      : stats.passed;
+    reset = false;
+    fromLength = store.length;
+    pending = [];
+    return result;
   };
   const scanPage = (records: readonly unknown[], end: number): void => {
     const incoming: PassingReference[] = [];
@@ -1050,13 +1072,21 @@ async function runFilter(
         timestamp: entry.timestamp,
         searchMatch: !!prepared.navigationSearch && navigationMatcher(entry),
       });
+      if (incoming[incoming.length - 1]!.searchMatch) matchCount++;
     }
     processed = end;
     stats.total = processed;
-    runs.add(incoming);
+    incoming.sort(compareByTimestampId);
+    store.appendSorted(incoming);
+    if (request.incrementalResults)
+      for (const ref of incoming) pending.push(ref);
     const now = performance.now();
-    if (!published || now - lastPublished >= PROGRESS_INTERVAL_MS) {
-      publish(buildResponse(baseRequest, snapshot(), stats, job.total, true));
+    if (
+      !published ||
+      pending.length >= MAX_PENDING_REFERENCES ||
+      now - lastPublished >= PROGRESS_INTERVAL_MS
+    ) {
+      publish(response(true));
       published = true;
       lastPublished = performance.now();
     }
@@ -1076,22 +1106,24 @@ async function runFilter(
     }
   }
   if (job.cancelled) return null;
-  references = snapshot();
   pagedFilterCache = {
     paged,
     baseKey: baseKey(request),
     searchKey: needsSearchScan ? null : searchKey(request),
     databaseName: paged ? request.databaseName : undefined,
     dataGeneration: request.dataGeneration,
+    generation: request.generation,
     scannedEntryCount: processed,
-    references,
+    references: store.publish(),
+    store,
+    matchCount,
     stats: { ...stats },
   };
   if (needsSearchScan) {
-    publish(buildResponse(baseRequest, references, stats, job.total, true));
+    publish(response(true));
     return runNavigationSearch(job, pagedFilterCache, publish, true);
   }
-  return buildResponse(request, references, stats, job.total);
+  return response();
 }
 
 const workerScope =

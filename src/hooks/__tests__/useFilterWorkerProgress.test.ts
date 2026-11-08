@@ -130,6 +130,180 @@ afterEach(() => {
 });
 
 describe("progressive filter coordination", () => {
+  function delta(
+    job: ReturnType<typeof request>,
+    rows: Array<{ id: number; timestamp: number; searchMatch?: boolean }>,
+    fromLength: number,
+    reset = false,
+    partial = false,
+  ) {
+    TestWorker.instance.onmessage?.({
+      data: {
+        type: "result",
+        requestId: job.requestId,
+        generation: job.generation,
+        filteredIndices: [],
+        searchMatchIndices: [],
+        partial,
+        baseDelta: {
+          reset,
+          fromLength,
+          entries: rows.map((row) => ({ ...row, _id: row.id })),
+        },
+        stats: stats(fromLength + rows.length),
+        progress: {
+          processed: fromLength + rows.length,
+          total: job.entryCount,
+          matches: 0,
+        },
+      },
+    });
+  }
+
+  it("inserts result deltas with stable snapshots and incremental match positions", () => {
+    const hook = mount();
+    hook.filterEntries(entries, options, undefined, config);
+    const first = request();
+    expect(first.incrementalResults).toBe(true);
+    delta(
+      first,
+      [
+        { id: 1, timestamp: 10, searchMatch: true },
+        { id: 2, timestamp: 30 },
+      ],
+      0,
+      true,
+    );
+    const old = state()
+      .ids as import("../../utils/metadataSnapshot").ReadonlySequence<number>;
+    hook.filterEntries([...entries, {}], options, undefined, {
+      ...config,
+      entryCount: 4,
+    });
+    const next = request();
+    delta(
+      next,
+      [
+        { id: 3, timestamp: 5 },
+        { id: 4, timestamp: 20, searchMatch: true },
+      ],
+      2,
+    );
+    expect([...(state().ids as Iterable<number>)]).toEqual([3, 1, 4, 2]);
+    expect([...(state().matches as Iterable<number>)]).toEqual([1, 4]);
+    expect([...(hooks.states[1] as Iterable<number>)]).toEqual([1, 2]);
+    expect([...old]).toEqual([1, 2]);
+    delta(next, [], 4);
+    expect(state().error).toBeNull();
+    expect(hooks.states[2]).toBe(false);
+  });
+
+  it("reports invalid delta bases rather than publishing an incomplete successful view", () => {
+    const hook = mount();
+    hook.filterEntries(entries, options, undefined, config);
+    delta(request(), [{ id: 1, timestamp: 1 }], 2);
+    expect(state().error).toBeInstanceOf(Error);
+    expect(state().ids).toEqual([]);
+    expect(state().isFiltering).toBe(false);
+  });
+
+  it("coalesces visible intermediate delta publications without delaying first and final results", async () => {
+    vi.useFakeTimers();
+    const hook = mount();
+    hook.filterEntries(entries, options, undefined, config);
+    const job = request();
+    delta(job, [{ id: 1, timestamp: 10 }], 0, true, true);
+    expect([...(state().ids as Iterable<number>)]).toEqual([1]);
+    delta(job, [{ id: 2, timestamp: 5 }], 1, false, true);
+    delta(job, [{ id: 3, timestamp: 20 }], 2, false, true);
+    expect([...(state().ids as Iterable<number>)]).toEqual([1]);
+    await vi.advanceTimersByTimeAsync(100);
+    expect([...(state().ids as Iterable<number>)]).toEqual([2, 1, 3]);
+    delta(job, [], 3);
+    expect(state().isFiltering).toBe(false);
+  });
+
+  it("publishes an unpublished hidden base along with a replacement navigation query", () => {
+    vi.useFakeTimers();
+    const document = Object.assign(new EventTarget(), { hidden: true });
+    vi.stubGlobal("document", document);
+    const hook = mount();
+    hook.filterEntries(entries, options, undefined, config);
+    delta(
+      request(),
+      [
+        { id: 1, timestamp: 10 },
+        { id: 2, timestamp: 5 },
+      ].sort((a, b) => a.timestamp - b.timestamp),
+      0,
+      true,
+    );
+    hook.cancelFiltering(true);
+    hook.filterEntries(
+      entries,
+      { ...options, navigationSearch: "new" },
+      undefined,
+      config,
+    );
+    const job = request();
+    TestWorker.instance.onmessage?.({
+      data: {
+        type: "result",
+        requestId: job.requestId,
+        generation: job.generation,
+        filteredIndices: [],
+        reuseFilteredIndices: true,
+        searchMatchesDelta: true,
+        searchMatchIds: [1],
+        searchMatchIndices: [1],
+        stats: stats(3),
+        progress: { processed: 3, total: 3, matches: 1 },
+      },
+    });
+    document.hidden = false;
+    document.dispatchEvent(new Event("visibilitychange"));
+    expect([...(state().ids as Iterable<number>)]).toEqual([2, 1]);
+    expect([...(state().matches as Iterable<number>)]).toEqual([1]);
+    expect([...(hooks.states[1] as Iterable<number>)]).toEqual([1]);
+  });
+
+  it("retains all hidden-window deltas but publishes only the latest view when visible", () => {
+    vi.useFakeTimers();
+    const document = Object.assign(new EventTarget(), { hidden: true });
+    vi.stubGlobal("document", document);
+    const hook = mount();
+    hook.filterEntries(entries, options, undefined, config);
+    const job = request();
+    delta(job, [{ id: 1, timestamp: 10 }], 0, true, true);
+    delta(job, [{ id: 2, timestamp: 5, searchMatch: true }], 1, false, true);
+    delta(job, [{ id: 3, timestamp: 20 }], 2);
+    expect(state().ids).toEqual([]);
+    document.hidden = false;
+    document.dispatchEvent(new Event("visibilitychange"));
+    expect([...(state().ids as Iterable<number>)]).toEqual([2, 1, 3]);
+    expect([...(state().matches as Iterable<number>)]).toEqual([2]);
+    expect(state().isFiltering).toBe(false);
+    expect(state().error).toBeNull();
+  });
+
+  it("cancels unpublished hidden results and resets the base epoch on cancellation", () => {
+    vi.useFakeTimers();
+    const document = Object.assign(new EventTarget(), { hidden: true });
+    vi.stubGlobal("document", document);
+    const hook = mount();
+    hook.filterEntries(entries, options, undefined, config);
+    const previous = request();
+    delta(previous, [{ id: 1, timestamp: 1 }], 0, true);
+    hook.cancelFiltering();
+    document.hidden = false;
+    document.dispatchEvent(new Event("visibilitychange"));
+    expect(state().ids).toEqual([]);
+    hook.filterEntries(entries, options, undefined, config);
+    expect(request().generation).not.toBe(previous.generation);
+    delta(previous, [{ id: 2, timestamp: 2 }], 1);
+    expect(state().ids).toEqual([]);
+  });
+
   it("searches only cached candidates for small datasets without reevaluating filters", () => {
     const levelRead = vi.fn(() => "ERROR");
     const excludedMessage = vi.fn(() => "needle");

@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { MetadataStore } from "../utils/metadataSnapshot";
+import { BoundedSequence, MappedSequence } from "../utils/readonlySequence";
 import {
   anchoredScrollOffset,
   adjacentSearchMatch,
@@ -9,6 +10,21 @@ import {
 } from "./progressiveSearch";
 
 describe("progressive search navigation", () => {
+  it("projects 1.5 million ordered matches lazily and navigates with logarithmic position lookups", () => {
+    class Matches extends BoundedSequence<number> {
+      readonly length = 1_500_000;
+      at(index: number) {
+        return index >= 0 && index < this.length ? index : undefined;
+      }
+    }
+    const positionOf = vi.fn((id: number) => id * 2);
+    const positions = new MappedSequence(new Matches(), positionOf);
+    expect(positionOf).not.toHaveBeenCalled();
+    expect(searchMatchIndex(positions, 2_999_996)).toBe(1_499_998);
+    expect(adjacentSearchMatch(positions, 2_999_996, 1)).toBe(2_999_998);
+    expect(positionOf.mock.calls.length).toBeLessThan(50);
+  });
+
   it("keeps navigation boundaries and finds adjacent matches from nonmatching rows", () => {
     const matches = [2, 6, 10];
     expect(adjacentSearchMatch(matches, -1, 1)).toBe(2);
@@ -64,6 +80,18 @@ describe("progressive search navigation", () => {
     expect(searchMatchPositions([9, 2, 7], (id) => [2, 9].indexOf(id))).toEqual(
       [0, 1],
     );
+    const store = new MetadataStore();
+    store.appendSorted(
+      [9, 2, 7].map((_id, timestamp) => ({
+        _id,
+        timestamp,
+        source: "",
+        signature: String(_id),
+      })),
+    );
+    expect(
+      searchMatchPositions(store.publish().ids, (id) => [2, 9].indexOf(id)),
+    ).toEqual([0, 1]);
   });
 
   it("does not impose the former 50k match cap", () => {
