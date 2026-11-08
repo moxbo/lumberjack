@@ -10,6 +10,8 @@ import {
   type IpcRendererEvent,
 } from "electron";
 import type {
+  ActiveHttpTail,
+  HttpTailStatusPayload,
   AutoUpdaterStatus,
   DroppedFile,
   ElasticSearchOptions,
@@ -594,14 +596,7 @@ const api: ElectronAPI = {
 
   httpTailList: (): Promise<{
     ok: boolean;
-    tails: Array<{
-      id: number;
-      url: string;
-      offset: number;
-      paused: boolean;
-      nextPollAt: number | null;
-      intervalMs: number;
-    }>;
+    tails: ActiveHttpTail[];
   }> => ipcRenderer.invoke("httpTail:list"),
 
   httpTailGetAuthHeader: (): Promise<{
@@ -611,51 +606,11 @@ const api: ElectronAPI = {
   }> => ipcRenderer.invoke("httpTail:getAuthHeader"),
 
   onHttpTailStatus: (
-    callback: (payload: {
-      type:
-        | "started"
-        | "stopped"
-        | "rotated"
-        | "error"
-        | "lines"
-        | "progress"
-        | "paused"
-        | "resumed"
-        | "scheduled";
-      id: number;
-      url: string;
-      lineCount?: number;
-      offset?: number;
-      total?: number;
-      message?: string;
-      paused?: boolean;
-      nextPollAt?: number;
-      intervalMs?: number;
-    }) => void,
+    callback: (payload: HttpTailStatusPayload) => void,
   ): (() => void) => {
     const listener = (
       _e: IpcRendererEvent,
-      payload: {
-        type:
-          | "started"
-          | "stopped"
-          | "rotated"
-          | "error"
-          | "lines"
-          | "progress"
-          | "paused"
-          | "resumed"
-          | "scheduled";
-        id: number;
-        url: string;
-        lineCount?: number;
-        offset?: number;
-        total?: number;
-        message?: string;
-        paused?: boolean;
-        nextPollAt?: number;
-        intervalMs?: number;
-      },
+      payload: HttpTailStatusPayload,
     ): void => {
       callback(payload);
     };

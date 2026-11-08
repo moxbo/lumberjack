@@ -85,6 +85,102 @@ describe("splitTailLines", () => {
   });
 });
 
+describe("HTTP tail transfer mode", () => {
+  afterEach(() => vi.useRealTimers());
+
+  it("reports full-response fallback once, preserves incremental delivery and detects recovery", async () => {
+    vi.useFakeTimers();
+    const fetchImpl = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(
+        new Response(null, { headers: { "content-length": "4" } }),
+      )
+      .mockResolvedValueOnce(new Response("old\nnew\n"))
+      .mockResolvedValueOnce(new Response("old\nnew\n"))
+      .mockResolvedValueOnce(
+        new Response("more\n", {
+          status: 206,
+          headers: { "content-range": "bytes 8-12/13" },
+        }),
+      );
+    const mode = vi.fn();
+    const received: string[] = [];
+    const manager = new HttpTailManager();
+    try {
+      manager.start(
+        "http://example.test/log",
+        {
+          onLines: (lines) => {
+            received.push(...lines);
+          },
+          onTransferMode: mode,
+        },
+        { fetchImpl, intervalMs: 250 },
+      );
+      await vi.advanceTimersByTimeAsync(0);
+      expect(manager.list()[0]?.transferMode).toBe("unknown");
+      await vi.advanceTimersByTimeAsync(250);
+      expect(mode.mock.calls).toEqual([["full"]]);
+      expect(manager.list()[0]?.transferMode).toBe("full");
+      expect(received).toEqual(["new"]);
+      await vi.advanceTimersByTimeAsync(250);
+      expect(mode).toHaveBeenCalledTimes(1);
+      await vi.advanceTimersByTimeAsync(250);
+      expect(mode.mock.calls).toEqual([["full"], ["range"]]);
+      expect(manager.list()[0]?.transferMode).toBe("range");
+      expect(received).toEqual(["new", "more"]);
+    } finally {
+      manager.stopAll();
+    }
+  });
+
+  it("does not mistake an initial full load for unsupported Range requests", async () => {
+    vi.useFakeTimers();
+    const fetchImpl = vi
+      .fn<typeof fetch>()
+      .mockResolvedValue(new Response("old\n"));
+    const mode = vi.fn();
+    const manager = new HttpTailManager();
+    try {
+      manager.start(
+        "http://example.test/log",
+        { onLines: () => {}, onTransferMode: mode },
+        { fetchImpl, emitInitial: true },
+      );
+      await vi.advanceTimersByTimeAsync(0);
+      expect(mode).not.toHaveBeenCalled();
+      expect(manager.list()[0]?.transferMode).toBe("unknown");
+    } finally {
+      manager.stopAll();
+    }
+  });
+
+  it("records unsupported Range during size discovery when HEAD is unavailable", async () => {
+    vi.useFakeTimers();
+    const fetchImpl = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(new Response(null, { status: 405 }))
+      .mockResolvedValueOnce(new Response("old\n"));
+    const mode = vi.fn();
+    const manager = new HttpTailManager();
+    try {
+      manager.start(
+        "http://example.test/log",
+        { onLines: () => {}, onTransferMode: mode },
+        { fetchImpl },
+      );
+      await vi.advanceTimersByTimeAsync(0);
+      expect(mode.mock.calls).toEqual([["full"]]);
+      expect(manager.list()[0]).toMatchObject({
+        transferMode: "full",
+        offset: 4,
+      });
+    } finally {
+      manager.stopAll();
+    }
+  });
+});
+
 describe("HttpTailManager", () => {
   let server: FakeServer;
   let url: string;

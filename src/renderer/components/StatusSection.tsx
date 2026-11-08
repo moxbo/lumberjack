@@ -22,6 +22,7 @@ export interface StatusSectionProps {
   /** Number of currently active HTTP-Tail watchers (0 = hidden). */
   httpTailCount?: number;
   httpTailPausedCount?: number;
+  httpTailFullResponseCount?: number;
   httpTailNextPollSeconds?: number | null;
   httpTailPausedIntervalSeconds?: number;
   nextPollIn: string;
@@ -96,6 +97,7 @@ export function StatusSection({
   httpStatus,
   httpTailCount = 0,
   httpTailPausedCount = 0,
+  httpTailFullResponseCount = 0,
   httpTailNextPollSeconds = null,
   httpTailPausedIntervalSeconds = 0,
   nextPollIn,
@@ -191,6 +193,16 @@ export function StatusSection({
       )}
       {httpTailCount > 0 && (
         <span className="status">{httpTailLabels.next}</span>
+      )}
+      {httpTailCount > 0 && httpTailFullResponseCount > 0 && (
+        <span
+          className="status status-warning"
+          title={t("httpTail.fullResponseWarning")}
+        >
+          {t("status.httpTailFullResponse", {
+            count: String(httpTailFullResponseCount),
+          })}
+        </span>
       )}
       {nextPollIn && (
         <span className="status" title={t("toolbar.nextPollInTooltip")}>

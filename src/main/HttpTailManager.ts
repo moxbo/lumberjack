@@ -24,6 +24,7 @@
 
 import { StringDecoder } from "string_decoder";
 import { responseChunks } from "../services/ResponseStream";
+import type { ActiveHttpTail, HttpTailTransferMode } from "../types/ipc";
 
 class TailDeliveryError extends Error {}
 
@@ -51,6 +52,7 @@ export interface HttpTailCallbacks {
   onBackpressure?: (info: { paused: boolean; intervalMs: number }) => void;
   /** Called whenever the next regular poll has been scheduled. */
   onScheduled?: (info: { nextPollAt: number; intervalMs: number }) => void;
+  onTransferMode?: (mode: HttpTailTransferMode) => void;
 }
 
 export interface HttpTailOptions {
@@ -93,6 +95,7 @@ interface TailState {
   callbacks: HttpTailCallbacks;
   paused: boolean;
   nextPollAt: number | null;
+  transferMode: HttpTailTransferMode;
 }
 
 /**
@@ -116,14 +119,7 @@ export class HttpTailManager {
   private nextId = 1;
   private tails = new Map<number, TailState>();
 
-  list(): Array<{
-    id: number;
-    url: string;
-    offset: number;
-    paused: boolean;
-    nextPollAt: number | null;
-    intervalMs: number;
-  }> {
+  list(): ActiveHttpTail[] {
     return [...this.tails.values()].map((t) => ({
       id: t.id,
       url: t.url,
@@ -131,6 +127,7 @@ export class HttpTailManager {
       paused: t.paused,
       nextPollAt: t.nextPollAt,
       intervalMs: t.intervalMs,
+      transferMode: t.transferMode,
     }));
   }
 
@@ -189,6 +186,7 @@ export class HttpTailManager {
       callbacks,
       paused: false,
       nextPollAt: null,
+      transferMode: "unknown",
     };
     this.tails.set(id, state);
 
@@ -258,6 +256,15 @@ export class HttpTailManager {
     }
   }
 
+  private updateTransferMode(
+    state: TailState,
+    mode: HttpTailTransferMode,
+  ): void {
+    if (state.stopped || state.transferMode === mode) return;
+    state.transferMode = mode;
+    state.callbacks.onTransferMode?.(mode);
+  }
+
   /**
    * Performs one Range request starting at `fromOffset` and emits any new
    * lines. Updates `state.offset` on success.
@@ -294,6 +301,8 @@ export class HttpTailManager {
       //   (b) we are simply at EOF (offset === total, no new bytes yet).
       // Disambiguate via a size probe before resetting.
       if (res.status === 416) {
+        if (res.headers.get("content-range")?.startsWith("bytes */"))
+          this.updateTransferMode(state, "range");
         await res.body?.cancel();
         const probed = await this.discoverSize(state);
         if (probed != null && probed < fromOffset) {
@@ -313,6 +322,8 @@ export class HttpTailManager {
 
       const total = parseTotalFromHeaders(res);
       const isFullResponse = res.status === 200 && fromOffset > 0;
+      if (res.status === 206) this.updateTransferMode(state, "range");
+      else if (isFullResponse) this.updateTransferMode(state, "full");
       let skip = isFullResponse ? fromOffset : 0;
       if (isFullResponse && total != null && total < fromOffset) {
         state.callbacks.onRotated?.();
@@ -426,6 +437,7 @@ export class HttpTailManager {
         signal: ac.signal,
       });
       if (probe.status === 206) {
+        this.updateTransferMode(state, "range");
         const cr = probe.headers.get("content-range");
         if (cr) {
           // Format: "bytes 0-0/12345"
@@ -443,6 +455,7 @@ export class HttpTailManager {
         }
         await probe.body?.cancel();
       } else if (probe.ok) {
+        if (probe.status === 200) this.updateTransferMode(state, "full");
         // No Range support – fall back to full GET, return body length in
         // *bytes* (consistent with the byte-based offset tracking).
         let bytes = 0;

@@ -21,6 +21,7 @@ import { entryPayloadStore } from "./EntryPayloadStore";
 import { IPC_BATCH_SIZE } from "../constants/logViewer";
 import { estimatePayloadBytes } from "../utils/estimatePayloadBytes";
 import type {
+  HttpTailStatusPayload,
   ExportBeginRequest,
   ExportBeginResult,
   ExportWriteRequest,
@@ -2480,27 +2481,7 @@ export function registerIpcHandlers(
   // ============================================================================
   function emitHttpTailStatus(
     senderId: number,
-    payload: {
-      type:
-        | "started"
-        | "stopped"
-        | "rotated"
-        | "error"
-        | "lines"
-        | "progress"
-        | "paused"
-        | "resumed"
-        | "scheduled";
-      id: number;
-      url: string;
-      lineCount?: number;
-      offset?: number;
-      total?: number;
-      message?: string;
-      paused?: boolean;
-      nextPollAt?: number;
-      intervalMs?: number;
-    },
+    payload: HttpTailStatusPayload,
   ): void {
     for (const win of BrowserWindow.getAllWindows()) {
       try {
@@ -2714,6 +2695,16 @@ export function registerIpcHandlers(
                 url: args.url,
                 nextPollAt: state.nextPollAt,
                 intervalMs: state.intervalMs,
+              });
+            },
+            onTransferMode: (transferMode) => {
+              if (!canIngest(owner, generation) || !owner.tails.has(tail.id))
+                return;
+              emitHttpTailStatus(senderId, {
+                type: "transfer-mode",
+                id: tail.id,
+                url: args.url,
+                transferMode,
               });
             },
           },

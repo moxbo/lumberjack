@@ -3,9 +3,43 @@
  * Defines the typed API surface between main and renderer processes
  */
 
-/**
- * Log entry structure
- */
+export type HttpTailTransferMode = "unknown" | "range" | "full";
+
+export interface ActiveHttpTail {
+  id: number;
+  url: string;
+  offset: number;
+  paused: boolean;
+  nextPollAt: number | null;
+  intervalMs: number;
+  transferMode: HttpTailTransferMode;
+}
+
+export interface HttpTailStatusPayload {
+  type:
+    | "started"
+    | "stopped"
+    | "rotated"
+    | "error"
+    | "lines"
+    | "progress"
+    | "paused"
+    | "resumed"
+    | "scheduled"
+    | "transfer-mode";
+  id: number;
+  url: string;
+  lineCount?: number;
+  offset?: number;
+  total?: number;
+  message?: string;
+  paused?: boolean;
+  nextPollAt?: number;
+  intervalMs?: number;
+  transferMode?: HttpTailTransferMode;
+}
+
+/** Log entry structure. */
 export interface LogEntry {
   _id?: number;
   /** Main-process transport metadata; remove before canonical persistence. */
@@ -594,14 +628,7 @@ export type ElectronAPI = {
   httpTailNotifyActiveCount: (count: number) => void;
   httpTailList: () => Promise<{
     ok: boolean;
-    tails: Array<{
-      id: number;
-      url: string;
-      offset: number;
-      paused: boolean;
-      nextPollAt: number | null;
-      intervalMs: number;
-    }>;
+    tails: ActiveHttpTail[];
   }>;
   /**
    * Return the decrypted HTTP auth header stored in settings so the tail
@@ -613,27 +640,7 @@ export type ElectronAPI = {
     error?: string;
   }>;
   onHttpTailStatus: (
-    callback: (payload: {
-      type:
-        | "started"
-        | "stopped"
-        | "rotated"
-        | "error"
-        | "lines"
-        | "progress"
-        | "paused"
-        | "resumed"
-        | "scheduled";
-      id: number;
-      url: string;
-      lineCount?: number;
-      offset?: number;
-      total?: number;
-      message?: string;
-      paused?: boolean;
-      nextPollAt?: number;
-      intervalMs?: number;
-    }) => void,
+    callback: (payload: HttpTailStatusPayload) => void,
   ) => () => void;
 };
 

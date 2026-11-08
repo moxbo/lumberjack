@@ -59,6 +59,7 @@
     "httpTailPaused": "HTTP-Tail pausiert – Verarbeitung läuft ({{count}})",
     "httpTailNextIn": "Nächster Tail-Abruf in {{seconds}} s",
     "httpTailNextAfterResume": "Nächster Abruf nach Verarbeitung + {{seconds}} s",
+    "httpTailFullResponse": "Vollabruf statt inkrementellem Tail ({{count}})",
     "error": "Fehler: {{message}}",
     "errorUnknown": "unbekannt",
     "elasticError": "Elastic-Fehler: {{message}}"
@@ -880,6 +881,7 @@
   },
   "httpTail": {
     "started": "HTTP-Tail aktiv",
+    "fullResponseWarning": "Der Server liefert trotz Range-Anfrage die vollständige Datei. Alte Bytes werden übersprungen, aber erneut übertragen. Range-Unterstützung prüfen oder das Abrufintervall erhöhen.",
     "rotated": "Endpunkt rotiert – Tail wird ab Anfang fortgesetzt",
     "error": "HTTP-Tail-Fehler",
     "startFailed": "HTTP-Tail konnte nicht gestartet werden: {{message}}",

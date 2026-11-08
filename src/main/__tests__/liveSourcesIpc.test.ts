@@ -198,6 +198,26 @@ async function startSources(sender: Sender) {
   return { poll: poll.id, watch: watch.id, tail: tail.id };
 }
 
+it("routes HTTP tail transfer-mode warnings only to the owning live window", async () => {
+  register();
+  const { tail } = await startSources(first);
+  first.send.mockClear();
+  second.send.mockClear();
+  const callbacks = fixture.tails.get(tail)!.callbacks;
+  callbacks.onTransferMode?.("full");
+  expect(first.send).toHaveBeenCalledWith("httpTail:status", {
+    type: "transfer-mode",
+    id: tail,
+    url: `http://example.test/tail/${first.id}`,
+    transferMode: "full",
+  });
+  expect(second.send).not.toHaveBeenCalled();
+  await invoke("live:setPaused", first, true);
+  first.send.mockClear();
+  callbacks.onTransferMode?.("range");
+  expect(first.send).not.toHaveBeenCalled();
+});
+
 beforeEach(() => {
   vi.clearAllMocks();
   fixture.windows.clear();

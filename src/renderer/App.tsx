@@ -254,6 +254,13 @@ export default function App(): JSX.Element {
         toaster.error(`${t("httpTail.error")}: ${payload.message || ""}`);
       } else if (payload.type === "started") {
         toaster.success(`${t("httpTail.started")}: ${payload.url}`);
+      } else if (
+        payload.type === "transfer-mode" &&
+        payload.transferMode === "full"
+      ) {
+        toaster.show(`${payload.url}: ${t("httpTail.fullResponseWarning")}`, {
+          severity: "warning",
+        });
       }
     },
   });
@@ -3208,6 +3215,7 @@ export default function App(): JSX.Element {
           httpStatus={httpStatus}
           httpTailCount={httpTail.tails.length}
           httpTailPausedCount={httpTail.pausedCount}
+          httpTailFullResponseCount={httpTail.fullResponseCount}
           httpTailNextPollSeconds={httpTail.nextPollSeconds}
           httpTailPausedIntervalSeconds={httpTail.pausedIntervalSeconds}
           nextPollIn={nextPollIn}

@@ -14,37 +14,12 @@ import {
   useState,
 } from "preact/hooks";
 import logger from "../utils/logger";
-
-export interface ActiveHttpTail {
-  id: number;
-  url: string;
-  offset: number;
-  paused: boolean;
-  nextPollAt: number | null;
-  intervalMs: number;
-}
-
-export interface HttpTailStatusPayload {
-  type:
-    | "started"
-    | "stopped"
-    | "rotated"
-    | "error"
-    | "lines"
-    | "progress"
-    | "paused"
-    | "resumed"
-    | "scheduled";
-  id: number;
-  url: string;
-  lineCount?: number;
-  offset?: number;
-  total?: number;
-  message?: string;
-  paused?: boolean;
-  nextPollAt?: number;
-  intervalMs?: number;
-}
+import type {
+  ActiveHttpTail,
+  HttpTailStatusPayload,
+  HttpTailTransferMode,
+} from "../types/ipc";
+export type { ActiveHttpTail, HttpTailStatusPayload } from "../types/ipc";
 
 interface ApiShape {
   httpTailStart?: (args: {
@@ -78,6 +53,7 @@ interface UseHttpTailOptions {
 export function useHttpTail(options: UseHttpTailOptions = {}) {
   const [tails, setTails] = useState<ActiveHttpTail[]>([]);
   const [now, setNow] = useState(() => Date.now());
+  const transferModesRef = useRef(new Map<number, HttpTailTransferMode>());
   // Stable ref so consumers can pass inline arrow functions without
   // tearing down the IPC subscription on every render of the parent.
   const onStatusRef = useRef(options.onStatus);
@@ -88,7 +64,14 @@ export function useHttpTail(options: UseHttpTailOptions = {}) {
       const api = getApi();
       if (!api?.httpTailList) return;
       const r = await api.httpTailList();
-      if (r.ok) setTails(r.tails);
+      if (r.ok)
+        setTails(
+          r.tails.map((tail) => ({
+            ...tail,
+            transferMode:
+              transferModesRef.current.get(tail.id) ?? tail.transferMode,
+          })),
+        );
     } catch (e) {
       logger.warn("[useHttpTail] list failed:", e);
     }
@@ -99,6 +82,17 @@ export function useHttpTail(options: UseHttpTailOptions = {}) {
     const api = getApi();
     if (!api?.onHttpTailStatus) return;
     const off = api.onHttpTailStatus((payload) => {
+      if (payload.type === "transfer-mode" && payload.transferMode) {
+        const mode = payload.transferMode;
+        transferModesRef.current.set(payload.id, mode);
+        setTails((current) =>
+          current.map((tail) =>
+            tail.id === payload.id ? { ...tail, transferMode: mode } : tail,
+          ),
+        );
+      } else if (payload.type === "stopped") {
+        transferModesRef.current.delete(payload.id);
+      }
       try {
         onStatusRef.current?.(payload);
       } catch {
@@ -161,6 +155,8 @@ export function useHttpTail(options: UseHttpTailOptions = {}) {
       0;
     return {
       pausedCount,
+      fullResponseCount: tails.filter((tail) => tail.transferMode === "full")
+        .length,
       nextPollSeconds:
         nextPollAt == null
           ? null

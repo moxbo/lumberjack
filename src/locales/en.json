@@ -59,6 +59,7 @@
     "httpTailPaused": "HTTP tail paused – processing backlog ({{count}})",
     "httpTailNextIn": "Next tail request in {{seconds}} s",
     "httpTailNextAfterResume": "Next request after processing + {{seconds}} s",
+    "httpTailFullResponse": "Full download instead of incremental tail ({{count}})",
     "error": "Error: {{message}}",
     "errorUnknown": "unknown",
     "elasticError": "Elastic error: {{message}}"
@@ -880,6 +881,7 @@
   },
   "httpTail": {
     "started": "HTTP tail active",
+    "fullResponseWarning": "The server returns the entire file despite the Range request. Old bytes are skipped but downloaded again. Check Range support or increase the request interval.",
     "rotated": "Endpoint rotated – tail resuming from start",
     "error": "HTTP tail error",
     "startFailed": "Failed to start HTTP tail: {{message}}",
