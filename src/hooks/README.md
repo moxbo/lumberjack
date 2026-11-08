@@ -6,15 +6,16 @@ and dialogs in `App.tsx`.
 ## Data flow
 
 - `useEntryManagement` persists canonical payloads and publishes
-  `MetadataSnapshot` views. Monotonic appends extend write-once segments;
-  publication does not copy previously loaded metadata. Reordering and clearing
-  replace the backing store so older views remain stable.
+  `MetadataSnapshot` views backed by immutable sorted pages. Late TCP/tail entries
+  copy only touched row/ID pages and the small page directories, not the entire
+  historical dataset. Older views retain their ordering and positions.
 - `ReadonlySequence<T>` is the shared interface for snapshots and native arrays.
   Use `.at(index)` for indexed reads and `.slice(start, end)` for bounded pages.
   Do not materialize entire snapshots on each append.
 - `entries.ids` shares the metadata snapshot's stable ordering.
-  `useIdPositions` reuses its incremental reverse index; arbitrary filtered
-  arrays receive a fresh index because their ordering may have changed.
+  `useIdPositions` uses the snapshot's paged ID lookup and binary rank lookup;
+  arbitrary filtered arrays receive a fresh index because their ordering may
+  have changed. Never mutate the ID or timestamp of a published entry.
 - `useFilterWorker` sends projections to the filter worker.
   `usePagedLogHydration` loads payloads needed by visible rows.
 - `main/EntryPayloadStore.ts` retains large originals before delivery.

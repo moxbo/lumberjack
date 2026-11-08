@@ -76,7 +76,7 @@ describe("MetadataStore", () => {
     expect(previous.length).toBe(400_000);
   });
 
-  it("rebuilds for late timestamps without changing any old view or position", () => {
+  it("inserts late timestamps without changing any old view or position", () => {
     const store = new MetadataStore();
     store.appendSorted([entry(1, 10), entry(2, 30)]);
     const previous = store.publish();
@@ -178,5 +178,62 @@ describe("MetadataStore", () => {
     );
     expect(store.publish()).toBe(previous);
     expect([...previous.ids]).toEqual([1]);
+  });
+
+  it("touches only page boundaries and affected rows for late batches at 1.5 million entries", () => {
+    const store = new MetadataStore();
+    let reads = 0;
+    store.appendSorted(
+      Array.from({ length: 1_500_000 }, (_, index) => ({
+        _id: index + 1,
+        get timestamp() {
+          reads++;
+          return index * 2;
+        },
+        source: "",
+        signature: "",
+      })),
+    );
+    const previous = store.publish();
+    reads = 0;
+    store.appendSorted([entry(1_500_001, 1001), entry(1_500_002, 2_000_001)]);
+    const next = store.publish();
+    expect(reads).toBeLessThan(15_000);
+    expect(next.length).toBe(1_500_002);
+    expect(previous.ids.positionOf(1_500_001)).toBe(-1);
+    expect(next.ids.positionOf(1_500_001)).toBe(501);
+    expect(next.ids.positionOf(1_500_002)).toBe(1_000_002);
+    expect(previous.ids.positionOf(1_500_000)).toBe(1_499_999);
+    expect(next.ids.positionOf(1_500_000)).toBe(1_500_001);
+  });
+
+  it("matches a reference sort across interleaved streams and retained snapshots", () => {
+    const store = new MetadataStore();
+    const expected: PagedEntryMetadata[] = [];
+    const snapshots = [];
+    for (let batch = 0; batch < 30; batch++) {
+      const incoming = Array.from({ length: 173 }, (_, index) => {
+        const id = batch * 173 + index + 1;
+        return entry(id, (id * 7919) % 12000);
+      }).sort(
+        (a, b) => Number(a.timestamp) - Number(b.timestamp) || a._id - b._id,
+      );
+      store.appendSorted(incoming);
+      expected.push(...incoming);
+      expected.sort(
+        (a, b) => Number(a.timestamp) - Number(b.timestamp) || a._id - b._id,
+      );
+      snapshots.push({
+        view: store.publish(),
+        ids: expected.map((value) => value._id),
+      });
+    }
+    for (const { view, ids } of snapshots) {
+      expect([...view.ids]).toEqual(ids);
+      ids.forEach((id, index) => {
+        expect(view.at(index)?._id).toBe(id);
+        expect(view.ids.positionOf(id)).toBe(index);
+      });
+    }
   });
 });
