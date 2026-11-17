@@ -2,7 +2,7 @@ export { PageLruCache, type PageLoader } from "./cache";
 export {
   IndexedDbUnavailableError,
   PagedStorageQuotaError,
-  isQuotaOrAbortError,
+  isQuotaExceededError,
 } from "./errors";
 export {
   PAGED_DB_NAME,

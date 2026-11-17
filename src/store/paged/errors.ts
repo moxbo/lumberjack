@@ -22,21 +22,21 @@ function errorName(error: unknown): string | undefined {
   return undefined;
 }
 
-export function isQuotaOrAbortError(error: unknown): boolean {
+export function isQuotaExceededError(error: unknown): boolean {
   let current: unknown = error;
   const seen = new Set<unknown>();
 
   while (current && typeof current === "object" && !seen.has(current)) {
     seen.add(current);
     const name = errorName(current);
-    if (name === "QuotaExceededError" || name === "AbortError") return true;
+    if (name === "QuotaExceededError") return true;
     current = "cause" in current ? current.cause : undefined;
   }
   return false;
 }
 
 export function toPagedWriteError(error: unknown): Error {
-  if (isQuotaOrAbortError(error)) {
+  if (isQuotaExceededError(error)) {
     return new PagedStorageQuotaError(undefined, { cause: error });
   }
   return error instanceof Error

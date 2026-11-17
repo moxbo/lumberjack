@@ -161,6 +161,9 @@ Failed persistence pauses ingestion and reports an error to the user and the
 awaiting producer. Already persisted entries remain available for browsing and
 export as long as IndexedDB reads still work. A read failure is reported rather
 than represented as an empty or successfully recovered dataset.
+Only a `QuotaExceededError` in the cause chain is classified as a quota failure.
+An ordinary transaction abort retains its original error instead of claiming
+that storage is full.
 
 After resolving the storage problem, explicitly clear the logs to begin a new
 storage generation before importing again. Export required data first: clearing
