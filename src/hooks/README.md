@@ -93,13 +93,43 @@ Match counters and previous/next navigation use binary lookup in sorted visual
 match positions. Sorted match snapshots project positions lazily instead of
 materializing potentially millions of positions on each append.
 
-New search terms still scan relevant message pages. IndexedDB reads use bounded
-`getAll()` ranges and skip pages without base-filter candidates. Boolean and regex
-matchers are compiled once per request. This does not provide a full-text index.
+Message-only filters use persisted compact search pages: individually lowercased
+messages, row offsets, IDs and original timestamps, optionally gzip-compressed.
+`PagedLogRepository` writes them atomically with payloads and projections.
+Preparing this extra column adds import work in exchange for faster repeated
+filtering; it does not duplicate full payloads.
+Each page covers 2,000 IDs; only the last committed page stays decoded during
+appends, bounded to 2 Mi characters. Missing pages (including upgraded older
+databases) and oversized pages fall back to authoritative projections. Storage
+and decoding failures remain errors, not empty results.
+
+The worker reads at most four search pages per request and caches exact literal
+match flags in a 16 MiB estimated LRU budget. AND/OR/NOT combinations reuse these
+flags, keyed by page revision and invalidated on dataset changes. Substring
+semantics, per-message Unicode casing and row boundaries are preserved. Only
+stored previews are searched; filtering never hydrates original payload files.
+Active level/logger/thread, mark, time/DC constraints or navigation search retain
+the projection path and its rejection-statistics order. Enabled but empty time/DC
+filters do not disable the compact path.
+
+New uncached literals still scan compact message text: this is not an inverted
+full-text index. Navigation search still reads relevant projection pages using
+bounded `getAll()` ranges and skips pages without base-filter candidates. Boolean
+and regex matchers are compiled once per request.
 For an opt-in Electron/IndexedDB measurement with short synthetic messages, run
 `SEARCH_BENCH_ROWS=1000000 npx playwright test tests/e2e/search-performance.spec.ts`
 after building the application. It compares base reuse with forced refiltering
 and reports timing and transferred base IDs, not a real 1–5 GB workload guarantee.
+
+For an actual NDJSON import and UI message-filter benchmark, build with
+`npm run prebuild && npm run build:renderer`, then run
+`FILTER_BENCH_FILE=/absolute/path/to/logs.ndjson npx playwright test tests/e2e/message-filter-performance.spec.ts --trace=off`.
+It reports import, worker and UI timings and verifies zero/all-match, negation,
+boolean and repeated-literal counts. `FILTER_BENCH_MAX_MS` optionally enforces
+a per-query worker-time ceiling. It uses an isolated temporary Electron profile
+and does not modify the input file.
+Keep the host awake throughout the run: system sleep invalidates latency
+measurements and can exceed the import acknowledgement deadline.
 
 ## Background windows and live sources
 

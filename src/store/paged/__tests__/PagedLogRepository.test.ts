@@ -1,7 +1,17 @@
 /* eslint-disable @typescript-eslint/unbound-method -- Mock methods are inspected, never called unbound. */
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { DEFAULT_MAX_CACHED_BYTES, estimatePayloadBytes } from "../cache";
-import { PAYLOAD_STORE_NAME, PROJECTION_STORE_NAME } from "../indexedDb";
+import {
+  PAYLOAD_STORE_NAME,
+  PROJECTION_STORE_NAME,
+  MESSAGE_SEARCH_STORE_NAME,
+} from "../indexedDb";
+import {
+  decodeMessageSearchText,
+  MESSAGE_SEARCH_PAGE_SIZE,
+  MAX_MESSAGE_SEARCH_CHARS,
+  type MessageSearchPage,
+} from "../messageSearchIndex";
 import * as indexedDb from "../indexedDb";
 import {
   PagedLogRepository,
@@ -28,9 +38,10 @@ function fixture(
       PROJECTION_STORE_NAME,
       new Map(records.map((item) => [item.projection.id, item.projection])),
     ],
+    [MESSAGE_SEARCH_STORE_NAME, new Map()],
   ]);
   const makeTransaction = (stores: Map<string, Map<number, { id: number }>>) =>
-    vi.fn(() => {
+    vi.fn((_names: string | string[], _mode: IDBTransactionMode) => {
       let pending = 0;
       const tx = {
         oncomplete: null as (() => void) | null,
@@ -59,6 +70,24 @@ function fixture(
               };
               queueMicrotask(() => {
                 request.result = store.get(id);
+                request.onsuccess?.();
+                finish();
+              });
+              return request;
+            },
+            getAll: (range: { lower: number; upper: number }) => {
+              pending++;
+              const request = {
+                result: [] as { id: number }[],
+                onsuccess: null as (() => void) | null,
+              };
+              queueMicrotask(() => {
+                request.result = [...store.values()]
+                  .filter(
+                    (record) =>
+                      record.id >= range.lower && record.id <= range.upper,
+                  )
+                  .sort((a, b) => a.id - b.id);
                 request.onsuccess?.();
                 finish();
               });
@@ -111,6 +140,8 @@ function fixture(
     ...options,
   });
   (repository as unknown as { db: IDBDatabase }).db = db;
+  (repository as unknown as { nextId: number }).nextId =
+    Math.max(0, ...records.map((record) => record.payload.id)) + 1;
   const open = vi.spyOn(indexedDb, "openPagedDatabase").mockImplementation(
     async () =>
       ({
@@ -119,6 +150,7 @@ function fixture(
           new Map([
             [PAYLOAD_STORE_NAME, new Map()],
             [PROJECTION_STORE_NAME, new Map()],
+            [MESSAGE_SEARCH_STORE_NAME, new Map()],
           ]),
         ),
       }) as unknown as IDBDatabase,
@@ -126,7 +158,17 @@ function fixture(
   vi.stubGlobal("IDBKeyRange", {
     bound: (lower: number, upper: number) => ({ lower, upper }),
   });
-  return { repository, transaction, open, factory, db };
+  return {
+    repository,
+    transaction,
+    open,
+    factory,
+    db,
+    index: stores.get(MESSAGE_SEARCH_STORE_NAME) as Map<
+      number,
+      MessageSearchPage
+    >,
+  };
 }
 
 afterEach(() => {
@@ -135,6 +177,95 @@ afterEach(() => {
 });
 
 describe("PagedLogRepository byte cache", () => {
+  it("atomically persists aligned search pages and reuses only the committed tail", async () => {
+    const { repository, transaction, index } = fixture([], {});
+    const input = { timestamp: null, source: "test", message: "FIRST" };
+    await repository.putMany([input]);
+    const original = index.get(1)!;
+    await repository.putMany([{ ...input, message: "SECOND" }]);
+    const page = index.get(1)!;
+    expect(page.revision).not.toBe(original.revision);
+    expect(page.omitted).toBe(false);
+    if (page.omitted) throw new Error("Expected indexed page");
+    expect([...page.ids]).toEqual([1, 2]);
+    expect([...page.offsets]).toEqual([0, 5, 11]);
+    expect(await decodeMessageSearchText(page)).toBe("firstsecond");
+    expect(transaction.mock.calls).toEqual([
+      [
+        [PAYLOAD_STORE_NAME, PROJECTION_STORE_NAME, MESSAGE_SEARCH_STORE_NAME],
+        "readwrite",
+      ],
+      [
+        [PAYLOAD_STORE_NAME, PROJECTION_STORE_NAME, MESSAGE_SEARCH_STORE_NAME],
+        "readwrite",
+      ],
+    ]);
+  });
+
+  it("reconstructs missing pages for sparse upserts without losing untouched rows", async () => {
+    const input = { timestamp: null, source: "test", message: "old" };
+    const { repository, index } = fixture(
+      [preparePagedRecord(input, 2), preparePagedRecord(input, 5)],
+      {},
+    );
+    await repository.putMany([
+      { ...input, id: 5, message: "updated" },
+      { ...input, id: MESSAGE_SEARCH_PAGE_SIZE + 1, message: "next" },
+    ]);
+    const page = index.get(1)!;
+    expect(page.omitted).toBe(false);
+    if (page.omitted) throw new Error("Expected indexed page");
+    expect([...page.ids]).toEqual([2, 5]);
+    expect(await decodeMessageSearchText(page)).toBe("oldupdated");
+    expect(index.has(MESSAGE_SEARCH_PAGE_SIZE + 1)).toBe(true);
+  });
+
+  it("does not publish a failed page into the committed append cache", async () => {
+    const { repository, transaction, index } = fixture([], {});
+    const input = { timestamp: null, source: "test", message: "old" };
+    await repository.putMany([input]);
+    const revision = index.get(1)!.revision;
+    transaction.mockImplementationOnce(() => {
+      const tx = {
+        onerror: null as (() => void) | null,
+        error: new Error("write failed"),
+        objectStore: () => ({ put: () => ({}) }),
+      };
+      queueMicrotask(() => tx.onerror?.());
+      return tx as unknown as ReturnType<typeof transaction>;
+    });
+    await expect(
+      repository.putMany([{ ...input, id: 1, message: "failed" }]),
+    ).rejects.toThrow();
+    expect(index.get(1)!.revision).toBe(revision);
+    await repository.putMany([{ ...input, message: "next" }]);
+    const page = index.get(1)!;
+    if (page.omitted) throw new Error("Expected indexed page");
+    expect(await decodeMessageSearchText(page)).toBe("oldnext");
+  });
+
+  it("marks oversized pages for fallback and discards the old tail on clear", async () => {
+    const { repository, index } = fixture([], {});
+    const input = {
+      timestamp: null,
+      source: "test",
+      message: "x".repeat(MAX_MESSAGE_SEARCH_CHARS + 1),
+    };
+    await repository.putMany([input]);
+    expect(index.get(1)).toMatchObject({ omitted: true });
+    await repository.clear();
+    await repository.putMany([{ ...input, message: "new dataset" }]);
+    const page = await indexedDb.readStoreRange<MessageSearchPage>(
+      (repository as unknown as { db: IDBDatabase }).db,
+      MESSAGE_SEARCH_STORE_NAME,
+      1,
+      1,
+    );
+    expect(page[0]!.omitted).toBe(false);
+    if (page[0]!.omitted) throw new Error("Expected indexed page");
+    expect(await decodeMessageSearchText(page[0]!)).toBe("new dataset");
+  });
+
   it("keeps original references lightweight and releases them only after a successful clear", async () => {
     const releasePayloads = vi.fn(async (_references: readonly string[]) => {});
     const { repository } = fixture([], { releasePayloads });

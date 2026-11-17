@@ -1,5 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ProjectionRecord } from "../../store/paged";
+import {
+  buildMessageSearchPage,
+  MESSAGE_SEARCH_PAGE_SIZE,
+  type MessageSearchPage,
+} from "../../store/paged/messageSearchIndex";
 import type {
   FilterErrorResponse,
   FilterOptions,
@@ -15,10 +20,11 @@ vi.mock("../../store/paged", () => ({
 }));
 
 interface PageLoad {
+  store: string;
   first: number;
   last: number;
   database: string;
-  release(records: ProjectionRecord[]): void;
+  release(records: ProjectionRecord[] | MessageSearchPage[]): void;
   fail(): void;
 }
 
@@ -82,7 +88,9 @@ describe("worker progressive message protocol", () => {
   let loads: PageLoad[];
   let clock: number;
   let close: ReturnType<typeof vi.fn>;
-  let autoPage: ((load: PageLoad) => ProjectionRecord[]) | undefined;
+  let hasMessageIndex: boolean;
+  let autoPage:
+    ((load: PageLoad) => ProjectionRecord[] | MessageSearchPage[]) | undefined;
   let onResponse:
     ((message: FilterResponse | FilterErrorResponse) => void) | undefined;
 
@@ -106,6 +114,7 @@ describe("worker progressive message protocol", () => {
     loads = [];
     clock = 0;
     autoPage = undefined;
+    hasMessageIndex = false;
     onResponse = undefined;
     close = vi.fn();
     vi.spyOn(performance, "now").mockImplementation(() => clock);
@@ -115,8 +124,13 @@ describe("worker progressive message protocol", () => {
     openDatabase.mockReset();
     openDatabase.mockImplementation(async (_version, database: string) => ({
       close,
+      objectStoreNames: {
+        contains: (name: string) =>
+          name === "projections" ||
+          (name === "message-search" && hasMessageIndex),
+      },
       transaction: () => ({
-        objectStore: () => ({
+        objectStore: (store: string) => ({
           getAll: (range: { lower: number; upper: number }) => {
             const cursorRequest = {
               result: null as unknown,
@@ -125,6 +139,7 @@ describe("worker progressive message protocol", () => {
               onerror: null as (() => void) | null,
             };
             const load: PageLoad = {
+              store,
               first: range.lower,
               last: range.upper,
               database,
@@ -161,6 +176,291 @@ describe("worker progressive message protocol", () => {
     vi.restoreAllMocks();
     vi.unstubAllGlobals();
   });
+
+  async function indexRecords(
+    records: ProjectionRecord[],
+  ): Promise<MessageSearchPage[]> {
+    const pages: MessageSearchPage[] = [];
+    for (
+      let start = 0;
+      start < records.length;
+      start += MESSAGE_SEARCH_PAGE_SIZE
+    ) {
+      pages.push(
+        await buildMessageSearchPage(
+          start + 1,
+          records.slice(start, start + MESSAGE_SEARCH_PAGE_SIZE),
+        ),
+      );
+    }
+    return pages;
+  }
+
+  function messageRequest(
+    message: string,
+    overrides: Partial<PagedFilterRequest> = {},
+  ): PagedFilterRequest {
+    return request({
+      incrementalResults: true,
+      options: options({
+        filter: { level: "", logger: "", thread: "", message },
+        navigationSearch: "",
+      }),
+      ...overrides,
+    });
+  }
+
+  it("filters indexed pages without loading full projections and reuses boolean terms", async () => {
+    const records = Array.from({ length: 4_005 }, (_, index) => ({
+      ...projection(index + 1, index % 3 ? "other" : "needle ERROR"),
+      timestamp: 4_005 - index,
+    }));
+    const pages = await indexRecords(records);
+    hasMessageIndex = true;
+    autoPage = (load) =>
+      pages.filter((page) => page.id >= load.first && page.id <= load.last);
+    send(messageRequest("needle", { entryCount: records.length }));
+    await until(() => !!final(1));
+    expect(loads.map((load) => load.store)).toEqual(["message-search"]);
+    expect(final(1)!.stats).toMatchObject({
+      total: 4_005,
+      passed: 1_335,
+      rejectedByMessage: 2_670,
+    });
+    const deltas = results().flatMap(
+      (result) => result.baseDelta?.entries ?? [],
+    );
+    expect(deltas.map((entry) => entry.id).sort((a, b) => a - b)).toEqual(
+      records
+        .filter((record) => record.message.includes("needle"))
+        .map((record) => record.id),
+    );
+    expect(results()[0]!.baseDelta?.entries[0]!.id).toBe(1_999);
+    expect(results()[0]!.partial).toBe(true);
+    send(
+      messageRequest("NOT needle", {
+        requestId: 2,
+        generation: "not",
+        entryCount: records.length,
+      }),
+    );
+    await until(() => !!final(2));
+    expect(final(2)!.stats).toMatchObject({
+      total: 4_005,
+      passed: 2_670,
+      rejectedByMessage: 1_335,
+    });
+    expect(loads.every((load) => load.store === "message-search")).toBe(true);
+    expect(close).toHaveBeenCalledTimes(2);
+  });
+
+  it("falls back only for missing/oversized pages and preserves rejection counts", async () => {
+    const records = Array.from({ length: 4_003 }, (_, index) =>
+      projection(index + 1, index % 2 ? "other" : "needle"),
+    );
+    const pages = await indexRecords(records);
+    pages[1] = { id: 2_001, version: 1, revision: "oversized", omitted: true };
+    pages.pop();
+    hasMessageIndex = true;
+    autoPage = (load) =>
+      load.store === "message-search"
+        ? pages
+        : records.filter(
+            (record) => record.id >= load.first && record.id <= load.last,
+          );
+    send(messageRequest("needle", { entryCount: records.length }));
+    await until(() => !!final(1));
+    expect(final(1)!.stats).toMatchObject({
+      total: 4_003,
+      passed: 2_002,
+      rejectedByMessage: 2_001,
+    });
+    expect(
+      loads
+        .filter((load) => load.store === "projections")
+        .map((load) => [load.first, load.last]),
+    ).toEqual([
+      [2_001, 4_000],
+      [4_001, 4_003],
+    ]);
+  });
+
+  it("uses the index with enabled but empty time/DC filters, as in the default UI", async () => {
+    hasMessageIndex = true;
+    const pages = await indexRecords([projection(1), projection(2, "other")]);
+    autoPage = () => pages;
+    send(
+      messageRequest("needle", {
+        entryCount: 2,
+        options: options({
+          filter: { level: "ALL", logger: "", thread: "", message: "needle" },
+          dcFilterEnabled: true,
+          dcFilterEntries: [{ key: "service", value: "app", active: false }],
+          timeFilterEnabled: true,
+          navigationSearch: "",
+        }),
+      }),
+    );
+    await until(() => !!final(1));
+    expect(final(1)!.stats).toMatchObject({
+      total: 2,
+      passed: 1,
+      rejectedByMessage: 1,
+    });
+    expect(loads.map((load) => load.store)).toEqual(["message-search"]);
+  });
+
+  it("keeps the authoritative rejection order for combinations with other filters", async () => {
+    hasMessageIndex = true;
+    const records = [
+      { ...projection(1, "other"), level: "DEBUG" },
+      { ...projection(2, "needle"), logger: "elsewhere" },
+      { ...projection(3, "other"), level: "ERROR" },
+      { ...projection(4, "needle"), level: "ERROR" },
+    ];
+    autoPage = (load) =>
+      records.filter(
+        (record) => record.id >= load.first && record.id <= load.last,
+      );
+    send(
+      messageRequest("needle", {
+        entryCount: records.length,
+        options: options({
+          filter: {
+            level: "INFO",
+            logger: "app",
+            thread: "",
+            message: "needle",
+          },
+          navigationSearch: "",
+        }),
+      }),
+    );
+    await until(() => !!final(1));
+    expect(final(1)!.stats).toMatchObject({
+      total: 4,
+      passed: 1,
+      rejectedByLevel: 1,
+      rejectedByLogger: 1,
+      rejectedByMessage: 1,
+    });
+    expect(loads.every((load) => load.store === "projections")).toBe(true);
+  });
+
+  it("bounds a partial final page by entryCount and scans only appended IDs", async () => {
+    hasMessageIndex = true;
+    let pages = await indexRecords([
+      projection(1),
+      projection(2, "other"),
+      projection(3),
+    ]);
+    autoPage = () => pages;
+    send(messageRequest("needle", { entryCount: 2 }));
+    await until(() => !!final(1));
+    expect(final(1)!.stats).toMatchObject({
+      total: 2,
+      passed: 1,
+      rejectedByMessage: 1,
+    });
+    pages = await indexRecords([
+      projection(1),
+      projection(2, "other"),
+      projection(3),
+      projection(4),
+    ]);
+    send(
+      messageRequest("needle", {
+        requestId: 2,
+        entryCount: 4,
+        knownBaseCount: 2,
+      }),
+    );
+    await until(() => !!final(2));
+    const appended = results().filter((result) => result.requestId === 2);
+    expect(appended[0]!.baseDelta).toMatchObject({
+      reset: false,
+      fromLength: 1,
+    });
+    expect(
+      appended.flatMap(
+        (result) => result.baseDelta?.entries.map((entry) => entry.id) ?? [],
+      ),
+    ).toEqual([3, 4]);
+    expect(final(2)!.stats).toMatchObject({
+      total: 4,
+      passed: 3,
+      rejectedByMessage: 1,
+    });
+  });
+
+  it.each(["database", "generation", "reset"])(
+    "invalidates indexed term flags after a %s change",
+    async (change) => {
+      hasMessageIndex = true;
+      let page = (await indexRecords([projection(1)]))[0]!;
+      autoPage = () => [page];
+      send(messageRequest("needle", { entryCount: 1 }));
+      await until(() => !!final(1));
+      expect(final(1)!.stats.passed).toBe(1);
+      const replacement = (await indexRecords([projection(1, "other")]))[0]!;
+      page = { ...replacement, revision: page.revision };
+      if (change === "reset") send({ type: "resetProjections" });
+      send(
+        messageRequest("needle", {
+          requestId: 2,
+          entryCount: 1,
+          ...(change === "database" ? { databaseName: "replacement" } : {}),
+          ...(change === "generation" ? { dataGeneration: "data-2" } : {}),
+        }),
+      );
+      await until(() => !!final(2));
+      expect(final(2)!.stats.passed).toBe(0);
+    },
+  );
+
+  it("cancels obsolete index reads and publishes only the replacement query", async () => {
+    hasMessageIndex = true;
+    const pages = await indexRecords([projection(1)]);
+    send(messageRequest("needle", { entryCount: 1 }));
+    await until(() => loads.length === 1);
+    send(
+      messageRequest("other", {
+        requestId: 2,
+        generation: "replacement",
+        entryCount: 1,
+      }),
+    );
+    loads[0]!.release(pages);
+    await until(() => loads.length === 2);
+    loads[1]!.release(pages);
+    await until(() => !!final(2));
+    expect(results().some((result) => result.requestId === 1)).toBe(false);
+    expect(final(2)!.stats.passed).toBe(0);
+  });
+
+  it.each(["storage", "codec"])(
+    "surfaces %s failures instead of successful empty results",
+    async (kind) => {
+      hasMessageIndex = true;
+      send(messageRequest("needle", { entryCount: 1 }));
+      await until(() => loads.length === 1);
+      if (kind === "storage") loads[0]!.fail();
+      else {
+        const page = (await indexRecords([projection(1)]))[0]!;
+        if (page.omitted) throw new Error("Expected indexed page");
+        loads[0]!.release([{ ...page, text: new Uint8Array([0]) }]);
+      }
+      await until(() => messages.some((message) => message.type === "error"));
+      expect(final(1)).toBeUndefined();
+      expect(messages.at(-1)).toMatchObject({
+        type: "error",
+        requestId: 1,
+        paged: true,
+      });
+      expect(loads.every((load) => load.store === "message-search")).toBe(true);
+      expect(close).toHaveBeenCalledOnce();
+    },
+  );
 
   it("publishes sorted immutable cumulative snapshots before loading later pages", async () => {
     send(request());

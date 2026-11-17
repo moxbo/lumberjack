@@ -5,7 +5,18 @@ import {
 } from "../store/paged";
 import { compileDcFilter, matchesCompiledDcFilter } from "../utils/dcMatch";
 import { compileLevelFilter } from "../utils/levelFilter";
-import { tokenizeQuery, type SearchMode } from "../utils/msgFilter";
+import { compileMessageExpression, type SearchMode } from "../utils/msgFilter";
+import {
+  MESSAGE_SEARCH_STORE_NAME,
+  readStoreRange,
+} from "../store/paged/indexedDb";
+import {
+  MESSAGE_SEARCH_PAGE_SIZE,
+  messageSearchPageId,
+  validateMessageSearchPage,
+  type MessageSearchPage,
+} from "../store/paged/messageSearchIndex";
+import { MessagePageQuery, MessageTermCache } from "./messageSearch";
 import { compareByTimestampId } from "../utils/sort";
 import { SortedStore, type SortedSnapshot } from "../utils/sortedSequence";
 import type { ReadonlySequence } from "../utils/readonlySequence";
@@ -190,6 +201,8 @@ interface PagedFilterCache {
 }
 
 let pagedFilterCache: PagedFilterCache | null = null;
+const messageTermCache = new MessageTermCache();
+let messageIndexIdentity: string | undefined;
 
 // ─── Transferred projection cache ────────────────────────────────────────────
 // Records pushed directly from the main thread via `transferProjections`.
@@ -301,6 +314,8 @@ export function handleResetProjections(): void {
   invalidateJobs();
   pagedFilterCache = null;
   transferredProjectionCache = null;
+  messageTermCache.clear();
+  messageIndexIdentity = undefined;
 }
 
 function emptyStats(): FilterStats {
@@ -343,56 +358,10 @@ export function createMessageMatcher(
     }
   }
 
-  // Parse once per request, including permissive malformed-expression behavior.
-  // Evaluating the old parser per row also walked every short-circuited branch.
-  const tokens = tokenizeQuery(query);
-  type Predicate = (message: string) => boolean;
-  let pos = 0;
-  const primary = (): Predicate => {
-    const token = tokens[pos++];
-    if (token?.t === "WORD") {
-      const needle = mode === "sensitive" ? token.v! : token.v!.toLowerCase();
-      return (message) => message.includes(needle);
-    }
-    if (token?.t === "LPAREN") {
-      const expression = or();
-      if (tokens[pos]?.t === "RPAREN") pos++;
-      return expression;
-    }
-    return () => true;
-  };
-  const not = (): Predicate => {
-    let negate = false;
-    while (tokens[pos]?.t === "NOT") {
-      pos++;
-      negate = !negate;
-    }
-    const operand = primary();
-    return negate ? (message) => !operand(message) : operand;
-  };
-  const and = (): Predicate => {
-    const operands = [not()];
-    while (true) {
-      const kind = tokens[pos]?.t;
-      if (kind === "AND") pos++;
-      else if (kind !== "WORD" && kind !== "LPAREN" && kind !== "NOT") break;
-      operands.push(not());
-    }
-    return operands.length === 1
-      ? operands[0]!
-      : (message) => operands.every((operand) => operand(message));
-  };
-  const or = (): Predicate => {
-    const operands = [and()];
-    while (tokens[pos]?.t === "OR") {
-      pos++;
-      operands.push(and());
-    }
-    return operands.length === 1
-      ? operands[0]!
-      : (message) => operands.some((operand) => operand(message));
-  };
-  const matches = or();
+  const matches = compileMessageExpression<string>(query, (literal) => {
+    const needle = mode === "sensitive" ? literal : literal.toLowerCase();
+    return (message) => message.includes(needle);
+  });
   return (entry) =>
     matches(
       mode === "sensitive"
@@ -694,37 +663,7 @@ function readProjectionPage(
   firstId: number,
   lastId: number,
 ): Promise<ProjectionRecord[]> {
-  return new Promise((resolve, reject) => {
-    let settled = false;
-    let transaction: IDBTransaction;
-    try {
-      transaction = db.transaction(PROJECTION_STORE_NAME, "readonly");
-      const range = IDBKeyRange.bound(firstId, lastId);
-      const request = transaction
-        .objectStore(PROJECTION_STORE_NAME)
-        .getAll(range);
-      request.onerror = () => {
-        settled = true;
-        reject(request.error ?? new Error("Projection page failed"));
-      };
-      request.onsuccess = () => {
-        if (!settled) {
-          settled = true;
-          resolve(request.result as ProjectionRecord[]);
-        }
-      };
-      transaction.onabort = () => {
-        if (!settled)
-          reject(transaction.error ?? new Error("Projection scan aborted"));
-      };
-      transaction.onerror = () => {
-        if (!settled)
-          reject(transaction.error ?? new Error("Projection scan failed"));
-      };
-    } catch (error) {
-      reject(error instanceof Error ? error : new Error(String(error)));
-    }
-  });
+  return readStoreRange(db, PROJECTION_STORE_NAME, firstId, lastId);
 }
 
 function yieldWorker(): Promise<void> {
@@ -825,6 +764,84 @@ async function* projectionPages(
     }
   } finally {
     db?.close();
+  }
+}
+
+async function* indexedMessagePages(
+  job: FilterJob,
+  start: number,
+): AsyncGenerator<{
+  references?: PassingReference[];
+  records?: ProjectionRecord[];
+  rejected: number;
+  processed: number;
+}> {
+  const request = job.request as PagedFilterRequest;
+  const identity = JSON.stringify([
+    request.databaseName,
+    request.dataGeneration,
+  ]);
+  if (identity !== messageIndexIdentity) {
+    messageTermCache.clear();
+    messageIndexIdentity = identity;
+  }
+  const query = new MessagePageQuery(request.options.filter.message);
+  const db = await openPagedDatabase(undefined, request.databaseName);
+  try {
+    // Older/unindexed databases and intentionally omitted oversized pages retain
+    // the authoritative scan. Actual storage/decoding failures still propagate.
+    const hasIndex = db.objectStoreNames.contains(MESSAGE_SEARCH_STORE_NAME);
+    const batchSize = MESSAGE_SEARCH_PAGE_SIZE * 4;
+    for (
+      let first = messageSearchPageId(start + 1);
+      first <= job.total;
+      first += batchSize
+    ) {
+      if (job.cancelled) return;
+      const last = Math.min(job.total, first + batchSize - 1);
+      const pages = hasIndex
+        ? await readStoreRange<MessageSearchPage>(
+            db,
+            MESSAGE_SEARCH_STORE_NAME,
+            first,
+            last,
+          )
+        : [];
+      const byId = new Map(pages.map((page) => [page.id, page]));
+      for (
+        let pageId = first;
+        pageId <= last;
+        pageId += MESSAGE_SEARCH_PAGE_SIZE
+      ) {
+        if (job.cancelled) return;
+        const from = Math.max(start + 1, pageId);
+        const end = Math.min(job.total, pageId + MESSAGE_SEARCH_PAGE_SIZE - 1);
+        const page = byId.get(pageId);
+        if (page) validateMessageSearchPage(page);
+        if (!page || page.omitted) {
+          const records = await readProjectionPage(db, from, end);
+          if (job.cancelled) return;
+          yield { records, rejected: 0, processed: end };
+          continue;
+        }
+        const matches = await query.match(page, messageTermCache);
+        if (job.cancelled) return;
+        const references: PassingReference[] = [];
+        let rejected = 0;
+        for (let index = 0; index < page.ids.length; index++) {
+          const id = page.ids[index]!;
+          if (id < from || id > end) continue;
+          if (matches[index]) {
+            references.push({ id, _id: id, timestamp: page.timestamps[index] });
+          } else {
+            rejected++;
+          }
+        }
+        yield { references, rejected, processed: end };
+      }
+    }
+  } finally {
+    db.close();
   }
 }
 
@@ -1056,6 +1073,24 @@ async function runFilter(
     pending = [];
     return result;
   };
+  const appendPage = (incoming: PassingReference[], end: number): void => {
+    processed = end;
+    stats.total = processed;
+    incoming.sort(compareByTimestampId);
+    store.appendSorted(incoming);
+    if (request.incrementalResults)
+      for (const ref of incoming) pending.push(ref);
+    const now = performance.now();
+    if (
+      !published ||
+      pending.length >= MAX_PENDING_REFERENCES ||
+      now - lastPublished >= PROGRESS_INTERVAL_MS
+    ) {
+      publish(response(true));
+      published = true;
+      lastPublished = performance.now();
+    }
+  };
   const scanPage = (records: readonly unknown[], end: number): void => {
     const incoming: PassingReference[] = [];
     for (let index = 0; index < records.length; index++) {
@@ -1074,25 +1109,40 @@ async function runFilter(
       });
       if (incoming[incoming.length - 1]!.searchMatch) matchCount++;
     }
-    processed = end;
-    stats.total = processed;
-    incoming.sort(compareByTimestampId);
-    store.appendSorted(incoming);
-    if (request.incrementalResults)
-      for (const ref of incoming) pending.push(ref);
-    const now = performance.now();
-    if (
-      !published ||
-      pending.length >= MAX_PENDING_REFERENCES ||
-      now - lastPublished >= PROGRESS_INTERVAL_MS
-    ) {
-      publish(response(true));
-      published = true;
-      lastPublished = performance.now();
-    }
+    appendPage(incoming, end);
   };
 
-  if (paged) {
+  const messageOnly =
+    paged &&
+    request.options.stdFiltersEnabled &&
+    !!request.options.filter.message.trim() &&
+    !prepared.levelFilter &&
+    !prepared.loggerFilter &&
+    !prepared.threadFilter &&
+    !request.options.onlyMarked &&
+    (!request.options.timeFilterEnabled ||
+      (prepared.fromTs === null && prepared.toTs === null)) &&
+    prepared.compiledDcFilter.length === 0 &&
+    !prepared.navigationSearch;
+  if (messageOnly) {
+    let lastYield = performance.now();
+    for await (const page of indexedMessagePages(job, processed)) {
+      if (job.cancelled) return null;
+      if (page.references) {
+        stats.passed += page.references.length;
+        stats.rejectedByMessage += page.rejected;
+        appendPage(page.references, page.processed);
+      } else {
+        scanPage(page.records!, page.processed);
+      }
+      // IndexedDB/decompression already yields; cached term masks only need a
+      // timer when CPU work has actually consumed a time slice.
+      if (performance.now() - lastYield >= 8) {
+        await yieldWorker();
+        lastYield = performance.now();
+      }
+    }
+  } else if (paged) {
     for await (const page of projectionPages(job, processed)) {
       if (job.cancelled) return null;
       scanPage(page.records, page.processed);

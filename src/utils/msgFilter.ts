@@ -153,6 +153,58 @@ export function tokenizeQuery(s: string): Token[] {
   return toks;
 }
 
+/** Compile the shared boolean grammar once, with caller-provided literal matching. */
+export function compileMessageExpression<T>(
+  expression: string,
+  literal: (text: string) => (value: T) => boolean,
+): (value: T) => boolean {
+  const tokens = tokenizeQuery(expression.trim());
+  type Predicate = (value: T) => boolean;
+  let pos = 0;
+  const primary = (): Predicate => {
+    const token = tokens[pos++];
+    if (token?.t === "WORD") return literal(token.v!);
+    if (token?.t === "LPAREN") {
+      const expression = or();
+      if (tokens[pos]?.t === "RPAREN") pos++;
+      return expression;
+    }
+    return () => true;
+  };
+  const not = (): Predicate => {
+    let negate = false;
+    while (tokens[pos]?.t === "NOT") {
+      pos++;
+      negate = !negate;
+    }
+    const operand = primary();
+    return negate ? (value) => !operand(value) : operand;
+  };
+  const and = (): Predicate => {
+    const operands = [not()];
+    while (true) {
+      const kind = tokens[pos]?.t;
+      if (kind === "AND") pos++;
+      else if (kind !== "WORD" && kind !== "LPAREN" && kind !== "NOT") break;
+      operands.push(not());
+    }
+    return operands.length === 1
+      ? operands[0]!
+      : (value) => operands.every((operand) => operand(value));
+  };
+  const or = (): Predicate => {
+    const operands = [and()];
+    while (tokens[pos]?.t === "OR") {
+      pos++;
+      operands.push(and());
+    }
+    return operands.length === 1
+      ? operands[0]!
+      : (value) => operands.some((operand) => operand(value));
+  };
+  return or();
+}
+
 /**
  * Extrahiert die hervorzuhebenden Suchbegriffe aus einem Filter-Ausdruck.
  *

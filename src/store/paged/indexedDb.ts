@@ -2,9 +2,10 @@ import { IndexedDbUnavailableError } from "./errors";
 import type { StorageEstimateResult } from "./types";
 
 export const PAGED_DB_NAME = "LumberjackPagedLogs";
-export const PAGED_DB_VERSION = 2;
+export const PAGED_DB_VERSION = 3;
 export const PAYLOAD_STORE_NAME = "payloads";
 export const PROJECTION_STORE_NAME = "projections";
+export const MESSAGE_SEARCH_STORE_NAME = "message-search";
 export const PROJECTION_SOURCE_SIGNATURE_INDEX = "by-source-signature";
 
 export function isIndexedDbAvailable(): boolean {
@@ -58,6 +59,9 @@ export function openPagedDatabase(
       if (!db.objectStoreNames.contains(PAYLOAD_STORE_NAME)) {
         db.createObjectStore(PAYLOAD_STORE_NAME, { keyPath: "id" });
       }
+      if (!db.objectStoreNames.contains(MESSAGE_SEARCH_STORE_NAME)) {
+        db.createObjectStore(MESSAGE_SEARCH_STORE_NAME, { keyPath: "id" });
+      }
       const projections = db.objectStoreNames.contains(PROJECTION_STORE_NAME)
         ? request.transaction!.objectStore(PROJECTION_STORE_NAME)
         : db.createObjectStore(PROJECTION_STORE_NAME, { keyPath: "id" });
@@ -86,6 +90,27 @@ export function openPagedDatabase(
       db.onversionchange = () => db.close();
       succeed(db);
     };
+  });
+}
+
+export function readStoreRange<T>(
+  db: IDBDatabase,
+  storeName: string,
+  firstId: number,
+  lastId: number,
+): Promise<T[]> {
+  return new Promise((resolve, reject) => {
+    const transaction = db.transaction(storeName, "readonly");
+    const request = transaction
+      .objectStore(storeName)
+      .getAll(IDBKeyRange.bound(firstId, lastId));
+    request.onsuccess = () => resolve(request.result as T[]);
+    request.onerror = () =>
+      reject(request.error ?? new Error(`Reading ${storeName} failed`));
+    transaction.onabort = () =>
+      reject(transaction.error ?? new Error(`Reading ${storeName} aborted`));
+    transaction.onerror = () =>
+      reject(transaction.error ?? new Error(`Reading ${storeName} failed`));
   });
 }
 

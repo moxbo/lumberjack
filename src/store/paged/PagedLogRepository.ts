@@ -7,8 +7,17 @@ import {
   PAGED_DB_NAME,
   PAYLOAD_STORE_NAME,
   PROJECTION_STORE_NAME,
+  MESSAGE_SEARCH_STORE_NAME,
+  readStoreRange,
   requestPersistentStorage,
 } from "./indexedDb";
+import {
+  buildMessageSearchPage,
+  messageSearchPageId,
+  MESSAGE_SEARCH_PAGE_SIZE,
+  type IndexedMessage,
+  type MessageSearchPage,
+} from "./messageSearchIndex";
 import {
   hydratePagedRecord,
   preparePagedRecord,
@@ -94,6 +103,10 @@ export class PagedLogRepository {
   private payloadCleanup: Promise<void> | null = null;
   private readonly releasePayloads?: PagedLogRepositoryOptions["releasePayloads"];
   private readonly payloadCache: PageLruCache<CanonicalLogEntry>;
+  private messageSearchTail: {
+    id: number;
+    records: readonly IndexedMessage[];
+  } | null = null;
 
   constructor(options: PagedLogRepositoryOptions = {}) {
     this.factory = options.indexedDbFactory;
@@ -128,6 +141,7 @@ export class PagedLogRepository {
     this.registerPayloadReferences(entries);
     return this.runMutation(async () => {
       const db = await this.getDb();
+      const previousNextId = this.nextId;
       const ids = entries.map((entry) => {
         const supplied = entry.id ?? entry._id;
         if (supplied !== undefined) {
@@ -161,8 +175,18 @@ export class PagedLogRepository {
         },
       );
       await Promise.all(workers);
+      let messageSearch: Awaited<ReturnType<typeof this.prepareMessageSearch>>;
+      try {
+        messageSearch = await this.prepareMessageSearch(
+          db,
+          records.map((record) => record.projection),
+          previousNextId,
+        );
+      } catch (error) {
+        throw toPagedWriteError(error);
+      }
       const transaction = db.transaction(
-        [PAYLOAD_STORE_NAME, PROJECTION_STORE_NAME],
+        [PAYLOAD_STORE_NAME, PROJECTION_STORE_NAME, MESSAGE_SEARCH_STORE_NAME],
         "readwrite",
       );
       let requestError: unknown;
@@ -183,6 +207,13 @@ export class PagedLogRepository {
             requestError = projectionRequest.error;
           };
         }
+        const messageIndex = transaction.objectStore(MESSAGE_SEARCH_STORE_NAME);
+        for (const page of messageSearch.pages) {
+          const request = messageIndex.put(page);
+          request.onerror = () => {
+            requestError = request.error;
+          };
+        }
       } catch (error) {
         transaction.abort();
         await done.catch(() => undefined);
@@ -193,6 +224,7 @@ export class PagedLogRepository {
       } catch (error) {
         throw toPagedWriteError(error);
       }
+      this.messageSearchTail = messageSearch.tail;
       for (const record of records) {
         this.signatureKeys.add(
           `${record.projection.source}\0${record.projection.signature}`,
@@ -201,6 +233,51 @@ export class PagedLogRepository {
       this.payloadCache.invalidateIds(ids);
       return ids;
     });
+  }
+
+  private async prepareMessageSearch(
+    db: IDBDatabase,
+    records: readonly ProjectionRecord[],
+    previousNextId: number,
+  ): Promise<{
+    pages: MessageSearchPage[];
+    tail: PagedLogRepository["messageSearchTail"];
+  }> {
+    const groups = new Map<number, IndexedMessage[]>();
+    for (const { id, timestamp, message } of records) {
+      const pageId = messageSearchPageId(id);
+      let group = groups.get(pageId);
+      if (!group) groups.set(pageId, (group = []));
+      group.push({ id, timestamp, message });
+    }
+    const pages: MessageSearchPage[] = [];
+    let tail: PagedLogRepository["messageSearchTail"] = null;
+    for (const [id, incoming] of [...groups].sort(
+      ([left], [right]) => left - right,
+    )) {
+      // Only the bounded, last committed page stays decoded between appends.
+      const previous =
+        this.messageSearchTail?.id === id
+          ? this.messageSearchTail.records
+          : id < previousNextId
+            ? await readStoreRange<ProjectionRecord>(
+                db,
+                PROJECTION_STORE_NAME,
+                id,
+                Math.min(previousNextId - 1, id + MESSAGE_SEARCH_PAGE_SIZE - 1),
+              )
+            : [];
+      const merged = new Map<number, IndexedMessage>();
+      for (const { id, timestamp, message } of previous) {
+        merged.set(id, { id, timestamp, message });
+      }
+      for (const record of incoming) merged.set(record.id, record);
+      const entries = [...merged.values()].sort((a, b) => a.id - b.id);
+      const page = await buildMessageSearchPage(id, entries);
+      pages.push(page);
+      tail = page.omitted ? null : { id, records: entries };
+    }
+    return { pages, tail };
   }
 
   /** Also track duplicates/rejected inputs so a successful clear reclaims their originals. */
@@ -364,6 +441,7 @@ export class PagedLogRepository {
       this.db = replacement;
       this.initPromise = Promise.resolve(replacement);
       this.nextId = 1;
+      this.messageSearchTail = null;
       this.signatureKeys.clear();
       this.signaturesLoaded = true;
       this.signatureLoadPromise = null;
@@ -459,6 +537,7 @@ export class PagedLogRepository {
 
   close(): void {
     this.lifecycleGeneration++;
+    this.messageSearchTail = null;
     this.payloadCache.invalidate();
     this.db?.close();
     this.db = null;

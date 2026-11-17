@@ -1,5 +1,6 @@
 import { build } from "esbuild";
 import { test, expect } from "./electron-fixtures";
+import { PAGED_DB_VERSION } from "../../src/store/paged/indexedDb";
 import type {
   FilterResponse,
   PagedFilterRequest,
@@ -21,13 +22,14 @@ test("measures IndexedDB full filtering versus reused navigation search", async 
     platform: "browser",
   });
   const metrics = await window.evaluate(
-    async ({ rows, source }) => {
+    async ({ rows, source, version }) => {
       const name = "search-performance";
       const db = await new Promise<IDBDatabase>((resolve, reject) => {
-        const open = indexedDB.open(name, 2);
+        const open = indexedDB.open(name, version);
         open.onupgradeneeded = () => {
           open.result.createObjectStore("payloads", { keyPath: "id" });
           open.result.createObjectStore("projections", { keyPath: "id" });
+          open.result.createObjectStore("message-search", { keyPath: "id" });
         };
         open.onsuccess = () => resolve(open.result);
         open.onerror = () =>
@@ -145,7 +147,7 @@ test("measures IndexedDB full filtering versus reused navigation search", async 
         });
       }
     },
-    { rows, source: bundle.outputFiles[0]!.text },
+    { rows, source: bundle.outputFiles[0]!.text, version: PAGED_DB_VERSION },
   );
   expect(metrics.reused.baseIds).toBe(0);
   expect(metrics.reused.matches).toBe(Math.floor(rows / 1000));
