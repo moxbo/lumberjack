@@ -80,6 +80,17 @@ export const test = base.extend<{
       },
       timeout: isCI ? 120000 : 60000, // Longer timeout for CI
     });
+    const electronProcess = electronApp.process();
+    const exited = new Promise<void>((resolve) => {
+      if (
+        electronProcess.exitCode !== null ||
+        electronProcess.signalCode !== null
+      ) {
+        resolve();
+      } else {
+        electronProcess.once("exit", () => resolve());
+      }
+    });
 
     try {
       const profile = await electronApp.evaluate(({ app }) =>
@@ -88,7 +99,29 @@ export const test = base.extend<{
       expect(profile).toBe(testUserData);
       await use(electronApp);
     } finally {
-      await electronApp.close();
+      let closeTimeout: ReturnType<typeof setTimeout> | undefined;
+      try {
+        await Promise.race([
+          electronApp.close(),
+          new Promise<never>((_, reject) => {
+            closeTimeout = setTimeout(
+              () =>
+                reject(new Error("Electron did not close within 10 seconds")),
+              10_000,
+            );
+          }),
+        ]);
+      } finally {
+        clearTimeout(closeTimeout);
+        // A lost debugger connection must not leave Electron writing to a deleted profile.
+        if (
+          electronProcess.exitCode === null &&
+          electronProcess.signalCode === null
+        ) {
+          electronProcess.kill("SIGKILL");
+        }
+        await exited;
+      }
     }
   },
 
