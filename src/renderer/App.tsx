@@ -458,6 +458,7 @@ export default function App(): JSX.Element {
     entryGeneration,
     getDataGeneration,
     appendEntriesAsync,
+    finishStreamedImport,
     clearEntries,
     isClearing,
     clearPhase,
@@ -689,11 +690,13 @@ export default function App(): JSX.Element {
 
   const persistStreamedEntries = useCallback(
     async (sessionId: string): Promise<void> => {
+      const generation = getDataGeneration();
       activeStreamSessionRef.current = sessionId;
       setImportProgress({ processedEntries: 0, bytesRead: 0, totalBytes: 0 });
       let persistedEntries = 0;
 
       await new Promise<void>((resolve, reject) => {
+        let cancelled = false;
         const cleanup = (): void => {
           offChunk();
           offComplete();
@@ -706,6 +709,7 @@ export default function App(): JSX.Element {
           }
         };
         const cancel = (): void => {
+          cancelled = true;
           typedStreamCancel(sessionId);
           cleanup();
           reject(new DOMException("Stream import cancelled", "AbortError"));
@@ -713,10 +717,15 @@ export default function App(): JSX.Element {
 
         const handleChunk = (chunk: StreamParseChunk): void => {
           if (chunk.sessionId !== sessionId) return;
+          if (getDataGeneration() !== generation) {
+            cancel();
+            return;
+          }
           void (async () => {
             try {
               if (chunk.entries.length > 0) {
                 await appendEntriesAsync(chunk.entries as any[], {
+                  deferPartialSearchPage: true,
                   onProgress: (processed) =>
                     setImportProgress({
                       processedEntries: persistedEntries + processed,
@@ -730,6 +739,10 @@ export default function App(): JSX.Element {
                 persistedEntries += chunk.entries.length;
                 hydrateMarksFromEntries(chunk.entries as any[]);
               }
+              if (chunk.done && chunk.fileIndex === chunk.totalFiles - 1) {
+                await finishStreamedImport(generation);
+              }
+              if (cancelled) return;
               setImportProgress({
                 processedEntries: persistedEntries,
                 bytesRead: chunk.bytesRead,
@@ -771,7 +784,12 @@ export default function App(): JSX.Element {
         setImportProgress(null);
       });
     },
-    [appendEntriesAsync, hydrateMarksFromEntries],
+    [
+      appendEntriesAsync,
+      finishStreamedImport,
+      getDataGeneration,
+      hydrateMarksFromEntries,
+    ],
   );
 
   const importPaths = useCallback(

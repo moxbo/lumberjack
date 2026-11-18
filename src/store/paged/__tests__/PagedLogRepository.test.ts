@@ -61,6 +61,7 @@ function fixture(
           return {
             put: (record: { id: number }) =>
               write(() => store.set(record.id, record)),
+            delete: (id: number) => write(() => store.delete(id)),
             clear: () => write(() => store.clear()),
             get: (id: number) => {
               pending++;
@@ -174,6 +175,120 @@ function fixture(
 afterEach(() => {
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
+});
+
+describe("streamed message index", () => {
+  const defer = { deferPartialSearchPage: true };
+  const row = { timestamp: null, source: "file", message: "error" };
+
+  it("writes each full page once, without reading projections or building the partial page", async () => {
+    const { repository, transaction, index } = fixture([], {});
+    const writes = vi.spyOn(index, "set");
+    const batch = Array.from({ length: 100 }, () => row);
+    for (
+      let count = 0;
+      count < MESSAGE_SEARCH_PAGE_SIZE;
+      count += batch.length
+    ) {
+      expect(index.size).toBe(0);
+      await repository.putMany(batch, defer);
+    }
+    expect(writes).toHaveBeenCalledTimes(1);
+    await repository.sealMessageSearchTail();
+    expect(writes).toHaveBeenCalledTimes(1);
+    const next = MESSAGE_SEARCH_PAGE_SIZE + 1;
+    await repository.putMany([row], defer);
+    expect(index.has(next)).toBe(false);
+    expect(
+      transaction.mock.calls.every(([, mode]) => mode === "readwrite"),
+    ).toBe(true);
+    expect((await repository.getProjection(next))?.message).toBe("error");
+    await Promise.all([
+      repository.sealMessageSearchTail(),
+      repository.sealMessageSearchTail(),
+    ]);
+    expect(writes).toHaveBeenCalledTimes(2);
+    expect(index.get(next)).toMatchObject({ ids: Float64Array.of(next) });
+  });
+
+  it("invalidates a sealed partial page once and gives its replacement a fresh revision", async () => {
+    const { repository, index } = fixture([], {});
+    const deletes = vi.spyOn(index, "delete");
+    await repository.putMany([row]);
+    const original = index.get(1)!;
+    await repository.putMany([{ ...row, message: "later" }], defer);
+    await repository.putMany([{ ...row, message: "last" }], defer);
+    expect(index.has(1)).toBe(false);
+    expect(deletes).toHaveBeenCalledTimes(1);
+    expect((await repository.getProjection(2))?.message).toBe("later");
+    await repository.sealMessageSearchTail();
+    const page = index.get(1)!;
+    expect(page.revision).not.toBe(original.revision);
+    if (page.omitted) throw new Error("Expected indexed page");
+    expect(await decodeMessageSearchText(page)).toBe("errorlaterlast");
+  });
+
+  it("seals skipped sparse ranges and preserves duplicate-ID, last-write-wins updates", async () => {
+    const { repository, index } = fixture([], {});
+    await repository.putMany(
+      [
+        { ...row, id: 8 },
+        { ...row, id: 2 },
+      ],
+      defer,
+    );
+    await repository.putMany([{ ...row, id: 5_000 }], defer);
+    expect(index.get(1)).toMatchObject({ ids: Float64Array.of(2, 8) });
+    await repository.putMany([{ ...row, id: 8, message: "updated" }]);
+    await repository.putMany(
+      [
+        { ...row, id: 5_000 },
+        { ...row, id: 5_000, message: "last" },
+      ],
+      defer,
+    );
+    await repository.sealMessageSearchTail();
+    const last = index.get(4_001)!;
+    if (last.omitted) throw new Error("Expected indexed page");
+    expect([...last.ids]).toEqual([5_000]);
+    expect(await decodeMessageSearchText(last)).toBe("last");
+  });
+
+  it("does not reread an oversized pending tail for dense appends or EOF; a shrinking upsert can recover it", async () => {
+    const { repository, index, transaction } = fixture([], {});
+    await repository.putMany(
+      [{ ...row, message: "x".repeat(MAX_MESSAGE_SEARCH_CHARS + 1) }],
+      defer,
+    );
+    await repository.putMany([row], defer);
+    await repository.sealMessageSearchTail();
+    expect(index.get(1)).toMatchObject({ omitted: true });
+    expect(
+      transaction.mock.calls.every(([, mode]) => mode === "readwrite"),
+    ).toBe(true);
+    await repository.putMany([{ ...row, id: 1 }], defer);
+    await repository.sealMessageSearchTail();
+    const page = index.get(1)!;
+    if (page.omitted) throw new Error("Expected indexed page");
+    expect(await decodeMessageSearchText(page)).toBe("errorerror");
+  });
+
+  it("surfaces seal failures and never publishes an old pending page after clearing", async () => {
+    const { repository, transaction, index } = fixture([], {});
+    await repository.putMany([row], defer);
+    transaction.mockImplementationOnce(() => {
+      throw new DOMException("full", "QuotaExceededError");
+    });
+    await expect(repository.sealMessageSearchTail()).rejects.toThrow("quota");
+    expect(index.has(1)).toBe(false);
+    expect((await repository.getProjection(1))?.message).toBe("error");
+    await repository.clear();
+    await repository.sealMessageSearchTail();
+    await repository.putMany([{ ...row, message: "new" }], defer);
+    await repository.sealMessageSearchTail();
+    expect(index.size).toBe(0);
+    expect((await repository.getProjection(1))?.message).toBe("new");
+  });
 });
 
 describe("PagedLogRepository byte cache", () => {

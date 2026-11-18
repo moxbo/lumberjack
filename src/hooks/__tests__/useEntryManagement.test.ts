@@ -60,6 +60,7 @@ vi.mock("../../store/paged/session", async () => {
       clear: vi.fn(() => repository.clear()),
       destroy: vi.fn(() => repository.destroy()),
       putMany: vi.fn(repository.putMany.bind(repository)),
+      sealMessageSearchTail: vi.fn(async () => {}),
       findExistingSignatures: vi.fn(
         repository.findExistingSignatures.bind(repository),
       ),
@@ -106,6 +107,62 @@ afterEach(() => {
 });
 
 describe("getMetadataPublishDelay", () => {
+  it("does not finalize a stale import or pause its replacement dataset", async () => {
+    const hook = render();
+    const generation = hook.getDataGeneration();
+    await hook.appendEntriesAsync([input(1)], { deferPartialSearchPage: true });
+    expect(pagedLogRepository.putMany).toHaveBeenCalledWith(expect.any(Array), {
+      deferPartialSearchPage: true,
+    });
+    await hook.clearEntries();
+    await expect(hook.finishStreamedImport(generation)).rejects.toThrow(
+      "dataset changed",
+    );
+    expect(pagedLogRepository.sealMessageSearchTail).not.toHaveBeenCalled();
+    expect(render().storageError).toBeNull();
+  });
+
+  it("pauses ingestion if the final search page fails, leaving acknowledged rows readable", async () => {
+    const hook = render();
+    await hook.appendEntriesAsync([input(1)]);
+    vi.mocked(pagedLogRepository.sealMessageSearchTail).mockRejectedValueOnce(
+      new Error("seal failed"),
+    );
+    await expect(
+      hook.finishStreamedImport(hook.getDataGeneration()),
+    ).rejects.toThrow("seal failed");
+    await expect(hook.appendEntriesAsync([input(2)])).rejects.toThrow(
+      "Ingestion is paused",
+    );
+    expect((await hook.repository.getPayloads([1])).size).toBe(1);
+  });
+
+  it("waits for an in-flight seal on clear and does not acknowledge the old import", async () => {
+    const hook = render();
+    await hook.appendEntriesAsync([input(1)], { deferPartialSearchPage: true });
+    let release!: () => void;
+    let started!: () => void;
+    const entered = new Promise<void>((resolve) => {
+      started = resolve;
+    });
+    vi.mocked(pagedLogRepository.sealMessageSearchTail).mockImplementationOnce(
+      () => {
+        started();
+        return new Promise<void>((resolve) => {
+          release = resolve;
+        });
+      },
+    );
+    const finish = hook.finishStreamedImport(hook.getDataGeneration());
+    await entered;
+    const clear = hook.clearEntries();
+    expect(render().clearPhase).toBe("waiting");
+    release();
+    await expect(finish).rejects.toThrow("dataset changed");
+    await clear;
+    expect(render().storageError).toBeNull();
+    expect(render().entries.length).toBe(0);
+  });
   it("drops pending hidden metadata publication when the dataset is cleared", async () => {
     const document = Object.assign(new EventTarget(), { hidden: true });
     vi.stubGlobal("document", document);

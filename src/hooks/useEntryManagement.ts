@@ -50,6 +50,7 @@ interface AppendEntriesOptions {
   ignoreExistingForElastic?: boolean;
   onProgress?: (processed: number, total: number) => void;
   live?: boolean;
+  deferPartialSearchPage?: boolean;
 }
 
 export interface PagedEntryMetadata {
@@ -316,7 +317,9 @@ export function useEntryManagement({
         if (mark) entry._mark = mark;
       }
 
-      const ids = await repository.putMany(accepted);
+      const ids = await repository.putMany(accepted, {
+        deferPartialSearchPage: options?.deferPartialSearchPage,
+      });
       assertActive();
 
       if (projectionBridgeRef.current) {
@@ -529,6 +532,31 @@ export function useEntryManagement({
     [appendEntriesAsync],
   );
 
+  const finishStreamedImport = useCallback(
+    (generation: number) => {
+      const assertActive = () => {
+        if (!mountedRef.current || generation !== generationRef.current) {
+          throw new Error("Log import cancelled because the dataset changed");
+        }
+        if (pausedErrorRef.current) throw pausedErrorRef.current;
+      };
+      const operation = (operationTailRef.current ?? Promise.resolve()).then(
+        async () => {
+          assertActive();
+          try {
+            await repositoryRef.current.sealMessageSearchTail();
+          } catch (error) {
+            throw pauseStorage(error, generation);
+          }
+          assertActive();
+        },
+      );
+      operationTailRef.current = operation.catch(() => undefined);
+      return operation;
+    },
+    [pauseStorage],
+  );
+
   const clearEntries = useCallback(() => {
     const generation = ++generationRef.current;
     setClearPhase("waiting");
@@ -608,6 +636,7 @@ export function useEntryManagement({
     getDataGeneration,
     appendEntries,
     appendEntriesAsync,
+    finishStreamedImport,
     clearEntries,
     clearPhase,
     isClearing: clearPhase !== null,

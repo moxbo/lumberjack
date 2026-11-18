@@ -3,6 +3,11 @@ import type { PagedTimestamp, ProjectionRecord } from "./types";
 export const MESSAGE_SEARCH_PAGE_SIZE = 2_000;
 export const MAX_MESSAGE_SEARCH_CHARS = 2 * 1024 * 1024;
 const VERSION = 1;
+// Vite defines this for the renderer; standalone browser bundles use gzip.
+declare const __BENCH_PLAIN_MESSAGE_INDEX__: boolean;
+const useGzip =
+  typeof __BENCH_PLAIN_MESSAGE_INDEX__ === "undefined" ||
+  !__BENCH_PLAIN_MESSAGE_INDEX__;
 
 export type IndexedMessage = Pick<
   ProjectionRecord,
@@ -37,6 +42,10 @@ export function messageSearchPageId(id: number): number {
   );
 }
 
+export function omittedMessageSearchPage(id: number): MessageSearchPage {
+  return { id, version: VERSION, revision: crypto.randomUUID(), omitted: true };
+}
+
 /** Only normalized search text and result references, never raw payloads or MDC. */
 export async function buildMessageSearchPage(
   pageId: number,
@@ -49,11 +58,6 @@ export async function buildMessageSearchPage(
   ) {
     throw new Error("Invalid message search page ID");
   }
-  const header = {
-    id: pageId,
-    version: VERSION,
-    revision: crypto.randomUUID(),
-  };
   let length = 0;
   const messages: string[] = [];
   const offsets = new Uint32Array(records.length + 1);
@@ -72,13 +76,18 @@ export async function buildMessageSearchPage(
     const message = record.message.toLowerCase();
     length += message.length;
     // Extremely large pages use the authoritative projection scan instead.
-    if (length > MAX_MESSAGE_SEARCH_CHARS) return { ...header, omitted: true };
+    if (length > MAX_MESSAGE_SEARCH_CHARS)
+      return omittedMessageSearchPage(pageId);
     messages.push(message);
     offsets[index + 1] = length;
   }
   const packed = messages.join("");
   let text: string | Uint8Array = packed;
-  if (packed.length >= 16 * 1024 && typeof CompressionStream !== "undefined") {
+  if (
+    useGzip &&
+    packed.length >= 16 * 1024 &&
+    typeof CompressionStream !== "undefined"
+  ) {
     // JSON preserves lone UTF-16 surrogates as well as ordinary Unicode text.
     const compressed = new Uint8Array(
       await new Response(
@@ -90,7 +99,9 @@ export async function buildMessageSearchPage(
     if (compressed.byteLength < packed.length) text = compressed;
   }
   return {
-    ...header,
+    id: pageId,
+    version: VERSION,
+    revision: crypto.randomUUID(),
     omitted: false,
     ids: Float64Array.from(records, (record) => record.id),
     timestamps: records.map((record) => record.timestamp),

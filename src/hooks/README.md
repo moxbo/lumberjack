@@ -95,13 +95,17 @@ materializing potentially millions of positions on each append.
 
 Message-only filters use persisted compact search pages: individually lowercased
 messages, row offsets, IDs and original timestamps, optionally gzip-compressed.
-`PagedLogRepository` writes them atomically with payloads and projections.
-Preparing this extra column adds import work in exchange for faster repeated
-filtering; it does not duplicate full payloads.
-Each page covers 2,000 IDs; only the last committed page stays decoded during
-appends, bounded to 2 Mi characters. Missing pages (including upgraded older
-databases) and oversized pages fall back to authoritative projections. Storage
-and decoding failures remain errors, not empty results.
+Each page covers 2,000 IDs. During a streamed file import, the repository writes
+the index once when the range fills, rather than recompressing it for each IPC
+chunk. It seals a remaining partial page **before acknowledging the last chunk**,
+even if that chunk is empty. Other producers still index each batch immediately.
+At most one partial page (2 Mi message characters) is retained between writes.
+
+Acknowledged rows are searchable even during an interrupted import: payloads,
+projections, and any replacement or invalidation of an existing search page
+commit atomically. For a missing or oversized page the worker scans that range's
+authoritative projections. Storage and decoding failures remain errors, not
+empty results. No full payload is added to the index.
 
 The worker reads at most four search pages per request and caches exact literal
 match flags in a 16 MiB estimated LRU budget. AND/OR/NOT combinations reuse these
@@ -124,10 +128,18 @@ and reports timing and transferred base IDs, not a real 1–5 GB workload guaran
 For an actual NDJSON import and UI message-filter benchmark, build with
 `npm run prebuild && npm run build:renderer`, then run
 `FILTER_BENCH_FILE=/absolute/path/to/logs.ndjson npx playwright test tests/e2e/message-filter-performance.spec.ts --trace=off`.
-It reports import, worker and UI timings and verifies zero/all-match, negation,
-boolean and repeated-literal counts. `FILTER_BENCH_MAX_MS` optionally enforces
-a per-query worker-time ceiling. It uses an isolated temporary Electron profile
-and does not modify the input file.
+It reports import, worker and UI timings, the origin's estimated storage usage,
+and counts of gzip/plain/omitted search-page writes. It checks one write per
+aligned page and verifies zero/all-match, negation, boolean and repeated-literal
+counts. `FILTER_BENCH_MAX_MS` optionally enforces a per-query worker-time ceiling.
+Use a file above the 1 MiB streaming threshold. Each run uses an isolated
+temporary Electron profile and does not modify the input file.
+
+For an A/B comparison, run the default benchmark first, rebuild the renderer with
+`npx cross-env FILTER_BENCH_INDEX=plain npm run build:renderer`, then repeat the
+same benchmark with `FILTER_BENCH_INDEX=plain` (use `npx cross-env` on Windows).
+Only message-index gzip is disabled; payload compression is unchanged. Rebuild
+with `npm run build:renderer` without the override to restore the default.
 Keep the host awake throughout the run: system sleep invalidates latency
 measurements and can exceed the import acknowledgement deadline.
 

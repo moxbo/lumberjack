@@ -29,6 +29,8 @@ export default defineConfig({
   // Disable preact/debug in development to prevent render limit errors
   // The render limit in preact/debug is too strict for components with many hooks
   define: {
+    // Benchmark builds may disable gzip for the message index only.
+    __BENCH_PLAIN_MESSAGE_INDEX__: process.env.FILTER_BENCH_INDEX === "plain",
     // Prevent preact/debug from being included
     "process.env.NODE_ENV": JSON.stringify(
       process.env.NODE_ENV === "production" ? "production" : "development",

@@ -15,6 +15,7 @@ declare global {
     messageFilterBenchmark: {
       imported: boolean;
       importError?: string;
+      indexWrites: { gzip: number; plain: number; omitted: number };
       current: BenchmarkRun | null;
     };
   }
@@ -36,9 +37,23 @@ test("measures message filters on an imported NDJSON dataset", async ({
   await page.addInitScript(() => {
     const state: Window["messageFilterBenchmark"] = {
       imported: false,
+      indexWrites: { gzip: 0, plain: 0, omitted: 0 },
       current: null,
     };
     window.messageFilterBenchmark = state;
+    // eslint-disable-next-line @typescript-eslint/unbound-method -- Forward with the original receiver below.
+    const put = IDBObjectStore.prototype.put;
+    IDBObjectStore.prototype.put = function (value, ...key) {
+      if (this.name === "message-search") {
+        const encoding = value.omitted
+          ? "omitted"
+          : typeof value.text === "string"
+            ? "plain"
+            : "gzip";
+        state.indexWrites[encoding]++;
+      }
+      return put.call(this, value, ...key);
+    };
     const NativeWorker = Worker;
     window.Worker = class extends NativeWorker {
       constructor(url: string | URL, options?: WorkerOptions) {
@@ -123,6 +138,16 @@ test("measures message filters on an imported NDJSON dataset", async ({
   ).toBeUndefined();
   await expect(page.locator(".workspace-storage-error")).toHaveCount(0);
   const importMs = performance.now() - importStart;
+  const { indexWrites, storageBytes } = await page.evaluate(async () => ({
+    indexWrites: window.messageFilterBenchmark.indexWrites,
+    storageBytes: (await navigator.storage.estimate()).usage,
+  }));
+  if (process.env.FILTER_BENCH_INDEX === "plain") {
+    expect(
+      indexWrites.gzip,
+      "Rebuild the renderer with FILTER_BENCH_INDEX=plain",
+    ).toBe(0);
+  }
   if (!(await page.locator("#filterMessage").isVisible())) {
     await page.locator(".filter-toggle-btn").click();
   }
@@ -165,7 +190,12 @@ test("measures message filters on an imported NDJSON dataset", async ({
   expect(runs[3]!.passed).toBe(runs[0]!.passed);
   expect(runs[4]!.passed! + runs[0]!.passed!).toBe(runs[0]!.total);
   expect(runs[5]!.passed).toBe(runs[0]!.passed);
-  console.warn("MESSAGE_FILTER_BENCHMARK", JSON.stringify({ importMs, runs }));
+  const pageWrites = indexWrites.gzip + indexWrites.plain + indexWrites.omitted;
+  expect(pageWrites).toBe(Math.ceil(runs[0]!.total! / 2_000));
+  console.warn(
+    "MESSAGE_FILTER_BENCHMARK",
+    JSON.stringify({ importMs, indexWrites, storageBytes, runs }),
+  );
   if (process.env.FILTER_BENCH_MAX_MS) {
     const limit = Number(process.env.FILTER_BENCH_MAX_MS);
     expect(Number.isFinite(limit) && limit > 0).toBe(true);
