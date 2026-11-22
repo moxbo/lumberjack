@@ -293,6 +293,12 @@ export default function App(): JSX.Element {
 
   const [selected, setSelected] = useState<Set<number>>(new Set());
   const lastClicked = useRef<number | null>(null);
+  const selectedOneIdx = useMemo(() => {
+    const id = lastClicked.current;
+    return id !== null && selected.has(id)
+      ? id
+      : (Array.from(selected).pop() ?? null);
+  }, [selected]);
 
   // Use the refactored filter state hook
   const filterState = useFilterState();
@@ -1239,49 +1245,29 @@ export default function App(): JSX.Element {
     if (queryActive && follow) handleDisableFollow();
   }, [cancelAutomaticNavigation, queryActive, follow, handleDisableFollow]);
 
-  // Bei Filteränderung: ausgewählten Eintrag sichtbar halten, wenn er noch in der Liste ist
-  const prevFilteredIdxRef = useRef<ReadonlySequence<number>>(filteredIdx);
-  const selectedRef = useRef<Set<number>>(selected);
-  // Track previous filter criteria to distinguish filter changes from new entries
   const prevFilterCriteriaRef = useRef({
     baseViewKey,
     entryGeneration,
   });
 
-  // Halte selectedRef aktuell
   useEffect(() => {
-    selectedRef.current = selected;
-  }, [selected]);
-
-  useEffect(() => {
-    const filteredListChanged = prevFilteredIdxRef.current !== filteredIdx;
-
-    // Prüfe ob sich die Filter-Kriterien geändert haben (nicht nur neue Einträge)
     const prevCriteria = prevFilterCriteriaRef.current;
-    const filterCriteriaChanged = prevCriteria.baseViewKey !== baseViewKey;
+    prevFilterCriteriaRef.current = { baseViewKey, entryGeneration };
 
     if (prevCriteria.entryGeneration !== entryGeneration) {
       cancelAutomaticNavigation();
-    } else if (filterCriteriaChanged) {
-      pendingSelectedAfterFilterRef.current = search.trim()
-        ? null
-        : (lastClicked.current ??
-          Array.from(selectedRef.current).pop() ??
-          null);
+      return;
     }
-
-    prevFilteredIdxRef.current = filteredIdx;
-    prevFilterCriteriaRef.current = {
-      baseViewKey,
-      entryGeneration,
-    };
-
-    if (!filteredListChanged || !filterResultsCurrent) return;
+    if (prevCriteria.baseViewKey !== baseViewKey) {
+      // A filter change keeps the selection; only an explicit search requests its first match.
+      pendingFirstSearchRef.current = null;
+      pendingSelectedAfterFilterRef.current = selectedOneIdx;
+    }
 
     // Teilergebnisse enthalten den ausgewählten Eintrag möglicherweise noch
     // nicht. Das Ziel bleibt daher bis zu einem späteren Worker-Ergebnis aktiv.
     const currentSelected = pendingSelectedAfterFilterRef.current;
-    if (currentSelected == null) return;
+    if (currentSelected == null || !filterResultsCurrent) return;
 
     // Prüfe ob der ausgewählte Eintrag noch in der gefilterten Liste ist
     const viIndex = viOfGlobal(currentSelected);
@@ -1292,9 +1278,8 @@ export default function App(): JSX.Element {
       pendingSelectedAfterFilterRef.current = null;
     }
   }, [
-    filteredIdx,
     baseViewKey,
-    search,
+    selectedOneIdx,
     entryGeneration,
     filterResultsCurrent,
     searchRunning,
@@ -1406,14 +1391,6 @@ export default function App(): JSX.Element {
     }
   }
 
-  const selectedOneIdx = useMemo(() => {
-    if (selected.size === 1) return Array.from(selected)[0] as number;
-    if (selected.size > 1)
-      return (
-        lastClicked.current ?? (Array.from(selected).slice(-1)[0] as number)
-      );
-    return null;
-  }, [selected]);
   const [selectedEntry, setSelectedEntry] = useState<CanonicalLogEntry | null>(
     null,
   );
