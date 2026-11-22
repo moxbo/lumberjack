@@ -13,11 +13,7 @@ declare global {
   }
 }
 
-test("shows real partial matches, rejects superseded results and preserves the viewport", async ({
-  electronApp,
-  window,
-  testUserData,
-}) => {
+test.beforeEach(async ({ electronApp, window, testUserData }) => {
   // Hold later real worker responses to make partial-result interactions deterministic.
   await window.addInitScript(() => {
     const NativeWorker = globalThis.Worker;
@@ -99,7 +95,13 @@ test("shows real partial matches, rejects superseded results and preserves the v
     });
   }, inputPath);
   await expect(window.locator("#countTotal")).toHaveText("6001");
+});
 
+test("shows real partial matches, rejects superseded results and preserves the viewport", async ({
+  electronApp,
+  window,
+  testUserData,
+}) => {
   const search = window.locator("#searchText");
   const progress = window.locator(".filter-progress progress");
   const selectedMessage = window.locator(".row.sel .col.msg");
@@ -239,8 +241,8 @@ test("shows real partial matches, rejects superseded results and preserves the v
   await expect(window.locator("#countTotal")).toHaveText("0");
   await expect(window.locator("#countFiltered")).toHaveText("0");
   await writeFile(
-    inputPath,
-    JSON.stringify({ ...entries[0], message: "replacement" }),
+    path.join(testUserData, "search.ndjson"),
+    JSON.stringify({ level: "INFO", message: "replacement" }),
   );
   await electronApp.evaluate(({ BrowserWindow }) => {
     BrowserWindow.getAllWindows()[0]!.webContents.send("menu:cmd", {
@@ -253,4 +255,41 @@ test("shows real partial matches, rejects superseded results and preserves the v
   await window.evaluate(() => globalThis.window.searchTestControl.release());
   await expect(window.locator("#countFiltered")).toHaveText("1");
   await expect(window.locator(".row .col.msg")).toHaveText("replacement");
+});
+
+test("keeps the selected row in view when filters change with a committed search", async ({
+  window,
+}) => {
+  const search = window.locator("#searchText");
+  const matches = window.locator("#btnPrevMatch + span");
+  const level = window.locator("#filterLevel");
+  const selectedRow = window.locator(".row.sel");
+  await search.fill("row-");
+  await search.press("Enter");
+  await expect(matches).toHaveText(/\/5999$/);
+  await window.locator(".filter-toggle-btn").click();
+
+  // row-5001 is visible index 3001 before filtering and is not on the first worker page.
+  await window.locator(".list").evaluate((list) => {
+    list.scrollTop = 3001 * 36;
+  });
+  await window.getByRole("option").filter({ hasText: "row-5001" }).click();
+  await window.evaluate(() => globalThis.window.searchTestControl.arm());
+  await level.selectOption("ERROR");
+  await expect(window.locator("#countFiltered")).toHaveText("1000");
+  await expect(selectedRow).toHaveCount(0);
+  await window.evaluate(() => globalThis.window.searchTestControl.release());
+  await expect(window.locator("#countFiltered")).toHaveText("3000");
+  await expect(selectedRow.locator(".msg")).toHaveText("row-5001");
+  await expect(selectedRow).toBeInViewport({ ratio: 1 });
+
+  // Removing the filter makes a previously unsuccessful search match again.
+  // That is not a new search and must not replace the selection.
+  await search.fill("needle");
+  await search.press("Enter");
+  await expect(matches).toHaveText("");
+  await level.selectOption("");
+  await expect(matches).toHaveText(/\/2$/);
+  await expect(selectedRow.locator(".msg")).toHaveText("row-5001");
+  await expect(selectedRow).toBeInViewport({ ratio: 1 });
 });
