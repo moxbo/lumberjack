@@ -1,4 +1,4 @@
-import { test, expect } from "./electron-fixtures";
+import { test, expect, openLogFiles } from "./electron-fixtures";
 
 interface BenchmarkRun {
   requestId: number;
@@ -109,17 +109,7 @@ test("measures message filters on an imported NDJSON dataset", async ({
     });
   });
   const importStart = performance.now();
-  await electronApp.evaluate(({ dialog, BrowserWindow }, filePath) => {
-    BrowserWindow.getFocusedWindow = () =>
-      BrowserWindow.getAllWindows()[0] ?? null;
-    dialog.showOpenDialog = async () => ({
-      canceled: false,
-      filePaths: [filePath],
-    });
-    BrowserWindow.getAllWindows()[0]!.webContents.send("menu:cmd", {
-      type: "open-files",
-    });
-  }, input!);
+  await openLogFiles(electronApp, [input!]);
   await expect
     .poll(
       () =>

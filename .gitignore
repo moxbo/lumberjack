@@ -78,4 +78,4 @@ preload.js
 /test-results/
 /playwright-report/
 /playwright/.cache/
-
+/performance-board/

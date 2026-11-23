@@ -1,5 +1,21 @@
 # Startup Performance Optimizations
 
+## Opt-in filter performance board
+
+**Local:** With Node 22.22.1+ and a desktop display, run `npm ci` and `npm run perf:board` from the repository root. It builds Lumberjack, starts Electron with temporary profiles and prints a Markdown table. On headless Linux use `xvfb-run -a npm run perf:board`. Find the table in `performance-board/report.md` and the raw measurements in `performance-board/results.json`. The normal app, unit tests and E2E suite do not run the board.
+
+**GitHub:** In **Actions → Filter performance board → Run workflow**, select a branch. For a pull request targeting `main`, add the `perf-board` label (create it once if necessary); subsequent pushes run the board while the label is present. Maintainers can start it for contributors without Actions write access. The workflow builds both revisions and measures them in sequence on the same runner with the same benchmark. The job summary compares the medians against `main`; the `filter-performance-board` artifact contains both sets of raw samples. A timing regression alone never fails the job; an incorrect result or an incomplete measurement does.
+
+**What is measured:** Each of three fresh Electron sessions imports the same 50,000 synthetic NDJSON entries. After import, the test applies a message filter, switches to a query without matches and repeats the first query. “First” means first search after import, not cold OS disk caches. Times start at Enter in the renderer:
+
+| Metric | End point |
+| --- | --- |
+| First visible result | First animation frame with matching message text in the visible list area (not an overscan row or worker reply), or the visible no-match message. |
+| Complete list | A result is visible, the expected final count is displayed and filter progress is gone. Virtualized off-screen rows do not need to render. |
+| Longest UI task | Longest overlap with a Chromium renderer Long Task during that interval. Tasks shorter than 50 ms are not reported; zero is not a guarantee of perfectly smooth scrolling. |
+
+For a local comparison, save the baseline `results.json` under another name, then set `PERF_BOARD_BASELINE` to that path for the candidate run. Compare on the same machine under similar load, keep the Electron window visible, and use the same fixture and board version. For an already-built checkout, `npm run perf:board:measure` skips the build; `PERF_BOARD_APP_ROOT` can point it at a separately installed and built checkout to measure both revisions with the same harness.
+
 ## Problem
 
 The application was experiencing slow startup times of 20+ seconds, which is unacceptable for user experience.

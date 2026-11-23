@@ -377,6 +377,8 @@ Full documentation is available in the [`docs/`](docs/INDEX.md) folder:
 
 ## ⚡ Performance
 
+Run `npm ci` and `npm run perf:board` for a local filter latency report, or launch **Filter performance board** under GitHub Actions. It is off by default. [Scenarios, PR opt-in and results](docs/developer/PERFORMANCE.md#opt-in-filter-performance-board).
+
 - **Cold Start**: < 2 seconds
 - **Warm Start**: < 0.3 seconds
 - **Bundle Size**: 38 KB (12 KB gzipped)

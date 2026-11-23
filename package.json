@@ -30,6 +30,8 @@
     "test:e2e:report": "npx playwright show-report",
     "diagnose:memory": "tsx ./scripts/diagnose-memory.ts",
     "test:filter-latency": "tsx ./scripts/test-filter-latency.ts",
+    "perf:board": "npm run build:prod && npm run perf:board:measure",
+    "perf:board:measure": "playwright test --config tests/performance/playwright.config.ts && tsx tests/performance/report.ts",
     "lint": "eslint src --ext .ts,.tsx",
     "lint:fix": "eslint src --ext .ts,.tsx --fix",
     "format": "prettier --write .",

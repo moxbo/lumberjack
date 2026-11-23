@@ -1,0 +1,62 @@
+name: Filter performance board
+on:
+  workflow_dispatch:
+  pull_request:
+    branches: [main]
+    types: [opened, reopened, synchronize, labeled]
+permissions:
+  contents: read
+jobs:
+  measure:
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (contains(github.event.pull_request.labels.*.name, 'perf-board') &&
+      (github.event.action != 'labeled' || github.event.label.name == 'perf-board'))
+    concurrency:
+      group: filter-board-${{ github.event.pull_request.number || github.ref }}
+      cancel-in-progress: true
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    defaults:
+      run:
+        working-directory: candidate
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          path: candidate
+          persist-credentials: false
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.base.sha || 'main' }}
+          path: baseline
+          persist-credentials: false
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+      - name: Build candidate
+        run: npm ci && npm run build:prod
+      - name: Build main
+        working-directory: baseline
+        run: npm ci && npm run build:prod
+      - name: Install Linux display dependencies
+        run: npx --no-install playwright install-deps chromium
+      - name: Measure main with the candidate's benchmark
+        env:
+          PERF_BOARD_APP_ROOT: ${{ github.workspace }}/baseline
+        run: |
+          xvfb-run -a npm run perf:board:measure
+          cp performance-board/results.json performance-board/main.json
+      - name: Measure candidate and compare
+        env:
+          PERF_BOARD_BASELINE: performance-board/main.json
+        run: |
+          xvfb-run -a npm run perf:board:measure
+          cat performance-board/report.md >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v7
+        with:
+          name: filter-performance-board
+          path: |
+            candidate/performance-board/*.json
+            candidate/performance-board/report.md
+          retention-days: 14

@@ -13,5 +13,6 @@ build/
 *.md
 .DS_Store
 coverage/
+performance-board/
 release/
 images/

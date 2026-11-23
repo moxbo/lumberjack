@@ -15,6 +15,7 @@ import { _electron as electron } from "playwright";
 import * as path from "path";
 import * as fs from "fs";
 import * as os from "os";
+import { createRequire } from "node:module";
 import { fileURLToPath } from "url";
 
 // Get __dirname equivalent in ESM
@@ -26,7 +27,9 @@ export const test = base.extend<{
   electronApp: ElectronApplication;
   window: Page;
   testUserData: string;
+  appRoot: string;
 }>({
+  appRoot: [path.resolve(__dirname, "../.."), { option: true }],
   // eslint-disable-next-line no-empty-pattern
   testUserData: async ({}, use) => {
     const directory = fs.mkdtempSync(path.join(os.tmpdir(), "lumberjack-e2e-"));
@@ -36,9 +39,7 @@ export const test = base.extend<{
       fs.rmSync(directory, { recursive: true, force: true });
     }
   },
-  electronApp: async ({ testUserData }, use) => {
-    // Resolve main entry from project root
-    const projectRoot = path.resolve(__dirname, "../..");
+  electronApp: async ({ testUserData, appRoot: projectRoot }, use) => {
     const mainPath = path.join(projectRoot, "dist-main/main.cjs");
 
     // Verify the main entry point exists
@@ -54,6 +55,9 @@ export const test = base.extend<{
 
     // Launch Electron app with the project directory as cwd
     const electronApp = await electron.launch({
+      executablePath: createRequire(path.join(projectRoot, "package.json"))(
+        "electron",
+      ) as string,
       args: [
         projectRoot,
         // Disable GPU for CI stability (headless environments)
@@ -138,6 +142,20 @@ export const test = base.extend<{
 });
 
 export { expect };
+
+export async function openLogFiles(
+  app: ElectronApplication,
+  paths: string[],
+): Promise<void> {
+  await app.evaluate(({ dialog, BrowserWindow }, filePaths) => {
+    BrowserWindow.getFocusedWindow = () =>
+      BrowserWindow.getAllWindows()[0] ?? null;
+    dialog.showOpenDialog = async () => ({ canceled: false, filePaths });
+    BrowserWindow.getAllWindows()[0]!.webContents.send("menu:cmd", {
+      type: "open-files",
+    });
+  }, paths);
+}
 
 /**
  * Helper to wait for the app to be fully initialized
