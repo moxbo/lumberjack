@@ -264,6 +264,9 @@ describe("source backpressure", () => {
     try {
       await vi.waitFor(() => expect(consume).toHaveBeenCalledTimes(1));
       expect(fetcher).toHaveBeenCalledTimes(1);
+      expect(service.getDiagnostics().http.pollerDetails[0]?.seenEntries).toBe(
+        0,
+      );
       release();
       await vi.waitFor(() =>
         expect(service.getDiagnostics().http.activePollers).toBe(0),
@@ -319,6 +322,9 @@ describe("source backpressure", () => {
         1,
       );
       await vi.waitFor(() => expect(defaultSink).toHaveBeenCalledOnce());
+      expect(service.getDiagnostics().http.pollerDetails[0]?.seenEntries).toBe(
+        1,
+      );
       service.httpStopPoll(second.id!);
       expect(defaultSink).toHaveBeenCalledWith([
         expect.objectContaining({

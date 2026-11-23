@@ -5,11 +5,11 @@
 
 import * as net from "net";
 import * as https from "https";
-import { createHash } from "crypto";
 import log from "electron-log/main";
 import type { LogEntry } from "../types/ipc";
 import { responseChunks } from "./ResponseStream";
 import { httpLogBatches } from "./HttpLogStream";
+import { MAX_SEEN_ENTRIES, prepareHttpPollBatch } from "./HttpPollHistory";
 import { LogLineSplitter, type LogLine } from "../utils/entryLimits";
 
 /**
@@ -84,7 +84,6 @@ export class NetworkService {
   // via TCP keepalive instead of an inactivity timeout that would reset them.
   private static readonly TCP_KEEPALIVE_MS = 60 * 1000;
   private static readonly TCP_SHUTDOWN_GRACE_MS = 1000;
-  private static readonly MAX_SEEN_ENTRIES = 10000; // Max deduplication entries per poller
 
   // Additional robustness constants
   private static readonly HTTP_FETCH_TIMEOUT_MS = 30 * 1000; // 30 seconds HTTP timeout
@@ -731,48 +730,6 @@ export class NetworkService {
   }
 
   /**
-   * Deduplicate new entries based on key fields
-   * Limits the size of the seen Set to prevent unbounded memory growth
-   */
-  private dedupeNewEntries(entries: LogEntry[], seen: Set<string>): LogEntry[] {
-    const fresh: LogEntry[] = [];
-    for (const e of entries) {
-      const key = createHash("sha256")
-        .update(
-          JSON.stringify([
-            e.timestamp,
-            e.level,
-            e.logger,
-            e.thread,
-            e.message,
-            e.traceId,
-            e.source,
-          ]),
-        )
-        .digest("hex");
-      if (!seen.has(key)) {
-        seen.add(key);
-        fresh.push(e);
-
-        // Prevent unbounded growth of seen Set (memory leak prevention)
-        if (seen.size > NetworkService.MAX_SEEN_ENTRIES) {
-          // Remove oldest entries by converting to array, slicing, and recreating
-          // This keeps the most recent entries which are more likely to be duplicates
-          const recentEntries = Array.from(seen).slice(
-            -NetworkService.MAX_SEEN_ENTRIES / 2,
-          );
-          seen.clear();
-          recentEntries.forEach((k) => seen.add(k));
-          log.debug(
-            `[http:poll] Trimmed seen Set to ${seen.size} entries (was ${seen.size + fresh.length})`,
-          );
-        }
-      }
-    }
-    return fresh;
-  }
-
-  /**
    * Load logs from HTTP URL once
    */
   async httpLoadOnce(
@@ -828,7 +785,6 @@ export class NetworkService {
       await Promise.resolve();
 
       const id = this.httpPollerSeq++;
-      const seen = new Set<string>();
       const abortController = new AbortController();
 
       // Helper to yield to event loop - prevents UI freeze ("Keine Rückmeldung")
@@ -860,30 +816,27 @@ export class NetworkService {
           )) {
             await yieldToEventLoop();
             if (!isPollerActive()) return;
-            const nextSeen = new Set(seen);
-            const fresh = this.dedupeNewEntries(entries, nextSeen);
-            if (fresh.length) {
-              try {
-                await this.sendLogs(fresh, consume);
-                delivered = true;
-              } catch (error) {
-                if (!isPollerActive()) return;
-                // Persistence may have accepted a prefix. Never refetch/replay
-                // the whole range after an ambiguous or terminal consumer error.
-                log.error(
-                  `[http:poll] ${url} stopped after delivery failure:`,
-                  error,
-                );
-                this.httpStopPoll(id);
-                onError?.(
-                  id,
-                  error instanceof Error ? error : new Error(String(error)),
-                );
-                return;
-              }
+            const batch = prepareHttpPollBatch(entries, poller.seen);
+            if (!batch.fresh.length) continue;
+            try {
+              await this.sendLogs(batch.fresh, consume);
+              delivered = true;
+            } catch (error) {
+              if (!isPollerActive()) return;
+              // Persistence may have accepted a prefix. Never refetch/replay
+              // the whole range after an ambiguous or terminal consumer error.
+              log.error(
+                `[http:poll] ${url} stopped after delivery failure:`,
+                error,
+              );
+              this.httpStopPoll(id);
+              onError?.(
+                id,
+                error instanceof Error ? error : new Error(String(error)),
+              );
+              return;
             }
-            seen.clear();
-            for (const key of nextSeen) seen.add(key);
+            poller.seen = batch.commit();
           }
         } catch (err) {
           // Don't log/retry if poller was stopped (abort error)
@@ -941,15 +894,16 @@ export class NetworkService {
       const initialTimer = setTimeout(() => {}, 0); // Placeholder, cleared immediately
       clearTimeout(initialTimer);
 
-      this.httpPollers.set(id, {
+      const poller: HttpPollConfig = {
         id,
         url,
         intervalSec,
         timer: initialTimer,
-        seen,
+        seen: new Set<string>(),
         abortController,
         stopped: false,
-      });
+      };
+      this.httpPollers.set(id, poller);
 
       // Fire first tick immediately (it will schedule the next one when done)
       void tick();
@@ -1091,7 +1045,7 @@ export class NetworkService {
         httpTimeout: NetworkService.HTTP_FETCH_TIMEOUT_MS,
         httpMaxResponseSize: null,
         httpMaxRecordSize: NetworkService.HTTP_MAX_RECORD_SIZE,
-        maxSeenEntries: NetworkService.MAX_SEEN_ENTRIES,
+        maxSeenEntries: MAX_SEEN_ENTRIES,
       },
     };
   }

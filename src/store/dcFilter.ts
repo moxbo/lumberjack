@@ -5,33 +5,10 @@ import {
   matchesDcFilter,
   normalizeTraceKeyName,
 } from "../utils/dcMatch";
+import { createChangeEmitter } from "./changeEmitter";
 
 // Re-export für bestehende Konsumenten (z. B. mdcListener)
 export { canonicalDcKey };
-
-interface Listener {
-  (): void;
-}
-class SimpleEmitter {
-  private _ls = new Set<Listener>();
-  on(fn: Listener): () => void {
-    if (typeof fn === "function") {
-      this._ls.add(fn);
-      return () => this._ls.delete(fn);
-    }
-    return () => {};
-  }
-  emit(): void {
-    for (const fn of this._ls) {
-      try {
-        fn();
-      } catch (e) {
-        // best-effort: do not throw from listeners
-        console.warn("Listener error in DiagnosticContextFilter emitter:", e);
-      }
-    }
-  }
-}
 
 type DcEntry = { key: string; val: string; active: boolean };
 export type { DcEntry };
@@ -42,7 +19,9 @@ function entryKey(key: string, val: string): string {
 
 class DiagnosticContextFilterImpl {
   private _map = new Map<string, DcEntry>();
-  private _em = new SimpleEmitter();
+  private _em = createChangeEmitter((error) =>
+    console.warn("Listener error in DiagnosticContextFilter emitter:", error),
+  );
   private _enabled = true;
   onChange(fn: () => void): () => void {
     return this._em.on(fn);

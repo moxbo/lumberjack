@@ -105,42 +105,52 @@ export function exportToCsv(entries: ExportEntry[]): string {
   return "\uFEFF" + CSV_HEADER + "\n" + entries.map(csvRow).join("\n");
 }
 
-export function exportToMarkdown(
-  entries: ExportEntry[],
+function markdownHeader(
+  count: number,
   meta?: { exportedAt?: string; total?: number },
 ): string {
-  const head = "| Timestamp | Level | Logger | Message |";
-  const sep = "| --- | --- | --- | --- |";
-  const rows = entries.map(
-    (e) =>
-      `| ${mdCell(fmtTs(e?.timestamp))} | ${mdCell(e?.level)} | ${mdCell(
-        e?.logger,
-      )} | ${mdCell(e?.message)} |`,
-  );
   const headerLines: string[] = ["# Lumberjack Log Export", ""];
   if (meta?.exportedAt) {
     headerLines.push(`_Exported: ${meta.exportedAt}_`);
   }
   if (meta?.total != null) {
-    headerLines.push(`_Entries: ${entries.length} of ${meta.total}_`);
+    headerLines.push(`_Entries: ${count} of ${meta.total}_`);
   }
-  headerLines.push("");
-  return [...headerLines, head, sep, ...rows].join("\n");
+  headerLines.push(
+    "",
+    "| Timestamp | Level | Logger | Message |",
+    "| --- | --- | --- | --- |",
+  );
+  return headerLines.join("\n");
+}
+
+function markdownRow(e: ExportEntry): string {
+  return `| ${mdCell(fmtTs(e?.timestamp))} | ${mdCell(e?.level)} | ${mdCell(e?.logger)} | ${mdCell(e?.message)} |`;
+}
+
+export function exportToMarkdown(
+  entries: ExportEntry[],
+  meta?: { exportedAt?: string; total?: number },
+): string {
+  return [
+    markdownHeader(entries.length, meta),
+    ...entries.map(markdownRow),
+  ].join("\n");
+}
+
+function textRow(e: ExportEntry, fmtTimestamp: (v: unknown) => string): string {
+  const ts = fmtTimestamp(e?.timestamp);
+  const lvl = String(e?.level || "").padEnd(5);
+  const loggerVal = String(e?.logger || "");
+  const msg = String(e?.message || "");
+  return `${ts} [${lvl}] ${loggerVal} - ${msg}`;
 }
 
 export function exportToTxt(
   entries: ExportEntry[],
   fmtTimestamp: (v: unknown) => string,
 ): string {
-  return entries
-    .map((e) => {
-      const ts = fmtTimestamp(e?.timestamp);
-      const lvl = String(e?.level || "").padEnd(5);
-      const loggerVal = String(e?.logger || "");
-      const msg = String(e?.message || "");
-      return `${ts} [${lvl}] ${loggerVal} - ${msg}`;
-    })
-    .join("\n");
+  return entries.map((e) => textRow(e, fmtTimestamp)).join("\n");
 }
 
 export interface StreamExportOptions {
@@ -159,18 +169,8 @@ export async function* streamExport(
 ): AsyncGenerator<string> {
   if (format === "json") yield options.count ? "[\n" : "[]";
   else if (format === "csv") yield "\uFEFF" + CSV_HEADER + "\n";
-  else if (format === "md") {
-    const header = ["# Lumberjack Log Export", ""];
-    if (options.exportedAt) header.push(`_Exported: ${options.exportedAt}_`);
-    if (options.total != null)
-      header.push(`_Entries: ${options.count} of ${options.total}_`);
-    header.push(
-      "",
-      "| Timestamp | Level | Logger | Message |",
-      "| --- | --- | --- | --- |",
-    );
-    yield header.join("\n");
-  } else if (format === "html") {
+  else if (format === "md") yield markdownHeader(options.count, options);
+  else if (format === "html") {
     if (!options.html) throw new Error("HTML export options are required");
     yield htmlHeader(options.html);
   } else if (format !== "ndjson" && format !== "txt") {
@@ -187,11 +187,9 @@ export async function* streamExport(
       if (count || format === "md") yield "\n";
       if (format === "ndjson") yield JSON.stringify(jsonEntry(entry));
       else if (format === "csv") yield csvRow(entry);
-      else if (format === "txt")
-        yield exportToTxt([entry], options.fmtTimestamp);
-      else if (format === "md") {
-        yield `| ${mdCell(fmtTs(entry.timestamp))} | ${mdCell(entry.level)} | ${mdCell(entry.logger)} | ${mdCell(entry.message)} |`;
-      } else yield htmlRow(entry, options.html!, options.fmtTimestamp);
+      else if (format === "txt") yield textRow(entry, options.fmtTimestamp);
+      else if (format === "md") yield markdownRow(entry);
+      else yield htmlRow(entry, options.html!, options.fmtTimestamp);
     }
     count++;
   }

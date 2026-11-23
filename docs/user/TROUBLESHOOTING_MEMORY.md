@@ -169,7 +169,7 @@ Die Logs zeigen aktive TCP-Verbindungen:
 
 #### 2. HTTP-Polling-Speicher prüfen
 
-Die Logs zeigen, wenn der Deduplizierungs-Speicher getrimmt wird:
+Pro Poller zählen nur Einträge aus bestätigten Chargen als bekannt. Enthält eine Charge ausschließlich Duplikate, wird die Historie weder kopiert noch verändert. Überschreitet sie 10.000 Schlüssel, bleiben die jüngsten 5.000 erhalten:
 ```
 [http:poll] Trimmed seen Set to 5000 entries (was 10001)
 ```
@@ -601,7 +601,7 @@ Logs show active TCP connections:
 
 #### 2. Check HTTP Polling Memory
 
-Logs show when deduplication memory is trimmed:
+Each poller remembers entries only after their batch is acknowledged. A batch containing only duplicates neither copies nor changes the history. When the history exceeds 10,000 keys, the most recent 5,000 are retained:
 ```
 [http:poll] Trimmed seen Set to 5000 entries (was 10001)
 ```

@@ -1,24 +1,6 @@
 // TimeFilter: verwaltet Zeitbereichs-Filter (relativ oder absolut) und bietet ein matches()-Prädikat
 
-class SimpleEmitterTF {
-  private _ls = new Set<() => void>();
-  on(fn: () => void): () => void {
-    if (typeof fn === "function") {
-      this._ls.add(fn);
-      return () => this._ls.delete(fn);
-    }
-    return () => {};
-  }
-  emit(): void {
-    for (const fn of this._ls) {
-      try {
-        fn();
-      } catch {
-        // Ignore errors in listeners
-      }
-    }
-  }
-}
+import { createChangeEmitter } from "./changeEmitter";
 
 function parseDurationMs(str: string): number | null {
   if (!str) return null;
@@ -68,7 +50,7 @@ export interface TimeFilterState {
 }
 
 class TimeFilterImpl {
-  private _em = new SimpleEmitterTF();
+  private _em = createChangeEmitter();
   private _state: TimeFilterState = {
     enabled: false,
     mode: "relative",

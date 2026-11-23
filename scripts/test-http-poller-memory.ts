@@ -6,6 +6,7 @@
  */
 
 import { NetworkService } from "../src/services/NetworkService";
+import { prepareHttpPollBatch } from "../src/services/HttpPollHistory";
 import type { LogEntry } from "../src/types/ipc";
 
 // @ts-expect-error TS6133 - helper kept for debugging
@@ -88,9 +89,6 @@ async function testHttpPollerMemoryLeak(): Promise<void> {
 
   console.log("Test 3: Verify deduplication prevents duplicate entries...");
 
-  // Create a test seen Set
-  const seen = new Set<string>();
-
   // Create some duplicate entries
   const testEntries: LogEntry[] = [
     {
@@ -117,11 +115,9 @@ async function testHttpPollerMemoryLeak(): Promise<void> {
     },
   ];
 
-  // Use reflection to access private method for testing
-  const dedupeMethod = (networkService as any).dedupeNewEntries.bind(
-    networkService,
-  );
-  const fresh = dedupeMethod(testEntries, seen);
+  const batch = prepareHttpPollBatch(testEntries, new Set());
+  const fresh = batch.fresh;
+  const seen = batch.commit();
 
   if (fresh.length !== 1) {
     throw new Error(`Expected 1 unique entry, got ${fresh.length}`);
@@ -154,8 +150,9 @@ async function testHttpPollerMemoryLeak(): Promise<void> {
     });
   }
 
-  const seenLarge = new Set<string>();
-  const freshLarge = dedupeMethod(largeTestEntries, seenLarge);
+  const largeBatch = prepareHttpPollBatch(largeTestEntries, new Set());
+  const freshLarge = largeBatch.fresh;
+  const seenLarge = largeBatch.commit();
 
   if (seenLarge.size > 10000) {
     throw new Error(

@@ -2,33 +2,15 @@
 // keys: Map<string, Set<string>>; hält interne Sortierung nicht, liefert aber sortierte Arrays per Getter
 
 import { lazyInstance } from "./_lazy";
+import { createChangeEmitter } from "./changeEmitter";
 import { canonicalDcKey } from "./dcFilter";
 import { LoggingStore } from "./loggingStore";
 
-type Listener = () => void;
-class SimpleEmitter {
-  private _ls = new Set<Listener>();
-  on(fn: Listener) {
-    if (typeof fn === "function") {
-      this._ls.add(fn);
-      return () => this._ls.delete(fn);
-    }
-    return () => {};
-  }
-  emit(): void {
-    for (const fn of this._ls) {
-      try {
-        fn();
-      } catch (e) {
-        console.warn("MDCListener emitter listener error:", e);
-      }
-    }
-  }
-}
-
 class MDCListenerImpl {
   private _started = false;
-  private _em = new SimpleEmitter();
+  private _em = createChangeEmitter((error) =>
+    console.warn("MDCListener emitter listener error:", error),
+  );
   public keys = new Map<string, Set<string>>(); // key -> Set(values)
   // Memory limits to prevent unbounded growth
   private static readonly MAX_KEYS = 1000;
@@ -96,7 +78,7 @@ class MDCListenerImpl {
     }
     if (changed) this._em.emit();
   }
-  onChange(fn: Listener): () => void {
+  onChange(fn: () => void): () => void {
     return this._em.on(fn);
   }
   getSortedKeys(): string[] {
