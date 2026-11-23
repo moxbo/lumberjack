@@ -5,6 +5,41 @@ Alle nennenswerten Änderungen an diesem Projekt werden in dieser Datei dokument
 Das Format orientiert sich an [Keep a Changelog](https://keepachangelog.com/de/1.1.0/),
 und dieses Projekt folgt [Semantic Versioning](https://semver.org/lang/de/).
 
+## [1.2.3] - 2026-11-23
+
+
+### Added
+- **http-tail**: Warn when range requests trigger full downloads
+
+
+### CI
+- Reuse successful checks for release commits
+
+
+### Changed
+- **App**: Remove unused local session message from storage error handling
+- **App**: Simplify window focus handling for improved input interactivity
+
+
+### Fixed
+- **storage**: Distinguish transaction aborts from quota failures
+- **filter**: Keep the selected log entry in view when filters change
+
+
+### Performance
+- **store**: Use paged immutable snapshots for log metadata
+- **renderer**: Coalesce metadata updates in hidden windows
+- **filter**: Apply incremental results and lazy match positions
+- **filter**: Index message-only queries with compact pages
+- **filter**: Seal message search pages once during streamed imports
+- **http**: Avoid copying poll history for every batch
+
+
+### Tests
+- **e2e**: Wait for Electron exit before profile cleanup
+- **e2e**: Cover selection across filter changes during a search
+- **perf**: Add an opt-in filter performance board
+
 ## [1.2.2] - 2026-10-22
 
 
