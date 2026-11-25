@@ -1,5 +1,7 @@
 # Production-Ready Optimizations - Implementation Guide
 
+Historical reference: the standalone `PerformanceMonitor` described below has been removed. The installed app's health-monitoring switch controls periodic memory checks, not filter performance recording.
+
 ## Overview
 
 This document describes the production-ready optimizations implemented in the Lumberjack application to improve performance, stability, and reliability.

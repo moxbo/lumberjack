@@ -5,6 +5,9 @@
  */
 
 import log from "electron-log/main";
+import type { FeatureFlags } from "./FeatureFlags";
+
+const HEALTH_CHECK_INTERVAL_MS = 60_000;
 
 export type HealthStatus = "healthy" | "unhealthy" | "degraded" | "error";
 
@@ -74,16 +77,17 @@ export class HealthMonitor {
 
     for (const [name, check] of this.checks.entries()) {
       const checkStartTime = Date.now();
+      let timeout: ReturnType<typeof setTimeout> | undefined;
 
       try {
         const result = await Promise.race([
           check.check(),
-          new Promise<boolean>((_, reject) =>
-            setTimeout(
+          new Promise<never>((_, reject) => {
+            timeout = setTimeout(
               () => reject(new Error("Health check timeout")),
               check.timeout ?? this.defaultTimeout,
-            ),
-          ),
+            );
+          }),
         ]);
 
         const duration = Date.now() - checkStartTime;
@@ -117,6 +121,8 @@ export class HealthMonitor {
           error: err.message,
           duration,
         });
+      } finally {
+        clearTimeout(timeout);
       }
     }
 
@@ -175,7 +181,10 @@ export class HealthMonitor {
   /**
    * Start periodic health monitoring
    */
-  startMonitoring(intervalMs: number = 60000): void {
+  startMonitoring(
+    intervalMs = HEALTH_CHECK_INTERVAL_MS,
+    runImmediately = true,
+  ): void {
     if (this.isRunning) {
       log.warn("[health-monitor] Already monitoring");
       return;
@@ -183,10 +192,11 @@ export class HealthMonitor {
 
     this.isRunning = true;
 
-    // Run checks immediately
-    this.runChecks().catch((error) => {
-      log.error("[health-monitor] Initial check failed:", error);
-    });
+    if (runImmediately) {
+      this.runChecks().catch((error) => {
+        log.error("[health-monitor] Initial check failed:", error);
+      });
+    }
 
     // Schedule periodic checks
     this.monitoringInterval = setInterval(() => {
@@ -196,6 +206,22 @@ export class HealthMonitor {
     }, intervalMs);
 
     log.info(`[health-monitor] Started monitoring (interval: ${intervalMs}ms)`);
+  }
+
+  followFeatureFlag(flags: FeatureFlags): () => void {
+    const sync = () => {
+      const enabled = flags.isEnabled("HEALTH_MONITORING");
+      if (enabled === this.isMonitoring()) return;
+      // Leave startup free of health checks. The first check runs after one interval.
+      if (enabled) this.startMonitoring(HEALTH_CHECK_INTERVAL_MS, false);
+      else this.stopMonitoring();
+    };
+    sync();
+    const unsubscribe = flags.onChange(sync);
+    return () => {
+      unsubscribe();
+      if (this.isMonitoring()) this.stopMonitoring();
+    };
   }
 
   /**

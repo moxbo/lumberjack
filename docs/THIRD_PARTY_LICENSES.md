@@ -1,6 +1,6 @@
 # Third-Party Licenses
 
-This document lists all third-party dependencies used in Lumberjack (production build).
+This is a historical snapshot of production dependencies. TanStack Virtual and its React peers are no longer dependencies of the app. Run `npm run licenses` for the inventory of the installed version.
 
 **Generated**: 2025-12-17  
 **License Checker**: `npx license-checker --production`
@@ -96,9 +96,8 @@ SOFTWARE.
 
 ---
 
-## Regenerating This File
+## Generating the current CSV inventory
 
 ```bash
 npm run licenses
 ```
-

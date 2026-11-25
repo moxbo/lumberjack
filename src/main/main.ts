@@ -398,26 +398,9 @@ healthMonitor.registerCheck("memory", async () => {
   return heapPercent < 0.9; // Healthy if heap usage below 90%
 });
 
-healthMonitor.registerCheck("network", async () => {
-  const tcp = networkService.getTcpStatus();
-  // Healthy if TCP not running or running successfully
-  return !tcp.running || tcp.running;
-});
-
-// Start periodic health monitoring in production - DELAYED to not impact startup
 if (!isDev) {
-  // Wait 5 seconds after startup before starting health checks
-  // This reduces CPU/IO load during the critical first-render period
-  setTimeout(() => {
-    setInterval(() => {
-      healthMonitor.runChecks().catch((err) => {
-        log.error(
-          "[health] Health check failed:",
-          err instanceof Error ? err.message : String(err),
-        );
-      });
-    }, 60000); // Check every minute
-  }, 5000); // Delay first check by 5 seconds
+  const stopHealthMonitoring = healthMonitor.followFeatureFlag(featureFlags);
+  app.once("will-quit", stopHealthMonitoring);
 }
 
 // Configure logging strategy based on environment

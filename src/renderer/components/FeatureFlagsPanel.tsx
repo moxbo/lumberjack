@@ -5,16 +5,7 @@
 
 import { useFeatureFlags, type FeatureName } from "../../hooks";
 import { useI18n } from "../../utils/i18n";
-
-const FEATURE_LIST: FeatureName[] = [
-  "TCP_SERVER",
-  "HTTP_POLLING",
-  "ELASTICSEARCH",
-  "FILE_LOGGING",
-  "HEALTH_MONITORING",
-  "ADAPTIVE_BATCHING",
-  "ASYNC_FILE_WRITER",
-];
+import { FEATURE_NAMES } from "../../constants/featureFlags";
 
 export function FeatureFlagsPanel() {
   const { features, stats, loading, error, enable, disable, resetAll } =
@@ -65,7 +56,7 @@ export function FeatureFlagsPanel() {
       </p>
 
       <div className="feature-flags-list">
-        {FEATURE_LIST.map((feature) => {
+        {FEATURE_NAMES.map((feature) => {
           const featureData = features[feature];
           const isEnabled = featureData?.enabled ?? true;
           const reason = featureData?.reason;

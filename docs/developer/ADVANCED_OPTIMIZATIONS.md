@@ -1,5 +1,7 @@
 # Advanced Performance Optimizations
 
+Historical design notes: the app now uses a fixed-row virtualizer and parses imported files in the main process. The TanStack virtualizer and renderer parser pool below are no longer shipped.
+
 This document describes the advanced performance optimizations implemented for the Lumberjack application, focusing on code splitting, web workers, caching, and other techniques to improve load time, responsiveness, and overall user experience.
 
 ## Overview

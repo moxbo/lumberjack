@@ -1,5 +1,7 @@
 # Startup Performance Optimizations
 
+Historical implementation notes: the current renderer uses `highlightWorkerClient`, `useFixedRowVirtualizer` and paged log storage, not the older alternatives described below.
+
 ## Problem Analysis
 
 Based on the provided performance logs, the application had a slow startup time of ~20.8 seconds with the following breakdown:

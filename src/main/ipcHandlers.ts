@@ -2026,8 +2026,9 @@ export function registerIpcHandlers(
     "featureFlags:disable",
     (_event, { feature, reason }: { feature: string; reason?: string }) => {
       if (featureFlags) {
-        featureFlags.disable(feature, reason);
-        return { ok: true };
+        return featureFlags.disable(feature, reason)
+          ? { ok: true }
+          : { ok: false, error: t("main.errors.featureFlagUnknown") };
       }
       return { ok: false, error: t("main.errors.featureFlagsNotAvailable") };
     },
@@ -2035,8 +2036,9 @@ export function registerIpcHandlers(
 
   ipcMain.handle("featureFlags:enable", (_event, feature: string) => {
     if (featureFlags) {
-      featureFlags.enable(feature);
-      return { ok: true };
+      return featureFlags.enable(feature)
+        ? { ok: true }
+        : { ok: false, error: t("main.errors.featureFlagUnknown") };
     }
     return { ok: false, error: t("main.errors.featureFlagsNotAvailable") };
   });

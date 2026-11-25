@@ -1,5 +1,7 @@
 # Production-Ready Optimizations - Quick Reference
 
+Historical reference: the experimental `PerformanceMonitor` is no longer part of the application. For current filter diagnostics, see [Live filter measurements](PERFORMANCE.md#live-filter-measurements).
+
 ## Overview
 
 Production-ready optimizations have been implemented to improve performance, stability, and reliability of the Lumberjack application.

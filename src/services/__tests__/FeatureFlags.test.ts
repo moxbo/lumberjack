@@ -13,11 +13,27 @@ describe("FeatureFlags", () => {
     expect(flags.isEnabled("HTTP_POLLING")).toBe(true);
     expect(flags.isEnabled("ELASTICSEARCH")).toBe(true);
     expect(flags.isEnabled("FILE_LOGGING")).toBe(true);
-    expect(flags.getStats().total).toBe(7);
-    expect(flags.getStats().enabled).toBe(7);
+    expect(flags.isEnabled("HEALTH_MONITORING")).toBe(true);
+    expect(flags.getStats()).toEqual({ total: 5, enabled: 5, disabled: 0 });
   });
   it("should return false for unknown features", () => {
     expect(flags.isEnabled("UNKNOWN")).toBe(false);
+  });
+  it("ignores retired settings and does not reintroduce them via legacy clients", () => {
+    const persist = vi.fn();
+    flags.setPersistCallback(persist);
+    flags.loadFromSettings({
+      ADAPTIVE_BATCHING: true,
+      ASYNC_FILE_WRITER: true,
+    });
+    expect(flags.enable("ASYNC_FILE_WRITER")).toBe(false);
+    expect(flags.disable("ADAPTIVE_BATCHING")).toBe(false);
+    expect(flags.getStats()).toEqual({ total: 5, enabled: 5, disabled: 0 });
+    expect(persist).not.toHaveBeenCalled();
+    expect(flags.disable("HEALTH_MONITORING")).toBe(true);
+    expect(persist).toHaveBeenLastCalledWith({ HEALTH_MONITORING: true });
+    flags.resetAll();
+    expect(persist).toHaveBeenLastCalledWith({});
   });
   it("should disable a feature with reason", () => {
     flags.disable("TCP_SERVER", "Port conflict");
@@ -39,7 +55,7 @@ describe("FeatureFlags", () => {
   });
   it("should handle undefined settings gracefully", () => {
     flags.loadFromSettings(undefined);
-    expect(flags.getStats().enabled).toBe(7);
+    expect(flags.getStats().enabled).toBe(5);
   });
   it("should reset all features", () => {
     flags.disable("TCP_SERVER");
@@ -55,7 +71,7 @@ describe("FeatureFlags", () => {
       enabled: true,
       reason: undefined,
     });
-    expect(all.size).toBe(7);
+    expect(all.size).toBe(5);
   });
   it("should call persist callback on disable", () => {
     const cb = vi.fn();

@@ -5,15 +5,8 @@
  */
 
 import log from "electron-log/main";
-
-export type FeatureName =
-  | "TCP_SERVER"
-  | "HTTP_POLLING"
-  | "ELASTICSEARCH"
-  | "FILE_LOGGING"
-  | "HEALTH_MONITORING"
-  | "ADAPTIVE_BATCHING"
-  | "ASYNC_FILE_WRITER";
+import { FEATURE_NAMES } from "../constants/featureFlags";
+import { createChangeEmitter } from "../store/changeEmitter";
 
 /** Callback for persisting feature flags */
 export type PersistCallback = (
@@ -24,19 +17,17 @@ export type PersistCallback = (
  * FeatureFlags manages feature availability for graceful degradation
  */
 export class FeatureFlags {
-  private features = new Map<string, boolean>();
+  private features = new Map<string, boolean>(
+    FEATURE_NAMES.map((name) => [name, true]),
+  );
   private disableReasons = new Map<string, string>();
   private persistCallback?: PersistCallback;
+  private readonly changes = createChangeEmitter((error) =>
+    log.error("[feature-flag] Change listener failed:", error),
+  );
 
-  constructor() {
-    // Define default feature flags
-    this.features.set("TCP_SERVER", true);
-    this.features.set("HTTP_POLLING", true);
-    this.features.set("ELASTICSEARCH", true);
-    this.features.set("FILE_LOGGING", true);
-    this.features.set("HEALTH_MONITORING", true);
-    this.features.set("ADAPTIVE_BATCHING", true);
-    this.features.set("ASYNC_FILE_WRITER", true);
+  onChange(listener: () => void): () => void {
+    return this.changes.on(listener);
   }
 
   /**
@@ -63,6 +54,7 @@ export class FeatureFlags {
         log.info(`[feature-flag] ${feature} loaded as disabled from settings`);
       }
     }
+    this.changes.emit();
   }
 
   /**
@@ -99,23 +91,29 @@ export class FeatureFlags {
   /**
    * Disable a feature
    */
-  disable(feature: string, reason?: string): void {
+  disable(feature: string, reason?: string): boolean {
+    if (!this.features.has(feature)) return false;
     this.features.set(feature, false);
     if (reason) {
       this.disableReasons.set(feature, reason);
     }
     log.warn(`[feature-flag] ${feature} disabled`, reason ? { reason } : {});
     this.persist();
+    this.changes.emit();
+    return true;
   }
 
   /**
    * Enable a feature
    */
-  enable(feature: string): void {
+  enable(feature: string): boolean {
+    if (!this.features.has(feature)) return false;
     this.features.set(feature, true);
     this.disableReasons.delete(feature);
     log.info(`[feature-flag] ${feature} enabled`);
     this.persist();
+    this.changes.emit();
+    return true;
   }
 
   /**
@@ -151,6 +149,7 @@ export class FeatureFlags {
     this.disableReasons.clear();
     log.info("[feature-flag] All features reset to enabled");
     this.persist();
+    this.changes.emit();
   }
 
   /**

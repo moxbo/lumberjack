@@ -56,7 +56,12 @@ test.describe("Stacktrace details", () => {
       await expect(row).toBeVisible({ timeout: 30000 });
       await row.click();
 
-      const displayedStackTrace = window.locator(".details .stack-trace");
+      await window
+        .getByRole("tab", { name: "Stacktrace", exact: true })
+        .click();
+      const displayedStackTrace = window.getByRole("tabpanel", {
+        name: "Stacktrace",
+      });
       await expect(displayedStackTrace).toBeVisible();
       await expect(displayedStackTrace).toContainText("E2E_STACKTRACE_START");
       await expect(displayedStackTrace).toContainText("E2E_STACKTRACE_END");

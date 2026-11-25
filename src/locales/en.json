@@ -496,6 +496,7 @@
       "invalidPatch": "Invalid data: not an object",
       "saveFailed": "Failed to save to disk",
       "featureFlagsNotAvailable": "Feature flags not available",
+      "featureFlagUnknown": "This feature is not supported.",
       "noWindow": "No active window found"
     },
     "dialogs": {
@@ -537,9 +538,7 @@
       "HTTP_POLLING": "HTTP polling for log sources",
       "ELASTICSEARCH": "Elasticsearch integration for log search",
       "FILE_LOGGING": "File-based app logging",
-      "HEALTH_MONITORING": "System health monitoring",
-      "ADAPTIVE_BATCHING": "Adaptive batch processing",
-      "ASYNC_FILE_WRITER": "Asynchronous file writing"
+      "HEALTH_MONITORING": "Check memory health periodically"
     }
   },
   "titleDialog": {

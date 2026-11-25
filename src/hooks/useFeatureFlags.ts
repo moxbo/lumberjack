@@ -5,6 +5,7 @@
 
 import { useState, useEffect, useCallback } from "preact/hooks";
 import type { FeatureFlagsResult } from "../types/ipc";
+import type { FeatureName } from "../constants/featureFlags";
 import {
   featureFlagsGetAll,
   featureFlagsDisable,
@@ -12,14 +13,7 @@ import {
   featureFlagsResetAll,
 } from "../utils/typedApi";
 
-export type FeatureName =
-  | "TCP_SERVER"
-  | "HTTP_POLLING"
-  | "ELASTICSEARCH"
-  | "FILE_LOGGING"
-  | "HEALTH_MONITORING"
-  | "ADAPTIVE_BATCHING"
-  | "ASYNC_FILE_WRITER";
+export type { FeatureName } from "../constants/featureFlags";
 
 interface UseFeatureFlagsReturn {
   /** All features with their status */
@@ -99,7 +93,8 @@ export function useFeatureFlags(): UseFeatureFlagsReturn {
   const disable = useCallback(
     async (feature: FeatureName, reason?: string): Promise<void> => {
       try {
-        await featureFlagsDisable(feature, reason);
+        const result = await featureFlagsDisable(feature, reason);
+        if (!result.ok) throw new Error(result.error);
         await refresh();
         // Notify all other hook instances to refresh
         notifyFeatureFlagChange();
@@ -113,7 +108,8 @@ export function useFeatureFlags(): UseFeatureFlagsReturn {
   const enable = useCallback(
     async (feature: FeatureName): Promise<void> => {
       try {
-        await featureFlagsEnable(feature);
+        const result = await featureFlagsEnable(feature);
+        if (!result.ok) throw new Error(result.error);
         await refresh();
         // Notify all other hook instances to refresh
         notifyFeatureFlagChange();
@@ -126,7 +122,8 @@ export function useFeatureFlags(): UseFeatureFlagsReturn {
 
   const resetAll = useCallback(async (): Promise<void> => {
     try {
-      await featureFlagsResetAll();
+      const result = await featureFlagsResetAll();
+      if (!result.ok) throw new Error(result.error);
       await refresh();
       // Notify all other hook instances to refresh
       notifyFeatureFlagChange();

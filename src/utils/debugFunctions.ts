@@ -3,7 +3,6 @@
  * Usage: window.ljDebug.findInEntries("searchterm")
  */
 
-import { getRendererLogEntryPool } from "../store/RendererLogEntryPool";
 import { LoggingStore } from "../store/loggingStore";
 import { DiagnosticContextFilter } from "../store/dcFilter";
 import { msgMatches as msgMatchesFn } from "./msgFilter";
@@ -161,23 +160,8 @@ export function setupDebugFunctions(): void {
       return "Check the filter toolbar in the app";
     },
 
-    poolStats: () => {
-      const pool = getRendererLogEntryPool();
-      const stats = pool.getStats();
-      console.log("[ljDebug] LogEntry Pool Statistics:");
-      console.log("  Available in pool: " + stats.available);
-      console.log("  Total created: " + stats.totalCreated);
-      console.log("  Reused: " + stats.reused);
-      console.log("  Returned: " + stats.returned);
-      console.log("  Hit rate: " + (stats.hitRate * 100).toFixed(1) + "%");
-      console.log("  Max size: " + stats.maxSize);
-      return stats;
-    },
-
     memoryUsage: () => {
       const entries = debugEntriesRef?.current || [];
-      const pool = getRendererLogEntryPool();
-      const poolStats = pool.getStats();
 
       // Estimate memory usage
       let totalStringSize = 0;
@@ -211,11 +195,6 @@ export function setupDebugFunctions(): void {
         averageBytesPerEntry: avgPerEntry + " bytes",
         entriesWithMDC: mdcCount,
         entriesWithStackTrace: stackTraceCount,
-        pool: {
-          available: poolStats.available,
-          hitRate: (poolStats.hitRate * 100).toFixed(1) + "%",
-          reused: poolStats.reused,
-        },
       };
 
       console.log("[ljDebug] Memory Usage Estimate:", report);

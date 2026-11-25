@@ -496,6 +496,7 @@
       "invalidPatch": "Ungültige Daten: kein Objekt",
       "saveFailed": "Speichern auf Festplatte fehlgeschlagen",
       "featureFlagsNotAvailable": "Feature-Flags nicht verfügbar",
+      "featureFlagUnknown": "Diese Funktion wird nicht unterstützt.",
       "noWindow": "Kein aktives Fenster gefunden"
     },
     "dialogs": {
@@ -537,9 +538,7 @@
       "HTTP_POLLING": "HTTP-Polling für Log-Quellen",
       "ELASTICSEARCH": "Elasticsearch-Integration für Logsuche",
       "FILE_LOGGING": "Dateibasiertes Logging der App",
-      "HEALTH_MONITORING": "Systemgesundheits-Überwachung",
-      "ADAPTIVE_BATCHING": "Adaptive Batch-Verarbeitung",
-      "ASYNC_FILE_WRITER": "Asynchrones Schreiben von Dateien"
+      "HEALTH_MONITORING": "Speicherzustand regelmäßig prüfen"
     }
   },
   "titleDialog": {

@@ -100,8 +100,7 @@ export default defineConfig({
           if (norm.includes("/node_modules/")) {
             if (
               norm.includes("/node_modules/preact/") ||
-              norm.includes("/node_modules/@preact/") ||
-              norm.includes("/node_modules/@tanstack/react-virtual/")
+              norm.includes("/node_modules/@preact/")
             ) {
               return "vendor";
             }

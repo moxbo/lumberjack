@@ -46,6 +46,13 @@ test("settings group existing controls without changing save and cancel behavior
   await dialog.locator("#settings-tab-advanced").click();
   await expect(dialog.locator("#heapSizeMB")).toBeVisible();
   await expect(dialog.locator(".feature-flags-list")).toBeVisible();
+  await expect(dialog.locator(".feature-flags-list .feature-name")).toHaveText([
+    "TCP_SERVER",
+    "HTTP_POLLING",
+    "ELASTICSEARCH",
+    "FILE_LOGGING",
+    "HEALTH_MONITORING",
+  ]);
   await expect(
     dialog.locator(".feature-flags-list input").first(),
   ).toHaveAttribute("aria-label", /.+/);
@@ -76,6 +83,21 @@ test("settings group existing controls without changing save and cancel behavior
           .settings?.tcpPort,
     )
     .toBe(54321);
+});
+
+test("feature flag IPC rejects retired names without changing the settings", async ({
+  window,
+}) => {
+  const { enable, disable, before, after } = await window.evaluate(async () => {
+    const api = globalThis.window.api;
+    const before = await api.featureFlagsGetAll();
+    const enable = await api.featureFlagsEnable("ASYNC_FILE_WRITER");
+    const disable = await api.featureFlagsDisable("ADAPTIVE_BATCHING");
+    return { enable, disable, before, after: await api.featureFlagsGetAll() };
+  });
+  expect(enable).toMatchObject({ ok: false, error: expect.any(String) });
+  expect(disable).toMatchObject({ ok: false, error: expect.any(String) });
+  expect(after).toEqual(before);
 });
 
 test("settings support category keys, focus containment, escape and focus restoration", async ({
