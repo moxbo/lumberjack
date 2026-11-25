@@ -1359,6 +1359,17 @@ body {
   margin-bottom: 4px;
 }
 
+.filter-diagnostics-table {
+  width: 100%;
+  border-spacing: 0.5rem;
+  font-variant-numeric: tabular-nums;
+  text-align: end;
+}
+.filter-diagnostics-table caption,
+.filter-diagnostics-table th:first-child {
+  text-align: start;
+}
+
 .settings-field-hint {
   font-size: 12px;
   color: var(--color-text-secondary);

@@ -164,6 +164,8 @@ export interface Settings {
   heapSizeMB?: number;
   /** Maximum accumulated live entries per log session; imports are exempt. */
   liveEntryLimit?: number;
+  /** Record local, per-window list filter timings (default: off). */
+  filterDiagnosticsEnabled?: boolean;
 }
 
 /**
@@ -377,6 +379,7 @@ export type ExportFinishResult = ExportStreamResult<{ filePath: string }>;
  */
 export interface ExportViewOptions {
   format: ExportFormat;
+  purpose?: "filter-diagnostics";
   includeStyles?: boolean;
   title?: string;
 }

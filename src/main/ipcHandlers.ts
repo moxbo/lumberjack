@@ -1158,15 +1158,18 @@ export function registerIpcHandlers(
     },
   );
 
-  // Legacy export view handler (kept for compatibility)
+  // Single-write export for bounded diagnostic reports and legacy views.
   ipcMain.handle(
     "dialog:exportView",
     async (
-      _event,
+      event,
       content: string,
       options: ExportViewOptions,
     ): Promise<ExportResult> => {
-      const mainWindow = BrowserWindow.getFocusedWindow();
+      const diagnostics = options.purpose === "filter-diagnostics";
+      const mainWindow = diagnostics
+        ? BrowserWindow.fromWebContents(event.sender)
+        : BrowserWindow.getFocusedWindow();
       if (!mainWindow) {
         return { ok: false, error: t("main.errors.noWindow") };
       }
@@ -1181,13 +1184,22 @@ export function registerIpcHandlers(
           { name: t("main.dialogs.allFiles"), extensions: ["*"] },
         ];
 
-        const defaultFormat = options.format || "ndjson";
-        const defaultName = `lumberjack-export-${new Date().toISOString().slice(0, 10)}.${defaultFormat}`;
+        const defaultFormat = diagnostics ? "json" : options.format || "ndjson";
+        const prefix = diagnostics
+          ? "lumberjack-filter-performance"
+          : "lumberjack-export";
+        const defaultName = `${prefix}-${new Date().toISOString().slice(0, 10)}.${defaultFormat}`;
 
         const res = await dialog.showSaveDialog(mainWindow, {
-          title: t("main.dialogs.exportView"),
+          title: t(
+            diagnostics
+              ? "main.dialogs.exportFilterDiagnostics"
+              : "main.dialogs.exportView",
+          ),
           defaultPath: defaultName,
-          filters,
+          filters: diagnostics
+            ? [{ name: "JSON", extensions: ["json"] }]
+            : filters,
         });
 
         if (res.canceled || !res.filePath) {

@@ -252,6 +252,7 @@ export function useSettings({ t, showAlert, onLoaded }: UseSettingsOptions) {
     settingsLoaded,
     tcpPort: current.tcpPort,
     liveEntryLimit: current.liveEntryLimit,
+    filterDiagnosticsEnabled: current.filterDiagnosticsEnabled,
     canTcpControlWindow,
     setCanTcpControlWindow,
     httpUrl: current.httpUrl,

@@ -56,12 +56,14 @@ const DEFAULT_SETTINGS: Settings = {
   // Performance / Memory - heap size in MB (requires restart)
   heapSizeMB: 4096,
   liveEntryLimit: DEFAULT_LIVE_ENTRY_LIMIT,
+  filterDiagnosticsEnabled: false,
 };
 
 function settingsWithDefaults(settings: Partial<Settings>): Settings {
   return {
     ...DEFAULT_SETTINGS,
     ...settings,
+    filterDiagnosticsEnabled: settings.filterDiagnosticsEnabled === true,
     liveEntryLimit: isValidLiveEntryLimit(settings.liveEntryLimit)
       ? settings.liveEntryLimit
       : DEFAULT_LIVE_ENTRY_LIMIT,
@@ -602,6 +604,15 @@ export class SettingsService {
       }
     }
 
+    if (
+      settings.filterDiagnosticsEnabled !== undefined &&
+      typeof settings.filterDiagnosticsEnabled !== "boolean"
+    ) {
+      return {
+        success: false,
+        error: "filterDiagnosticsEnabled must be boolean",
+      };
+    }
     if (
       settings.liveEntryLimit !== undefined &&
       !isValidLiveEntryLimit(settings.liveEntryLimit)

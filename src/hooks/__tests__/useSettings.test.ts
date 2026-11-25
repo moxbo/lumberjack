@@ -112,6 +112,22 @@ afterEach(() => {
 });
 
 describe("useSettings integration", () => {
+  it("does not start diagnostics from a draft or a failed save", async () => {
+    await mount();
+    await render().openSettingsModal("features");
+    const hook = render();
+    hook.setForm({ ...hook.form, filterDiagnosticsEnabled: true });
+    expect(render().filterDiagnosticsEnabled).toBe(false);
+    vi.mocked(patchSettings).mockResolvedValueOnce({
+      ok: false,
+      error: "disk full",
+    });
+    await render().saveSettingsModal();
+    expect(render().filterDiagnosticsEnabled).toBe(false);
+    await render().saveSettingsModal();
+    expect(render().filterDiagnosticsEnabled).toBe(true);
+  });
+
   it("opens general settings by default and preserves connection shortcuts", async () => {
     await mount();
     await render().openSettingsModal();

@@ -300,6 +300,20 @@
       "available": "Update verfügbar: {{version}}",
       "checkFailed": "Prüfung fehlgeschlagen: {{error}}"
     },
+    "diagnostics": {
+      "enable": "Filterleistung messen",
+      "hint": "Speichern startet die Messung für Listenfilter in diesem Fenster. Die letzten {{limit}} abgeschlossenen Läufe bleiben im Arbeitsspeicher, bis Sie die Messung deaktivieren oder das Fenster schließen. Logtexte, Suchbegriffe und Pfade werden weder erfasst noch übertragen.",
+      "samples": "Abgeschlossene Läufe: {{count}} · Letzter Filter: {{result}} von {{input}} Einträgen",
+      "metric": "Messwert",
+      "latest": "Letzter Lauf",
+      "firstVisibleMs": "Erstes sichtbares Ergebnis",
+      "finalListMs": "Endgültige Trefferzahl",
+      "longestTaskMs": "Längste Überlappung mit einer UI-Aufgabe",
+      "empty": "Noch keine abgeschlossenen Läufe. Wenden Sie einen Listenfilter auf Ihre Logs an und öffnen Sie diese Ansicht erneut.",
+      "metricsHint": "Gemessen wird ab dem Filterauftrag, nicht ab der Texteingabe. Auch ein sichtbarer Hinweis auf fehlende Treffer zählt als Ergebnis. Navigationssuchen und Hintergrundläufe sind ausgenommen. — steht für nicht beobachtete Werte; 0 ms bei UI-Aufgaben bedeutet, dass keine Aufgabe ab 50 ms beobachtet wurde.",
+      "export": "Messwerte als JSON exportieren",
+      "saved": "Messwerte exportiert."
+    },
     "performance": {
       "heapSize": "Speicherlimit",
       "heapSizeHint": "Maximaler Arbeitsspeicher für die Anwendung. Größere Werte ermöglichen mehr Log-Einträge, benötigen aber einen Neustart.",
@@ -491,6 +505,7 @@
       "openLogs": "Logs",
       "openAllFiles": "Alle Dateien",
       "exportView": "View exportieren",
+      "exportFilterDiagnostics": "Filtermesswerte exportieren",
       "textFiles": "Textdateien"
     },
     "help": {

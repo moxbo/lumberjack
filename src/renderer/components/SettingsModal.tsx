@@ -10,6 +10,8 @@ import type {
 } from "../../types/renderer";
 import { useFeatureFlags } from "../../hooks";
 import { FeatureFlagsPanel } from "./FeatureFlagsPanel";
+import { FilterDiagnosticsPanel } from "./FilterDiagnosticsPanel";
+import type { FilterDiagnostics } from "../filterDiagnostics";
 import type { JSX, TargetedKeyboardEvent } from "preact";
 import {
   getDefaultLogPath as typedGetDefaultLogPath,
@@ -147,6 +149,7 @@ const CONNECTION_TABS = ["tcp", "http", "elastic"] as const;
 
 interface SettingsModalProps {
   open: boolean;
+  filterDiagnostics: FilterDiagnostics | null;
   tab: SettingsTab;
   form: SettingsForm;
   elasticHasPass: boolean;
@@ -302,6 +305,7 @@ function UpdateCheckRow(): JSX.Element {
 
 export function SettingsModal({
   open,
+  filterDiagnostics,
   tab,
   form,
   elasticHasPass,
@@ -1176,6 +1180,13 @@ export function SettingsModal({
                     />
                   </div>
                 </div>
+                <FilterDiagnosticsPanel
+                  enabled={form.filterDiagnosticsEnabled}
+                  onChange={(filterDiagnosticsEnabled) =>
+                    onFormChange({ ...form, filterDiagnosticsEnabled })
+                  }
+                  recorder={filterDiagnostics}
+                />
                 <div className="settings-card">
                   <FeatureFlagsPanel />
                 </div>

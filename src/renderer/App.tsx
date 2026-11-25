@@ -3,6 +3,7 @@
 import {
   useCallback,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -11,6 +12,7 @@ import { highlightAll } from "../utils/highlight";
 import logger from "../utils/logger";
 import { LiveIngestionLimitError } from "../utils/liveIngestionLimit";
 import { rendererPerf } from "../utils/rendererPerf";
+import { FilterDiagnostics } from "./filterDiagnostics";
 import { useI18n } from "../utils/i18n";
 import { LoggingStore } from "../store/loggingStore";
 import type { CanonicalLogEntry } from "../store/paged";
@@ -420,6 +422,7 @@ export default function App(): JSX.Element {
     elasticSize,
     elasticHasPass,
     liveEntryLimit,
+    filterDiagnosticsEnabled,
     follow,
     setFollow,
     themeMode,
@@ -929,6 +932,12 @@ export default function App(): JSX.Element {
     detailLayout: effectiveDetailLayout,
   });
 
+  const filterDiagnostics = useMemo(
+    () => (filterDiagnosticsEnabled ? new FilterDiagnostics() : null),
+    [filterDiagnosticsEnabled],
+  );
+  useLayoutEffect(() => filterDiagnostics?.connect(), [filterDiagnostics]);
+
   // Use Filter Worker for large datasets (>10,000 entries)
   const {
     filteredIndices: workerFilteredIdx,
@@ -940,7 +949,7 @@ export default function App(): JSX.Element {
     filterEntries,
     cancelFiltering,
     projectionBridge,
-  } = useFilterWorker();
+  } = useFilterWorker(filterDiagnostics);
 
   // Wire projection bridge so useEntryManagement can publish directly.
   projectionBridgeRef.current = projectionBridge;
@@ -995,6 +1004,12 @@ export default function App(): JSX.Element {
   >(null);
   const filterResultsCurrent = baseViewKey === submittedBaseViewKey;
   const resultsCurrent = queryKey === submittedQueryKey;
+  useLayoutEffect(() => {
+    if (!filterDiagnostics) return;
+    if (!resultsCurrent || !filterIsActive || filterWorkerError || showSettings)
+      filterDiagnostics.cancel();
+    else filterDiagnostics.committed(workerFilterStats, parentRef.current);
+  });
   const searchRunning = queryActive && (!resultsCurrent || isFiltering);
   const pendingFirstSearchRef = useRef<string | null>(null);
   const pendingSelectedAfterFilterRef = useRef<number | null>(null);
@@ -2717,6 +2732,7 @@ export default function App(): JSX.Element {
       <Suspense fallback={null}>
         <SettingsModal
           open={showSettings}
+          filterDiagnostics={filterDiagnostics}
           tab={settingsTab}
           form={form}
           elasticHasPass={elasticHasPass}

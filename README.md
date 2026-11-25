@@ -377,7 +377,9 @@ Full documentation is available in the [`docs/`](docs/INDEX.md) folder:
 
 ## ⚡ Performance
 
-Run `npm ci` and `npm run perf:board` for a local filter latency report, or launch **Filter performance board** under GitHub Actions. It is off by default. [Scenarios, PR opt-in and results](docs/developer/PERFORMANCE.md#opt-in-filter-performance-board).
+**In the app:** Under **Settings → Advanced**, enable **Measure filter performance** and save. Filter your own logs, then return to the same panel to see the latest run, medians, or **Export measurements as JSON**. Recording is off by default. The last 100 completed runs are local to the window; disabling recording clears them. The report contains counts and timings, not logs, search terms or paths. [Metric definitions](docs/developer/PERFORMANCE.md#live-filter-measurements).
+
+**For development:** Run `npm ci` and `npm run perf:board` for a reproducible synthetic filter benchmark, or launch **Filter performance board** under GitHub Actions. [Scenarios, PR opt-in and results](docs/developer/PERFORMANCE.md#opt-in-filter-performance-board).
 
 - **Cold Start**: < 2 seconds
 - **Warm Start**: < 0.3 seconds

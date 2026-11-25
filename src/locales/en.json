@@ -300,6 +300,20 @@
       "available": "Update available: {{version}}",
       "checkFailed": "Check failed: {{error}}"
     },
+    "diagnostics": {
+      "enable": "Measure filter performance",
+      "hint": "Save to start recording list filters in this window. The latest {{limit}} completed runs stay in memory until recording is disabled or the window closes. No log text, search terms or paths are recorded or sent.",
+      "samples": "Completed runs: {{count}} · Last filter: {{result}} of {{input}} entries",
+      "metric": "Metric",
+      "latest": "Last run",
+      "firstVisibleMs": "First visible result",
+      "finalListMs": "Final list count",
+      "longestTaskMs": "Longest UI task overlap",
+      "empty": "No completed runs yet. Apply a list filter to your logs, then return here.",
+      "metricsHint": "Measured from filter submission, not typing. A visible no-match message also counts. Navigation searches and background runs are excluded. — means not observed; 0 ms for UI tasks means no task of at least 50 ms was observed.",
+      "export": "Export measurements as JSON",
+      "saved": "Measurements exported."
+    },
     "performance": {
       "heapSize": "Memory Limit",
       "heapSizeHint": "Maximum memory for the application. Higher values allow more log entries but require a restart.",
@@ -491,6 +505,7 @@
       "openLogs": "Logs",
       "openAllFiles": "All files",
       "exportView": "Export view",
+      "exportFilterDiagnostics": "Export filter measurements",
       "textFiles": "Text files"
     },
     "help": {

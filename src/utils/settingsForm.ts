@@ -41,6 +41,7 @@ export function normalizeSettingsForm(
     elasticMaxParallel: Math.max(1, numberOr(settings.elasticMaxParallel, 1)),
     allowPrerelease: !!settings.allowPrerelease,
     heapSizeMB: heapSize(settings.heapSizeMB),
+    filterDiagnosticsEnabled: settings.filterDiagnosticsEnabled === true,
     liveEntryLimit: isValidLiveEntryLimit(settings.liveEntryLimit)
       ? settings.liveEntryLimit
       : DEFAULT_LIVE_ENTRY_LIMIT,
@@ -73,6 +74,7 @@ export function settingsFormPatch(
     allowPrerelease: form.allowPrerelease,
     heapSizeMB: heapSize(form.heapSizeMB),
     liveEntryLimit: form.liveEntryLimit,
+    filterDiagnosticsEnabled: form.filterDiagnosticsEnabled === true,
   };
   if (form.elasticPassClear) patch.elasticPassClear = true;
   else if (form.elasticPassNew.trim())

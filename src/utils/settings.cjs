@@ -166,6 +166,7 @@ var SETTINGS_SCHEMA = {
     default: DEFAULT_LIVE_ENTRY_LIMIT,
     validate: isValidLiveEntryLimit
   },
+  filterDiagnosticsEnabled: { type: "boolean", default: false },
   // Elasticsearch settings
   elasticUrl: {
     type: "string",

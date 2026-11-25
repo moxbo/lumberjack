@@ -16,6 +16,20 @@
 
 For a local comparison, save the baseline `results.json` under another name, then set `PERF_BOARD_BASELINE` to that path for the candidate run. Compare on the same machine under similar load, keep the Electron window visible, and use the same fixture and board version. For an already-built checkout, `npm run perf:board:measure` skips the build; `PERF_BOARD_APP_ROOT` can point it at a separately installed and built checkout to measure both revisions with the same harness.
 
+## Live filter measurements
+
+**Settings → Advanced → Measure filter performance → Save** starts local recording for real list filters. Open the same panel after filtering for the latest run, medians and JSON export. Only the setting persists. Each window keeps its last 100 completed runs in memory; export before disabling recording, reloading or closing the window. No data is uploaded.
+
+The version 1 JSON file contains `unit: "ms"` and `samples` in submission order. `trigger` distinguishes a changed filter or dataset (`new-view`) from recalculating the same view, for example after an append (`refresh`). `inputCount` and `resultCount` are the submitted list size and final number of matches. There are no log entries, filter values, paths or wall-clock timestamps.
+
+| Field | Interpretation |
+| --- | --- |
+| `firstVisibleMs` | From filter submission to the first observed animation frame with a hydrated result or final no-match title inside the visible list. Off-screen and placeholder rows do not count. `null` if not observed within the probe window (up to one second after a publication). |
+| `finalListMs` | From the same submission to the DOM commit displaying the final count. It can precede the first visible frame; it does not include typing, debounce or hydration of off-screen rows. |
+| `longestTaskMs` | Longest overlap of a Chromium renderer task of at least 50 ms with the interval ending at the final commit. `0` means none observed, `null` means the API was unavailable. |
+
+Medians exclude unavailable values. Canceled, failed and background runs are omitted, as are submissions with a navigation search (the highlighted match need not be in the viewport). Unlike the synthetic benchmark, live results depend on the actual data, viewport and machine and do not measure time from the Enter key.
+
 ## Problem
 
 The application was experiencing slow startup times of 20+ seconds, which is unacceptable for user experience.

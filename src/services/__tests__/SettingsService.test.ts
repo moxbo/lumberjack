@@ -35,6 +35,25 @@ afterEach(async () => {
   await fs.promises.rm(directory, { recursive: true, force: true });
 });
 
+it("requires explicit boolean opt-in for filter diagnostics and persists it", async () => {
+  const service = new SettingsService();
+  expect(service.get().filterDiagnosticsEnabled).toBe(false);
+  await fs.promises.writeFile(
+    settingsPath,
+    JSON.stringify({ filterDiagnosticsEnabled: "true" }),
+  );
+  await service.load();
+  expect(service.get().filterDiagnosticsEnabled).toBe(false);
+  expect(
+    service.validate({ filterDiagnosticsEnabled: "true" as never }).success,
+  ).toBe(false);
+  service.update({ filterDiagnosticsEnabled: true });
+  expect(await service.save()).toBe(true);
+  const restored = new SettingsService();
+  restored.loadSync();
+  expect(restored.get().filterDiagnosticsEnabled).toBe(true);
+});
+
 describe("live entry limit validation", () => {
   it("uses the finite default and permits unrelated settings patches", () => {
     const service = new SettingsService();

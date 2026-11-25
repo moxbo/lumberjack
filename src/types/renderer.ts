@@ -132,6 +132,7 @@ export interface SettingsFormState {
   allowPrerelease: boolean;
   heapSizeMB: number;
   liveEntryLimit: number;
+  filterDiagnosticsEnabled: boolean;
 }
 
 /**

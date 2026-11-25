@@ -37,6 +37,7 @@ import { SortedStore } from "../utils/sortedSequence";
 import { MappedSequence } from "../utils/readonlySequence";
 import { compareByTimestampId } from "../utils/sort";
 import { VisibilityScheduler } from "../utils/visibilityScheduler";
+import type { FilterDiagnostics } from "../renderer/filterDiagnostics";
 
 export interface FilterOptions {
   stdFiltersEnabled: boolean;
@@ -255,7 +256,11 @@ function mergeSearchMatches(
 }
 
 /** Worker-first filtering with progressive, cancellable fallback pages. */
-export function useFilterWorker(): UseFilterWorkerResult {
+export function useFilterWorker(
+  diagnostics: FilterDiagnostics | null = null,
+): UseFilterWorkerResult {
+  const diagnosticsRef = useRef(diagnostics);
+  diagnosticsRef.current = diagnostics;
   const [filteredIndices, setFilteredIndices] = useState<
     ReadonlySequence<number>
   >([]);
@@ -329,6 +334,7 @@ export function useFilterWorker(): UseFilterWorkerResult {
   } | null>(null);
 
   const cancelFiltering = useCallback((preserveBase = false) => {
+    diagnosticsRef.current?.cancel();
     resultPublisherRef.current?.cancel();
     pendingPublicationRef.current = null;
     const requestId = ++requestSeqRef.current;
@@ -519,6 +525,11 @@ export function useFilterWorker(): UseFilterWorkerResult {
         const baseToPublish =
           nextFiltered ?? resultStoreRef.current?.publish().ids;
         pendingPublicationRef.current = () => {
+          diagnosticsRef.current?.published(
+            requestId,
+            data.stats,
+            !data.partial,
+          );
           setError(null);
           if (baseToPublish) setFilteredIndices(baseToPublish);
           setSearchMatchIndices(nextMatchIndices);
@@ -821,6 +832,8 @@ export function useFilterWorker(): UseFilterWorkerResult {
       config?: PagedFilterConfig,
     ) => {
       const requestId = ++requestSeqRef.current;
+      const recorder = diagnosticsRef.current;
+      const startedAt = recorder ? performance.now() : 0;
       const previousSource = previousSourceRef.current;
       if (
         !config?.paged &&
@@ -868,6 +881,18 @@ export function useFilterWorker(): UseFilterWorkerResult {
         databaseName: config?.databaseName,
       });
       const baseChanged = baseGeneration !== pendingBaseGenerationRef.current;
+      if (recorder) {
+        // Navigation highlights positions without necessarily filtering rows.
+        if (options.navigationSearch?.trim() || !entries.length)
+          recorder.cancel();
+        else
+          recorder.start(
+            requestId,
+            startedAt,
+            config?.entryCount ?? entries.length,
+            baseChanged,
+          );
+      }
       const cachedBase = localBaseRef.current;
       if (
         cachedBase &&
@@ -918,6 +943,7 @@ export function useFilterWorker(): UseFilterWorkerResult {
       ) => {
         if (!isCurrent() || requestId < lastAppliedRequestRef.current) return;
         lastAppliedRequestRef.current = requestId;
+        diagnosticsRef.current?.published(requestId, result.stats, !partial);
         setFilteredIndices(result.indices);
         if (!partial && !config?.paged) {
           localBaseRef.current = {
