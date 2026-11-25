@@ -5,6 +5,21 @@ Alle nennenswerten Änderungen an diesem Projekt werden in dieser Datei dokument
 Das Format orientiert sich an [Keep a Changelog](https://keepachangelog.com/de/1.1.0/),
 und dieses Projekt folgt [Semantic Versioning](https://semver.org/lang/de/).
 
+## [1.2.4] - 2026-11-25
+
+
+### Added
+- **perf**: Add opt-in live filter diagnostics and JSON export
+
+
+### Docs
+- Update CONTRIBUTING.md with dependency update guidelines and add ncu-review skill documentation
+
+
+### Fixed
+- **diagnostics**: Honor the health flag and remove obsolete code
+- **renderer**: Keep log rows sharp while scrolling
+
 ## [1.2.3] - 2026-11-23
 
 
