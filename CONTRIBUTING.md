@@ -18,7 +18,9 @@ npm install
 npm run dev
 ```
 
-  Use the Node.js version range declared in `package.json`. Update dependencies
+### Dependency updates
+
+Use the Node.js version range declared in `package.json`. Update dependencies
 with `npx npm-check-updates --upgrade --reject typescript`, then run
 `npm update` to refresh the lockfile, including transitive dependencies.
 Check `overrides` as well. Retain TypeScript 6.0.x until the stable
@@ -27,6 +29,10 @@ Check `overrides` as well. Retain TypeScript 6.0.x until the stable
 `--legacy-peer-deps`. Commit both `package.json` and `package-lock.json`
 together. `npm run prepack:app` regenerates the release manifest from the
 root manifest; do not edit `release/app/package.json` manually.
+
+For a review before upgrading, use the [ncu-review Copilot skill](.github/skills/ncu-review/SKILL.md).
+Once the skill is on the default branch, assign an issue to Copilot with a prompt such as:
+“Use ncu-review to report required migrations and identify workarounds we can remove. Do not modify files.”
 
 ---
 
