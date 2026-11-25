@@ -119,11 +119,11 @@ export function unmount() {
   };
 }
 
-export function mount() {
+export function mount(count = 1_772_245) {
   root = document.createElement("div");
   root.id = "large-log-list-fixture";
   root.style.cssText =
     "position:fixed;inset:0;z-index:99999;display:flex;background:white";
   document.body.append(root);
-  setRows(1_772_245);
+  setRows(count);
 }

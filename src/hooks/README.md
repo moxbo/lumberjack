@@ -26,9 +26,11 @@ and dialogs in `App.tsx`.
   replacement preparation preserves the originals.
 - `useFixedRowVirtualizer` maps fixed-height log rows onto a scroll surface
   capped at 8,000,000 CSS pixels, below browser layout limits. Navigation and
-  stable-ID anchoring use logical offsets; DOM row positions and scrollbar
-  offsets use the capped coordinate space. Only viewport rows plus overscan
-  are materialized, even when removing a filter exposes millions of entries.
+  stable-ID anchoring use unrounded logical offsets; DOM row positions and
+  scrollbar offsets use the capped coordinate space. Only rendered row positions
+  are snapped to device pixels, keeping text sharp without losing fractional
+  scroll input. Only viewport rows plus overscan are materialized, even when
+  removing a filter exposes millions of entries.
 
 ## Application state
 

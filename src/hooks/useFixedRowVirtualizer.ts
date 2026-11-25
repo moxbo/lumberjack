@@ -10,6 +10,8 @@ export function useFixedRowVirtualizer(
 ) {
   const [viewport, setViewport] = useState({
     height: 0,
+    top: 0,
+    pixelRatio: 1,
     scrollTop: 0,
     adjustment: 0,
   });
@@ -17,16 +19,24 @@ export function useFixedRowVirtualizer(
     if (!element) return;
     const header = element.firstElementChild;
     const measure = () => {
+      const headerRect = header?.getBoundingClientRect();
       const height = Math.max(
         0,
-        element.clientHeight - (header?.getBoundingClientRect().height ?? 0),
+        element.clientHeight - (headerRect?.height ?? 0),
       );
+      const top = headerRect?.bottom ?? element.getBoundingClientRect().top;
+      const pixelRatio = window.devicePixelRatio;
       const scrollTop = element.scrollTop;
       setViewport((previous) =>
-        previous.height === height && previous.scrollTop === scrollTop
+        previous.height === height &&
+        previous.top === top &&
+        previous.pixelRatio === pixelRatio &&
+        previous.scrollTop === scrollTop
           ? previous
           : {
               height,
+              top,
+              pixelRatio,
               scrollTop,
               adjustment:
                 previous.scrollTop === scrollTop ? previous.adjustment : 0,
@@ -38,12 +48,17 @@ export function useFixedRowVirtualizer(
     const observer = new ResizeObserver(measure);
     observer.observe(element);
     if (header) observer.observe(header);
+    const resolution = window.matchMedia(
+      `(resolution: ${viewport.pixelRatio}dppx)`,
+    );
+    resolution.addEventListener("change", measure);
     element.addEventListener("scroll", onScroll);
     return () => {
       observer.disconnect();
+      resolution.removeEventListener("change", measure);
       element.removeEventListener("scroll", onScroll);
     };
-  }, [element]);
+  }, [element, viewport.pixelRatio]);
 
   const geometry = useMemo(
     () => fixedRowScroll(count, rowHeight, viewport.height),
@@ -124,10 +139,14 @@ export function useFixedRowVirtualizer(
   const virtualItems = useMemo(() => {
     if (!element || viewport.height <= 0) return [];
     const { start, end } = geometry.range(scrollOffset, overscan);
-    const adjustment = scrollOffset - viewport.scrollTop;
+    const { top, scrollTop, pixelRatio } = viewport;
+    const contentOrigin = top - scrollTop;
     return Array.from({ length: end - start }, (_, offset) => {
       const index = start + offset;
-      return { index, start: index * rowHeight - adjustment };
+      // Snap in screen space for crisp text, not in logical scroll coordinates.
+      const y = top + index * rowHeight - scrollOffset;
+      const snappedY = Math.round(y * pixelRatio) / pixelRatio;
+      return { index, start: snappedY - contentOrigin };
     });
   }, [element, geometry, overscan, rowHeight, scrollOffset, viewport]);
 
