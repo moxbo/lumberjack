@@ -8,9 +8,7 @@ declare global {
   }
 }
 
-test("core portals preserve positioning, context and keyboard interaction without compat", async ({
-  window,
-}) => {
+test.beforeEach(async ({ window }) => {
   await expect(window.locator("#splash-screen")).toHaveCount(0);
   const bundle = await build({
     entryPoints: ["tests/e2e/fixtures/preact-core.tsx"],
@@ -28,6 +26,11 @@ test("core portals preserve positioning, context and keyboard interaction withou
     ),
   ).toEqual([]);
   await window.evaluate(bundle.outputFiles[0]!.text);
+});
+
+test("core portals preserve positioning, context and keyboard interaction without compat", async ({
+  window,
+}) => {
   await window.evaluate(() => globalThis.window.preactCoreTest.mount());
 
   const trigger = window.locator("#core-portal-trigger");
@@ -74,4 +77,35 @@ test("core portals preserve positioning, context and keyboard interaction withou
   await window.evaluate(() => globalThis.window.preactCoreTest.unmount());
   await expect(tooltip).toHaveCount(0);
   await expect(window.locator("#preact-core-fixture")).toHaveCount(0);
+});
+
+test("the error boundary reports thrown values through IPC and recovers on retry", async ({
+  window,
+  electronApp,
+}) => {
+  const reports = await electronApp.evaluateHandle(({ ipcMain }) => {
+    const messages: string[] = [];
+    ipcMain.removeHandler("logError");
+    ipcMain.handle("logError", (_event, { error }: { error: Error }) => {
+      messages.push(`${error.name}: ${error.message}`);
+      return { ok: true };
+    });
+    return messages;
+  });
+  for (const [kind, name] of [
+    ["null", "Error: null"],
+    ["undefined", "Error: undefined"],
+    ["error", "TypeError: fixture"],
+  ] as const) {
+    await window.evaluate(
+      (value) => globalThis.window.preactCoreTest.mountBoundary(value),
+      kind,
+    );
+    await window.getByRole("button", { name, exact: true }).press("Enter");
+    await expect(window.locator("#boundary-recovered")).toHaveText("Recovered");
+    await window.evaluate(() => globalThis.window.preactCoreTest.unmount());
+  }
+  await expect
+    .poll(() => reports.jsonValue())
+    .toEqual(["Error: null", "Error: undefined", "TypeError: fixture"]);
 });

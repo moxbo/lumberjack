@@ -38,9 +38,9 @@ vi.mock("electron-log/main", () => ({
   default: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
 }));
 
-function deferred() {
-  let resolve!: () => void;
-  const promise = new Promise<void>((done) => {
+function deferred<T = void>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((done) => {
     resolve = done;
   });
   return { promise, resolve };
@@ -77,12 +77,17 @@ describe("settings IPC concurrency", () => {
       const settings = new SettingsService();
       settings.update({ follow: false, elasticPassEnc: "encrypted-old" });
       vi.spyOn(settings, "save").mockResolvedValue(true);
-      vi.spyOn(settings, "encryptSecret").mockReturnValue("encrypted-new");
+      vi.spyOn(settings, "encryptSecret").mockResolvedValue("encrypted-new");
       const barrier = deferred();
-      const onLoggingChange = vi.fn(() => barrier.promise);
+      const loggingStarted = deferred();
+      const onLoggingChange = vi.fn(() => {
+        loggingStarted.resolve();
+        return barrier.promise;
+      });
       register(settings, onLoggingChange);
       const handle = handlers.settings!;
       const pending = handle(undefined, { logMaxBackups: 4, ...password });
+      await loggingStarted.promise;
       expect(onLoggingChange).toHaveBeenCalledOnce();
       expect((await handle(undefined, { follow: true })).ok).toBe(true);
       barrier.resolve();
@@ -99,7 +104,7 @@ describe("settings IPC concurrency", () => {
   it("does not replace a newer password after awaiting the logging barrier", async () => {
     const settings = new SettingsService();
     vi.spyOn(settings, "save").mockResolvedValue(true);
-    vi.spyOn(settings, "encryptSecret").mockReturnValue("encrypted-new");
+    vi.spyOn(settings, "encryptSecret").mockResolvedValue("encrypted-new");
     const barrier = deferred();
     register(settings, () => barrier.promise);
     const pending = handlers.settings!(undefined, {
@@ -110,6 +115,49 @@ describe("settings IPC concurrency", () => {
     barrier.resolve();
     await pending;
     expect(settings.get().elasticPassEnc).toBe("");
+  });
+
+  it("applies a clear and overlapping ordinary fields after pending encryption", async () => {
+    const settings = new SettingsService();
+    vi.spyOn(settings, "save").mockResolvedValue(true);
+    const encryption = deferred<string>();
+    vi.spyOn(settings, "encryptSecret").mockReturnValueOnce(encryption.promise);
+    register(settings, async () => {});
+    const change = handlers.settings!(undefined, {
+      elasticPassPlain: "fixture",
+      follow: false,
+      tcpPort: 5555,
+    });
+    const clear = handlers.settings!(undefined, {
+      elasticPassClear: true,
+      follow: true,
+    });
+    encryption.resolve("encrypted-fixture");
+    expect((await change).ok).toBe(true);
+    expect((await clear).ok).toBe(true);
+    expect(settings.get()).toMatchObject({
+      elasticPassEnc: "",
+      follow: true,
+      tcpPort: 5555,
+    });
+    expect(settings.get()).not.toHaveProperty("elasticPassPlain");
+  });
+
+  it("keeps the old password after encryption fails and accepts the next patch", async () => {
+    const settings = new SettingsService();
+    settings.update({ elasticPassEnc: "encrypted-old" });
+    vi.spyOn(settings, "save").mockResolvedValue(true);
+    vi.spyOn(settings, "encryptSecret").mockRejectedValueOnce(
+      new Error("locked"),
+    );
+    register(settings, async () => {});
+    expect(
+      (await handlers.settings!(undefined, { elasticPassPlain: "fixture" })).ok,
+    ).toBe(false);
+    expect(settings.get().elasticPassEnc).toBe("encrypted-old");
+    expect((await handlers.settings!(undefined, { follow: true })).ok).toBe(
+      true,
+    );
   });
 });
 

@@ -13,8 +13,15 @@ exports.default = async function afterPack(context) {
     return;
   }
 
-  const exePath = path.join(context.appOutDir, `${context.packager.appInfo.productFilename}.exe`);
+  const productFilename = context.packager.appInfo.productFilename;
+  const exePath = path.join(context.appOutDir, `${productFilename}.exe`);
   const productName = context.packager.appInfo.productName || 'Lumberjack';
+
+  // Electron looks for its bundled WER helper next to the renamed executable.
+  const werHelper = path.join(context.appOutDir, `${productFilename}_wer.dll`);
+  if (!fs.existsSync(werHelper)) {
+    fs.renameSync(path.join(context.appOutDir, 'electron_wer.dll'), werHelper);
+  }
 
   console.log(`[afterPack] Setting Windows metadata for: ${exePath}`);
   console.log(`[afterPack] ProductName: ${productName}`);
@@ -79,4 +86,3 @@ exports.default = async function afterPack(context) {
     // Don't fail the build, just warn
   }
 };
-

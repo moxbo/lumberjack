@@ -1,6 +1,7 @@
 import { createContext, render } from "preact";
 import { useContext, useState } from "preact/hooks";
 import { Tooltip } from "../../../src/renderer/components/Tooltip";
+import { ErrorBoundary } from "../../../src/renderer/ErrorBoundary";
 
 const PortalContext = createContext("missing provider");
 let root: HTMLDivElement;
@@ -47,4 +48,38 @@ export function mount() {
 export function unmount() {
   render(null, root);
   root.remove();
+}
+
+export function mountBoundary(kind: "null" | "undefined" | "error") {
+  root = document.createElement("div");
+  document.body.prepend(root);
+  let recovered = false;
+  function Child() {
+    if (!recovered) {
+      // eslint-disable-next-line @typescript-eslint/only-throw-error -- The regression test must throw the original null or undefined.
+      throw kind === "null"
+        ? null
+        : kind === "error"
+          ? new TypeError("fixture")
+          : undefined;
+    }
+    return <output id="boundary-recovered">Recovered</output>;
+  }
+  render(
+    <ErrorBoundary
+      fallback={(error, reset) => (
+        <button
+          onClick={() => {
+            recovered = true;
+            reset();
+          }}
+        >
+          {error.name}: {error.message}
+        </button>
+      )}
+    >
+      <Child />
+    </ErrorBoundary>,
+    root,
+  );
 }

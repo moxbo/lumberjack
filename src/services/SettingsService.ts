@@ -629,78 +629,56 @@ export class SettingsService {
   /**
    * Encrypt a secret using Electron's safeStorage or fallback to AES
    */
-  encryptSecret(plaintext: string): string {
-    try {
-      // Try Electron safeStorage first
-      if (
-        safeStorage &&
-        typeof safeStorage.isEncryptionAvailable === "function" &&
-        safeStorage.isEncryptionAvailable()
-      ) {
-        const buf = safeStorage.encryptString(plaintext);
-        return "ss1:" + Buffer.from(buf).toString("base64");
-      }
-    } catch (err) {
-      log.warn("safeStorage encryption failed, falling back to AES:", err);
+  async encryptSecret(plaintext: string): Promise<string> {
+    if (await safeStorage.isAsyncEncryptionAvailable()) {
+      const buf = await safeStorage.encryptStringAsync(plaintext);
+      return "ss1:" + buf.toString("base64");
     }
 
-    // Fallback to AES-256-GCM
-    try {
-      const key = crypto
-        .createHash("sha256")
-        .update(app.getPath("userData") + "|lumberjack")
-        .digest();
-      const iv = crypto.randomBytes(12);
-      const cipher = crypto.createCipheriv("aes-256-gcm", key, iv);
-      const enc = Buffer.concat([
-        cipher.update(plaintext, "utf8"),
-        cipher.final(),
-      ]);
-      const tag = cipher.getAuthTag();
-      return "gcm1:" + Buffer.concat([iv, tag, enc]).toString("base64");
-    } catch (err) {
-      log.error("AES encryption failed:", err);
-      return "";
-    }
+    // Preserve the existing fallback only when the OS reports no encryption.
+    const key = crypto
+      .createHash("sha256")
+      .update(app.getPath("userData") + "|lumberjack")
+      .digest();
+    const iv = crypto.randomBytes(12);
+    const cipher = crypto.createCipheriv("aes-256-gcm", key, iv);
+    const enc = Buffer.concat([
+      cipher.update(plaintext, "utf8"),
+      cipher.final(),
+    ]);
+    const tag = cipher.getAuthTag();
+    return "gcm1:" + Buffer.concat([iv, tag, enc]).toString("base64");
   }
 
   /**
    * Decrypt a secret
    */
-  decryptSecret(encrypted: string): string {
+  async decryptSecret(encrypted: string): Promise<string> {
     if (!encrypted) return "";
 
-    try {
-      if (encrypted.startsWith("ss1:")) {
-        const b = Buffer.from(encrypted.slice(4), "base64");
-        if (safeStorage && typeof safeStorage.decryptString === "function") {
-          return safeStorage.decryptString(b);
-        }
-        return "";
-      }
-
-      if (encrypted.startsWith("gcm1:")) {
-        const buf = Buffer.from(encrypted.slice(5), "base64");
-        const iv = buf.subarray(0, 12);
-        const tag = buf.subarray(12, 28);
-        const data = buf.subarray(28);
-        const key = crypto
-          .createHash("sha256")
-          .update(app.getPath("userData") + "|lumberjack")
-          .digest();
-        const decipher = crypto.createDecipheriv("aes-256-gcm", key, iv);
-        decipher.setAuthTag(tag);
-        return Buffer.concat([
-          decipher.update(data),
-          decipher.final(),
-        ]).toString("utf8");
-      }
-    } catch (err) {
-      log.error("Decryption failed:", err);
-      return "";
+    if (encrypted.startsWith("ss1:")) {
+      const b = Buffer.from(encrypted.slice(4), "base64");
+      const { result } = await safeStorage.decryptStringAsync(b);
+      return result;
     }
 
-    return "";
+    if (encrypted.startsWith("gcm1:")) {
+      const buf = Buffer.from(encrypted.slice(5), "base64");
+      const iv = buf.subarray(0, 12);
+      const tag = buf.subarray(12, 28);
+      const data = buf.subarray(28);
+      const key = crypto
+        .createHash("sha256")
+        .update(app.getPath("userData") + "|lumberjack")
+        .digest();
+      const decipher = crypto.createDecipheriv("aes-256-gcm", key, iv);
+      decipher.setAuthTag(tag);
+      return Buffer.concat([decipher.update(data), decipher.final()]).toString(
+        "utf8",
+      );
+    }
+
+    throw new Error("Unrecognized encrypted settings format");
   }
 
   /**

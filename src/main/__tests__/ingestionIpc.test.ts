@@ -42,11 +42,12 @@ function register(
   parsers: Partial<Parsers>,
   network = new NetworkService(),
   enqueue?: Parameters<typeof registerIpcHandlers>[5],
+  settings = new SettingsService(),
 ) {
   ipc.handle.mockClear();
   ipc.on.mockClear();
   registerIpcHandlers(
-    new SettingsService(),
+    settings,
     network,
     () => parsers as Parsers,
     () => AdmZip,
@@ -54,6 +55,54 @@ function register(
     enqueue,
   );
 }
+
+it("resolves stored credentials before returning HTTP headers or issuing an Elastic request", async () => {
+  const settings = new SettingsService();
+  settings.update({
+    httpAuthHeaderEnc: "stored-header",
+    elasticUser: "fixture-user",
+    elasticPassEnc: "stored-password",
+  });
+  const decrypt = vi
+    .spyOn(settings, "decryptSecret")
+    .mockResolvedValueOnce("fixture-header")
+    .mockResolvedValueOnce("fixture-password");
+  const fetchElasticPitPage = vi
+    .fn<Parsers["fetchElasticPitPage"]>()
+    .mockResolvedValue({
+      entries: [],
+      total: 0,
+      hasMore: false,
+      nextSearchAfter: null,
+      pitSessionId: "fixture",
+    });
+  register({ fetchElasticPitPage }, undefined, undefined, settings);
+  const header = ipc.handle.mock.calls.find(
+    ([name]) => name === "httpTail:getAuthHeader",
+  )![1];
+  const search = ipc.handle.mock.calls.find(
+    ([name]) => name === "elastic:search",
+  )![1];
+  expect(await header()).toEqual({ ok: true, authHeader: "fixture-header" });
+  const event = {
+    sender: Object.assign(new EventEmitter(), {
+      id: 42,
+      isDestroyed: () => false,
+      send: vi.fn(),
+    }),
+  };
+  expect((await search(event, { url: "https://example.test" })).ok).toBe(true);
+  expect(fetchElasticPitPage).toHaveBeenCalledWith(
+    expect.objectContaining({
+      auth: {
+        type: "basic",
+        username: "fixture-user",
+        password: "fixture-password",
+      },
+    }),
+  );
+  expect(decrypt.mock.calls).toEqual([["stored-header"], ["stored-password"]]);
+});
 
 describe("original payload IPC", () => {
   it.each([

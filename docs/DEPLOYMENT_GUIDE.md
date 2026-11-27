@@ -294,7 +294,7 @@ Folgende Secrets müssen im GitHub Repository unter **Settings → Secrets and v
 
 3. **Build auslösen** – Die CI/CD Pipeline erkennt automatisch ob Signing-Secrets vorhanden sind:
    - `afterSign` Hook (`scripts/afterSign.cjs`) führt macOS Notarization durch
-   - `afterPack` Hook (`scripts/afterPack.cjs`) setzt Windows-Metadaten
+   - Der `afterPack`-Hook setzt Windows-Metadaten und legt Electrons mitgelieferte `Lumberjack_wer.dll` neben `Lumberjack.exe` ab. Fehlt der WER-Helper beim Packen, bricht der Windows-Build ab. Crash-Dumps bleiben lokal.
    - Wenn keine Secrets vorhanden: Build läuft ohne Signing weiter
 
 ### Signing lokal deaktivieren

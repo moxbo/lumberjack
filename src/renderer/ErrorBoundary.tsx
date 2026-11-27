@@ -47,8 +47,8 @@ export class ErrorBoundary extends Component<
     this.state = { hasError: false, error: null, errorCount: 0 };
   }
 
-  componentDidCatch(error: Error, errorInfo: Record<string, unknown>): void {
-    // Log error to console
+  componentDidCatch(thrown: unknown, errorInfo: Record<string, unknown>): void {
+    const error = thrown instanceof Error ? thrown : new Error(String(thrown));
     console.error("[ErrorBoundary] Caught error:", error, errorInfo);
 
     // Update state to show fallback UI

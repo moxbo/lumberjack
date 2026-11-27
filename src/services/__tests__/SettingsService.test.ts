@@ -6,9 +6,15 @@ import { app } from "electron";
 import { SettingsService } from "../SettingsService";
 import { DEFAULT_LIVE_ENTRY_LIMIT } from "../../utils/liveIngestionLimit";
 
+const keychain = vi.hoisted(() => ({
+  isAsyncEncryptionAvailable:
+    vi.fn<Electron.SafeStorage["isAsyncEncryptionAvailable"]>(),
+  encryptStringAsync: vi.fn<Electron.SafeStorage["encryptStringAsync"]>(),
+  decryptStringAsync: vi.fn<Electron.SafeStorage["decryptStringAsync"]>(),
+}));
 vi.mock("electron", () => ({
   app: { getPath: vi.fn() },
-  safeStorage: {},
+  safeStorage: keychain,
 }));
 vi.mock("electron-log/main", () => ({
   default: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() },
@@ -33,6 +39,46 @@ afterEach(async () => {
   vi.restoreAllMocks();
   vi.unstubAllEnvs();
   await fs.promises.rm(directory, { recursive: true, force: true });
+});
+
+describe("stored secrets", () => {
+  it("keeps the ss1 envelope and reads the plaintext result from the OS", async () => {
+    const bytes = Buffer.from([0, 255, 128]);
+    keychain.isAsyncEncryptionAvailable.mockResolvedValueOnce(true);
+    keychain.encryptStringAsync.mockResolvedValueOnce(bytes);
+    keychain.decryptStringAsync.mockResolvedValueOnce({
+      result: "fixture",
+      shouldReEncrypt: false,
+    });
+    const service = new SettingsService();
+    const encrypted = await service.encryptSecret("fixture");
+    expect(encrypted).toBe("ss1:AP+A");
+    expect(keychain.encryptStringAsync).toHaveBeenCalledWith("fixture");
+    expect(await new SettingsService().decryptSecret(encrypted)).toBe(
+      "fixture",
+    );
+    expect(keychain.decryptStringAsync).toHaveBeenCalledWith(bytes);
+  });
+
+  it("can still read gcm1 values without a keychain", async () => {
+    keychain.isAsyncEncryptionAvailable.mockResolvedValueOnce(false);
+    const encrypted = await new SettingsService().encryptSecret("fixture");
+    expect(encrypted).toMatch(/^gcm1:/);
+    expect(await new SettingsService().decryptSecret(encrypted)).toBe(
+      "fixture",
+    );
+    expect(keychain.decryptStringAsync).not.toHaveBeenCalled();
+  });
+
+  it("does not downgrade to the fallback when OS encryption fails", async () => {
+    keychain.isAsyncEncryptionAvailable.mockResolvedValueOnce(true);
+    keychain.encryptStringAsync.mockRejectedValueOnce(
+      new Error("keychain locked"),
+    );
+    await expect(
+      new SettingsService().encryptSecret("fixture"),
+    ).rejects.toThrow("keychain locked");
+  });
 });
 
 it("requires explicit boolean opt-in for filter diagnostics and persists it", async () => {

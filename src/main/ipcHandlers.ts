@@ -863,6 +863,15 @@ export function registerIpcHandlers(
     }
   });
 
+  // Keychain calls can finish out of order. Serialize mutations and disk saves,
+  // but never hold the queue while waiting for a file-logging reconfiguration.
+  let settingsOperation: Promise<unknown> = Promise.resolve();
+  function serializeSettings<T>(operation: () => Promise<T>): Promise<T> {
+    const pending = settingsOperation.then(operation);
+    settingsOperation = pending.catch(() => undefined);
+    return pending;
+  }
+
   ipcMain.handle(
     "settings:set",
     async (_event, patch: Partial<Settings>): Promise<SettingsResult> => {
@@ -888,14 +897,16 @@ export function registerIpcHandlers(
           return { ok: false, error: validation.error };
         }
 
-        if (passClear) {
-          clone.elasticPassEnc = "";
-        } else if (passPlain && passPlain.trim()) {
-          clone.elasticPassEnc = settingsService.encryptSecret(
-            passPlain.trim(),
-          );
-        }
-        settingsService.update(clone);
+        await serializeSettings(async () => {
+          if (passClear) {
+            clone.elasticPassEnc = "";
+          } else if (passPlain?.trim()) {
+            clone.elasticPassEnc = await settingsService.encryptSecret(
+              passPlain.trim(),
+            );
+          }
+          settingsService.update(clone);
+        });
         if (
           ["logToFile", "logFilePath", "logMaxBytes", "logMaxBackups"].some(
             (key) => Object.hasOwn(clone, key),
@@ -905,7 +916,7 @@ export function registerIpcHandlers(
         }
 
         // Use async save to avoid blocking the main process
-        const saved = await settingsService.save();
+        const saved = await serializeSettings(() => settingsService.save());
         if (!saved) {
           return { ok: false, error: t("main.errors.saveFailed") };
         }
@@ -1860,22 +1871,21 @@ export function registerIpcHandlers(
           ),
         );
 
-        const derivedAuth = (() => {
-          const user = settings.elasticUser || "";
-          const pass = settingsService.decryptSecret(
-            settings.elasticPassEnc || "",
-          );
-          if (user && pass) {
-            return { type: "basic", username: user, password: pass } as const;
-          }
-          return undefined;
-        })();
+        const user = settings.elasticUser;
+        const pass =
+          !opts.auth && user && settings.elasticPassEnc
+            ? await settingsService.decryptSecret(settings.elasticPassEnc)
+            : undefined;
 
         const mergedOpts: ElasticSearchOptions = {
           ...opts,
           url,
           size: pageSize,
-          auth: opts.auth ?? derivedAuth,
+          auth:
+            opts.auth ??
+            (user && pass
+              ? { type: "basic", username: user, password: pass }
+              : undefined),
           // defaults for PIT/retries
           keepAlive: opts.keepAlive || "5m",
           trackTotalHits: opts.trackTotalHits ?? false,
@@ -2789,12 +2799,12 @@ export function registerIpcHandlers(
     };
   });
 
-  ipcMain.handle("httpTail:getAuthHeader", () => {
+  ipcMain.handle("httpTail:getAuthHeader", async () => {
     try {
       const settings = settingsService.get();
       return {
         ok: true,
-        authHeader: settingsService.decryptSecret(
+        authHeader: await settingsService.decryptSecret(
           settings.httpAuthHeaderEnc || "",
         ),
       };
