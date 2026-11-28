@@ -181,11 +181,6 @@ export class AutoUpdaterService {
     // Allow downgrade (useful for testing)
     autoUpdater.allowDowngrade = false;
 
-    // Disable code signing verification for unsigned builds
-    // Required for macOS when building without Apple Developer ID
-    // @ts-expect-error - forceCodeSigning is not in the type definitions but is supported
-    autoUpdater.forceCodeSigning = false;
-
     // Configure GitHub token for private repositories
     this.configurePrivateRepoAccess();
 

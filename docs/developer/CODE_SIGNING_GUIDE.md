@@ -9,7 +9,7 @@ Diese Anleitung beschreibt, wie Code Signing für macOS und Windows eingerichtet
 | Plattform | Zertifikat | Kosten | Nutzen |
 |-----------|------------|--------|--------|
 | **macOS** | Apple Developer ID | $99/Jahr | Keine Gatekeeper-Warnung |
-| **Windows** | EV Code Signing Certificate | $200-500/Jahr | Keine SmartScreen-Warnung |
+| **Windows** | EV Code Signing Certificate | $200-500/Jahr | Überprüfbarer Herausgeber |
 | **Windows** | Standard OV Certificate | $70-300/Jahr | SmartScreen baut Reputation auf |
 
 ---
@@ -152,14 +152,13 @@ Erstelle `build/entitlements.mac.plist`:
 
 ---
 
-## 🪟 Windows Code Signing
+## Windows release signing
 
 ### Option A: EV Code Signing Certificate (Empfohlen)
 
 **Vorteile:**
-- Sofortige SmartScreen-Reputation
-- Keine Warnungen ab Tag 1
-- Hardware-Token (sicherer)
+- Windows kann den Herausgeber und die Integrität der EXE prüfen.
+- Die Signatur garantiert nicht, dass SmartScreen keine Warnung zeigt.
 
 **Anbieter & Preise (ca.):**
 | Anbieter | 1 Jahr | 3 Jahre |
@@ -187,22 +186,28 @@ Erstelle `build/entitlements.mac.plist`:
 ### Umgebungsvariablen
 
 ```bash
-# Für .pfx/.p12 Zertifikat (OV)
-export CSC_LINK="path/to/certificate.pfx"
-export CSC_KEY_PASSWORD="your-password"
-
-# Für EV-Zertifikat mit Hardware-Token
-export CSC_LINK="path/to/certificate.pfx"
-export CSC_KEY_PASSWORD="your-token-pin"
-# Zusätzlich: signtool.exe muss Token finden
+# Für eine vorhandene exportierbare Windows-Signieridentität
+export WIN_CSC_LINK="path/to/certificate.pfx"
+export WIN_CSC_KEY_PASSWORD="your-password"
 ```
 
 ### GitHub Secrets für Windows
 
 | Secret Name | Beschreibung |
 |-------------|--------------|
-| `CSC_LINK` | Base64-encoded .pfx Zertifikat |
-| `CSC_KEY_PASSWORD` | Zertifikat-Passwort |
+| `WIN_CSC_LINK` | Base64-kodierte PFX-Datei der Windows-Signieridentität |
+| `WIN_CSC_KEY_PASSWORD` | Passwort der PFX-Datei |
+
+Der Windows-Build verwendet diese Secrets nur beim Paketieren. Mit
+`WIN_CSC_LINK` ist Signing verpflichtend: Vor der Freigabe müssen die
+Authenticode-Signaturen des heruntergeladenen Setups und der installierten
+`Lumberjack.exe` gültig sein und denselben Signierer haben. Die Vorversion im
+Upgrade-Test darf unsigniert sein.
+
+Nach Einrichtung die Repository-**Variable** `WINDOWS_SIGNING_REQUIRED=true`
+setzen. Dann verhindert auch ein versehentlich gelöschtes Secret ein
+unsigniertes Release. Ohne Identität und ohne diese Variable bleiben
+unsignierte Builds möglich.
 
 ```powershell
 # Zertifikat zu Base64 konvertieren (PowerShell):
@@ -229,14 +234,6 @@ jobs:
     runs-on: ${{ matrix.os }}
     # ...
     steps:
-      # Windows Signing
-      - name: Build Windows (Signed)
-        if: matrix.platform == 'win'
-        run: npx electron-builder --win --publish never
-        env:
-          CSC_LINK: ${{ secrets.CSC_LINK }}
-          CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
-
       # macOS Signing & Notarization
       - name: Build macOS (Signed)
         if: matrix.platform == 'mac'
@@ -302,4 +299,3 @@ Get-AuthenticodeSignature "path\to\Lumberjack.exe"
 - [Notarization Guide](https://www.electron.build/notarization)
 - [DigiCert EV Certificates](https://www.digicert.com/signing/code-signing-certificates)
 - [SSL.com Code Signing](https://www.ssl.com/certificates/ev-code-signing/)
-

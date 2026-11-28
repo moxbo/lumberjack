@@ -32,12 +32,14 @@ permissions:
   contents: write
 
 concurrency:
-  group: build-${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/') }}
+  group: build-${{ github.workflow }}-${{ inputs.release_tag || github.ref_name }}
+  cancel-in-progress: false
 
 env:
-  # Code-Signing global deaktivieren (keine Zertifikate vorhanden)
+  # Never pick up an unrelated identity from the runner's keychain.
   CSC_IDENTITY_AUTO_DISCOVERY: "false"
+  # Ignore download counts and timestamps when comparing the tested release to the one being published.
+  RELEASE_ASSET_QUERY: "{id, assets: (.assets | sort_by(.name) | map({id, name, size, state, digest}))} | @json"
 
 jobs:
   prepare-release:
@@ -52,14 +54,15 @@ jobs:
       - name: Parameter auswerten
         id: meta
         shell: bash
+        env:
+          INPUT_REF: ${{ inputs.ref }}
+          INPUT_TAG: ${{ inputs.release_tag }}
+          INPUT_PRERELEASE: ${{ inputs.prerelease }}
+          INPUT_PROMOTE: ${{ inputs.promote_to_release }}
         run: |
           set -euo pipefail
-          event="${{ github.event_name }}"
-          ref="${{ github.ref }}"
-          input_ref="${{ github.event.inputs.ref }}"
-          input_tag="${{ github.event.inputs.release_tag }}"
-          input_prerelease="${{ github.event.inputs.prerelease }}"
-          input_promote="${{ github.event.inputs.promote_to_release }}"
+          event="$GITHUB_EVENT_NAME"
+          ref="$GITHUB_REF"
 
           checkout_ref="$ref"
           should_release="false"
@@ -67,20 +70,20 @@ jobs:
           prerelease="false"
           promote_only="false"
 
-          if [[ "$event" == "workflow_dispatch" && -n "$input_ref" ]]; then
-            checkout_ref="$input_ref"
+          if [[ "$event" == "workflow_dispatch" && -n "$INPUT_REF" ]]; then
+            checkout_ref="$INPUT_REF"
           fi
 
           if [[ "$ref" == refs/tags/* ]]; then
             should_release="true"
             release_tag="${ref#refs/tags/}"
             checkout_ref="$ref"  # Use full refs/tags/... path for checkout
-          elif [[ "$event" == "workflow_dispatch" && -n "$input_tag" ]]; then
+          elif [[ "$event" == "workflow_dispatch" && -n "$INPUT_TAG" ]]; then
             should_release="true"
-            release_tag="$input_tag"
+            release_tag="$INPUT_TAG"
             # For manual dispatch, use the branch/ref (tag may not exist yet)
-            if [[ -n "$input_ref" ]]; then
-              checkout_ref="$input_ref"
+            if [[ -n "$INPUT_REF" ]]; then
+              checkout_ref="$INPUT_REF"
             else
               checkout_ref="main"
             fi
@@ -91,17 +94,22 @@ jobs:
               prerelease="true"
             fi
           fi
-          if [[ "$input_prerelease" == "true" ]]; then
+          if [[ "$INPUT_PRERELEASE" == "true" ]]; then
             prerelease="true"
           fi
 
           # Check if we are promoting a pre-release to a release
-          if [[ "$input_promote" == "true" && -n "$input_tag" ]]; then
+          if [[ "$INPUT_PROMOTE" == "true" && -n "$INPUT_TAG" ]]; then
             should_release="true"
-            release_tag="$input_tag"
+            release_tag="$INPUT_TAG"
             prerelease="false"  # Force to non-prerelease
             promote_only="true"  # Skip build, only update release
-            checkout_ref="refs/tags/$input_tag"
+            checkout_ref="refs/tags/$INPUT_TAG"
+          fi
+
+          if [[ "$should_release" == "true" && ! "$release_tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-(alpha|beta|rc)\.[0-9]+)?$ ]]; then
+            echo "::error::Unsupported release tag; expected vX.Y.Z or vX.Y.Z-{alpha,beta,rc}.N"
+            exit 1
           fi
 
           echo "should_release=$should_release" >> "$GITHUB_OUTPUT"
@@ -167,11 +175,6 @@ jobs:
         run: |
           set -euo pipefail
           tag="${{ steps.meta.outputs.release_tag }}"
-          prerelease_flag=""
-          if [[ "${{ steps.meta.outputs.prerelease }}" == "true" ]]; then
-            prerelease_flag="--prerelease"
-          fi
-
           # Create tag if it doesn't exist (for workflow_dispatch)
           if ! git show-ref --verify --quiet "refs/tags/$tag"; then
             echo "Creating tag $tag..."
@@ -180,7 +183,12 @@ jobs:
           fi
 
           # Create draft release if it doesn't exist
-          if ! gh release view "$tag" >/dev/null 2>&1; then
+          if draft=$(gh release view "$tag" --json isDraft --jq .isDraft); then
+            if [[ "$draft" != "true" ]]; then
+              echo "::error::Refusing to replace assets on an already published release"
+              exit 1
+            fi
+          else
             gh release create "$tag" --draft --title "$tag" --notes "Release $tag"
           fi
 
@@ -294,6 +302,8 @@ jobs:
         needs.prepare-release.outputs.promote_only != 'true'
       }}
     runs-on: ${{ matrix.os }}
+    env:
+      RELEASE_TAG: ${{ needs.prepare-release.outputs.release_tag }}
     strategy:
       matrix:
         include:
@@ -310,6 +320,14 @@ jobs:
           fetch-depth: 0
           fetch-tags: true
 
+      # A manually selected older tag need not contain the current release helpers.
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.sha }}
+          path: .release-tools
+          sparse-checkout: scripts
+          persist-credentials: false
+
       - uses: actions/setup-node@v7
         with:
           node-version: 22
@@ -320,7 +338,8 @@ jobs:
         run: |
           for i in 1 2 3; do
             echo "Attempt $i of 3..."
-            npm ci && break
+            npm ci && exit 0
+            if [[ "$i" == 3 ]]; then exit 1; fi
             echo "Attempt $i failed, retrying in 15 seconds..."
             sleep 15
             npm cache clean --force
@@ -344,55 +363,29 @@ jobs:
           # Version wird aus dem Release-Tag übernommen (z.B. v1.0.7 -> 1.0.7)
           RELEASE_VERSION: ${{ needs.prepare-release.outputs.release_tag }}
 
-      - name: Build Windows NSIS Installer
-        if: ${{ matrix.platform == 'win' && matrix.arch == 'x64' }}
-        run: npx electron-builder --win nsis --x64 --publish never
+      - name: Build Windows NSIS and portable from one application bundle
+        if: matrix.platform == 'win'
+        shell: pwsh
         env:
           CI: true
+          WIN_CSC_LINK: ${{ secrets.WIN_CSC_LINK }}
+          WIN_CSC_KEY_PASSWORD: ${{ secrets.WIN_CSC_KEY_PASSWORD }}
+          REQUIRE_SIGNATURE: ${{ vars.WINDOWS_SIGNING_REQUIRED }}
+        run: |
+          $options = @()
+          if ($env:WIN_CSC_LINK) {
+            $options += '-c.win.forceCodeSigning=true'
+          } elseif ($env:REQUIRE_SIGNATURE -eq 'true' -or $env:WIN_CSC_KEY_PASSWORD) {
+            throw 'Windows signing requested but WIN_CSC_LINK is missing'
+          }
+          npx --no-install electron-builder --win nsis portable --x64 --publish never @options
 
-      - name: Build Windows Portable (optimized for fast startup)
-        if: ${{ matrix.platform == 'win' && matrix.arch == 'x64' }}
-        run: npx electron-builder --win portable --x64 --publish never
-        env:
-          CI: true
-
-      - name: Build Windows Directory (for ZIP distribution)
-        if: ${{ matrix.platform == 'win' && matrix.arch == 'x64' }}
-        run: npx electron-builder --win dir --x64 --publish never
-        env:
-          CI: true
-
-      - name: Create ZIP from win-unpacked (alternative to portable)
-        if: ${{ matrix.platform == 'win' && matrix.arch == 'x64' }}
+      - name: Create Windows ZIP without installer update metadata
+        if: matrix.platform == 'win'
         shell: pwsh
         run: |
-          $buildDir = Join-Path $PWD "release\build"
-          $unpackedDir = Join-Path $buildDir "win-unpacked"
-          # Version aus release/app/package.json lesen (dort ist die Build-Version)
-          $packageJson = Get-Content "release/app/package.json" | ConvertFrom-Json
-          $version = $packageJson.version
-          $zipName = "Lumberjack-$version-x64-win.zip"
-          $zipPath = Join-Path $buildDir $zipName
-
-          if (Test-Path $unpackedDir) {
-            Write-Host "Creating $zipName from win-unpacked..."
-            # Use NoCompression for fastest extraction and startup
-            # The files are already compressed in ASAR, so re-compressing saves little space
-            Compress-Archive -Path "$unpackedDir\*" -DestinationPath $zipPath -CompressionLevel NoCompression
-            $size = [math]::Round((Get-Item $zipPath).Length / 1MB, 1)
-            Write-Host "Created: $zipPath ($size MB)"
-            Write-Host ""
-            Write-Host "=== STARTUP TIME COMPARISON ==="
-            Write-Host "portable.exe: Self-extracting, optimized for single-file distribution"
-            Write-Host "             First start: ~3-5s (extraction), subsequent: ~1-2s"
-            Write-Host ""
-            Write-Host "win.zip:      Pre-extracted, fastest startup after unzip"
-            Write-Host "             Every start: ~1-2s (no extraction needed)"
-            Write-Host ""
-            Write-Host "For fastest startup, use the ZIP version and extract once."
-          } else {
-            Write-Host "win-unpacked directory not found, skipping ZIP creation"
-          }
+          $version = $env:RELEASE_TAG.Substring(1)
+          ./.release-tools/scripts/create-windows-zip.ps1 -UnpackedDir release/build/win-unpacked -ZipPath "release/build/Lumberjack-$version-x64-win.zip"
 
       - name: Build macOS app bundle
         if: ${{ matrix.platform == 'mac' }}
@@ -434,122 +427,29 @@ jobs:
         env:
           CI: true
 
-      - name: Organize Windows build outputs into arch subfolder
-        if: ${{ matrix.platform == 'win' && always() }}
-        shell: pwsh
-        run: |
-          $arch = "${{ matrix.arch }}"
-          $outDir = Join-Path $PWD "release\build"
-          $archDir = Join-Path $outDir $arch
-          if (-not (Test-Path $archDir)) { New-Item -ItemType Directory -Path $archDir | Out-Null }
-          $moved = 0
-
-          # Move files matching arch name (exe, zip, blockmap)
-          Get-ChildItem -Path $outDir -File -Force -ErrorAction SilentlyContinue | Where-Object { $_.Name -like "*$arch*" } | ForEach-Object {
-            Move-Item -Path $_.FullName -Destination $archDir -Force
-            $moved += 1
-          }
-
-          # Move portable-fast.zip (created from win-unpacked, only for x64)
-          if ($arch -eq "x64") {
-            Get-ChildItem -Path $outDir -File -Force -ErrorAction SilentlyContinue | Where-Object { $_.Name -like "*-win.zip" } | ForEach-Object {
-              Move-Item -Path $_.FullName -Destination $archDir -Force
-              Write-Host "Moved $($_.Name) to $archDir"
-              $moved += 1
-            }
-          }
-
-          # Move latest.yml (only for x64 which builds NSIS installer)
-          if ($arch -eq "x64") {
-            Get-ChildItem -Path $outDir -File -Force -ErrorAction SilentlyContinue | Where-Object { $_.Name -like "*.yml" } | ForEach-Object {
-              Copy-Item -Path $_.FullName -Destination $archDir -Force
-              Write-Host "Copied $($_.Name) to $archDir"
-              $moved += 1
-            }
-          }
-
-          if (Test-Path (Join-Path $outDir 'win-unpacked')) {
-            $dest = Join-Path $archDir 'win-unpacked'
-            # Move win-unpacked directory into arch folder (if present)
-            Move-Item -Path (Join-Path $outDir 'win-unpacked') -Destination $dest -Force -ErrorAction SilentlyContinue
-          }
-          Write-Host "Moved $moved files into $archDir"
-
-      - name: Organize macOS build outputs into arch subfolder
-        if: ${{ matrix.platform == 'mac' && always() }}
+      - name: Verify and stage only expected release assets
         shell: bash
-        run: |
-          arch="${{ matrix.arch }}"
-          outDir="release/build"
-          archDir="$outDir/mac-$arch"
-          mkdir -p "$archDir"
+        run: node .release-tools/scripts/release-assets.mjs stage release/build "$RELEASE_TAG" "${{ matrix.platform }}"
 
-          # Move DMG and other macOS artifacts
-          find "$outDir" -maxdepth 1 -name "*.dmg" -exec mv {} "$archDir/" \;
-          find "$outDir" -maxdepth 1 -name "*.zip" -exec mv {} "$archDir/" \;
-          find "$outDir" -maxdepth 1 -name "*.blockmap" -exec mv {} "$archDir/" \;
-          find "$outDir" -maxdepth 1 -name "latest-mac*.yml" -exec cp {} "$archDir/" \;
-
-          echo "macOS artifacts organized in $archDir"
-          ls -la "$archDir" || true
-
-      - name: Upload Windows artifacts
-        if: ${{ matrix.platform == 'win' }}
+      - name: Archive verified build artifacts
         uses: actions/upload-artifact@v7
         with:
-          name: windows-release-${{ matrix.arch }}
-          path: |
-            release/build/${{ matrix.arch }}/*.exe
-            release/build/${{ matrix.arch }}/*.zip
-            release/build/${{ matrix.arch }}/*.yml
-            release/build/${{ matrix.arch }}/*.blockmap
+          name: ${{ matrix.platform == 'win' && 'windows' || 'macos' }}-release-${{ matrix.arch }}
+          path: release/build/publish-${{ matrix.platform }}/
+          if-no-files-found: error
           retention-days: 30
 
-      - name: Upload macOS artifacts
-        if: ${{ matrix.platform == 'mac' }}
-        uses: actions/upload-artifact@v7
-        with:
-          name: macos-release-${{ matrix.arch }}
-          path: |
-            release/build/mac-${{ matrix.arch }}/*.dmg
-            release/build/mac-${{ matrix.arch }}/*.zip
-            release/build/mac-${{ matrix.arch }}/*.yml
-            release/build/mac-${{ matrix.arch }}/*.blockmap
-          retention-days: 30
-
-      - name: Create GitHub Release and Upload Assets
-        if: needs.prepare-release.outputs.should_release == 'true'
+      - name: Upload verified assets to draft
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          ARCH: ${{ matrix.arch }}
-          PLATFORM: ${{ matrix.platform }}
         shell: bash
-        run: |
-          tag="${{ needs.prepare-release.outputs.release_tag }}"
+        run: gh release upload "$RELEASE_TAG" release/build/publish-${{ matrix.platform }}/* --clobber
 
-          # Determine artifact directory based on platform
-          if [[ "$PLATFORM" == "mac" ]]; then
-            artifact_dir="release/build/mac-$ARCH"
-          else
-            artifact_dir="release/build/$ARCH"
-          fi
-
-          # Upload artifacts
-          echo "Uploading artifacts from $artifact_dir for PLATFORM=$PLATFORM ARCH=$ARCH"
-          matches=0
-          for file in "$artifact_dir"/*; do
-            if [ -f "$file" ]; then
-              echo "Uploading $file..."
-              gh release upload "$tag" "$file" --clobber || true
-              matches=$((matches+1))
-            fi
-          done
-          if [ "$matches" -eq 0 ]; then
-            echo "No artifacts found in $artifact_dir, skipping upload."
-          fi
-
-  finalize-release:
+  installer-smoke:
+    name: Verify release assets and installed Windows upgrade
     needs: [prepare-release, validation, release]
+    outputs:
+      asset_fingerprint: ${{ steps.installers.outputs.asset_fingerprint }}
     if: >-
       ${{
         !cancelled() &&
@@ -561,6 +461,41 @@ jobs:
           (needs.prepare-release.outputs.promote_only == 'true' && needs.release.result == 'skipped')
         )
       }}
+    runs-on: windows-latest
+    timeout-minutes: 15
+    # GitHub requires push access to read drafts. Only the download step gets
+    # GH_TOKEN; never pass it to the installer or persist it in the checkout.
+    permissions:
+      contents: write
+    env:
+      RELEASE_TAG: ${{ needs.prepare-release.outputs.release_tag }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+      # Playwright launches the installed EXE, not the npm Electron binary.
+      - run: npm ci --ignore-scripts
+      - name: Download and verify published predecessor and release candidate
+        id: installers
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: node scripts/release-assets.mjs fetch-installers "$env:RUNNER_TEMP/installers" "$env:RELEASE_TAG"
+      - name: Install, upgrade, launch and uninstall
+        shell: pwsh
+        env:
+          PREVIOUS_TAG: ${{ steps.installers.outputs.previous }}
+          REQUIRE_SIGNATURE: ${{ secrets.WIN_CSC_LINK != '' || vars.WINDOWS_SIGNING_REQUIRED == 'true' }}
+        run: |
+          ./scripts/smoke-nsis.ps1 -Installers "$env:RUNNER_TEMP/installers" -PreviousTag $env:PREVIOUS_TAG -ReleaseTag $env:RELEASE_TAG -RequireSignature:($env:REQUIRE_SIGNATURE -eq 'true')
+
+  finalize-release:
+    needs: [prepare-release, installer-smoke]
+    if: ${{ !cancelled() && needs.installer-smoke.result == 'success' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -572,14 +507,12 @@ jobs:
       - name: Generate Changelog and Finalize Release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_TAG: ${{ needs.prepare-release.outputs.release_tag }}
+          PRERELEASE: ${{ needs.prepare-release.outputs.prerelease }}
+          TESTED_ASSETS: ${{ needs.installer-smoke.outputs.asset_fingerprint }}
         run: |
           set -euo pipefail
-          tag="${{ needs.prepare-release.outputs.release_tag }}"
-          prerelease="${{ needs.prepare-release.outputs.prerelease }}"
-          release_flag=""
-          if [[ "$prerelease" == "true" ]]; then
-            release_flag="--prerelease"
-          fi
+          tag="$RELEASE_TAG"
 
           REPO="${{ github.repository }}"
           REPO_URL="https://github.com/$REPO"
@@ -687,16 +620,13 @@ jobs:
             changelog=$(gh api repos/$REPO/releases/generate-notes -f tag_name="$tag" --jq '.body' 2>/dev/null || echo ":tada: Initial Release")
           fi
 
-          # Create or update release
-          if gh release view "$tag" >/dev/null 2>&1; then
-            echo "Updating existing release $tag"
-            gh release edit "$tag" --draft --title "$tag"
-          else
-            echo "Creating new release $tag"
-            gh release create "$tag" --draft --title "$tag"
+          # A draft can be edited while Windows is running the smoke test.
+          snapshot=$(gh release view "$tag" --json id,assets --jq "$RELEASE_ASSET_QUERY")
+          actual=$(printf '%s' "$snapshot" | sha256sum | cut -d ' ' -f 1)
+          if [[ "$actual" != "$TESTED_ASSETS" ]]; then
+            echo "::error::The tested release assets have changed. Re-run the installer check before publication."
+            exit 1
           fi
-
-          # Apply changelog and finalize
-          echo -e "$changelog" | gh release edit "$tag" --notes-file - $release_flag --draft=false
+          echo -e "$changelog" | gh release edit "$tag" --title "$tag" --notes-file - --prerelease="$PRERELEASE" --draft=false
 
           echo "✅ Release $tag finalized successfully!"

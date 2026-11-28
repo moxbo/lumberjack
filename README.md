@@ -296,7 +296,7 @@ brew install --cask lumberjack
 
 Download the latest release from [GitHub Releases](https://github.com/moxbo/lumberjack/releases/latest):
 - **macOS**: `Lumberjack-x.x.x-arm64.dmg` or `Lumberjack-x.x.x-x64.dmg`
-- **Windows**: `Lumberjack-x.x.x-portable.exe` or `Lumberjack-Setup-x.x.x.exe`
+- **Windows x64**: `Lumberjack-x.x.x-x64-setup.exe` for installation and in-app updates; `Lumberjack-x.x.x-x64-portable.exe` or `Lumberjack-x.x.x-x64-win.zip` to run without installing.
 - **Linux**: `Lumberjack-x.x.x.AppImage`
 
 ### Development

@@ -21,8 +21,8 @@ Knappe Übersicht über Lumberjacks wichtigste Befehle, Pfade und Shortcuts.
 | `npm run build:portable:x64` | Windows Portable Build |
 | `npm run build:x64` | Windows NSIS-Installer |
 | `npm run build:mac:dmg` | macOS DMG (lokal, ohne Publish) |
-| `npm run release:mac` | macOS DMG/ZIP veröffentlichen |
-| `npm run release:win` | Windows NSIS + Portable veröffentlichen |
+| `npm run release:mac` | macOS DMG/ZIP in einen GitHub-Entwurf hochladen |
+| `npm run release:win` | Windows NSIS + Portable in einen GitHub-Entwurf hochladen |
 
 ---
 
@@ -73,14 +73,11 @@ QcStatus&!CB23       → "QcStatus", aber NICHT "CB23"
 ## 🚀 Release-Workflow (Kurzform)
 
 ```bash
-git tag v1.2.3
-git push && git push --tags
-npm run release:mac     # macOS
-npm run release:win     # Windows
+npm run release -- 1.2.3
 ```
 
-Version wird automatisch aus dem Git-Tag abgeleitet (`RELEASE_VERSION` als
-Override möglich).
+Der Helper pusht Branch und Tag gemeinsam. GitHub Actions veröffentlicht erst
+nach den Pflichtprüfungen, dem Artefaktabgleich und dem Windows-Upgrade-Test.
 
 ---
 
@@ -92,4 +89,3 @@ Override möglich).
 - [user/TROUBLESHOOTING_AND_FAQ.md](user/TROUBLESHOOTING_AND_FAQ.md)
 - [developer/PERFORMANCE.md](developer/PERFORMANCE.md)
 - [developer/ARCHITECTURE_DECISION.md](developer/ARCHITECTURE_DECISION.md)
-

@@ -257,7 +257,7 @@ Ohne Code Signing zeigen macOS (Gatekeeper) und Windows (SmartScreen) Warnungen 
 | Plattform | Zertifikat | Kosten | Zweck |
 |-----------|------------|--------|-------|
 | **macOS** | Apple Developer ID Application | $99/Jahr | Gatekeeper-Freigabe |
-| **Windows** | EV Code Signing (DigiCert, Sectigo, etc.) | $200-500/Jahr | SmartScreen-Freigabe sofort |
+| **Windows** | EV Code Signing (DigiCert, Sectigo, etc.) | $200-500/Jahr | Überprüfbarer Herausgeber |
 | **Windows** | Standard OV Certificate | $70-300/Jahr | SmartScreen baut Reputation auf |
 
 ### GitHub Secrets konfigurieren
@@ -295,7 +295,7 @@ Folgende Secrets müssen im GitHub Repository unter **Settings → Secrets and v
 3. **Build auslösen** – Die CI/CD Pipeline erkennt automatisch ob Signing-Secrets vorhanden sind:
    - `afterSign` Hook (`scripts/afterSign.cjs`) führt macOS Notarization durch
    - Der `afterPack`-Hook setzt Windows-Metadaten und legt Electrons mitgelieferte `Lumberjack_wer.dll` neben `Lumberjack.exe` ab. Fehlt der WER-Helper beim Packen, bricht der Windows-Build ab. Crash-Dumps bleiben lokal.
-   - Wenn keine Secrets vorhanden: Build läuft ohne Signing weiter
+   - Mit `WIN_CSC_LINK` werden das Setup und die installierte EXE vor Veröffentlichung auf gültige Signaturen geprüft. Nach Einrichtung `WINDOWS_SIGNING_REQUIRED=true` als Repository-Variable setzen, damit auch fehlende Anmeldedaten den Windows-Release blockieren. Ohne Identität und ohne Pflichtvariable sind unsignierte Builds weiterhin möglich.
 
 ### Signing lokal deaktivieren
 

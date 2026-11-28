@@ -211,6 +211,32 @@ API errors block the release. Manual pre-release promotions use the same gate
 before publication, even though they reuse existing artifacts and skip the release
 build.
 
+### Windows release artifacts
+
+The Windows job builds x64 NSIS and portable in one electron-builder invocation.
+The standalone ZIP uses the same `win-unpacked` files but omits
+`resources/app-update.yml` and the installer elevation helper. Keep the update
+manifest in NSIS: its presence distinguishes an installed app from a ZIP build.
+README screenshots are not runtime assets.
+
+The workflow stages only versioned distribution files, blockmaps and the GitHub
+updater manifests (`latest.yml` / `latest-mac.yml`, including for beta and RC).
+Missing, empty or unexpected public assets block finalization; build diagnostics
+such as `builder-debug.yml` do not belong on a release. Remove any such legacy
+extras before promoting an older pre-release. Local `release:win` and
+`release:mac` uploads target **drafts**, not public releases.
+
+Before publication (including promotion), a fresh Windows runner downloads
+the candidate setup and the most recent **lower stable version** from GitHub.
+It checks the referenced EXE name, version, byte size, SHA-512 and blockmap,
+then installs the predecessor in a path containing spaces, saves a setting in
+the installed app, upgrades without passing the path again, checks the version
+and saved setting in the new app, and silently uninstalls. A missing baseline
+or a failed upload/check blocks publication rather than skipping the test.
+Immediately before publication, the workflow confirms that the release and its
+asset IDs and digests are unchanged since the installer check.
+For signature enforcement, see the [Windows signing guide](docs/developer/CODE_SIGNING_GUIDE.md#windows-release-signing).
+
 ### Quick Reference
 
 | Script                            | Purpose                                                  |

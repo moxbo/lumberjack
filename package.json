@@ -39,10 +39,10 @@
     "licenses": "license-checker --production --csv --out docs/THIRD_PARTY_LICENSES.csv",
     "icon:generate": "tsx ./scripts/make-icon.ts",
     "prepack:app": "node scripts/prepare-release-metadata.cjs",
-    "build:x64": "npm run prepack:app && npm run build:prod && cross-env CSC_IDENTITY_AUTO_DISCOVERY=false electron-builder --win nsis --x64",
-    "build:portable": "npm run prepack:app && npm run build:prod && cross-env CSC_IDENTITY_AUTO_DISCOVERY=false electron-builder --win portable",
-    "build:portable:x64": "npm run prepack:app && npm run build:prod && cross-env CSC_IDENTITY_AUTO_DISCOVERY=false electron-builder --win portable --x64",
-    "build:dir:x64": "npm run prepack:app && npm run build:prod && cross-env CSC_IDENTITY_AUTO_DISCOVERY=false electron-builder --win dir --x64",
+    "build:x64": "npm run prepack:app && npm run build:prod && cross-env CSC_IDENTITY_AUTO_DISCOVERY=false electron-builder --win nsis --x64 --publish never",
+    "build:portable": "npm run prepack:app && npm run build:prod && cross-env CSC_IDENTITY_AUTO_DISCOVERY=false electron-builder --win portable --publish never",
+    "build:portable:x64": "npm run prepack:app && npm run build:prod && cross-env CSC_IDENTITY_AUTO_DISCOVERY=false electron-builder --win portable --x64 --publish never",
+    "build:dir:x64": "npm run prepack:app && npm run build:prod && cross-env CSC_IDENTITY_AUTO_DISCOVERY=false electron-builder --win dir --x64 --publish never",
     "build:mac:dmg": "npm run prepack:app && npm run build:prod && cross-env ELECTRON_BUILDER_DISABLE_PUBLISH=true CSC_IDENTITY_AUTO_DISCOVERY=false electron-builder --mac dmg zip --publish never",
     "build:mac:publish": "npm run prepack:app && npm run build:prod && cross-env CSC_IDENTITY_AUTO_DISCOVERY=false electron-builder --mac dmg zip --publish always",
     "release:mac": "npm run prepack:app && npm run build:prod && cross-env CSC_IDENTITY_AUTO_DISCOVERY=false electron-builder --mac dmg zip --publish always",
@@ -85,6 +85,7 @@
     "git-cliff": "^2.14.2",
     "globals": "^17.14.0",
     "husky": "^9.1.7",
+    "js-yaml": "^4.3.2",
     "license-checker": "^25.0.1",
     "lint-staged": "^17.6.2",
     "png-to-ico": "^3.0.2",
@@ -122,6 +123,7 @@
     "files": [
       "dist/**/*",
       "images/**/*",
+      "!images/screenshot/**",
       "package.json"
     ],
     "asar": true,
@@ -135,7 +137,7 @@
       "provider": "github",
       "owner": "moxbo",
       "repo": "lumberjack",
-      "releaseType": "release"
+      "releaseType": "draft"
     },
     "electronLanguages": [
       "de",
